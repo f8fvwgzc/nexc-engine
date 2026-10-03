@@ -121,3 +121,8 @@ def test_tool_schemas_are_strict() -> None:
 def test_run_python_is_disabled_by_default() -> None:
     assert "run_python" not in build_toolset(can_spawn=True, allow_code_exec=False)
     assert "run_python" in build_toolset(can_spawn=True, allow_code_exec=True)
+
+
+def test_safe_path_dot_is_the_workspace_root(tmp_path: Path) -> None:
+    assert safe_path(tmp_path, ".") == tmp_path.resolve()
+    assert safe_path(tmp_path, "./") == tmp_path.resolve()

@@ -34,8 +34,10 @@ def safe_path(root: Path, relative: str) -> Path:
 
     # Canonicalise both sides (following symlinks) and require the result to stay under root.
     base = os.path.realpath(root)
+    if pure == PurePosixPath("."):
+        return Path(base)
     resolved = os.path.realpath(os.path.join(base, relative))
-    if resolved != base and not resolved.startswith(base + os.sep):
+    if not resolved.startswith(base + os.sep):
         raise PathError("path escapes the workspace")
     return Path(resolved)
 

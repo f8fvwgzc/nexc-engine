@@ -115,6 +115,7 @@ step "artifacts"
 ARTIFACTS="$(api GET "/runs/$RID/artifacts")"
 jq -r '.[] | "  \(.path)  \(.mime)  \(.size) bytes"' <<<"$ARTIFACTS"
 [[ "$(jq length <<<"$ARTIFACTS")" -gt 0 ]] || fail "no artifacts produced"
+login # long real-LLM runs outlive the 15-minute access token
 curl -sSf -H "Authorization: Bearer $TOKEN" -o "$WORK/artifacts.zip" "$API/runs/$RID/artifacts.zip"
 [[ "$(head -c 2 "$WORK/artifacts.zip")" == PK ]] || fail "artifacts.zip is not a zip"
 echo "  artifacts.zip $(wc -c <"$WORK/artifacts.zip" | tr -d ' ') bytes"
