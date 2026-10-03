@@ -7,7 +7,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-10-03
+## [0.1.0] - 2026-10-04
 
 First public release.
 
@@ -23,8 +23,11 @@ First public release.
   sub-agents (depth 2, up to 4 children), workspace-confined tools, `.docx` generation and an
   opt-in sandboxed `run_python`.
 - LLM providers: Anthropic (default `claude-opus-5`, adaptive thinking, server-side refusal
-  fallbacks), OpenAI-compatible endpoints, and an offline deterministic `demo` provider.
-- Memory with BM25 retrieval; C11 kernels for hashing, MinHash, embeddings and SHA-256.
+  fallbacks), the local Claude Code CLI with its own login (`claude_code`, no API key),
+  OpenAI-compatible endpoints, and an offline deterministic `demo` provider.
+- Six starter templates that ask for a topic; document and output nodes always deliver a `.docx`.
+- Mem0-style memory (extract, consolidate, hybrid retrieval: embeddings + BM25 + recency);
+  C11 kernels for hashing, MinHash, embeddings and SHA-256.
 - Authentication with Argon2, rotating refresh tokens with reuse detection, CSRF guard and
   AES-256-GCM encrypted API keys.
 - PostgreSQL 17 storage with realtime fan-out over `LISTEN/NOTIFY`.
