@@ -1,0 +1,17 @@
+# Build contexts are per service (backend/, frontend/, agent-runtime/); this guards root-context builds.
+.git/
+.github/
+.env
+.env.*
+data/
+**/target/
+**/node_modules/
+**/dist/
+**/.venv/
+**/__pycache__/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+deploy/k8s/secret.env
+*.log
+.DS_Store

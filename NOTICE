@@ -1,0 +1,9 @@
+nexc-engine
+Copyright 2026 the nexc-engine contributors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+It bundles shadcn/ui components (MIT License, Copyright (c) 2023 shadcn) in
+frontend/src/components/ui, and depends on third-party open-source packages
+listed in backend/Cargo.lock, frontend/pnpm-lock.yaml and agent-runtime/uv.lock,
+each under its own license.

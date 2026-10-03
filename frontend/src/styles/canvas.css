@@ -1,0 +1,241 @@
+/* Styles for the D3 graph canvas (features/graph/canvas). Plain CSS because D3 writes the
+   geometry attributes directly; colors come from the theme tokens in index.css. */
+
+.graph-canvas {
+  background-color: var(--canvas-bg);
+  background-image:
+    radial-gradient(
+      circle at 20% 0%,
+      color-mix(in oklch, var(--brand) 9%, transparent),
+      transparent 45%
+    ),
+    radial-gradient(
+      circle at 100% 100%,
+      color-mix(in oklch, var(--brand-2) 8%, transparent),
+      transparent 40%
+    ),
+    radial-gradient(var(--canvas-dot) 1px, transparent 1px);
+  background-size:
+    100% 100%,
+    100% 100%,
+    22px 22px;
+  touch-action: none;
+  user-select: none;
+}
+
+.graph-canvas:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+/* ---------- nodes ---------- */
+.gnode {
+  cursor: grab;
+}
+.gnode:active {
+  cursor: grabbing;
+}
+.gnode-card {
+  fill: color-mix(in oklch, var(--card) 88%, transparent);
+  stroke: var(--border);
+  stroke-width: 1;
+  transition:
+    stroke 200ms ease,
+    fill 200ms ease;
+}
+.gnode:hover .gnode-card {
+  stroke: color-mix(in oklch, var(--foreground) 30%, transparent);
+}
+.gnode-ring {
+  fill: none;
+  stroke: var(--node-status, var(--status-idle));
+  stroke-width: 1.5;
+  opacity: 0.85;
+  transition:
+    stroke 250ms ease,
+    opacity 250ms ease;
+}
+.gnode[data-status='idle'] .gnode-ring {
+  opacity: 0;
+}
+.gnode[data-selected='true'] .gnode-card {
+  stroke: var(--ring);
+  stroke-width: 2;
+}
+.gnode[data-status='running'] .gnode-ring {
+  animation: gnode-pulse 1.4s ease-in-out infinite;
+  filter: drop-shadow(0 0 6px var(--status-running));
+}
+.gnode[data-status='succeeded'] .gnode-ring {
+  filter: drop-shadow(0 0 4px color-mix(in oklch, var(--status-succeeded) 60%, transparent));
+}
+.gnode[data-status='failed'] .gnode-ring {
+  filter: drop-shadow(0 0 5px color-mix(in oklch, var(--status-failed) 70%, transparent));
+}
+.gnode-title {
+  fill: var(--foreground);
+  font-size: 12.5px;
+  font-weight: 500;
+  pointer-events: none;
+}
+.gnode-sub {
+  fill: var(--muted-foreground);
+  font-size: 10.5px;
+  pointer-events: none;
+}
+.gnode-icon {
+  color: var(--muted-foreground);
+  pointer-events: none;
+}
+.gnode-dot {
+  fill: var(--node-status, var(--status-idle));
+}
+.gnode[data-connect-target='true'] .gnode-card {
+  stroke: var(--brand);
+  stroke-width: 2;
+}
+
+@keyframes gnode-pulse {
+  0%,
+  100% {
+    stroke-opacity: 1;
+    stroke-width: 1.5;
+  }
+  50% {
+    stroke-opacity: 0.35;
+    stroke-width: 4;
+  }
+}
+
+/* ---------- edges ---------- */
+.gedge-line {
+  fill: none;
+  stroke: var(--canvas-edge);
+  stroke-width: 1.4;
+  opacity: 0.75;
+  transition:
+    stroke 200ms ease,
+    opacity 200ms ease;
+}
+.gedge[data-kind='relates_to'] .gedge-line {
+  stroke-dasharray: 5 5;
+  opacity: 0.5;
+}
+.gedge[data-origin='auto'] .gedge-line {
+  stroke: color-mix(in oklch, var(--brand-2) 70%, var(--canvas-edge));
+}
+.gedge[data-selected='true'] .gedge-line {
+  stroke: var(--ring);
+  stroke-width: 2.2;
+  opacity: 1;
+}
+.gedge-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  cursor: pointer;
+}
+.gedge:hover .gedge-line {
+  opacity: 1;
+}
+
+.gsuggest {
+  cursor: pointer;
+}
+.gsuggest-line {
+  fill: none;
+  stroke: var(--brand);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 6;
+  opacity: 0.7;
+  animation: dash-flow 1.2s linear infinite;
+}
+.gsuggest:hover .gsuggest-line {
+  opacity: 1;
+  stroke-width: 2.2;
+}
+
+.glink-preview {
+  fill: none;
+  stroke: var(--brand);
+  stroke-width: 2;
+  stroke-dasharray: 4 4;
+  pointer-events: none;
+}
+
+.garrow {
+  fill: var(--canvas-edge);
+}
+.garrow-active {
+  fill: var(--ring);
+}
+.garrow-brand {
+  fill: var(--brand);
+}
+
+/* ---------- ghost plan proposals ---------- */
+.gghost {
+  animation: ghost-in 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  transform-box: fill-box;
+  transform-origin: center;
+  pointer-events: none;
+}
+.gghost-card {
+  fill: color-mix(in oklch, var(--brand) 10%, transparent);
+  stroke: var(--brand);
+  stroke-width: 1.4;
+  stroke-dasharray: 6 4;
+}
+.gghost[data-update='true'] .gghost-card {
+  fill: color-mix(in oklch, var(--brand-2) 10%, transparent);
+  stroke: var(--brand-2);
+}
+.gghost-title {
+  fill: var(--foreground);
+  font-size: 12.5px;
+  font-weight: 500;
+  opacity: 0.9;
+}
+.gghost-sub {
+  fill: var(--brand);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.gghost-edge {
+  fill: none;
+  stroke: var(--brand);
+  stroke-width: 1.3;
+  stroke-dasharray: 4 5;
+  opacity: 0.65;
+  animation: dash-flow 1.6s linear infinite;
+}
+
+@keyframes ghost-in {
+  from {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* ---------- presence ---------- */
+.gpresence circle {
+  fill: var(--brand-2);
+  stroke: var(--background);
+  stroke-width: 2;
+}
+.gpresence text {
+  fill: var(--brand-2);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+@keyframes dash-flow {
+  to {
+    stroke-dashoffset: -24;
+  }
+}

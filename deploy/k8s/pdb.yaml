@@ -1,0 +1,27 @@
+# Keep at least one replica of each stateless tier during voluntary disruptions (node drains).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: backend
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: backend }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: agent-runtime
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: agent-runtime }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: frontend
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: frontend }

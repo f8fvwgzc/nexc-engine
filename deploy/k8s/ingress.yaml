@@ -1,0 +1,32 @@
+# http://nexc.local -> frontend (SPA); /api goes straight to the backend so SSE and WebSockets
+# skip a hop. /metrics is not routed at all.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nexc
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "2m"
+    # Long-lived SSE / WebSocket connections.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    # Enable once TLS is configured (see README):
+    # nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  # tls:
+  #   - hosts: [nexc.example.com]
+  #     secretName: nexc-tls
+  rules:
+    - host: nexc.local
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service: { name: backend, port: { name: http } }
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: frontend, port: { name: http } }

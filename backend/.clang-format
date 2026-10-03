@@ -1,0 +1,36 @@
+# Linux kernel coding style (subset of the kernel's own .clang-format).
+BasedOnStyle: LLVM
+AccessModifierOffset: -4
+AlignAfterOpenBracket: Align
+AllowShortBlocksOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+AlwaysBreakBeforeMultilineStrings: false
+BinPackArguments: true
+BinPackParameters: true
+BraceWrapping:
+  AfterClass: false
+  AfterControlStatement: false
+  AfterEnum: false
+  AfterFunction: true
+  AfterNamespace: true
+  AfterStruct: false
+  AfterUnion: false
+  AfterExternBlock: false
+  BeforeCatch: false
+  BeforeElse: false
+  IndentBraces: false
+BreakBeforeBraces: Custom
+BreakBeforeTernaryOperators: false
+ColumnLimit: 100
+ContinuationIndentWidth: 8
+IndentCaseLabels: false
+IndentWidth: 8
+PointerAlignment: Right
+SortIncludes: false
+SpaceAfterCStyleCast: false
+SpaceBeforeParens: ControlStatements
+TabWidth: 8
+UseTab: Always

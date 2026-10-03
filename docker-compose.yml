@@ -1,0 +1,176 @@
+# nexc-engine with Docker Compose.
+#
+#   make init              # creates .env with generated secrets (demo LLM provider by default)
+#   docker compose up -d --build
+#   open http://localhost:8080
+#
+# Only the web UI is published. The backend, the agent runtime and PostgreSQL live on internal
+# networks. Optional texc-symphony executor: `docker compose --profile symphony up -d`.
+
+name: nexc
+
+x-hardening: &hardening
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  init: true
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+
+services:
+  postgres:
+    <<: *hardening
+    image: postgres:17-alpine
+    # Run as the image's postgres user (uid 70) so no capabilities are needed at all.
+    user: "70:70"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nexc}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is empty - run `make init`}
+      POSTGRES_DB: ${POSTGRES_DB:-nexc}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    tmpfs:
+      - /var/run/postgresql:uid=70,gid=70,mode=0775
+      - /tmp:uid=70,gid=70,mode=1777
+    shm_size: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\" -h 127.0.0.1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks: [data]
+
+  backend:
+    <<: *hardening
+    image: ghcr.io/f8fvwgzc/nexc-engine-backend:${NEXC_IMAGE_TAG:-latest}
+    pull_policy: missing # local image, else pull the release, else build from source
+    build:
+      context: ./backend
+    env_file: [.env]
+    environment:
+      # Container networking overrides the local-dev values in .env.
+      NEXC_HOST: 0.0.0.0
+      NEXC_PORT: "8080"
+      NEXC_DATA_DIR: /data
+      NEXC_DATABASE_URL: postgres://${POSTGRES_USER:-nexc}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-nexc}
+      NEXC_RUNTIME_URL: http://agent-runtime:8090
+      NEXC_SYMPHONY_URL: http://texc-symphony:4000
+      NEXC_SYMPHONY_WORKFLOW: /data/symphony/WORKFLOW.md
+      NEXC_CORS_ORIGINS: http://localhost:${NEXC_HTTP_PORT:-8080}
+      NEXC_TRUST_PROXY: "true"
+      NEXC_LLM_PROVIDER: ${NEXC_LLM_PROVIDER:-demo}
+    volumes:
+      - nexc-data:/data
+      - symphony-config:/data/symphony
+    tmpfs:
+      - /tmp
+    depends_on:
+      postgres: { condition: service_healthy }
+      agent-runtime: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/v1/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    networks: [web, agents, data, egress]
+
+  agent-runtime:
+    <<: *hardening
+    image: ghcr.io/f8fvwgzc/nexc-engine-runtime:${NEXC_IMAGE_TAG:-latest}
+    pull_policy: missing # local image, else pull the release, else build from source
+    build:
+      context: ./agent-runtime
+    # No env_file on purpose: the runtime only gets what it needs (no DB, JWT or master key).
+    # LLM API keys arrive per request from the backend and are never stored.
+    environment:
+      NEXC_RUNTIME_TOKEN: ${NEXC_RUNTIME_TOKEN:?NEXC_RUNTIME_TOKEN is empty - run `make init`}
+      NEXC_LLM_MODEL: ${NEXC_LLM_MODEL:-claude-opus-5}
+      RUNTIME_HOST: 0.0.0.0
+      RUNTIME_PORT: "8090"
+      RUNTIME_WORKSPACE: /workspace
+      RUNTIME_ALLOW_CODE_EXEC: ${RUNTIME_ALLOW_CODE_EXEC:-false}
+      RUNTIME_LOG_LEVEL: ${RUNTIME_LOG_LEVEL:-info}
+    tmpfs:
+      - /workspace:uid=10001,gid=10001,mode=0700,size=512m
+      - /tmp:size=64m
+    pids_limit: 256
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    # agents: reachable only from the backend. egress: outbound calls to the LLM provider.
+    networks: [agents, egress]
+
+  frontend:
+    <<: *hardening
+    image: ghcr.io/f8fvwgzc/nexc-engine-frontend:${NEXC_IMAGE_TAG:-latest}
+    pull_policy: missing # local image, else pull the release, else build from source
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api/v1}
+    ports:
+      - "${NEXC_HTTP_PORT:-8080}:8080"
+    tmpfs:
+      - /tmp
+    depends_on:
+      backend: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-T", "3", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [web]
+
+  # Optional coding-task executor (https://github.com/f8fvwgzc/texc-symphony).
+  # Needs a Codex login once:  docker compose --profile symphony run --rm texc-symphony codex login
+  # and NEXC_SYMPHONY_ENABLED=true in .env. The backend writes the managed WORKFLOW.md into the
+  # shared `symphony-config` volume; Symphony reads it from /config.
+  texc-symphony:
+    profiles: [symphony]
+    image: ghcr.io/f8fvwgzc/texc-symphony:latest
+    restart: unless-stopped
+    init: false # the image runs tini as PID 1
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    command:
+      - --i-understand-that-this-will-be-running-without-the-usual-guardrails
+      - /config/WORKFLOW.md
+    environment:
+      SYMPHONY_HOST: 0.0.0.0
+      SYMPHONY_PORT: "4000"
+    volumes:
+      - symphony-config:/config:ro
+      - symphony-data:/data
+      - symphony-workspaces:/workspaces
+      - codex-home:/home/symphony/.codex
+    depends_on:
+      backend: { condition: service_healthy }
+    networks: [agents, egress]
+
+volumes:
+  pgdata:
+  nexc-data:
+  symphony-config:
+  symphony-data:
+  symphony-workspaces:
+  codex-home:
+
+networks:
+  # Public edge: nginx <-> backend.
+  web:
+  # backend <-> agent-runtime / texc-symphony. No route to the outside world.
+  agents:
+    internal: true
+  # backend <-> PostgreSQL only.
+  data:
+    internal: true
+  # Outbound internet for LLM APIs (backend, runtime) and git/Codex (symphony).
+  egress:

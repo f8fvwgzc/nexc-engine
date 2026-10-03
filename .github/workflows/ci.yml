@@ -1,0 +1,173 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  backend:
+    name: Backend (Rust)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: nexc
+          POSTGRES_PASSWORD: nexc-ci-password
+          POSTGRES_DB: nexc
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U nexc -d nexc"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      NEXC_DATABASE_URL: postgres://nexc:nexc-ci-password@localhost:5432/nexc
+      DATABASE_URL: postgres://nexc:nexc-ci-password@localhost:5432/nexc
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.99.0
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo test --locked
+
+  frontend:
+    name: Frontend (React)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: frontend/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Lint
+        run: pnpm lint
+      - name: Test
+        run: pnpm test
+      - name: Build
+        run: pnpm build
+
+  runtime:
+    name: Agent runtime (Python)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: agent-runtime
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: agent-runtime/uv.lock
+      - run: uv sync --locked
+      - name: Ruff
+        run: uv run ruff check && uv run ruff format --check
+      - name: Mypy
+        run: uv run mypy src tests
+      - name: Pytest
+        run: uv run pytest
+
+  infra:
+    name: Infra (compose, k8s, shell, Dockerfiles)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Generate env files
+        run: scripts/init-env.sh && scripts/init-env.sh --k8s
+      - name: docker compose config
+        run: |
+          docker compose config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.demo.yml --profile symphony config --quiet
+      - name: kustomize render
+        run: kubectl kustomize deploy/k8s > /dev/null
+      - name: shellcheck
+        run: shellcheck -x scripts/*.sh
+      - name: hadolint
+        run: |
+          for file in backend/Dockerfile frontend/Dockerfile agent-runtime/Dockerfile; do
+            echo "::group::$file"
+            docker run --rm -i hadolint/hadolint < "$file"
+            echo "::endgroup::"
+          done
+
+  images:
+    name: Docker image (${{ matrix.image }})
+    needs: [backend, frontend, runtime, infra]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: backend
+            context: backend
+          - image: frontend
+            context: frontend
+          - image: runtime
+            context: agent-runtime
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Build (no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          push: false
+          tags: nexc-engine-${{ matrix.image }}:ci
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,scope=${{ matrix.image }},mode=max
+
+  e2e:
+    name: End-to-end (Docker Compose, demo mode)
+    needs: [backend, frontend, runtime, infra]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - name: Generate .env (demo mode)
+        run: scripts/init-env.sh
+      - name: Build and start the stack
+        run: docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d --build --wait --wait-timeout 300
+      - name: Smoke test (register, template, plan, apply, run, cache, artifacts, SSE)
+        run: scripts/smoke.sh http://localhost:8080
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail 300
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

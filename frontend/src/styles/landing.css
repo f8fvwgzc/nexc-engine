@@ -1,0 +1,93 @@
+/* Hero mini-graph animation (landing page only; loaded with its lazy chunk). */
+.hero-graph .hg-edge {
+  fill: none;
+  stroke: var(--canvas-edge);
+  stroke-width: 1.5;
+  stroke-dasharray: 220;
+  stroke-dashoffset: 220;
+  animation: hg-draw 900ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.hero-graph .hg-edge-ghost {
+  fill: none;
+  stroke: var(--brand);
+  stroke-width: 1.4;
+  stroke-dasharray: 5 6;
+  opacity: 0;
+  animation:
+    hg-fade 600ms ease-out 2.6s forwards,
+    dash-flow 1.4s linear 2.6s infinite;
+}
+.hero-graph .hg-node {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: hg-pop 600ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.hero-graph .hg-card {
+  fill: var(--card);
+  stroke: var(--border);
+}
+.hero-graph .hg-ring {
+  fill: none;
+  stroke-width: 2;
+  stroke: var(--status-idle);
+  animation: hg-status 7s ease-in-out infinite;
+}
+.hero-graph .hg-ghost .hg-card {
+  fill: color-mix(in oklch, var(--brand) 10%, transparent);
+  stroke: var(--brand);
+  stroke-dasharray: 6 4;
+}
+.hero-graph text {
+  fill: var(--foreground);
+  font-size: 11px;
+  font-weight: 500;
+}
+.hero-graph .hg-sub {
+  fill: var(--muted-foreground);
+  font-size: 9px;
+  font-weight: 400;
+}
+
+@keyframes hg-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes hg-fade {
+  to {
+    opacity: 0.8;
+  }
+}
+@keyframes hg-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+/* idle → queued → running → succeeded, staggered per node via animation-delay. */
+@keyframes hg-status {
+  0%,
+  15% {
+    stroke: var(--status-idle);
+    stroke-opacity: 0.4;
+  }
+  25% {
+    stroke: var(--status-queued);
+    stroke-opacity: 1;
+  }
+  35%,
+  50% {
+    stroke: var(--status-running);
+    stroke-width: 3.5;
+  }
+  60%,
+  100% {
+    stroke: var(--status-succeeded);
+    stroke-width: 2;
+  }
+}

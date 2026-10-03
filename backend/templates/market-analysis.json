@@ -1,0 +1,163 @@
+{
+  "id": "market-analysis",
+  "name": "Market analysis",
+  "description": "Size a market, map competitors and customer segments, build an evidence-based SWOT, and land on a clear, pressure-tested go/no-go recommendation.",
+  "category": "business",
+  "tags": [
+    "market",
+    "strategy",
+    "competitors"
+  ],
+  "goal": "Answer a concrete business question about a market. After framing the decision, three research branches run in parallel: market sizing (TAM/SAM/SOM), competitor mapping and customer segmentation. They converge into a SWOT with TOWS strategies, a decisive recommendation, and a skeptical pressure test, before the final node compiles an executive-ready market analysis brief.",
+  "nodes": [
+    {
+      "key": "framing",
+      "title": "Frame the market question",
+      "content": "Frame the analysis so every later step answers the same question.\n\n**Produce:**\n- The decision this analysis supports (e.g. enter a market, launch a product, raise funding).\n- Market definition: product category, geography, customer type (B2B/B2C), time horizon.\n- 3-5 key questions the analysis must answer.\n- Explicit assumptions and what would invalidate each.\n- The company's starting position (product, strengths, constraints) as given by the user, or clearly labelled placeholders.",
+      "kind": "topic",
+      "tags": [
+        "planning"
+      ],
+      "x": 80,
+      "y": 80,
+      "executor": "llm",
+      "agent_role": "planner"
+    },
+    {
+      "key": "sizing",
+      "title": "Estimate market size (TAM/SAM/SOM)",
+      "content": "Estimate the size of the market defined in [[Frame the market question]].\n\n**Produce:**\n- TAM, SAM and SOM using both top-down (industry reports, public data) and bottom-up (customers x price x purchase frequency) methods.\n- A table of every input: value, unit, source or rationale, confidence.\n- Growth rate (CAGR) for the next 3-5 years, with its source.\n- Sensitivity: the two inputs that move the answer most.\n\nShow the arithmetic. If the two methods differ by more than 3x, explain why and pick one.",
+      "kind": "research",
+      "tags": [
+        "sizing",
+        "data"
+      ],
+      "x": 400,
+      "y": 80,
+      "executor": "agent",
+      "agent_role": "researcher"
+    },
+    {
+      "key": "competitors",
+      "title": "Analyze competitors",
+      "content": "Map the competitive landscape.\n\n**Produce:**\n- A table of 5-10 competitors (direct, indirect and substitutes): name, target customer, core offering, pricing model and price point, distribution, strengths, weaknesses, estimated scale.\n- A 2x2 positioning map described in text, using the two axes buyers care about most, with each competitor placed.\n- Gaps and underserved needs the landscape leaves open.\n\nCite sources for pricing and scale; label estimates as estimates.",
+      "kind": "research",
+      "tags": [
+        "competition"
+      ],
+      "x": 400,
+      "y": 260,
+      "executor": "agent",
+      "agent_role": "researcher"
+    },
+    {
+      "key": "segments",
+      "title": "Define customer segments",
+      "content": "Identify the customer segments within the market.\n\n**Produce 3-5 segments**, each with: name, description, size estimate, primary job-to-be-done, top 3 pain points, current alternatives, buying process and decision maker, willingness to pay, and acquisition channels.\n\nThen rank segments in a scored table (size x pain x accessibility x fit, 1-5 each) and name the recommended beachhead segment with a short justification.",
+      "kind": "research",
+      "tags": [
+        "customers"
+      ],
+      "x": 400,
+      "y": 440,
+      "executor": "llm",
+      "agent_role": "researcher"
+    },
+    {
+      "key": "swot",
+      "title": "SWOT analysis",
+      "content": "Build a SWOT grounded in evidence from [[Analyze competitors]], [[Define customer segments]] and the sizing work.\n\n**Produce:**\n- A 2x2 SWOT table with 3-5 specific points per quadrant. Each point must reference a finding; no generic statements like \"strong team\".\n- A TOWS section: two strategies each for S-O, S-T, W-O and W-T.\n- The single biggest risk and the single biggest opportunity, one sentence each.",
+      "kind": "task",
+      "tags": [
+        "strategy"
+      ],
+      "x": 720,
+      "y": 80,
+      "executor": "llm",
+      "agent_role": "planner"
+    },
+    {
+      "key": "recommendation",
+      "title": "Strategic recommendation",
+      "content": "Turn the [[SWOT analysis]] into a clear recommendation.\n\n**Produce:**\n- Verdict: go / no-go / go with conditions, in one sentence.\n- Target segment, positioning statement and differentiated value proposition.\n- Go-to-market outline: entry pricing, first channels, first 90 days.\n- 3-5 KPIs with year-one targets.\n- Key risks with mitigations.\n- The evidence that would change this recommendation.\n\nBe decisive and tie every point to an earlier finding.",
+      "kind": "document",
+      "tags": [
+        "strategy",
+        "decision"
+      ],
+      "x": 1040,
+      "y": 80,
+      "executor": "agent",
+      "agent_role": "planner"
+    },
+    {
+      "key": "challenge",
+      "title": "Pressure-test assumptions",
+      "content": "Act as a skeptical investor and pressure-test the recommendation.\n\n**Produce:**\n- The 5 weakest assumptions, why each is weak, and a cheap way to validate it (survey, landing-page test, expert call, pilot).\n- Numbers that are inconsistent across sizing, segments and the recommendation.\n- Missing considerations: regulation, switching costs, channel conflict, macro trends.\n- A revised overall confidence rating (high / medium / low) with justification.",
+      "kind": "task",
+      "tags": [
+        "qa",
+        "risk"
+      ],
+      "x": 1360,
+      "y": 80,
+      "executor": "llm",
+      "agent_role": "reviewer"
+    },
+    {
+      "key": "brief",
+      "title": "Market analysis brief",
+      "content": "Compile the final market analysis brief for decision makers. Reconcile every figure flagged in the pressure test, using [[Estimate market size (TAM/SAM/SOM)]] as the reference for market numbers.\n\n**Structure (Markdown):**\n1. Executive summary (max 250 words) ending with the recommendation.\n2. Market definition and size, with the TAM/SAM/SOM table.\n3. Customer segments and beachhead.\n4. Competitive landscape table and positioning.\n5. SWOT and strategic options.\n6. Recommendation, KPIs and risks.\n7. Assumptions to validate next.\n8. Sources.",
+      "kind": "output",
+      "tags": [
+        "deliverable"
+      ],
+      "x": 1680,
+      "y": 80,
+      "executor": "agent",
+      "agent_role": "writer"
+    }
+  ],
+  "edges": [
+    {
+      "source": "framing",
+      "target": "sizing"
+    },
+    {
+      "source": "framing",
+      "target": "competitors"
+    },
+    {
+      "source": "framing",
+      "target": "segments"
+    },
+    {
+      "source": "sizing",
+      "target": "swot"
+    },
+    {
+      "source": "competitors",
+      "target": "swot"
+    },
+    {
+      "source": "segments",
+      "target": "swot"
+    },
+    {
+      "source": "swot",
+      "target": "recommendation"
+    },
+    {
+      "source": "sizing",
+      "target": "recommendation"
+    },
+    {
+      "source": "recommendation",
+      "target": "challenge"
+    },
+    {
+      "source": "challenge",
+      "target": "brief"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+# Default owner for everything in the repository.
+*                       @f8fvwgzc
+
+# Shared contract: changes affect every component.
+/docs/CONTRACT.md       @f8fvwgzc
+/.github/               @f8fvwgzc

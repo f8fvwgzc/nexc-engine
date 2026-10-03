@@ -1,0 +1,10 @@
+target/
+.env
+.env.*
+data/
+*.db
+*.log
+Dockerfile
+.dockerignore
+.DS_Store
+rust-toolchain.toml

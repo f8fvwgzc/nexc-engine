@@ -1,0 +1,98 @@
+# Backend API + scheduler. Stateless apart from the artifact volume; realtime fan-out between
+# replicas goes through PostgreSQL LISTEN/NOTIFY, so it scales horizontally.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backend-data
+  labels: { app.kubernetes.io/name: backend }
+spec:
+  # ReadWriteOnce works on single-node clusters (minikube). With several nodes and >1 replica,
+  # use a ReadWriteMany storage class (NFS, EFS, Filestore, CephFS) so every replica sees every
+  # artifact.
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  labels: { app.kubernetes.io/name: backend }
+spec:
+  selector: { app.kubernetes.io/name: backend }
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  labels: { app.kubernetes.io/name: backend, app.kubernetes.io/component: api }
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels: { app.kubernetes.io/name: backend }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: backend, app.kubernetes.io/component: api }
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: { type: RuntimeDefault }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app.kubernetes.io/name: backend }
+      containers:
+        - name: backend
+          image: ghcr.io/f8fvwgzc/nexc-engine-backend
+          imagePullPolicy: IfNotPresent
+          args: ["serve"]
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef: { name: nexc-config }
+            - secretRef: { name: nexc-secrets }
+          startupProbe:
+            httpGet: { path: /api/v1/healthz, port: http }
+            periodSeconds: 5
+            failureThreshold: 30 # migrations run before the server listens
+          livenessProbe:
+            httpGet: { path: /api/v1/healthz, port: http }
+            periodSeconds: 15
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet: { path: /api/v1/readyz, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 5
+          resources:
+            requests: { cpu: 200m, memory: 256Mi }
+            limits: { cpu: "2", memory: 1Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: backend-data }
+        - name: tmp
+          emptyDir: {}

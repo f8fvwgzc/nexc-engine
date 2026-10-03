@@ -1,0 +1,168 @@
+{
+  "id": "research-report-docx",
+  "name": "Research report (DOCX)",
+  "description": "Research a topic from scoped questions to vetted sources and evidence-based findings, then produce a polished, citation-backed report ready to convert to DOCX.",
+  "category": "research",
+  "tags": [
+    "research",
+    "report",
+    "docx"
+  ],
+  "goal": "Produce a rigorous, well-structured research report on the user's topic. The graph scopes the problem into answerable questions, builds a vetted source base and a background primer in parallel, synthesizes evidence per question, outlines and drafts the report, runs a fact-check and editorial review, and finally emits a complete Markdown document with title page, executive summary, body, and numbered references that converts cleanly to DOCX.",
+  "nodes": [
+    {
+      "key": "scope",
+      "title": "Define scope and research questions",
+      "content": "Turn the user's topic into a researchable brief.\n\n**Produce:**\n- A one-sentence research objective.\n- 3-6 numbered research questions, each answerable with evidence.\n- In-scope / out-of-scope bullets (time range, geography, audience).\n- The intended reader and the decision this report should inform.\n- Key terms with working definitions.\n\n**Acceptance:** every question is specific enough that a reader could tell whether it was answered. Record ambiguous parts of the topic as explicit assumptions instead of guessing silently.",
+      "kind": "topic",
+      "tags": [
+        "planning"
+      ],
+      "x": 80,
+      "y": 80,
+      "executor": "llm",
+      "agent_role": "planner"
+    },
+    {
+      "key": "sources",
+      "title": "Gather and vet sources",
+      "content": "Collect the evidence base for the questions in [[Define scope and research questions]].\n\n**Produce** a Markdown table with columns: `#`, `Source`, `Type` (peer-reviewed, official statistics, industry report, news, expert blog), `Year`, `URL or citation`, `Answers Q#`, `Credibility (H/M/L)`, `Key takeaway`.\n\n- Aim for 10-20 sources; prefer primary data and work from the last 5 years unless history matters.\n- Every research question needs at least two independent sources.\n- Note conflicts between sources and gaps where evidence is thin.\n\nNever invent citations. If a source cannot be verified, mark it `unverified`.",
+      "kind": "research",
+      "tags": [
+        "sources",
+        "evidence"
+      ],
+      "x": 400,
+      "y": 80,
+      "executor": "agent",
+      "agent_role": "researcher"
+    },
+    {
+      "key": "background",
+      "title": "Map background and key concepts",
+      "content": "Write a concise primer so the rest of the report rests on shared understanding.\n\n**Produce:**\n- A 150-250 word overview of the topic's history and current state.\n- A glossary of 5-10 essential terms.\n- The main schools of thought or competing explanations, one short paragraph each.\n- Widely cited figures (with their origin) that the report must address or correct.\n\nStay neutral and factual; save judgments for the analysis. Write for an informed non-specialist.",
+      "kind": "research",
+      "tags": [
+        "context"
+      ],
+      "x": 400,
+      "y": 260,
+      "executor": "llm",
+      "agent_role": "researcher"
+    },
+    {
+      "key": "analysis",
+      "title": "Analyze evidence and synthesize findings",
+      "content": "Answer each research question using the evidence from [[Gather and vet sources]] and the background primer.\n\n**For each question produce:**\n1. A direct answer in 1-2 sentences.\n2. Supporting evidence with source numbers in brackets, e.g. [3][7].\n3. Counter-evidence or caveats.\n4. Confidence (high / medium / low) with a one-line justification.\n\nFinish with 3-5 cross-cutting insights and a short list of open questions. Clearly separate what the evidence shows from your own inference.",
+      "kind": "research",
+      "tags": [
+        "analysis",
+        "synthesis"
+      ],
+      "x": 720,
+      "y": 80,
+      "executor": "agent",
+      "agent_role": "researcher"
+    },
+    {
+      "key": "outline",
+      "title": "Draft the report outline",
+      "content": "Design the report structure before any prose is written.\n\n**Produce** a numbered outline with H1/H2/H3 headings; under each heading add a one-line note on its purpose and a target word count.\n\n**Required sections:** Executive Summary, Introduction (objective, scope, method), one section per research question or theme, Discussion, Recommendations or Implications, Limitations, References, optional Appendices.\n\nTarget 2,500-4,000 words in total unless the scope calls for less. Order sections so each builds on the previous one.",
+      "kind": "task",
+      "tags": [
+        "structure"
+      ],
+      "x": 720,
+      "y": 260,
+      "executor": "llm",
+      "agent_role": "planner"
+    },
+    {
+      "key": "draft",
+      "title": "Write the full draft",
+      "content": "Write the complete report following [[Draft the report outline]] and the synthesized findings.\n\n**Rules:**\n- Formal, clear prose; short paragraphs; active voice.\n- Cite inline with bracketed numbers that match the source table.\n- Use tables for comparisons and numbered lists for steps or recommendations.\n- Mark figure ideas as `[Figure: description]` for later insertion.\n- Write the Executive Summary last: 200-300 words covering question, method, key findings and recommendations.\n\nOutput the full draft in Markdown.",
+      "kind": "document",
+      "tags": [
+        "writing"
+      ],
+      "x": 1040,
+      "y": 80,
+      "executor": "agent",
+      "agent_role": "writer"
+    },
+    {
+      "key": "review",
+      "title": "Fact-check and editorial review",
+      "content": "Review the draft critically against [[Analyze evidence and synthesize findings]].\n\n**Check:**\n- Every factual claim has a citation, and the citation actually supports it.\n- Numbers, dates and names are consistent throughout.\n- Each research question is explicitly answered.\n- Recommendations follow from the evidence with no unsupported leaps.\n- Tone, tense and terminology are consistent; no filler.\n\n**Produce** a Markdown list of issues, each with location, problem, severity (blocker / major / minor) and a concrete fix. Then rewrite every paragraph that has a blocker.",
+      "kind": "task",
+      "tags": [
+        "qa",
+        "editing"
+      ],
+      "x": 1360,
+      "y": 80,
+      "executor": "llm",
+      "agent_role": "reviewer"
+    },
+    {
+      "key": "final",
+      "title": "Final report (DOCX-ready)",
+      "content": "Produce the final, publication-ready report in Markdown suitable for conversion to DOCX (e.g. with Pandoc), applying every fix from [[Fact-check and editorial review]].\n\n**Structure:**\n1. Title page: title, subtitle, author/organization placeholder, date, version.\n2. Table of contents placeholder (`[TOC]`).\n3. Executive Summary.\n4. Introduction, body sections, Discussion, Recommendations, Limitations.\n5. References in APA style, numbered to match inline citations.\n6. Appendices if needed.\n\nUse only standard Markdown (headings, tables, lists, emphasis), no HTML. Output the document only, with no commentary.",
+      "kind": "output",
+      "tags": [
+        "deliverable",
+        "docx"
+      ],
+      "x": 1680,
+      "y": 80,
+      "executor": "agent",
+      "agent_role": "writer"
+    }
+  ],
+  "edges": [
+    {
+      "source": "scope",
+      "target": "sources"
+    },
+    {
+      "source": "scope",
+      "target": "background"
+    },
+    {
+      "source": "sources",
+      "target": "analysis"
+    },
+    {
+      "source": "background",
+      "target": "analysis"
+    },
+    {
+      "source": "scope",
+      "target": "outline"
+    },
+    {
+      "source": "background",
+      "target": "outline"
+    },
+    {
+      "source": "analysis",
+      "target": "draft"
+    },
+    {
+      "source": "outline",
+      "target": "draft"
+    },
+    {
+      "source": "draft",
+      "target": "review"
+    },
+    {
+      "source": "analysis",
+      "target": "review"
+    },
+    {
+      "source": "review",
+      "target": "final"
+    }
+  ]
+}

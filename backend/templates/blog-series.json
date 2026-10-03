@@ -1,0 +1,161 @@
+{
+  "id": "blog-series",
+  "name": "Technical blog series",
+  "description": "Plan, research and write a three-part technical blog series, then run a cross-series editing pass and package it for publishing.",
+  "category": "writing",
+  "tags": [
+    "blog",
+    "technical-writing",
+    "content"
+  ],
+  "goal": "Produce a coherent three-part technical blog series that teaches one idea well. The audience and thesis are defined first, technical material is researched and verified, and an outline assigns each concept to exactly one part. The three parts are written in parallel, then a single editing pass enforces consistency and accuracy across the series, and the final node delivers publish-ready Markdown with SEO metadata and social posts.",
+  "nodes": [
+    {
+      "key": "audience",
+      "title": "Define audience and series thesis",
+      "content": "Define who the series is for and what it will argue.\n\n**Produce:**\n- Target reader: role, experience level, what they already know, what they are trying to do.\n- Series thesis in one sentence: the idea readers should walk away with.\n- What readers will be able to do after each of the three parts.\n- Style guide: voice, person (we/you), code language and versions, formatting conventions.\n- 3-5 working titles for the series.\n- Explicit non-goals: topics the series will not cover.",
+      "kind": "topic",
+      "tags": [
+        "planning"
+      ],
+      "x": 80,
+      "y": 80,
+      "executor": "llm",
+      "agent_role": "planner"
+    },
+    {
+      "key": "research",
+      "title": "Research technical material",
+      "content": "Gather accurate, current technical material for the series.\n\n**Produce:**\n- Key concepts, each with a precise 2-3 sentence explanation.\n- Official docs, specs, RFCs or source files to cite, with links and versions.\n- 3-5 runnable code examples or command sequences that illustrate the concepts, checked against current versions.\n- Common misconceptions and pitfalls readers hit.\n- Benchmarks or real-world numbers only when a citable source exists.\n\nFlag anything version-specific or likely to change soon.",
+      "kind": "research",
+      "tags": [
+        "research"
+      ],
+      "x": 400,
+      "y": 80,
+      "executor": "agent",
+      "agent_role": "researcher"
+    },
+    {
+      "key": "outline",
+      "title": "Outline the three parts",
+      "content": "Plan the three parts based on [[Define audience and series thesis]] and the research notes.\n\n**For each part produce:** working title, one-sentence promise to the reader, target length (1,200-2,000 words), section headings with bullet notes, the code examples it will include, and the hook into the next part.\n\n**Arc:** Part 1 builds foundations and motivation, Part 2 goes deep on the core technique, Part 3 covers production concerns, trade-offs and lessons. Introduce each concept in exactly one part.",
+      "kind": "task",
+      "tags": [
+        "structure"
+      ],
+      "x": 720,
+      "y": 80,
+      "executor": "llm",
+      "agent_role": "planner"
+    },
+    {
+      "key": "part1",
+      "title": "Write Part 1: foundations",
+      "content": "Write Part 1 following its section of [[Outline the three parts]].\n\n**Requirements:**\n- Open with a concrete problem or short story in the first three sentences, not a definition.\n- Explain why the topic matters before how it works.\n- Introduce core concepts with small code samples and diagrams described as `[Diagram: ...]`.\n- End with a summary, 3-5 key takeaways and a teaser for Part 2.\n\nOutput Markdown with front matter: title, description (max 160 chars), tags.",
+      "kind": "document",
+      "tags": [
+        "draft"
+      ],
+      "x": 1040,
+      "y": 80,
+      "executor": "agent",
+      "agent_role": "writer"
+    },
+    {
+      "key": "part2",
+      "title": "Write Part 2: deep dive",
+      "content": "Write Part 2, the deep dive, using code and facts from [[Research technical material]].\n\n**Requirements:**\n- Recap Part 1 in 2-3 sentences; do not repeat it.\n- Walk through one realistic example end to end, with complete runnable code blocks and expected output.\n- Explain every non-obvious line or design choice.\n- Include a \"Common pitfalls\" section.\n- End with takeaways and a teaser for Part 3.\n\nOutput Markdown with the same front matter format as Part 1.",
+      "kind": "document",
+      "tags": [
+        "draft"
+      ],
+      "x": 1040,
+      "y": 260,
+      "executor": "agent",
+      "agent_role": "writer"
+    },
+    {
+      "key": "part3",
+      "title": "Write Part 3: production lessons",
+      "content": "Write Part 3, on running the approach in production.\n\n**Requirements:**\n- Cover performance, failure modes, observability, security and testing as they apply to the topic.\n- Present trade-offs honestly, including when NOT to use the approach.\n- Include a checklist readers can apply to their own project.\n- Close the series: restate the thesis, link back to Parts 1 and 2, and suggest further reading from the research notes.\n\nOutput Markdown with the same front matter format as the other parts.",
+      "kind": "document",
+      "tags": [
+        "draft"
+      ],
+      "x": 1040,
+      "y": 440,
+      "executor": "agent",
+      "agent_role": "writer"
+    },
+    {
+      "key": "edit",
+      "title": "Editing pass for consistency",
+      "content": "Edit all three parts as one series, starting from [[Write Part 1: foundations]] and checking it against Parts 2 and 3.\n\n**Check and fix:**\n- Consistent terminology, code style, versions and voice.\n- Technical accuracy: code runs as written and outputs match.\n- No repeated explanations; cross-references are correct.\n- Cut filler, hedging and cliches; tighten sentences by about 10%.\n- Scannable headings; each part delivers its promise.\n\n**Produce** a change log (part, change, reason), then the three revised parts in full.",
+      "kind": "task",
+      "tags": [
+        "editing",
+        "qa"
+      ],
+      "x": 1360,
+      "y": 80,
+      "executor": "llm",
+      "agent_role": "reviewer"
+    },
+    {
+      "key": "publish",
+      "title": "Publish-ready series",
+      "content": "Deliver the publish-ready series with every change from [[Editing pass for consistency]] applied.\n\n**Structure:**\n1. Series overview: title, one-paragraph description, reading order.\n2. Parts 1, 2 and 3 as complete Markdown articles with front matter (title, description, tags, series name, part number).\n3. For each part: an SEO title (max 60 chars), a meta description, and three social posts (X, LinkedIn, Hacker News or Reddit).\n4. A suggested publishing schedule, e.g. one part per week.",
+      "kind": "output",
+      "tags": [
+        "deliverable"
+      ],
+      "x": 1680,
+      "y": 80,
+      "executor": "agent",
+      "agent_role": "writer"
+    }
+  ],
+  "edges": [
+    {
+      "source": "audience",
+      "target": "research"
+    },
+    {
+      "source": "audience",
+      "target": "outline"
+    },
+    {
+      "source": "research",
+      "target": "outline"
+    },
+    {
+      "source": "outline",
+      "target": "part1"
+    },
+    {
+      "source": "outline",
+      "target": "part2"
+    },
+    {
+      "source": "outline",
+      "target": "part3"
+    },
+    {
+      "source": "part1",
+      "target": "edit"
+    },
+    {
+      "source": "part2",
+      "target": "edit"
+    },
+    {
+      "source": "part3",
+      "target": "edit"
+    },
+    {
+      "source": "edit",
+      "target": "publish"
+    }
+  ]
+}

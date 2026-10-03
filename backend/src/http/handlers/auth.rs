@@ -1,0 +1,269 @@
+//! Registration, login, refresh-token rotation and logout.
+
+use axum::Json;
+use axum::extract::State;
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::response::{IntoResponse, Response};
+use serde::Deserialize;
+use utoipa::ToSchema;
+
+use crate::app::AppState;
+use crate::domain::AppError;
+use crate::domain::user::{self, AuthResponse, Role, User};
+use crate::domain::validation::{FieldErrors, Validate};
+use crate::http::extract::{AuthUser, ClientIp, ValidatedJson};
+use crate::http::middleware::rate_limit::AuthRateLimit;
+use crate::http::problem::Problem;
+use crate::orchestrator;
+use crate::repo::{self, OrNotFound};
+use crate::security::password;
+use crate::security::session::{self, Session, SessionConfig};
+
+/// Name of the refresh-token cookie.
+pub const REFRESH_COOKIE: &str = "nexc_refresh";
+const COOKIE_PATH: &str = "/api/v1/auth";
+const CSRF_HEADER: &str = "x-requested-with";
+const CSRF_VALUE: &str = "nexc";
+
+/// `POST /auth/register` body.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RegisterRequest {
+    pub email: String,
+    /// 12–128 characters.
+    pub password: String,
+    pub name: String,
+}
+
+impl Validate for RegisterRequest {
+    fn validate(&self, errors: &mut FieldErrors) {
+        user::check_email(errors, &user::normalize_email(&self.email));
+        user::check_password(errors, &self.password);
+        user::check_name(errors, &self.name);
+    }
+}
+
+/// `POST /auth/login` body.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LoginRequest {
+    pub email: String,
+    pub password: String,
+}
+
+impl Validate for LoginRequest {
+    fn validate(&self, errors: &mut FieldErrors) {
+        if self.email.trim().is_empty() || self.email.len() > user::EMAIL_MAX {
+            errors.add("email", "invalid email");
+        }
+        if self.password.is_empty() || self.password.chars().count() > user::PASSWORD_MAX {
+            errors.add("password", "invalid password");
+        }
+    }
+}
+
+fn session_config(state: &AppState) -> SessionConfig<'_> {
+    SessionConfig {
+        jwt: &state.jwt,
+        refresh_ttl: state.settings.refresh_ttl,
+    }
+}
+
+fn cookie(state: &AppState, value: &str, max_age: u64) -> HeaderValue {
+    let secure = if state.settings.cookie_secure {
+        "; Secure"
+    } else {
+        ""
+    };
+    let raw = format!(
+        "{REFRESH_COOKIE}={value}; HttpOnly; SameSite=Strict; Path={COOKIE_PATH}; Max-Age={max_age}{secure}"
+    );
+    HeaderValue::from_str(&raw).expect("cookie is ASCII")
+}
+
+fn with_session(state: &AppState, status: StatusCode, s: Session) -> Response {
+    let set_cookie = cookie(
+        state,
+        &s.refresh_token,
+        state.settings.refresh_ttl.as_secs(),
+    );
+    (status, [(header::SET_COOKIE, set_cookie)], Json(s.response)).into_response()
+}
+
+/// Reads the refresh token from the `Cookie` header.
+fn refresh_token(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(';'))
+        .find_map(|pair| {
+            pair.trim()
+                .strip_prefix(REFRESH_COOKIE)?
+                .strip_prefix('=')
+                .map(str::to_owned)
+        })
+        .filter(|t| !t.is_empty() && t.len() <= 128)
+}
+
+fn require_csrf_header(headers: &HeaderMap) -> Result<(), AppError> {
+    match headers.get(CSRF_HEADER).and_then(|v| v.to_str().ok()) {
+        Some(CSRF_VALUE) => Ok(()),
+        _ => Err(AppError::Forbidden(format!(
+            "missing header {CSRF_HEADER}: {CSRF_VALUE}"
+        ))),
+    }
+}
+
+/// Creates an account (when signups are enabled) and starts a session.
+#[utoipa::path(post, path = "/auth/register", tag = "auth", request_body = RegisterRequest,
+    responses(
+        (status = 201, description = "Registered; refresh cookie set", body = AuthResponse),
+        (status = 403, description = "Signups disabled", body = Problem),
+        (status = 409, description = "E-mail already registered", body = Problem),
+        (status = 422, description = "Validation failed", body = Problem),
+        (status = 429, description = "Rate limited", body = Problem),
+    ))]
+pub async fn register(
+    _limit: AuthRateLimit,
+    State(state): State<AppState>,
+    ValidatedJson(req): ValidatedJson<RegisterRequest>,
+) -> Result<Response, AppError> {
+    if !state.settings.allow_signup {
+        return Err(AppError::Forbidden("signups are disabled".into()));
+    }
+    let email = user::normalize_email(&req.email);
+    if repo::users::email_exists(&state.db, &email).await? {
+        return Err(AppError::Conflict(
+            "this e-mail is already registered".into(),
+        ));
+    }
+    let password = req.password.clone();
+    let hash = tokio::task::spawn_blocking(move || password::hash_password(&password))
+        .await
+        .map_err(anyhow::Error::from)??;
+    let user = create_user(&state, &email, req.name.trim(), Role::User, &hash).await?;
+    let session = session::start(&state.db, session_config(&state), user).await?;
+    Ok(with_session(&state, StatusCode::CREATED, session))
+}
+
+/// Inserts a user and its default agent organisation in one transaction.
+pub async fn create_user(
+    state: &AppState,
+    email: &str,
+    name: &str,
+    role: Role,
+    hash: &str,
+) -> Result<User, AppError> {
+    let mut tx = state.db.begin().await?;
+    let user = repo::users::create(&mut *tx, email, name, role, hash).await?;
+    orchestrator::seed_default_org(&mut tx, user.id, &state.settings.llm_model).await?;
+    tx.commit().await?;
+    Ok(user)
+}
+
+/// Verifies credentials and starts a session.
+#[utoipa::path(post, path = "/auth/login", tag = "auth", request_body = LoginRequest,
+    responses(
+        (status = 200, description = "Logged in; refresh cookie set", body = AuthResponse),
+        (status = 401, description = "Invalid credentials", body = Problem),
+        (status = 429, description = "Too many failed attempts", body = Problem),
+    ))]
+pub async fn login(
+    _limit: AuthRateLimit,
+    State(state): State<AppState>,
+    ClientIp(ip): ClientIp,
+    ValidatedJson(req): ValidatedJson<LoginRequest>,
+) -> Result<Response, AppError> {
+    state.limiters.check_login_allowed(ip)?;
+    let email = user::normalize_email(&req.email);
+    match session::login(&state.db, session_config(&state), &email, &req.password).await {
+        Ok(session) => Ok(with_session(&state, StatusCode::OK, session)),
+        Err(err @ AppError::Unauthorized(_)) => {
+            state.limiters.record_login_failure(ip);
+            Err(err)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+/// Rotates the refresh token (cookie + `X-Requested-With: nexc`).
+#[utoipa::path(post, path = "/auth/refresh", tag = "auth",
+    params(("X-Requested-With" = String, Header, description = "Must be `nexc` (CSRF guard)")),
+    responses(
+        (status = 200, description = "New access token; rotated cookie", body = AuthResponse),
+        (status = 401, description = "Missing, expired, revoked or reused refresh token", body = Problem),
+        (status = 403, description = "Missing CSRF header", body = Problem),
+    ))]
+pub async fn refresh(
+    _limit: AuthRateLimit,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    require_csrf_header(&headers)?;
+    let token = refresh_token(&headers).ok_or(AppError::Unauthorized("missing refresh token"))?;
+    let session = session::rotate(&state.db, session_config(&state), &token).await?;
+    Ok(with_session(&state, StatusCode::OK, session))
+}
+
+/// Ends the session: revokes the refresh-token family and clears the cookie.
+#[utoipa::path(post, path = "/auth/logout", tag = "auth",
+    params(("X-Requested-With" = String, Header, description = "Must be `nexc` (CSRF guard)")),
+    responses(
+        (status = 204, description = "Logged out"),
+        (status = 403, description = "Missing CSRF header", body = Problem),
+    ))]
+pub async fn logout(
+    _limit: AuthRateLimit,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    require_csrf_header(&headers)?;
+    if let Some(token) = refresh_token(&headers) {
+        session::revoke(&state.db, &token).await?;
+    }
+    Ok((
+        StatusCode::NO_CONTENT,
+        [(header::SET_COOKIE, cookie(&state, "", 0))],
+    )
+        .into_response())
+}
+
+/// The current user.
+#[utoipa::path(get, path = "/auth/me", tag = "auth", security(("bearer" = [])),
+    responses((status = 200, body = User), (status = 401, body = Problem)))]
+pub async fn me(State(state): State<AppState>, auth: AuthUser) -> Result<Json<User>, AppError> {
+    Ok(Json(
+        repo::users::find(&state.db, auth.id)
+            .await
+            .or_not_found("user")?,
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_refresh_cookie() {
+        let mut h = HeaderMap::new();
+        h.insert(
+            header::COOKIE,
+            HeaderValue::from_static("a=1; nexc_refresh=tok-123; b=2"),
+        );
+        assert_eq!(refresh_token(&h).as_deref(), Some("tok-123"));
+        h.insert(
+            header::COOKIE,
+            HeaderValue::from_static("nexc_refresh_other=x"),
+        );
+        assert_eq!(refresh_token(&h), None);
+    }
+
+    #[test]
+    fn csrf_header_required() {
+        let mut h = HeaderMap::new();
+        assert!(require_csrf_header(&h).is_err());
+        h.insert(CSRF_HEADER, HeaderValue::from_static("nexc"));
+        assert!(require_csrf_header(&h).is_ok());
+    }
+}

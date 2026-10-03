@@ -1,0 +1,190 @@
+{
+  "id": "data-pipeline",
+  "name": "Data pipeline (ETL/ELT)",
+  "description": "Design an ETL/ELT data pipeline end to end: sources, target schema, ingestion, transformations, data quality checks, orchestration and an on-call runbook.",
+  "category": "data",
+  "tags": [
+    "data",
+    "etl",
+    "pipeline"
+  ],
+  "goal": "Produce a complete, implementable design for a batch or micro-batch data pipeline. Requirements and a source inventory drive the target schema and the ingestion layer in parallel; transformations and data quality checks build on the schema; orchestration ties everything together against freshness SLAs; and a runbook makes the system operable. The final node packages architecture, code, SLAs, runbook and a phased rollout plan.",
+  "nodes": [
+    {
+      "key": "requirements",
+      "title": "Gather pipeline requirements",
+      "content": "Pin down what the pipeline must deliver.\n\n**Produce:**\n- Business questions and downstream consumers (dashboards, ML features, reverse-ETL, exports).\n- Freshness SLA per dataset (e.g. hourly, or daily by 06:00 UTC).\n- Expected volume today and in 12 months (rows/day, GB/day).\n- ETL vs ELT decision and target platform (warehouse or lakehouse), with justification.\n- Compliance needs: PII, retention, data residency, access control.\n- Budget and tooling constraints, stated as assumptions if unknown.",
+      "kind": "topic",
+      "tags": [
+        "planning",
+        "requirements"
+      ],
+      "x": 80,
+      "y": 80,
+      "executor": "llm",
+      "agent_role": "planner"
+    },
+    {
+      "key": "sources",
+      "title": "Inventory data sources",
+      "content": "Inventory every source the pipeline will read.\n\n**Produce a table** with columns: source, type (OLTP database, SaaS API, event stream, files), owner, access method, extraction mode (full, incremental by timestamp, CDC), volume, update frequency, primary key, known quality issues, PII fields.\n\nFor each API, note rate limits, pagination and auth. For each database, note whether CDC (e.g. logical replication) is available. Flag sources without a reliable change-tracking column.",
+      "kind": "research",
+      "tags": [
+        "sources"
+      ],
+      "x": 400,
+      "y": 80,
+      "executor": "agent",
+      "agent_role": "researcher"
+    },
+    {
+      "key": "schema",
+      "title": "Design target schema",
+      "content": "Design the target schema using [[Inventory data sources]].\n\n**Produce:**\n- Layers: raw/bronze (as ingested), staging/silver (cleaned, typed), marts/gold (business-ready).\n- A dimensional model for marts: fact tables with their grain stated in one sentence, dimensions, and the slowly changing dimension type for each.\n- DDL for the core fact and dimension tables.\n- Naming conventions, partitioning and clustering keys, and how PII is masked or isolated.",
+      "kind": "task",
+      "tags": [
+        "modeling",
+        "schema"
+      ],
+      "x": 720,
+      "y": 80,
+      "executor": "llm",
+      "agent_role": "engineer"
+    },
+    {
+      "key": "ingestion",
+      "title": "Design ingestion layer",
+      "content": "Design and implement ingestion for each source.\n\n**Produce:**\n- Tool per source (managed connector, custom extractor, CDC tool) with justification.\n- Incremental logic: watermark column, late-arriving data handling, idempotent upserts or merge keys.\n- Backfill strategy for historical data.\n- Python code for one representative custom extractor with retries and exponential backoff, pagination and checkpointing.\n- Landing location (path or table pattern) and file format, e.g. Parquet.",
+      "kind": "code",
+      "tags": [
+        "ingestion"
+      ],
+      "x": 720,
+      "y": 260,
+      "executor": "llm",
+      "agent_role": "engineer"
+    },
+    {
+      "key": "transforms",
+      "title": "Write transformation models",
+      "content": "Write the transformations that turn raw data into the model in [[Design target schema]].\n\n**Produce:**\n- SQL models (dbt-style, one per file) for staging and marts, using CTEs and explicit column lists; no `SELECT *` in marts.\n- Incremental strategy for large facts: merge on a unique key, with a lookback window for late data.\n- Deduplication and type-casting rules in staging.\n- A lineage summary: model -> upstream models and sources.\n\nOutput each model in a fenced SQL block labelled with its file path.",
+      "kind": "code",
+      "tags": [
+        "sql",
+        "transform"
+      ],
+      "x": 1040,
+      "y": 80,
+      "executor": "agent",
+      "agent_role": "engineer"
+    },
+    {
+      "key": "quality",
+      "title": "Define data quality checks",
+      "content": "Define data quality checks that enforce the SLAs in [[Gather pipeline requirements]].\n\n**Produce a table** with columns: dataset, check, type (schema, not-null, unique, accepted values, referential integrity, freshness, volume anomaly, reconciliation vs source), threshold, severity (warn / error), action on failure.\n\nInclude source-to-target row-count reconciliation and a freshness check per mart. Express the checks as dbt tests or Great Expectations-style config. Error-level failures must block downstream publishing.",
+      "kind": "task",
+      "tags": [
+        "quality",
+        "testing"
+      ],
+      "x": 1040,
+      "y": 260,
+      "executor": "llm",
+      "agent_role": "engineer"
+    },
+    {
+      "key": "orchestration",
+      "title": "Design orchestration and scheduling",
+      "content": "Design how the pipeline runs end to end.\n\n**Produce:**\n- Orchestrator (e.g. Airflow, Dagster, Prefect) with justification.\n- DAG definition: ingestion, staging, quality gates and marts, with dependencies and schedules that meet the freshness SLAs.\n- Retry, timeout and alerting policy, including who is paged for what.\n- An idempotent backfill and re-run procedure.\n- Environments (dev / staging / prod) and CI checks on pull requests.\n\nInclude the DAG code in a fenced block.",
+      "kind": "task",
+      "tags": [
+        "orchestration"
+      ],
+      "x": 1360,
+      "y": 80,
+      "executor": "llm",
+      "agent_role": "engineer"
+    },
+    {
+      "key": "runbook",
+      "title": "Write the operations runbook",
+      "content": "Write the on-call runbook covering failures caught by [[Define data quality checks]] and jobs defined in [[Design orchestration and scheduling]].\n\n**Produce:**\n- System overview and an ownership/contacts table.\n- For each common incident (source outage, upstream schema change, quality check failure, late data, job timeout, cost spike): symptoms, diagnosis steps, fix, and how to verify recovery.\n- How to run a backfill safely.\n- Dashboards and alerts to check first.",
+      "kind": "document",
+      "tags": [
+        "operations",
+        "docs"
+      ],
+      "x": 1680,
+      "y": 80,
+      "executor": "agent",
+      "agent_role": "writer"
+    },
+    {
+      "key": "package",
+      "title": "Pipeline design package",
+      "content": "Assemble the complete pipeline design package.\n\n**Structure (Markdown):**\n1. Summary: purpose, architecture in one paragraph, ETL/ELT choice, tools.\n2. Architecture diagram as a Mermaid `flowchart`: sources -> ingestion -> raw -> staging -> marts -> consumers.\n3. Source inventory and target schema with DDL.\n4. Ingestion, transformation and quality-check code.\n5. Orchestration DAG and SLA table.\n6. Runbook.\n7. Cost estimate, risks, and a phased rollout plan.",
+      "kind": "output",
+      "tags": [
+        "deliverable"
+      ],
+      "x": 2000,
+      "y": 80,
+      "executor": "agent",
+      "agent_role": "engineer"
+    }
+  ],
+  "edges": [
+    {
+      "source": "requirements",
+      "target": "sources"
+    },
+    {
+      "source": "requirements",
+      "target": "schema"
+    },
+    {
+      "source": "sources",
+      "target": "schema"
+    },
+    {
+      "source": "sources",
+      "target": "ingestion"
+    },
+    {
+      "source": "schema",
+      "target": "transforms"
+    },
+    {
+      "source": "ingestion",
+      "target": "transforms"
+    },
+    {
+      "source": "schema",
+      "target": "quality"
+    },
+    {
+      "source": "requirements",
+      "target": "quality"
+    },
+    {
+      "source": "transforms",
+      "target": "orchestration"
+    },
+    {
+      "source": "quality",
+      "target": "orchestration"
+    },
+    {
+      "source": "orchestration",
+      "target": "runbook"
+    },
+    {
+      "source": "quality",
+      "target": "runbook"
+    },
+    {
+      "source": "runbook",
+      "target": "package"
+    }
+  ]
+}

@@ -1,0 +1,178 @@
+{
+  "id": "rest-api-service",
+  "name": "REST API service",
+  "description": "Design and build a small production-style REST API: requirements, data model, auth, OpenAPI spec, implementation, tests, docs and a security review.",
+  "category": "engineering",
+  "tags": [
+    "api",
+    "backend",
+    "rest"
+  ],
+  "goal": "Take a service idea from requirements to a reviewed, runnable REST API. Requirements feed parallel data-model and auth designs, which merge into an OpenAPI contract. The contract drives the implementation and the developer docs in parallel; tests verify the implementation, a security and code review hardens it, and the final node assembles a complete, release-ready codebase with spec, README and verification checklist.",
+  "nodes": [
+    {
+      "key": "requirements",
+      "title": "Capture requirements and API spec",
+      "content": "Turn the idea into a concrete, buildable API brief.\n\n**Produce:**\n- The service's purpose in one paragraph and its primary consumers.\n- 5-10 user stories: *As a <role>, I can <action> so that <benefit>*.\n- Core resources (nouns) and the operations each needs.\n- Non-functional requirements: expected load, latency target, data retention, deployment target.\n- Tech stack with a one-line justification (default: a small, popular framework plus a relational database).\n\nList open questions and the assumption you made for each.",
+      "kind": "topic",
+      "tags": [
+        "planning",
+        "requirements"
+      ],
+      "x": 80,
+      "y": 80,
+      "executor": "llm",
+      "agent_role": "planner"
+    },
+    {
+      "key": "data_model",
+      "title": "Design the data model",
+      "content": "Design the persistent data model from [[Capture requirements and API spec]].\n\n**Produce:**\n- A table per entity: field, type, nullable, default, constraints, description.\n- Primary keys (prefer UUIDv7 or ULID), foreign keys, unique constraints and indexes, each justified by a query it serves.\n- An ER diagram in Mermaid `erDiagram` syntax.\n- The initial SQL migration (`CREATE TABLE ...`).\n\nInclude `created_at`/`updated_at` timestamps and decide soft vs hard delete explicitly.",
+      "kind": "task",
+      "tags": [
+        "database",
+        "schema"
+      ],
+      "x": 400,
+      "y": 80,
+      "executor": "llm",
+      "agent_role": "engineer"
+    },
+    {
+      "key": "auth",
+      "title": "Design authentication and authorization",
+      "content": "Design how clients authenticate and what each may do.\n\n**Produce:**\n- Mechanism (session cookie, JWT access + refresh, or API keys) with trade-offs for this service.\n- Token lifetime, rotation, revocation and client storage rules.\n- A permission matrix: rows = roles, columns = operations, cells = allow / own-only / deny.\n- Password hashing (argon2id or bcrypt) and rate limits on login.\n- Threats addressed: credential stuffing, token theft, IDOR, CSRF where relevant.\n\nKeep it as simple as the requirements allow.",
+      "kind": "task",
+      "tags": [
+        "security",
+        "auth"
+      ],
+      "x": 400,
+      "y": 260,
+      "executor": "llm",
+      "agent_role": "engineer"
+    },
+    {
+      "key": "endpoints",
+      "title": "Specify endpoints (OpenAPI)",
+      "content": "Specify every endpoint, combining [[Design the data model]] and [[Design authentication and authorization]].\n\n**Produce** an OpenAPI 3.1 YAML document: paths, methods, request/response schemas, status codes (200/201/204/400/401/403/404/409/422), required auth and pagination parameters.\n\n**Conventions:** plural nouns (`/v1/projects`), cursor pagination (`?limit=&cursor=`), filters as query params, RFC 9457 problem+json errors, `Idempotency-Key` on POST where duplicates are harmful.\n\nAfter the YAML, add a summary table: method, path, purpose, allowed roles.",
+      "kind": "document",
+      "tags": [
+        "openapi",
+        "contract"
+      ],
+      "x": 720,
+      "y": 80,
+      "executor": "agent",
+      "agent_role": "engineer"
+    },
+    {
+      "key": "implement",
+      "title": "Implement the service",
+      "content": "Implement the service exactly as specified in [[Specify endpoints (OpenAPI)]].\n\n**Requirements:**\n- Layered structure: routes/handlers, services (business logic), repositories (data access), config.\n- Validate every request; map errors to the problem+json format.\n- Migrations, a seed script, and configuration from environment variables (no secrets in code).\n- Structured JSON logs with request IDs, plus a `/healthz` endpoint.\n- A Dockerfile and a `compose.yaml` for the app and database.\n\nOutput the file tree, then every file in a fenced code block labelled with its path.",
+      "kind": "code",
+      "tags": [
+        "implementation"
+      ],
+      "x": 1040,
+      "y": 80,
+      "executor": "agent",
+      "agent_role": "engineer"
+    },
+    {
+      "key": "tests",
+      "title": "Write automated tests",
+      "content": "Write an automated test suite for the implementation.\n\n**Cover:**\n- Unit tests for service-layer business rules.\n- Integration tests for every endpoint: happy path, validation errors, 401/403, 404 and conflict cases.\n- Authorization tests proving users cannot read or modify others' resources.\n- Pagination and filtering edge cases (empty set, last page, invalid cursor).\n\nUse the framework's standard runner with an isolated test database or per-test rolled-back transactions. Output the test files and the single command that runs them. No sleeps or timing-based assertions.",
+      "kind": "code",
+      "tags": [
+        "testing"
+      ],
+      "x": 1360,
+      "y": 80,
+      "executor": "agent",
+      "agent_role": "engineer"
+    },
+    {
+      "key": "docs",
+      "title": "Write README and API docs",
+      "content": "Write developer documentation for the API.\n\n**Produce a README.md with:**\n- What the service does (2-3 sentences).\n- Quickstart: prerequisites, `docker compose up`, migrations, seed data.\n- Configuration table: env var, default, description.\n- Auth walkthrough with `curl` examples for login and an authorized request.\n- One `curl` example per resource for create, list and get.\n- Error format and common status codes.\n- How to run the tests.\n\nKeep examples copy-pasteable and consistent with the OpenAPI spec.",
+      "kind": "document",
+      "tags": [
+        "docs"
+      ],
+      "x": 1040,
+      "y": 260,
+      "executor": "agent",
+      "agent_role": "writer"
+    },
+    {
+      "key": "review",
+      "title": "Security and code review",
+      "content": "Review the codebase and [[Write automated tests]] as a senior engineer and security reviewer.\n\n**Check:** OWASP API Security Top 10 (broken object-level auth, mass assignment, excessive data exposure, missing rate limits), SQL injection, secret handling, error leakage, N+1 queries, missing indexes, transaction boundaries, and drift between code, OpenAPI spec and README.\n\n**Produce** a table: file/area, finding, severity (critical / high / medium / low), fix. Then give patched code for every critical or high finding.",
+      "kind": "task",
+      "tags": [
+        "security",
+        "qa"
+      ],
+      "x": 1680,
+      "y": 80,
+      "executor": "llm",
+      "agent_role": "reviewer"
+    },
+    {
+      "key": "release",
+      "title": "Release-ready service package",
+      "content": "Assemble the release-ready deliverable with all review fixes applied.\n\n**Structure:**\n1. Summary: what was built, the stack, and how it maps to the user stories.\n2. Final file tree.\n3. Every source, test, migration and config file in a fenced block labelled with its path.\n4. The OpenAPI spec and README.\n5. Verification checklist: build, migrate, tests pass, sample `curl` calls succeed.\n6. Known limitations and next steps (max 5 bullets).\n\nNever omit files or use placeholders such as `// ...rest of code`.",
+      "kind": "output",
+      "tags": [
+        "deliverable"
+      ],
+      "x": 2000,
+      "y": 80,
+      "executor": "agent",
+      "agent_role": "engineer"
+    }
+  ],
+  "edges": [
+    {
+      "source": "requirements",
+      "target": "data_model"
+    },
+    {
+      "source": "requirements",
+      "target": "auth"
+    },
+    {
+      "source": "data_model",
+      "target": "endpoints"
+    },
+    {
+      "source": "auth",
+      "target": "endpoints"
+    },
+    {
+      "source": "endpoints",
+      "target": "implement"
+    },
+    {
+      "source": "endpoints",
+      "target": "docs"
+    },
+    {
+      "source": "implement",
+      "target": "tests"
+    },
+    {
+      "source": "tests",
+      "target": "review"
+    },
+    {
+      "source": "docs",
+      "target": "review"
+    },
+    {
+      "source": "review",
+      "target": "release"
+    }
+  ]
+}

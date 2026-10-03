@@ -1,0 +1,44 @@
+# nexc-engine on Kubernetes (tested on minikube with the ingress addon).
+#
+#   scripts/init-env.sh --k8s      # creates secret.env with generated secrets (git-ignored)
+#   kubectl apply -k deploy/k8s
+#
+# Or simply: make minikube-up
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: nexc
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: nexc-engine
+    includeSelectors: false
+
+resources:
+  - namespace.yaml
+  - postgres.yaml
+  - backend.yaml
+  - agent-runtime.yaml
+  - frontend.yaml
+  - ingress.yaml
+  - networkpolicies.yaml
+  - pdb.yaml
+
+configMapGenerator:
+  - name: nexc-config
+    envs: [config.env]
+
+secretGenerator:
+  - name: nexc-secrets
+    envs: [secret.env]
+    type: Opaque
+
+# Local builds (scripts/minikube-up.sh builds into minikube's docker daemon with tag `local`).
+# For a release, set newTag to the version, e.g. `kustomize edit set image ...:0.1.0`.
+images:
+  - name: ghcr.io/f8fvwgzc/nexc-engine-backend
+    newTag: local
+  - name: ghcr.io/f8fvwgzc/nexc-engine-frontend
+    newTag: local
+  - name: ghcr.io/f8fvwgzc/nexc-engine-runtime
+    newTag: local

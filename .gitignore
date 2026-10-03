@@ -1,0 +1,47 @@
+# --- secrets & local state ---
+.env
+.env.*
+!.env.example
+data/
+deploy/k8s/secret.env
+*.pem
+*.key
+
+# --- Rust ---
+target/
+**/*.rs.bk
+
+# --- Node / frontend ---
+node_modules/
+dist/
+.vite/
+coverage/
+*.tsbuildinfo
+.pnpm-store/
+npm-debug.log*
+pnpm-debug.log*
+
+# --- Python / runtime ---
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# --- databases & dumps ---
+*.db
+*.db-*
+*.dump
+
+# --- editors & OS ---
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.log
+.cache/

@@ -1,0 +1,12 @@
+# Demo overlay: force the deterministic offline LLM provider (no API key needed).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d --build
+#   # or: make demo
+#
+# Plain `docker compose up` already uses demo mode while NEXC_LLM_PROVIDER=demo in .env (the
+# default written by `make init` when ANTHROPIC_API_KEY is empty). This overlay pins it even if
+# your .env says otherwise, which is handy for screenshots and workshops.
+services:
+  backend:
+    environment:
+      NEXC_LLM_PROVIDER: demo

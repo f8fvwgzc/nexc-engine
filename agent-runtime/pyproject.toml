@@ -1,0 +1,72 @@
+[project]
+name = "nexc-runtime"
+version = "0.1.0"
+description = "nexc-engine agent runtime: agents born from a spec at request time, executing graph nodes with tools."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "nexc-engine contributors" }]
+keywords = ["llm", "agents", "anthropic", "claude", "fastapi"]
+classifiers = [
+    "Programming Language :: Python :: 3.12",
+    "Framework :: FastAPI",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=1.11.0",
+    "fastapi>=0.142.2",
+    "httpx>=0.28.1",
+    "httpx2>=2.0",
+    "pydantic>=2.13.5",
+    "pydantic-settings>=2.15.0",
+    "python-docx>=1.2.0",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/f8fvwgzc/nexc-engine"
+Repository = "https://github.com/f8fvwgzc/nexc-engine"
+Issues = "https://github.com/f8fvwgzc/nexc-engine/issues"
+
+[project.scripts]
+nexc-runtime = "nexc_runtime.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nexc_runtime"]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.16.10",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "SIM", "RUF", "S", "ASYNC", "PL", "C4", "PT", "RET"]
+ignore = ["PLR0913", "PLR2004", "PLR0911", "PLR0912"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "S108", "PLR2004", "PT018"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]
+mypy_path = "src"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-q"

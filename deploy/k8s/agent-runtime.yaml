@@ -1,0 +1,84 @@
+# Python agent runtime: internal only (NetworkPolicy admits the backend alone).
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-runtime
+  labels: { app.kubernetes.io/name: agent-runtime }
+spec:
+  selector: { app.kubernetes.io/name: agent-runtime }
+  ports:
+    - name: http
+      port: 8090
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-runtime
+  labels: { app.kubernetes.io/name: agent-runtime, app.kubernetes.io/component: agents }
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels: { app.kubernetes.io/name: agent-runtime }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: agent-runtime, app.kubernetes.io/component: agents }
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: agent-runtime
+          image: ghcr.io/f8fvwgzc/nexc-engine-runtime
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8090
+          # Only what the runtime needs: no database, JWT or master-key secrets.
+          env:
+            - name: NEXC_RUNTIME_TOKEN
+              valueFrom: { secretKeyRef: { name: nexc-secrets, key: NEXC_RUNTIME_TOKEN } }
+            - name: NEXC_LLM_MODEL
+              valueFrom: { configMapKeyRef: { name: nexc-config, key: NEXC_LLM_MODEL } }
+            - name: RUNTIME_HOST
+              valueFrom: { configMapKeyRef: { name: nexc-config, key: RUNTIME_HOST } }
+            - name: RUNTIME_PORT
+              valueFrom: { configMapKeyRef: { name: nexc-config, key: RUNTIME_PORT } }
+            - name: RUNTIME_WORKSPACE
+              valueFrom: { configMapKeyRef: { name: nexc-config, key: RUNTIME_WORKSPACE } }
+            - name: RUNTIME_ALLOW_CODE_EXEC
+              valueFrom: { configMapKeyRef: { name: nexc-config, key: RUNTIME_ALLOW_CODE_EXEC } }
+            - name: RUNTIME_LOG_LEVEL
+              valueFrom: { configMapKeyRef: { name: nexc-config, key: RUNTIME_LOG_LEVEL } }
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 15
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: "2", memory: 1Gi, ephemeral-storage: 2Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: workspace, mountPath: /workspace }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: workspace
+          emptyDir: { sizeLimit: 1Gi }
+        - name: tmp
+          emptyDir: { sizeLimit: 128Mi }

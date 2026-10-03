@@ -1,0 +1,184 @@
+{
+  "id": "product-launch-plan",
+  "name": "Product launch plan",
+  "description": "Build a complete go-to-market launch plan: audience research, positioning, pricing, channels, timeline, success metrics and a launch-day checklist.",
+  "category": "marketing",
+  "tags": [
+    "launch",
+    "go-to-market",
+    "marketing"
+  ],
+  "goal": "Create an actionable launch plan for a product or major feature. Launch goals and audience research feed parallel positioning and pricing work; channels, success metrics and a week-by-week timeline build on them; a launch-day checklist with go/no-go criteria turns the plan into execution; and the final node compiles a single plan document a team can run from.",
+  "nodes": [
+    {
+      "key": "brief",
+      "title": "Define product and launch goals",
+      "content": "Capture what is launching and what success means.\n\n**Produce:**\n- Product summary: what it is, the problem it solves, key features at launch.\n- Launch type (new product, major feature, market expansion) and tier (big-bang vs soft launch).\n- Business goals with measurable targets, e.g. signups, revenue, activation rate.\n- Launch window, budget range and available team.\n- Constraints and dependencies: legal, partners, engineering readiness.\n\nState assumptions explicitly wherever the user has not provided details.",
+      "kind": "topic",
+      "tags": [
+        "planning"
+      ],
+      "x": 80,
+      "y": 80,
+      "executor": "llm",
+      "agent_role": "planner"
+    },
+    {
+      "key": "research",
+      "title": "Research audience and competitors",
+      "content": "Research the target audience and competitive context.\n\n**Produce:**\n- 2-3 ideal customer profiles: role, company type or demographics, pains, triggers that start their search for a solution, where they spend time online.\n- Competitor table: name, positioning one-liner, pricing, key differentiator, launch tactics they used.\n- Customer language: paraphrased phrases from reviews, forums or communities that describe the pain, with source.\n- Market-timing factors that help or hurt the launch.",
+      "kind": "research",
+      "tags": [
+        "research",
+        "audience"
+      ],
+      "x": 400,
+      "y": 80,
+      "executor": "agent",
+      "agent_role": "researcher"
+    },
+    {
+      "key": "positioning",
+      "title": "Craft positioning and messaging",
+      "content": "Craft positioning from [[Research audience and competitors]].\n\n**Produce:**\n- Positioning statement: For <target> who <need>, <product> is a <category> that <key benefit>. Unlike <alternative>, it <differentiator>.\n- Value proposition headline (max 10 words) and subheadline.\n- Three messaging pillars, each with a proof point.\n- Elevator pitch (50 words) and boilerplate (100 words).\n- Top 5 objections with responses.\n\nUse customer language, not internal jargon.",
+      "kind": "document",
+      "tags": [
+        "messaging"
+      ],
+      "x": 720,
+      "y": 80,
+      "executor": "agent",
+      "agent_role": "writer"
+    },
+    {
+      "key": "pricing",
+      "title": "Set pricing and packaging",
+      "content": "Design pricing and packaging aligned with [[Define product and launch goals]].\n\n**Produce:**\n- Pricing model (per seat, usage-based, flat, freemium) with rationale.\n- A tier table: tier name, monthly and annual price, target customer, included features, limits.\n- A competitor price comparison showing where each tier sits.\n- A launch offer (discount, extended trial, founding-member pricing) with an end date.\n- Conversion assumptions and a rough revenue projection for the first 90 days.",
+      "kind": "task",
+      "tags": [
+        "pricing"
+      ],
+      "x": 720,
+      "y": 260,
+      "executor": "llm",
+      "agent_role": "planner"
+    },
+    {
+      "key": "channels",
+      "title": "Choose launch channels",
+      "content": "Choose and plan launch channels for the positioning.\n\n**Produce a table**: channel (e.g. email list, Product Hunt, Hacker News, LinkedIn, paid search, partners, PR, community), audience reach, cost, effort, expected impact, owner, assets needed.\n\nPick a focused mix of 4-6 channels and explain why the rest are excluded. For each chosen channel, list the concrete assets to create (posts, emails, landing page, demo video, press kit) and how the core message is adapted to it.",
+      "kind": "task",
+      "tags": [
+        "channels"
+      ],
+      "x": 1040,
+      "y": 80,
+      "executor": "llm",
+      "agent_role": "planner"
+    },
+    {
+      "key": "metrics",
+      "title": "Define success metrics",
+      "content": "Define how launch success is measured.\n\n**Produce:**\n- The north-star metric for the launch and why.\n- A funnel table: stage (awareness, acquisition, activation, conversion, retention), metric, targets at day 7 / 30 / 90, data source.\n- A tracking plan: analytics events and UTM conventions to implement before launch.\n- Guardrail metrics: support load, error rate, refund rate.\n- Decision rules: which results trigger doubling down, iterating, or rolling back.",
+      "kind": "task",
+      "tags": [
+        "metrics",
+        "analytics"
+      ],
+      "x": 1040,
+      "y": 260,
+      "executor": "llm",
+      "agent_role": "planner"
+    },
+    {
+      "key": "timeline",
+      "title": "Build launch timeline",
+      "content": "Build the launch timeline from [[Choose launch channels]] and [[Set pricing and packaging]].\n\n**Produce** a week-by-week plan from T-6 weeks to T+4 weeks with columns: week, workstream (product, marketing, sales, support, legal), task, owner, dependency, deliverable.\n\nMark the critical path and the milestones: feature freeze, beta feedback, assets final, pricing live, launch day, post-launch review. Also render the milestones as a Mermaid `gantt` chart.",
+      "kind": "task",
+      "tags": [
+        "timeline"
+      ],
+      "x": 1360,
+      "y": 80,
+      "executor": "llm",
+      "agent_role": "planner"
+    },
+    {
+      "key": "checklist",
+      "title": "Launch-day checklist",
+      "content": "Create the launch-day checklist and readiness review, tied to [[Define success metrics]].\n\n**Produce:**\n- Go/no-go criteria table: criterion, owner, status.\n- Hour-by-hour run of show from T-24h to T+48h.\n- Pre-flight checks: landing page, signup and payment flows, analytics events firing, support macros, status page, rollback plan.\n- Communication plan: who posts what, where and when, and who monitors replies.\n- Escalation contacts for incidents.",
+      "kind": "task",
+      "tags": [
+        "checklist",
+        "qa"
+      ],
+      "x": 1680,
+      "y": 80,
+      "executor": "llm",
+      "agent_role": "reviewer"
+    },
+    {
+      "key": "plan",
+      "title": "Launch plan document",
+      "content": "Compile the complete product launch plan as one Markdown document.\n\n**Structure:**\n1. Executive summary: what, who, when and goals (max 200 words).\n2. Product and launch goals.\n3. Target audience and competitive context.\n4. Positioning and messaging.\n5. Pricing and packaging.\n6. Channel plan and asset list.\n7. Timeline with the Gantt chart.\n8. Success metrics and tracking plan.\n9. Launch-day checklist and go/no-go criteria.\n10. Risks, mitigations and the post-launch review plan.",
+      "kind": "output",
+      "tags": [
+        "deliverable"
+      ],
+      "x": 2000,
+      "y": 80,
+      "executor": "agent",
+      "agent_role": "writer"
+    }
+  ],
+  "edges": [
+    {
+      "source": "brief",
+      "target": "research"
+    },
+    {
+      "source": "research",
+      "target": "positioning"
+    },
+    {
+      "source": "research",
+      "target": "pricing"
+    },
+    {
+      "source": "brief",
+      "target": "pricing"
+    },
+    {
+      "source": "positioning",
+      "target": "channels"
+    },
+    {
+      "source": "brief",
+      "target": "metrics"
+    },
+    {
+      "source": "pricing",
+      "target": "metrics"
+    },
+    {
+      "source": "channels",
+      "target": "timeline"
+    },
+    {
+      "source": "pricing",
+      "target": "timeline"
+    },
+    {
+      "source": "timeline",
+      "target": "checklist"
+    },
+    {
+      "source": "metrics",
+      "target": "checklist"
+    },
+    {
+      "source": "checklist",
+      "target": "plan"
+    }
+  ]
+}
