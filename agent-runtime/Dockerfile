@@ -4,7 +4,7 @@
 
 ARG PYTHON_IMAGE=python:3.12-slim-bookworm
 
-FROM ghcr.io/astral-sh/uv:0.10.12 AS uv
+FROM ghcr.io/astral-sh/uv:0.12.22 AS uv
 
 # ---------------------------------------------------------------------------------------------
 FROM ${PYTHON_IMAGE} AS builder
