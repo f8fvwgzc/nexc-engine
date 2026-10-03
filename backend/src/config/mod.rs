@@ -16,6 +16,7 @@ pub use secret::Secret;
 use crate::domain::settings::LlmProviderKind;
 use crate::domain::user;
 use crate::domain::validation::FieldErrors;
+use crate::security::random::random_bytes;
 
 /// Deployment environment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -268,9 +269,12 @@ impl Reader<'_> {
         secret.into_bytes()
     }
 
+    /// The AES-256-GCM master key. When it is missing or invalid an error is recorded (so
+    /// startup fails) and a random throwaway key is returned: a predictable placeholder key
+    /// never exists, even transiently.
     fn master_key(&mut self, prod: bool) -> [u8; 32] {
         let Some(raw) = self.required("NEXC_MASTER_KEY") else {
-            return [0; 32];
+            return random_bytes::<32>();
         };
         let decoded = base64::engine::general_purpose::STANDARD
             .decode(raw.as_bytes())
@@ -286,7 +290,7 @@ impl Reader<'_> {
             None => {
                 self.errors
                     .push("NEXC_MASTER_KEY must be base64 of exactly 32 bytes".into());
-                [0; 32]
+                random_bytes::<32>()
             }
         }
     }

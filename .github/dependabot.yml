@@ -30,10 +30,19 @@ updates:
   - package-ecosystem: docker-compose
     directory: /
     schedule: { interval: weekly, day: monday }
+    ignore:
+      # The project targets PostgreSQL 17; a major upgrade needs a dump/restore and is a
+      # deliberate decision, not a routine bump.
+      - dependency-name: postgres
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly, day: monday }
+    ignore:
+      # Its refs name Rust toolchains, not action releases; the toolchain is pinned in
+      # backend/rust-toolchain.toml and bumped together with the code.
+      - dependency-name: dtolnay/rust-toolchain
     groups:
       actions:
         patterns: ["*"]

@@ -89,7 +89,7 @@ async def execute(
         raise
     except Exception as exc:
         trace = redact("".join(traceback.format_exception(exc)), secret)
-        log.error("unexpected failure in run %s:\n%s", request.run_id, trace)
+        log.error("unexpected failure in run %s:\n%s", _loggable(request.run_id), trace)
         events.error("internal runtime error", retryable=True)
     finally:
         census.runs_active -= 1
@@ -97,7 +97,7 @@ async def execute(
         if provider is not None:
             await provider.aclose()
         if settings.runtime_keep_workspaces:
-            log.info("keeping workspace %s for run %s", workspace_dir, request.run_id)
+            log.info("keeping workspace %s for run %s", workspace_dir, _loggable(request.run_id))
         else:
             shutil.rmtree(workspace_dir, ignore_errors=True)
 
@@ -166,6 +166,11 @@ async def _run(
 
 
 DOCUMENT_KINDS = ("document", "output")
+
+
+def _loggable(value: str) -> str:
+    """A request-supplied value made safe for log lines (no forged line breaks)."""
+    return value.replace("\r", "\\r").replace("\n", "\\n")
 
 
 def _ensure_document(

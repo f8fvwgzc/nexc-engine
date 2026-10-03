@@ -126,15 +126,11 @@ class AnthropicProvider:
         for attempt in range(_MAX_JSON_RETRIES + 1):
             try:
                 message = await self._stream(conversation, tools, max_tokens, on_text)
-                break
+                return self._to_turn(conversation, message)
             except ValueError as exc:
                 # The SDK raises ValueError for tool-input JSON it cannot parse at all
                 # (eager input streaming). There is no tool_use id to answer: re-issue.
                 log.warning("unparseable tool input from model (attempt %d): %s", attempt + 1, exc)
-                if attempt == _MAX_JSON_RETRIES:
-                    raise LLMError(
-                        "model produced unparseable tool input repeatedly", retryable=True
-                    ) from None
             except anthropic.RateLimitError as exc:
                 raise LLMError(
                     self._safe(f"rate limited by Anthropic: {exc}"), retryable=True
@@ -149,7 +145,7 @@ class AnthropicProvider:
                 raise LLMError(
                     self._safe(f"cannot reach Anthropic: {exc}"), retryable=True
                 ) from None
-        return self._to_turn(conversation, message)
+        raise LLMError("model produced unparseable tool input repeatedly", retryable=True)
 
     async def _stream(
         self,

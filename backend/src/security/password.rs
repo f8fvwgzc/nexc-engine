@@ -5,6 +5,8 @@ use std::sync::OnceLock;
 
 use argon2::{Algorithm, Argon2, Params, PasswordHasher, PasswordVerifier, Version};
 
+use super::random::random_token;
+
 fn hasher() -> Argon2<'static> {
     let params = Params::new(19 * 1024, 2, 1, None).expect("static argon2 params are valid");
     Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
@@ -27,7 +29,8 @@ pub fn verify_password(password: &str, phc: &str) -> bool {
 /// not exist so that login timing does not reveal registered e-mails.
 pub fn verify_dummy(password: &str) {
     static DUMMY: OnceLock<String> = OnceLock::new();
-    let phc = DUMMY.get_or_init(|| hash_password("dummy password for timing").unwrap_or_default());
+    // A random password nobody knows, hashed once with the real parameters.
+    let phc = DUMMY.get_or_init(|| hash_password(&random_token()).unwrap_or_default());
     let _ = verify_password(password, phc);
 }
 

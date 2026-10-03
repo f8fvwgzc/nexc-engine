@@ -32,11 +32,12 @@ def safe_path(root: Path, relative: str) -> Path:
     if any(part == ".." for part in pure.parts):
         raise PathError("'..' is not allowed in paths")
 
-    base = root.resolve()
-    resolved = (base / pure).resolve(strict=False)
-    if resolved != base and not resolved.is_relative_to(base):
+    # Canonicalise both sides (following symlinks) and require the result to stay under root.
+    base = os.path.realpath(root)
+    resolved = os.path.realpath(os.path.join(base, relative))
+    if resolved != base and not resolved.startswith(base + os.sep):
         raise PathError("path escapes the workspace")
-    return resolved
+    return Path(resolved)
 
 
 class Workspace:
@@ -70,7 +71,7 @@ class Workspace:
             raise PathError(f"workspace quota of {self.max_total_bytes} bytes exceeded")
         target.parent.mkdir(parents=True, exist_ok=True)
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
-        fd = os.open(target, flags, 0o640)
+        fd = os.open(target, flags, 0o600)
         with os.fdopen(fd, "wb") as handle:
             handle.write(data)
         return target

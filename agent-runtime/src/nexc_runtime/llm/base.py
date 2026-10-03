@@ -70,7 +70,8 @@ class LLMProvider(Protocol):
     name: str
     model: str
 
-    def new_conversation(self, system: str, prompt: str) -> Conversation: ...
+    def new_conversation(self, system: str, prompt: str) -> Conversation:
+        """Start a conversation with a system prompt and the first user message."""
 
     async def next_turn(
         self,
@@ -79,13 +80,17 @@ class LLMProvider(Protocol):
         *,
         max_tokens: int,
         on_text: TextSink | None = None,
-    ) -> Turn: ...
+    ) -> Turn:
+        """Ask for the next assistant turn and append it to the conversation."""
 
-    def add_tool_results(self, conversation: Conversation, results: list[ToolResult]) -> None: ...
+    def add_tool_results(self, conversation: Conversation, results: list[ToolResult]) -> None:
+        """Answer every tool call of the last turn in one message."""
 
-    def add_user_text(self, conversation: Conversation, text: str) -> None: ...
+    def add_user_text(self, conversation: Conversation, text: str) -> None:
+        """Append a plain user message (e.g. a nudge after a truncated answer)."""
 
-    async def aclose(self) -> None: ...
+    async def aclose(self) -> None:
+        """Release network clients and scratch directories."""
 
 
 def redact(text: str, *secrets: str | None) -> str:
