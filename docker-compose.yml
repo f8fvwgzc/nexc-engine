@@ -22,7 +22,7 @@ x-hardening: &hardening
 services:
   postgres:
     <<: *hardening
-    image: postgres:17-alpine
+    image: postgres:18-alpine
     # Run as the image's postgres user (uid 70) so no capabilities are needed at all.
     user: "70:70"
     environment:
