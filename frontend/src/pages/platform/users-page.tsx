@@ -22,10 +22,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import {
+  eraseAccount,
   platformUsersQuery,
   updatePlatformUser,
   type PlatformUser,
@@ -108,12 +110,82 @@ function SuspendDialog({
   );
 }
 
+/** Erases an account on its holder's request, once its address is typed out. */
+function EraseDialog({ user, onClose }: { user: PlatformUser | null; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [typed, setTyped] = useState('');
+  const erase = useMutation({
+    mutationFn: (target: PlatformUser) => eraseAccount(target.id, typed.trim()),
+    meta: { successMessage: 'Account erased', errorToast: false },
+    onSuccess: () => {
+      setTyped('');
+      onClose();
+      return queryClient.invalidateQueries({ queryKey: ['platform'] });
+    },
+  });
+  const close = () => {
+    setTyped('');
+    erase.reset();
+    onClose();
+  };
+  const matches = user !== null && typed.trim().toLowerCase() === user.email.toLowerCase();
+  return (
+    <Dialog open={user !== null} onOpenChange={(open) => !open && close()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Erase {user?.name}&apos;s account?</DialogTitle>
+          <DialogDescription>
+            For when the account&apos;s holder asks for it. Workspaces they are alone in are
+            deleted; they leave the others, where what they made stays under &quot;Deleted
+            account&quot;. Their name, address, password and sessions are removed. This cannot be
+            undone, and the activity log keeps only the account&apos;s id.
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          className="space-y-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (user && matches) erase.mutate(user);
+          }}
+        >
+          <div className="space-y-1.5">
+            <Label htmlFor="erase-confirm" className="text-[13px]">
+              Type {user?.email} to confirm
+            </Label>
+            <Input
+              id="erase-confirm"
+              value={typed}
+              autoComplete="off"
+              className="text-[13px]"
+              onChange={(e) => setTyped(e.target.value)}
+            />
+          </div>
+          {erase.error ? (
+            <p role="alert" className="text-xs text-destructive">
+              {errorMessage(erase.error)}
+            </p>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={close}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="destructive" disabled={!matches || erase.isPending}>
+              Erase account
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function PlatformUsersPage() {
   const queryClient = useQueryClient();
   const me = useAuthStore((s) => s.user?.id);
   const { page, search, controls } = usePlatformPage();
   const { data, isPending, error } = useQuery(platformUsersQuery(page));
   const [suspending, setSuspending] = useState<PlatformUser | null>(null);
+  const [erasing, setErasing] = useState<PlatformUser | null>(null);
   const change = useMutation({
     mutationFn: ({ user, change }: { user: PlatformUser; change: PlatformUserChange }) =>
       updatePlatformUser(user.id, change),
@@ -220,6 +292,11 @@ export default function PlatformUsersPage() {
                       Suspend account…
                     </DropdownMenuItem>
                   )}
+                  {u.role !== 'admin' && (
+                    <DropdownMenuItem variant="destructive" onSelect={() => setErasing(u)}>
+                      Erase account…
+                    </DropdownMenuItem>
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
             </li>
@@ -227,6 +304,7 @@ export default function PlatformUsersPage() {
         </ul>
       )}
       {controls(data?.length ?? 0)}
+      <EraseDialog user={erasing} onClose={() => setErasing(null)} />
       <SuspendDialog
         user={suspending}
         pending={change.isPending}

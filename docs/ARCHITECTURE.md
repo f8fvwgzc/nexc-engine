@@ -198,6 +198,18 @@ flowchart LR
   answers 429 when full.
 * **PostgreSQL** – the single source of truth; back it up together with `NEXC_MASTER_KEY`.
 
+## Deleting an account
+
+Several tables cascade from an account's id (`graphs`, `agents`, `runs`, `plans`, `memories`), so
+removing the row would delete work that belongs to a team. `engine::account::erase` therefore
+empties the account instead: it removes the workspaces the account is alone in, its memberships,
+personal settings, notifications, sessions and personal memories, clears its assignments, and
+replaces its name and address (`users.deleted_at` marks the row). What it made in shared
+workspaces keeps pointing at that row and reads as "Deleted account". Audit logs keep names as
+they were written at the time; that is the record of what happened, and it goes when the
+workspace does. The same routine serves a person deleting their own account and a platform
+administrator erasing one on request.
+
 ## Security boundaries
 
 | Boundary | Control |

@@ -79,6 +79,63 @@ pub async fn session_epoch(db: impl PgExecutor<'_>, id: Uuid) -> Result<i32, sql
         .await
 }
 
+/// Changes a user's display name.
+pub async fn set_name(
+    db: impl PgExecutor<'_>,
+    id: Uuid,
+    name: &str,
+) -> Result<Option<User>, sqlx::Error> {
+    sqlx::query_as(
+        "UPDATE users SET name = $2, updated_at = now() WHERE id = $1
+         RETURNING id, email, name, role, created_at",
+    )
+    .bind(id)
+    .bind(name)
+    .fetch_optional(db)
+    .await
+}
+
+/// The stored password hash of a user.
+pub async fn password_hash(
+    db: impl PgExecutor<'_>,
+    id: Uuid,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1 AND deleted_at IS NULL")
+        .bind(id)
+        .fetch_optional(db)
+        .await
+}
+
+/// Replaces a user's password hash.
+pub async fn set_password(
+    db: impl PgExecutor<'_>,
+    id: Uuid,
+    hash: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE users SET password_hash = $2, failed_logins = 0, locked_until = NULL,
+                updated_at = now()
+         WHERE id = $1",
+    )
+    .bind(id)
+    .bind(hash)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Ends the access tokens issued to a user so far; returns the session
+/// epoch new tokens carry (see `security::gate`).
+pub async fn end_sessions(db: impl PgExecutor<'_>, id: Uuid) -> Result<i32, sqlx::Error> {
+    sqlx::query_scalar(
+        "UPDATE users SET session_epoch = session_epoch + 1, session_epoch_at = now()
+         WHERE id = $1 RETURNING session_epoch",
+    )
+    .bind(id)
+    .fetch_one(db)
+    .await
+}
+
 /// Finds credentials by (normalised) e-mail.
 pub async fn credentials(
     db: impl PgExecutor<'_>,
@@ -87,7 +144,7 @@ pub async fn credentials(
     let row = sqlx::query(
         "SELECT id, email, name, role, created_at, password_hash, failed_logins, locked_until,
                 suspended_at IS NOT NULL AS suspended
-         FROM users WHERE lower(email) = lower($1)",
+         FROM users WHERE lower(email) = lower($1) AND deleted_at IS NULL",
     )
     .bind(email)
     .fetch_optional(db)

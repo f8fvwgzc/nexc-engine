@@ -24,6 +24,7 @@ string_enum!(
         AccountReactivated => "account_reactivated",
         OwnerAssigned => "owner_assigned",
         WorkspaceDeleted => "workspace_deleted",
+        AccountErased => "account_erased",
     }
 );
 

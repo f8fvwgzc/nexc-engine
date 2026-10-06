@@ -77,7 +77,12 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(auth::login))
         .routes(routes!(auth::refresh))
         .routes(routes!(auth::logout))
-        .routes(routes!(auth::me))
+        .routes(routes!(auth::me, account::update_me))
+        .routes(routes!(account::change_password))
+        .routes(routes!(account::sessions))
+        .routes(routes!(account::end_all_sessions))
+        .routes(routes!(account::export))
+        .routes(routes!(account::delete_me))
         .routes(routes!(
             settings::get_llm,
             settings::put_llm,
@@ -112,6 +117,7 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(platform::assign_owner))
         .routes(routes!(platform::users))
         .routes(routes!(platform::update_user))
+        .routes(routes!(platform::erase_user))
         .routes(routes!(platform::events))
         .routes(routes!(infrastructure::status))
         .routes(routes!(infrastructure::check))

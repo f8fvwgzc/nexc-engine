@@ -2,6 +2,7 @@
 //! and execution.
 #![forbid(unsafe_code)]
 
+pub mod account;
 pub mod analysis;
 pub mod artifacts;
 pub mod assistant;
@@ -18,6 +19,7 @@ pub mod summary;
 pub mod templates;
 pub mod transfer;
 pub mod usage;
+pub mod workspaces;
 
 use dashmap::{DashMap, DashSet};
 use tokio::sync::Notify;

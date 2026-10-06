@@ -63,6 +63,7 @@ export const platformActionSchema = z.enum([
   'account_reactivated',
   'owner_assigned',
   'workspace_deleted',
+  'account_erased',
 ]);
 export type PlatformAction = z.infer<typeof platformActionSchema>;
 
@@ -129,6 +130,14 @@ export function updatePlatformUser(userId: string, change: PlatformUserChange) {
     method: 'PATCH',
     body: change,
   });
+}
+
+/**
+ * Deletes an account on its holder's request, as they could from their own profile; `email` must
+ * be the account's address.
+ */
+export function eraseAccount(userId: string, email: string) {
+  return apiSend(`/admin/users/${userId}/erase`, { method: 'POST', body: { confirm: email } });
 }
 
 /** Makes a registered account an owner of a workspace. */

@@ -20,6 +20,7 @@ const VERB: Record<PlatformAction, string> = {
   account_reactivated: 'reactivated',
   owner_assigned: 'assigned an owner to',
   workspace_deleted: 'deleted the workspace',
+  account_erased: 'erased',
 };
 
 function Entry({ event }: { event: PlatformEvent }) {
@@ -56,7 +57,7 @@ export default function PlatformActivityPage() {
       <Seo title="Activity" noIndex />
       <PageHeader
         title="Activity"
-        description="Everything platform administrators did from this console: role changes, suspensions, owners they assigned and workspaces they deleted. Entries cannot be edited or removed here."
+        description="Everything platform administrators did from this console: role changes, suspensions, owners they assigned, workspaces they deleted and accounts they erased. Entries cannot be edited or removed here."
       />
       {search}
       {error ? (

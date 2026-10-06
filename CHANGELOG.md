@@ -120,6 +120,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   as a digest of bounded size, the call obeys the workspace's guardrails and is booked as
   `summary` usage, and summaries travel with a workspace transfer
   (`GET`/`POST /workspaces/{wid}/timeline/summary`). The demo provider answers with the counts.
+- Account self-service on the Profile page (and for platform administrators under Account in
+  the console): change your name and your password, see where you are signed in and sign out
+  everywhere, download a copy of what the installation holds about you, and delete your
+  account (`PATCH /auth/me`, `POST /auth/password`, `GET /auth/sessions`,
+  `POST /auth/sessions/end`, `GET /auth/me/export`, `POST /auth/me/delete`). Changing the
+  password ends every other session at once.
+- Deleting an account empties it instead of removing its row, so a team's shared work is not
+  lost with it: workspaces the account is alone in are removed, it leaves the others, and what
+  it made there stays under "Deleted account". Its name, address, password, sessions, AI
+  account, notifications and personal memories are gone, and the address can register again.
+  The only owner of a shared workspace has to hand it over first. Platform administrators can
+  erase an account on request from the console (`POST /admin/users/{uid}/erase`); the activity
+  log keeps the account's id, not its name.
 - Search from the command palette (⌘K): a few typed characters find issues (by title or
   identifier), projects, graphs, documents, teams and people in the open workspace, grouped by
   kind, and picking one opens it. One request, and only what the caller may see: each kind goes

@@ -61,14 +61,14 @@ impl Validate for LoginRequest {
     }
 }
 
-fn session_config(state: &AppState) -> SessionConfig<'_> {
+pub(super) fn session_config(state: &AppState) -> SessionConfig<'_> {
     SessionConfig {
         jwt: &state.jwt,
         refresh_ttl: state.settings.refresh_ttl,
     }
 }
 
-fn cookie(state: &AppState, value: &str, max_age: u64) -> HeaderValue {
+pub(super) fn cookie(state: &AppState, value: &str, max_age: u64) -> HeaderValue {
     let secure = if state.settings.cookie_secure {
         "; Secure"
     } else {
@@ -80,7 +80,7 @@ fn cookie(state: &AppState, value: &str, max_age: u64) -> HeaderValue {
     HeaderValue::from_str(&raw).expect("cookie is ASCII")
 }
 
-fn with_session(state: &AppState, status: StatusCode, s: Session) -> Response {
+pub(super) fn with_session(state: &AppState, status: StatusCode, s: Session) -> Response {
     let set_cookie = cookie(
         state,
         &s.refresh_token,

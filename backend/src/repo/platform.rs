@@ -159,7 +159,8 @@ pub async fn footprint(
     .await
 }
 
-/// An account row with its memberships; `$w` filters it.
+/// An account row with its memberships; `$w` filters it. Deleted accounts
+/// are left out: nothing in them names anyone any more.
 macro_rules! user_rows {
     ($w:literal) => {
         concat!(
@@ -170,8 +171,9 @@ macro_rules! user_rows {
                       WHERE m.user_id = u.id AND m.role = 'owner') AS owned_count,
                     COALESCE(u.locked_until > now(), false) AS locked,
                     u.suspended_at IS NOT NULL AS suspended, u.suspended_reason, u.created_at
-             FROM users u WHERE ",
-            $w
+             FROM users u WHERE u.deleted_at IS NULL AND (",
+            $w,
+            ")"
         )
     };
 }

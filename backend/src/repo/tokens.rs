@@ -83,6 +83,18 @@ pub async fn revoke_user(db: impl PgExecutor<'_>, user_id: Uuid) -> Result<(), s
     Ok(())
 }
 
+/// How many sessions of a user are alive: sign-ins whose latest token was
+/// neither used up, revoked nor expired.
+pub async fn active_sessions(db: impl PgExecutor<'_>, user_id: Uuid) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT count(DISTINCT family_id) FROM refresh_tokens
+         WHERE user_id = $1 AND revoked_at IS NULL AND used_at IS NULL AND expires_at > now()",
+    )
+    .bind(user_id)
+    .fetch_one(db)
+    .await
+}
+
 /// Deletes tokens that expired more than a day ago.
 pub async fn purge_expired(db: impl PgExecutor<'_>) -> Result<u64, sqlx::Error> {
     let done =

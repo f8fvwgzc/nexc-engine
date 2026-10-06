@@ -31,6 +31,7 @@ export const routeModules = {
   platformWorkspaces: () => import('@/pages/platform/workspaces-page'),
   platformUsers: () => import('@/pages/platform/users-page'),
   platformActivity: () => import('@/pages/platform/activity-page'),
+  platformAccount: () => import('@/pages/settings/profile-page'),
   platformInfrastructure: () => import('@/pages/settings/infrastructure-page'),
   notFound: () => import('@/pages/not-found-page'),
 };

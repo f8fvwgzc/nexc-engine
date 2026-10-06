@@ -13,7 +13,7 @@ use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
-use super::workspaces::{audit, ensure_personal, erase};
+use super::workspaces::{audit, ensure_personal};
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::audit::AuditAction;
@@ -233,7 +233,7 @@ pub async fn delete_workspace(
             "type the workspace's name exactly to delete it",
         ));
     }
-    erase(&state, wid).await?;
+    crate::engine::workspaces::erase(&state, wid).await?;
     let owner = workspace.owner_email.as_deref().unwrap_or("nobody");
     let count = |n: i64, one: &str| format!("{n} {one}{}", if n == 1 { "" } else { "s" });
     let summary = format!(
@@ -377,6 +377,64 @@ pub async fn update_user(
             .await
             .or_not_found("user")?,
     ))
+}
+
+/// `POST /admin/users/{uid}/erase` body.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EraseAccount {
+    /// The account's e-mail address, exactly: erasing cannot be undone.
+    pub confirm: String,
+}
+
+impl Validate for EraseAccount {
+    fn validate(&self, _errors: &mut FieldErrors) {}
+}
+
+/// Deletes an account on its holder's request, exactly as the holder could
+/// from their profile: workspaces it is alone in are removed, it leaves the
+/// others, and what identified the person is gone. The activity log keeps
+/// the account's id, not its name or address.
+#[utoipa::path(post, path = "/admin/users/{uid}/erase", tag = "admin", security(("bearer" = [])),
+    params(("uid" = Uuid, Path, description = "User id")), request_body = EraseAccount,
+    responses((status = 204, description = "Erased"), (status = 403, body = Problem), (status = 404, body = Problem),
+        (status = 409, description = "Your own account, a platform administrator, or the only owner of a shared workspace", body = Problem),
+        (status = 422, description = "The address does not match", body = Problem)))]
+pub async fn erase_user(
+    State(state): State<AppState>,
+    admin: PlatformAdmin,
+    Path(uid): Path<Uuid>,
+    ValidatedJson(req): ValidatedJson<EraseAccount>,
+) -> Result<StatusCode, AppError> {
+    let account = repo::platform::user(&state.db, uid)
+        .await
+        .or_not_found("user")?;
+    if uid == admin.id {
+        return Err(AppError::Conflict(
+            "you cannot erase your own account here".into(),
+        ));
+    }
+    if account.role == Role::Admin {
+        return Err(AppError::Conflict(
+            "take the platform role away from this account before erasing it".into(),
+        ));
+    }
+    if user::normalize_email(&req.confirm) != user::normalize_email(&account.email) {
+        return Err(AppError::field(
+            "confirm",
+            "type the account's e-mail address exactly to erase it",
+        ));
+    }
+    crate::engine::account::erase(&state, uid).await?;
+    log(
+        &state,
+        admin,
+        PlatformAction::AccountErased,
+        &format!("account {uid}"),
+        "erased on request",
+    )
+    .await;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// What platform administrators did, newest first.

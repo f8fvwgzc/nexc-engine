@@ -100,6 +100,28 @@ export interface paths {
         patch: operations["update_user"];
         trace?: never;
     };
+    "/api/v1/admin/users/{uid}/erase": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deletes an account on its holder's request, exactly as the holder could
+         *     from their profile: workspaces it is alone in are removed, it leaves the
+         *     others, and what identified the person is gone. The activity log keeps
+         *     the account's id, not its name or address.
+         */
+        post: operations["erase_user"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/workspaces": {
         parameters: {
             query?: never;
@@ -278,6 +300,72 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
+        /** Changes the caller's display name. */
+        patch: operations["update_me"];
+        trace?: never;
+    };
+    "/api/v1/auth/me/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deletes the caller's account. Workspaces it is alone in are removed; it
+         *     leaves the others, where what it made stays under "Deleted account".
+         *     Its name, address, password, sessions, AI account, notifications and
+         *     personal memories are gone, and the address can register again.
+         */
+        post: operations["delete_me"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/me/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A copy of what the installation holds about the caller, as a JSON file:
+         *     the account, its workspaces and teams, the issues and comments it wrote,
+         *     its graphs, documents and personal memories, and what it spent. No
+         *     credential is in it.
+         */
+        get: operations["export"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Changes the caller's password. Every session ends, on every device, and
+         *     this one starts anew: the response carries a fresh access token and
+         *     refresh cookie.
+         */
+        post: operations["change_password"];
+        delete?: never;
+        options?: never;
+        head?: never;
         patch?: never;
         trace?: never;
     };
@@ -309,6 +397,40 @@ export interface paths {
         put?: never;
         /** Creates an account (when signups are enabled) and starts a session. */
         post: operations["register"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** How many sessions the caller has. */
+        get: operations["sessions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/sessions/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Signs the caller out everywhere, this device included. */
+        post: operations["end_all_sessions"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1848,6 +1970,20 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description A copy of what the installation holds about one account. */
+        AccountExport: {
+            account: components["schemas"]["User"];
+            /** Format: date-time */
+            exported_at: string;
+            /**
+             * @description `workspaces`, `teams`, `issues_created`, `issues_assigned`,
+             *     `comments`, `graphs`, `documents`, `memories`, `ai_account`, `usage`,
+             *     `notifications`: each a list of plain objects.
+             */
+            sections: Record<string, never>;
+            /** @description Sections that hold more than [`EXPORT_SECTION_MAX`] rows and were cut there. */
+            truncated: string[];
+        };
         /** @description An agent in the user's organisation. */
         Agent: {
             /** Format: int64 */
@@ -1976,6 +2112,12 @@ export interface components {
             agent_runtime: components["schemas"]["BackendHealth"];
             llm: components["schemas"]["BackendHealth"];
             symphony: components["schemas"]["BackendHealth"];
+        };
+        /** @description `POST /auth/password` body. */
+        ChangePassword: {
+            current_password: string;
+            /** @description 12–128 characters. */
+            new_password: string;
         };
         /** @description `POST /admin/infrastructure/check` body. */
         CheckConnection: {
@@ -2268,6 +2410,11 @@ export interface components {
             /** @description Whether more has happened on the day since it was written. */
             stale: boolean;
         };
+        /** @description `POST /auth/me/delete` body. */
+        DeleteAccount: {
+            /** @description The caller's password: deleting cannot be undone. */
+            password: string;
+        };
         /** @description `POST /admin/workspaces/{wid}/delete` body. */
         DeleteWorkspace: {
             /** @description The workspace's name, exactly: deleting cannot be undone. */
@@ -2325,6 +2472,11 @@ export interface components {
             source: string;
             /** Format: uuid */
             target: string;
+        };
+        /** @description `POST /admin/users/{uid}/erase` body. */
+        EraseAccount: {
+            /** @description The account's e-mail address, exactly: erasing cannot be undone. */
+            confirm: string;
         };
         /**
          * @description Which executor runs a node.
@@ -3022,7 +3174,7 @@ export interface components {
          * @description What a platform administrator did.
          * @enum {string}
          */
-        PlatformAction: "role_changed" | "account_suspended" | "account_reactivated" | "owner_assigned" | "workspace_deleted";
+        PlatformAction: "role_changed" | "account_suspended" | "account_reactivated" | "owner_assigned" | "workspace_deleted" | "account_erased";
         /** @description One entry of the platform's activity log. */
         PlatformEvent: {
             action: components["schemas"]["PlatformAction"];
@@ -3241,6 +3393,14 @@ export interface components {
          * @enum {string}
          */
         SearchKind: "issue" | "project" | "graph" | "document" | "team" | "member";
+        /** @description The caller's sessions. */
+        Sessions: {
+            /**
+             * Format: int64
+             * @description Sign-ins that are still alive, this one included.
+             */
+            active: number;
+        };
         /** @description `PUT /workspaces/{wid}/teams/{tid}/members/{uid}` body. */
         SetTeamMember: {
             role?: components["schemas"]["TeamRole"] | null;
@@ -3576,6 +3736,10 @@ export interface components {
             role?: components["schemas"]["Role"] | null;
             /** @description `true` stops the account from signing in and ends its sessions; `false` lifts that. */
             suspended?: boolean | null;
+        };
+        /** @description `PATCH /auth/me` body. */
+        UpdateProfile: {
+            name: string;
         };
         /**
          * @description `PATCH /workspaces/{wid}/projects/{pid}` body (any subset; `lead_id` and
@@ -3985,6 +4149,65 @@ export interface operations {
             };
             /** @description Your own account, or the only owner of a shared workspace */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    erase_user: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description User id */
+                uid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EraseAccount"];
+            };
+        };
+        responses: {
+            /** @description Erased */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Your own account, a platform administrator, or the only owner of a shared workspace */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The address does not match */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4485,6 +4708,179 @@ export interface operations {
             };
         };
     };
+    update_me: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateProfile"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["User"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    delete_me: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteAccount"];
+            };
+        };
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The only owner of a shared workspace, or a platform administrator */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Wrong password */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Too many wrong passwords */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    export: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountExport"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    change_password: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangePassword"];
+            };
+        };
+        responses: {
+            /** @description Changed; new session */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthResponse"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Wrong current password, or a new one that does not meet the rules */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Too many wrong passwords */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     refresh: {
         parameters: {
             query?: never;
@@ -4577,6 +4973,59 @@ export interface operations {
             };
             /** @description Rate limited */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    sessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Sessions"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    end_all_sessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every session ended */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
