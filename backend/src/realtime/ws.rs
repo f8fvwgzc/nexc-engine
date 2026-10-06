@@ -22,6 +22,8 @@ pub const MAX_FRAME_BYTES: usize = 16 * 1024;
 const FRAMES_PER_SEC: u32 = 30;
 /// Node moves are persisted at most this often per socket.
 const MOVE_FLUSH: Duration = Duration::from_millis(100);
+/// How often an open socket checks that its account's sessions were not ended.
+const SESSION_CHECK: Duration = Duration::from_secs(5);
 
 /// A client → server message.
 #[derive(Debug, Deserialize)]
@@ -56,8 +58,16 @@ pub async fn session(state: AppState, socket: WebSocket, peer: Peer) {
     let mut moves: HashMap<Uuid, (f64, f64)> = HashMap::new();
     let mut flush = tokio::time::interval(MOVE_FLUSH);
     let mut budget = TokenBucket::new(FRAMES_PER_SEC * 2, f64::from(FRAMES_PER_SEC));
+    // The socket closes when the account's sessions are ended (suspension, platform role change).
+    let admitted_at = state.sessions.floor(peer.user_id);
+    let mut session_check = tokio::time::interval(SESSION_CHECK);
     loop {
         tokio::select! {
+            _ = session_check.tick() => {
+                if state.sessions.floor(peer.user_id) > admitted_at {
+                    break;
+                }
+            }
             broadcast = hub.recv() => match broadcast {
                 Ok(json) => {
                     if sink.send(Message::Text(Utf8Bytes::from(&*json))).await.is_err() {

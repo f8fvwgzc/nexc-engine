@@ -36,6 +36,13 @@ impl SessionGate {
             .is_none_or(|floor| epoch >= floor.epoch)
     }
 
+    /// The epoch below which tokens of `user` are refused right now; 0 when
+    /// nothing was ended early. Something long-lived (an event stream, a
+    /// socket) notes it when it starts and stops once it has risen.
+    pub fn floor(&self, user: Uuid) -> i32 {
+        self.floors.get(&user).map_or(0, |floor| floor.epoch)
+    }
+
     /// Refuses the tokens of `user` issued before `epoch`.
     pub fn raise(&self, user: Uuid, epoch: i32) {
         let now = Instant::now();
@@ -85,5 +92,6 @@ mod tests {
         assert!(gate.admits(other, 0), "other accounts are untouched");
         gate.raise(user, 1);
         assert!(!gate.admits(user, 1), "the floor never goes down");
+        assert_eq!((gate.floor(user), gate.floor(other)), (2, 0));
     }
 }

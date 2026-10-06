@@ -148,7 +148,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reason. Everything done from the console is kept in its Activity log (`/admin/workspaces/{wid}`,
   `/admin/workspaces/{wid}/owners`, `/admin/workspaces/{wid}/delete`, `/admin/events`).
 - Suspended accounts: sign-in answers 403 once the password was right, refresh is refused, and
-  the access token already in hand stops working at once. The Members page of every workspace
+  the access token already in hand stops working at once. An event stream the account has
+  open ends at its next event or heartbeat, and an open collaboration socket within five
+  seconds. The Members page of every workspace
   the account is in marks it as suspended (`WorkspaceMember.suspended`).
 - `make seed-demo` (`scripts/seed-demo.py`): a demo workspace with five accounts in different
   roles, three teams, projects, cycles, issues and comments, created through the API so that
@@ -171,6 +173,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   administrator created by the server or the command line no longer gets a personal workspace,
   and the only owner of a workspace other people work in cannot be made one until the workspace
   has another owner.
+- A workspace keeps at least one owner who can sign in: a suspended owner, or one who now
+  administers the platform, no longer counts when the last other owner tries to leave or step
+  down, and such an owner can be demoted or removed while another remains.
 - Changing an account's platform role takes hold at once instead of at the next token refresh:
   access tokens carry a session epoch (`epoch` claim) that the change raises.
 - `PATCH /admin/users/{uid}` takes `suspended` and `reason` next to `role`, all optional.

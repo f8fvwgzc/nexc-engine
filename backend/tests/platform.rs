@@ -551,3 +551,116 @@ async fn the_platform_assigns_owners_and_deletes_workspaces(pool: PgPool) {
                 .contains("is an owner now (was member)")
     }));
 }
+
+/// Signing in is refused to a suspended account, and what it already had
+/// open stops too: an event stream ends at its next event.
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_suspension_ends_open_event_streams(pool: PgPool) {
+    use axum::body::Body;
+    use axum::http::Request;
+    use http_body_util::BodyExt;
+    use std::time::Duration;
+
+    let app = TestApp::new(pool, &[]).await;
+    let (root, _) = platform_admin(&app, "root@example.com").await;
+    let (owner, _) = user(&app, "owner@example.com").await;
+    let (member, member_id) = user(&app, "member@example.com").await;
+    let (wid, _) = workspace_of(&app, &owner).await;
+    let invite = json!({"email": "member@example.com", "role": "member"});
+    let members = format!("/workspaces/{wid}/members");
+    call(&app, Method::POST, &members, &owner, Some(invite)).await;
+    let graph = json!({"name": "Shared", "goal": "g", "workspace_id": wid});
+    let (_, graph) = call(&app, Method::POST, "/graphs", &owner, Some(graph)).await;
+    let gid = graph["id"].as_str().unwrap().to_owned();
+
+    // The member watches the graph.
+    let ask = json!({"graph_id": gid});
+    let (status, ticket) = call(&app, Method::POST, "/realtime/tickets", &member, Some(ask)).await;
+    assert_eq!(status, StatusCode::OK, "{ticket}");
+    let ticket = ticket["ticket"].as_str().unwrap();
+    let request = Request::get(format!("/api/v1/graphs/{gid}/events?ticket={ticket}"))
+        .body(Body::empty())
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(app.router.clone(), request)
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body();
+    let mut next = async || {
+        tokio::time::timeout(Duration::from_secs(10), body.frame())
+            .await
+            .expect("the stream neither sent nor ended")
+    };
+    // Open: planning the graph reaches the member as events.
+    app.node(&owner, &gid, json!({"title": "Step"})).await;
+    let plan = format!("/graphs/{gid}/plan");
+    let (status, _) = call(&app, Method::POST, &plan, &owner, Some(json!({}))).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let mut seen = String::new();
+    while !seen.contains("event: plan.ready") {
+        let frame = next().await.expect("the stream is open").unwrap();
+        if let Ok(data) = frame.into_data() {
+            seen.push_str(&String::from_utf8_lossy(&data));
+        }
+    }
+
+    // Suspended: the next event of the graph ends the stream instead of being sent.
+    let suspend = json!({"suspended": true});
+    let account = format!("/admin/users/{member_id}");
+    let (status, _) = call(&app, Method::PATCH, &account, &root, Some(suspend)).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = call(&app, Method::POST, &plan, &owner, Some(json!({}))).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let mut rest = String::new();
+    while let Some(frame) = next().await {
+        if let Ok(data) = frame.unwrap().into_data() {
+            rest.push_str(&String::from_utf8_lossy(&data));
+        }
+    }
+    assert!(
+        !rest.contains("event: plan."),
+        "nothing of the second plan reached the account: {rest}"
+    );
+    // And no new stream can be opened.
+    let ask = json!({"graph_id": gid});
+    let (status, _) = call(&app, Method::POST, "/realtime/tickets", &member, Some(ask)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+/// A workspace keeps an owner who can sign in: a suspended owner does not
+/// count as one, and can itself be removed while another owner remains.
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn an_owner_who_cannot_sign_in_does_not_count(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let (root, _) = platform_admin(&app, "root@example.com").await;
+    let (owner, owner_id) = user(&app, "owner@example.com").await;
+    let (_, second_id) = user(&app, "second@example.com").await;
+    let (wid, _) = workspace_of(&app, &owner).await;
+    let members = format!("/workspaces/{wid}/members");
+    let invite = json!({"email": "second@example.com", "role": "owner"});
+    let (status, _) = call(&app, Method::POST, &members, &owner, Some(invite)).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let suspend = json!({"suspended": true});
+    let account = format!("/admin/users/{second_id}");
+    let (status, _) = call(&app, Method::PATCH, &account, &root, Some(suspend)).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Two owners on paper, one who can sign in: that one stays an owner and stays in.
+    let me = format!("{members}/{owner_id}");
+    let demote = json!({"role": "admin"});
+    let (status, refused) = call(&app, Method::PATCH, &me, &owner, Some(demote.clone())).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert!(refused["detail"].as_str().unwrap().contains("can sign in"));
+    let (status, _) = call(&app, Method::DELETE, &me, &owner, None).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    // The suspended owner can be demoted or removed: the other one remains.
+    let them = format!("{members}/{second_id}");
+    let (status, _) = call(&app, Method::PATCH, &them, &owner, Some(demote)).await;
+    assert_eq!(status, StatusCode::OK);
+    let promote = json!({"role": "owner"});
+    let (status, _) = call(&app, Method::PATCH, &them, &owner, Some(promote)).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = call(&app, Method::DELETE, &them, &owner, None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+}

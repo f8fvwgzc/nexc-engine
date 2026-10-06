@@ -365,7 +365,8 @@ pub async fn invite(
 }
 
 /// Changes a member's role. Only owners change owners, and a workspace
-/// always keeps at least one owner.
+/// always keeps at least one owner who can sign in: a suspended owner, or
+/// one who administers the platform, does not count.
 #[utoipa::path(patch, path = "/workspaces/{wid}/members/{uid}", tag = "workspaces", security(("bearer" = [])),
     params(("wid" = Uuid, Path, description = "Workspace id"), ("uid" = Uuid, Path, description = "User id")),
     request_body = UpdateMember,
@@ -379,7 +380,7 @@ pub async fn update_member(
 ) -> Result<Json<Vec<WorkspaceMember>>, AppError> {
     let workspace = member_of(&state, auth, wid).await?;
     let mut tx = state.db.begin().await?;
-    let owners = repo::workspaces::lock_owner_count(&mut *tx, wid).await?;
+    let owners = repo::workspaces::lock_owners(&mut *tx, wid).await?;
     let current = repo::workspaces::role_of(&mut *tx, wid, uid)
         .await
         .or_not_found("member")?;
@@ -389,9 +390,12 @@ pub async fn update_member(
             workspace.role, req.role
         )));
     }
-    if current == WorkspaceRole::Owner && req.role != WorkspaceRole::Owner && owners <= 1 {
+    if current == WorkspaceRole::Owner
+        && req.role != WorkspaceRole::Owner
+        && !owners.iter().any(|owner| *owner != uid)
+    {
         return Err(AppError::Conflict(
-            "a workspace needs at least one owner".into(),
+            "a workspace needs at least one owner who can sign in".into(),
         ));
     }
     repo::workspaces::set_role(&mut *tx, wid, uid, req.role).await?;
@@ -424,7 +428,7 @@ pub async fn remove_member(
 ) -> Result<StatusCode, AppError> {
     let workspace = member_of(&state, auth, wid).await?;
     let mut tx = state.db.begin().await?;
-    let owners = repo::workspaces::lock_owner_count(&mut *tx, wid).await?;
+    let owners = repo::workspaces::lock_owners(&mut *tx, wid).await?;
     let target = repo::workspaces::role_of(&mut *tx, wid, uid)
         .await
         .or_not_found("member")?;
@@ -434,9 +438,9 @@ pub async fn remove_member(
             workspace.role
         )));
     }
-    if target == WorkspaceRole::Owner && owners <= 1 {
+    if target == WorkspaceRole::Owner && !owners.iter().any(|owner| *owner != uid) {
         return Err(AppError::Conflict(
-            "a workspace needs at least one owner".into(),
+            "a workspace needs at least one owner who can sign in".into(),
         ));
     }
     repo::workspaces::remove_member(&mut tx, wid, uid).await?;

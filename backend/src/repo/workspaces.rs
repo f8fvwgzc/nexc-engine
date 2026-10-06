@@ -207,19 +207,22 @@ pub async fn remove_member(
     Ok(())
 }
 
-/// Number of owners of a workspace. Locks the member rows so that two
+/// The owners of a workspace who can sign in to it: not suspended, and not
+/// administering the platform. Locks their member rows so that two
 /// concurrent demotions cannot both see "another owner remains".
-pub async fn lock_owner_count(
+pub async fn lock_owners(
     db: impl PgExecutor<'_>,
     workspace_id: Uuid,
-) -> Result<usize, sqlx::Error> {
-    let owners: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT user_id FROM workspace_members WHERE workspace_id = $1 AND role = 'owner' FOR UPDATE",
+) -> Result<Vec<Uuid>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT m.user_id FROM workspace_members m JOIN users u ON u.id = m.user_id
+         WHERE m.workspace_id = $1 AND m.role = 'owner'
+           AND u.suspended_at IS NULL AND u.role <> 'admin'
+         FOR UPDATE OF m",
     )
     .bind(workspace_id)
     .fetch_all(db)
-    .await?;
-    Ok(owners.len())
+    .await
 }
 
 /// Members of a workspace: owners first, then by name.

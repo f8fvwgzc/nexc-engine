@@ -24,14 +24,18 @@ fn heartbeat(id: u64) -> Event {
         .data(data)
 }
 
-/// Streams the graph's events: `retry` and a heartbeat first, then every
-/// published event with a monotonically increasing id, and a heartbeat
-/// every 15 seconds.
+/// Streams the graph's events to `user_id`: `retry` and a heartbeat first,
+/// then every published event with a monotonically increasing id, and a
+/// heartbeat every 15 seconds. The stream ends when the account's sessions
+/// are ended (suspension, platform role change): at the next event or
+/// heartbeat, whichever comes first.
 pub fn stream(
     state: AppState,
     graph_id: Uuid,
+    user_id: Uuid,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let mut rx = state.hub.subscribe_sse(graph_id);
+    let admitted_at = state.sessions.floor(user_id);
     let events = stream! {
         yield Ok(Event::default().retry(RETRY));
         yield Ok(heartbeat(state.hub.next_id(graph_id)));
@@ -49,6 +53,9 @@ pub fn stream(
                     Err(RecvError::Closed) => break,
                 },
             };
+            if state.sessions.floor(user_id) > admitted_at {
+                break;
+            }
             yield Ok(event);
         }
     };

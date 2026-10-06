@@ -54,7 +54,8 @@ the platform console and is refused on everything else: handlers take either `Au
 `PlatformAdmin` (`http/extract.rs`), and only the session endpoints take both. Each access token
 carries the account's session epoch; suspending an account or changing its platform role raises
 the epoch (`security/gate.rs`), so the tokens already issued stop working at once on this server
-and within ten seconds on the others.
+and within ten seconds on the others. Event streams and collaboration sockets note the epoch when
+they open and close once it has risen.
 
 ## Flow 1: plan refinement
 

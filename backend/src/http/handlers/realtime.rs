@@ -97,8 +97,8 @@ pub async fn events(
     Path(gid): Path<Uuid>,
     Query(q): Query<TicketQuery>,
 ) -> Result<Response, AppError> {
-    redeem(&state, gid, &q.ticket).await?;
-    Ok(sse::stream(state, gid).into_response())
+    let grant = redeem(&state, gid, &q.ticket).await?;
+    Ok(sse::stream(state, gid, grant.user_id).into_response())
 }
 
 /// Collaborative WebSocket of a graph (contract §7). The `Origin` header,
