@@ -140,6 +140,22 @@ interface Team { id: string; workspace_id: string; name: string; key: string /* 
   member_count: number; created_at: string }
 interface TeamMember { user_id: string; name: string; email: string; role: TeamRole; joined_at: string }
 
+// Issues (Linear's model). A team owns its workflow: states are rows with a name, a colour and a
+// category; only the category is a fixed vocabulary. An issue's identifier is the team key and a
+// number that counts up per team.
+type StateCategory = "backlog" | "unstarted" | "started" | "completed" | "canceled";
+interface IssueState { id: string; team_id: string; name: string; category: StateCategory; color: string; position: number }
+interface Issue { id: string; workspace_id: string; team_id: string; identifier: string /* "ENG-12" */;
+  number: number; title: string; description: string; state: IssueState;
+  priority: 0 | 1 | 2 | 3 | 4 /* none, urgent, high, medium, low */;
+  assignee: { user_id: string; name: string } | null; agent_id: string | null; project_id: string | null;
+  graph_id: string | null /* the graph that plans and executes the issue */; creator_id: string | null;
+  created_at: string; updated_at: string; completed_at: string | null /* follows the state's category */ }
+type ProjectStatus = "planned" | "started" | "paused" | "completed" | "canceled";
+interface Project { id: string; workspace_id: string; name: string; description: string; status: ProjectStatus;
+  lead_id: string | null; target_date: string | null; issue_count: number; closed_count: number /* of the
+  issues the caller can see */; created_at: string }
+
 // Token usage. Every LLM call that spent tokens is recorded with who caused it and whose account paid.
 interface UsageTotals { calls: number; tokens_in: number; tokens_out: number; cost_usd: number;
   context_chars_saved: number /* upstream characters left out of prompts */ }
@@ -203,6 +219,14 @@ Public: `GET /healthz`, `GET /readyz`, `POST /auth/register`, `POST /auth/login`
 | PATCH/DELETE `/agents/{id}` | any subset of the agent fields | `Agent` / 204 (member+ of the agent's workspace; others 404) |
 | GET `/memories?workspace_id=&graph_id=&q=&limit=` | — | `Memory[]`: what the workspace's graphs learned, limited to graphs the caller can open, plus the caller's own notes; with `q` a hybrid search with `score`. `graph_id` narrows to one graph |
 | DELETE `/memories/{id}` | — | 204 for the author or anyone who can work on the memory's graph |
+| GET `/workspaces/{wid}/issues?team_id=&assignee_id=&project_id=&open=&q=&limit=` | — | `Issue[]` in teams the caller can see, most recently updated first |
+| POST `/workspaces/{wid}/teams/{tid}/issues` | `{title, description?, state_id?, priority?, assignee_id?, agent_id?, project_id?}` | 201 `Issue`. Team members, and workspace members (not guests) for a team they can see |
+| GET/PATCH/DELETE `/issues/{iid}` | PATCH any subset; `assignee_id`, `agent_id`, `project_id` accept `null` | `Issue` / 204 |
+| POST `/issues/{iid}/graph` | — | `Issue` with `graph_id`: creates a graph of the issue's team whose goal is the issue (team members only, 403 otherwise); idempotent |
+| GET/POST `/workspaces/{wid}/teams/{tid}/states` | POST `{name, category, color, position?}` (team owner or workspace admin) | `IssueState[]` / 201 `IssueState`; 409 name taken |
+| PATCH/DELETE `/workspaces/{wid}/teams/{tid}/states/{sid}` | PATCH any subset | `IssueState` / 204; 409 while issues are in the state or it is the last one |
+| GET/POST `/workspaces/{wid}/projects` | POST `{name, description?, target_date?}` (member+) | `Project[]` / 201 `Project` |
+| PATCH/DELETE `/workspaces/{wid}/projects/{pid}` | PATCH `{name?, description?, status?, lead_id?, target_date?}` (member+) | `Project` / 204 (admin+; issues stay) |
 | GET `/workspaces/{wid}/usage?days=` | — (`days` 1–365, default 30) | `UsageReport`: admins get the whole workspace, other members only their own calls |
 | GET `/workspaces/{wid}/invites`, DELETE `/workspaces/{wid}/invites/{iid}` | — | `WorkspaceInvite[]` / 204 (admin+) |
 | GET/POST `/workspaces/{wid}/teams` | POST `{name, key?, description?, private?}` (member+) | `Team[]` visible to the caller / 201 `Team`; 409 if the key is taken |

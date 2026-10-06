@@ -8,6 +8,7 @@ pub mod agent;
 pub mod context;
 pub mod error;
 pub mod graph;
+pub mod issue;
 pub mod memory;
 pub mod ontology;
 pub mod plan;

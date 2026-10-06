@@ -440,6 +440,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/issues/{iid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One issue. */
+        get: operations["get"];
+        put?: never;
+        post?: never;
+        /** Deletes an issue (a graph created for it stays). */
+        delete: operations["delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Updates an issue. Moving it to a completed or canceled state stamps
+         *     `completed_at`; moving it back clears it.
+         */
+        patch: operations["update"];
+        trace?: never;
+    };
+    "/api/v1/issues/{iid}/graph": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Gives the issue a graph that plans and executes it: a graph of the issue's
+         *     team whose goal is the issue's title and description. Calling it again
+         *     returns the issue with the graph it already has.
+         */
+        post: operations["create_graph"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/memories": {
         parameters: {
             query?: never;
@@ -739,6 +782,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{wid}/issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Issues of a workspace in the teams the caller can see, most recently
+         *     updated first.
+         */
+        get: operations["list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{wid}/llm": {
         parameters: {
             query?: never;
@@ -803,6 +866,42 @@ export interface paths {
         patch: operations["update_member"];
         trace?: never;
     };
+    "/api/v1/workspaces/{wid}/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Projects of a workspace, with how many of their issues the caller can see. */
+        get: operations["projects"];
+        put?: never;
+        /** Creates a project led by the caller (members and above). */
+        post: operations["create_project"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/projects/{pid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Deletes a project (workspace admins); its issues stay, without a project. */
+        delete: operations["delete_project"];
+        options?: never;
+        head?: never;
+        /** Updates a project (members and above). */
+        patch: operations["update_project"];
+        trace?: never;
+    };
     "/api/v1/workspaces/{wid}/teams": {
         parameters: {
             query?: never;
@@ -838,6 +937,23 @@ export interface paths {
         head?: never;
         /** Updates a team (team owners and workspace admins). */
         patch: operations["update"];
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/teams/{tid}/issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Files an issue with a team. It gets the team's next number. */
+        post: operations["create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/workspaces/{wid}/teams/{tid}/members": {
@@ -877,6 +993,42 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/teams/{tid}/states": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The workflow of a team, in order. */
+        get: operations["states"];
+        put?: never;
+        /** Adds a state to a team's workflow (team owners and workspace admins). */
+        post: operations["create_state"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/teams/{tid}/states/{sid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Removes a state no issue is in. A workflow keeps at least one state. */
+        delete: operations["delete_state"];
+        options?: never;
+        head?: never;
+        /** Renames, recolours, reorders or recategorises a state. */
+        patch: operations["update_state"];
         trace?: never;
     };
     "/api/v1/workspaces/{wid}/usage": {
@@ -1047,6 +1199,27 @@ export interface components {
              */
             workspace_id?: string | null;
         };
+        /** @description `POST /workspaces/{wid}/teams/{tid}/issues` body. */
+        CreateIssue: {
+            /** Format: uuid */
+            agent_id?: string | null;
+            /** Format: uuid */
+            assignee_id?: string | null;
+            description?: string;
+            /**
+             * Format: int32
+             * @description `0` none (default), `1` urgent, `2` high, `3` medium, `4` low.
+             */
+            priority?: number | null;
+            /** Format: uuid */
+            project_id?: string | null;
+            /**
+             * Format: uuid
+             * @description A state of the team's workflow (default: its first "unstarted" state).
+             */
+            state_id?: string | null;
+            title: string;
+        };
         /** @description `POST /graphs/{gid}/nodes` body. */
         CreateNode: {
             agent_role?: string | null;
@@ -1065,6 +1238,13 @@ export interface components {
         CreatePlan: {
             instructions?: string;
         };
+        /** @description `POST /workspaces/{wid}/projects` body. */
+        CreateProject: {
+            description?: string;
+            name: string;
+            /** Format: date */
+            target_date?: string | null;
+        };
         /** @description `POST /graphs/{gid}/runs` body. */
         CreateRun: {
             /** @description Ignore the result cache. */
@@ -1076,6 +1256,18 @@ export interface components {
             max_concurrency?: number | null;
             /** @description Run only these nodes (default: all). */
             node_ids?: string[] | null;
+        };
+        /** @description `POST .../states` body. */
+        CreateState: {
+            category: components["schemas"]["StateCategory"];
+            /** @description `#rrggbb`. */
+            color: string;
+            name: string;
+            /**
+             * Format: int32
+             * @description Order within the workflow (default: after the existing states).
+             */
+            position?: number | null;
         };
         /** @description `POST /workspaces/{wid}/teams` body. */
         CreateTeam: {
@@ -1270,6 +1462,70 @@ export interface components {
         InviteResult: {
             invite: components["schemas"]["WorkspaceInvite"] | null;
             member: components["schemas"]["WorkspaceMember"] | null;
+        };
+        /** @description An issue. */
+        Issue: {
+            /**
+             * Format: uuid
+             * @description The agent the issue is delegated to.
+             */
+            agent_id: string | null;
+            assignee: components["schemas"]["IssuePerson"] | null;
+            /** Format: date-time */
+            completed_at: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            creator_id: string | null;
+            description: string;
+            /**
+             * Format: uuid
+             * @description The graph that plans and executes the issue, if one was created.
+             */
+            graph_id: string | null;
+            /** Format: uuid */
+            id: string;
+            /** @description The team key and the issue number, e.g. `ENG-12`. */
+            identifier: string;
+            /** Format: int32 */
+            number: number;
+            /**
+             * Format: int32
+             * @description `0` none, `1` urgent, `2` high, `3` medium, `4` low.
+             */
+            priority: number;
+            /** Format: uuid */
+            project_id: string | null;
+            state: components["schemas"]["IssueState"];
+            /** Format: uuid */
+            team_id: string;
+            title: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: uuid */
+            workspace_id: string;
+        };
+        /** @description Someone an issue refers to. */
+        IssuePerson: {
+            name: string;
+            /** Format: uuid */
+            user_id: string;
+        };
+        /** @description One state of a team's workflow. */
+        IssueState: {
+            category: components["schemas"]["StateCategory"];
+            /** @description `#rrggbb`. */
+            color: string;
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /**
+             * Format: int32
+             * @description Order within the workflow, lowest first.
+             */
+            position: number;
+            /** Format: uuid */
+            team_id: string;
         };
         /**
          * @description Where the effective API key comes from.
@@ -1484,6 +1740,37 @@ export interface components {
             /** @description Always `about:blank`. */
             type: string;
         };
+        /** @description A project: a body of work that issues of any team can belong to. */
+        Project: {
+            /**
+             * Format: int64
+             * @description Of those, the ones in a completed or canceled state.
+             */
+            closed_count: number;
+            /** Format: date-time */
+            created_at: string;
+            description: string;
+            /** Format: uuid */
+            id: string;
+            /**
+             * Format: int64
+             * @description Issues of the project the caller can see.
+             */
+            issue_count: number;
+            /** Format: uuid */
+            lead_id: string | null;
+            name: string;
+            status: components["schemas"]["ProjectStatus"];
+            /** Format: date */
+            target_date: string | null;
+            /** Format: uuid */
+            workspace_id: string;
+        };
+        /**
+         * @description Where a project stands.
+         * @enum {string}
+         */
+        ProjectStatus: "planned" | "started" | "paused" | "completed" | "canceled";
         /** @description A typed relation between two proposed nodes (by `ref`). */
         ProposedEdge: {
             /** @description Key of a relation type; empty means the ontology's dependency relation. */
@@ -1612,6 +1899,12 @@ export interface components {
         } | {
             run: components["schemas"]["Run"];
         };
+        /**
+         * @description What a workflow state means, whatever a team calls it. Reports and
+         *     "is this done?" questions use the category, never the name.
+         * @enum {string}
+         */
+        StateCategory: "backlog" | "unstarted" | "started" | "completed" | "canceled";
         /** @description A team as seen by the caller. */
         Team: {
             /** Format: date-time */
@@ -1683,6 +1976,24 @@ export interface components {
             name?: string | null;
         };
         /**
+         * @description `PATCH /issues/{iid}` body: any subset. `assignee_id`, `agent_id` and
+         *     `project_id` accept `null` to clear them.
+         */
+        UpdateIssue: {
+            /** Format: uuid */
+            agent_id?: string | null;
+            /** Format: uuid */
+            assignee_id?: string | null;
+            description?: string | null;
+            /** Format: int32 */
+            priority?: number | null;
+            /** Format: uuid */
+            project_id?: string | null;
+            /** Format: uuid */
+            state_id?: string | null;
+            title?: string | null;
+        };
+        /**
          * @description `PUT /settings/llm` body. `api_key`: omitted keeps the stored key,
          *     `""` deletes it, any other value replaces it.
          */
@@ -1714,6 +2025,27 @@ export interface components {
             x?: number | null;
             /** Format: double */
             y?: number | null;
+        };
+        /**
+         * @description `PATCH /workspaces/{wid}/projects/{pid}` body (any subset; `lead_id` and
+         *     `target_date` accept `null`).
+         */
+        UpdateProject: {
+            description?: string | null;
+            /** Format: uuid */
+            lead_id?: string | null;
+            name?: string | null;
+            status?: components["schemas"]["ProjectStatus"] | null;
+            /** Format: date */
+            target_date?: string | null;
+        };
+        /** @description `PATCH .../states/{sid}` body (any subset). */
+        UpdateState: {
+            category?: components["schemas"]["StateCategory"] | null;
+            color?: string | null;
+            name?: string | null;
+            /** Format: int32 */
+            position?: number | null;
         };
         /** @description `PATCH /workspaces/{wid}/teams/{tid}` body (any subset). */
         UpdateTeam: {
@@ -3172,6 +3504,162 @@ export interface operations {
             };
         };
     };
+    get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Issue id */
+                iid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Issue"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Issue id */
+                iid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Issue id */
+                iid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateIssue"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Issue"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    create_graph: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Issue id */
+                iid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Issue"];
+                };
+            };
+            /** @description Only team members run its issues */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     list: {
         parameters: {
             query?: {
@@ -3864,6 +4352,46 @@ export interface operations {
             };
         };
     };
+    list: {
+        parameters: {
+            query?: {
+                team_id?: string | null;
+                assignee_id?: string | null;
+                project_id?: string | null;
+                /** @description `true` leaves out completed and canceled issues. */
+                open?: boolean | null;
+                /** @description Matches the title, or the start of the identifier (`ENG-1`). */
+                q?: string | null;
+                /** @description 1-500, default 200. */
+                limit?: number | null;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Issue"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     get_workspace_llm: {
         parameters: {
             query?: never;
@@ -4172,6 +4700,169 @@ export interface operations {
             };
         };
     };
+    projects: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    create_project: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateProject"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    delete_project: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Project id */
+                pid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    update_project: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Project id */
+                pid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateProject"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     list: {
         parameters: {
             query?: never;
@@ -4385,6 +5076,58 @@ export interface operations {
             };
         };
     };
+    create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Team id */
+                tid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateIssue"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Issue"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     members: {
         parameters: {
             query?: never;
@@ -4504,6 +5247,204 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    states: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Team id */
+                tid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueState"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    create_state: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Team id */
+                tid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateState"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueState"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Name taken */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    delete_state: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Team id */
+                tid: string;
+                /** @description State id */
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Issues are in this state, or it is the last one */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    update_state: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Team id */
+                tid: string;
+                /** @description State id */
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateState"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueState"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Name taken */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

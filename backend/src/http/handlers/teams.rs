@@ -29,7 +29,7 @@ fn access(workspace: &Workspace, team: &Team) -> TeamAccess {
 
 /// Loads a team the caller can see, with their standing towards it. A team
 /// that is hidden from them is a 404, like one that does not exist.
-async fn visible_team(
+pub async fn visible_team(
     state: &AppState,
     auth: AuthUser,
     wid: Uuid,
@@ -167,6 +167,7 @@ pub async fn create(
         _ => err.into(),
     })?;
     repo::teams::upsert_member(&mut *tx, id, auth.id, TeamRole::Owner).await?;
+    repo::issues::seed_states(&mut tx, id).await?;
     tx.commit().await?;
     let team = repo::teams::find(&state.db, auth.id, wid, id)
         .await

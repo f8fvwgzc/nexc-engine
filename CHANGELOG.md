@@ -28,6 +28,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   provider at request time (Anthropic and OpenAI-compatible endpoints).
 - Members and Teams pages, and a settings page split into "Your AI account" and "Workspace
   credential".
+- Issues and projects: every team has a workflow whose states are data (starter: Backlog, Todo,
+  In Progress, In Review, Done, Canceled), issues are numbered per team (`ENG-12`) with
+  priority, assignee and project, and `POST /issues/{iid}/graph` turns an issue into a graph
+  that plans and executes it. Issues and Projects pages.
 - Upstream context is fitted to the node instead of cut after a fixed length: padding is removed
   and, when an upstream output is still too long, the passages most relevant to the node's task
   are kept. The characters left out are recorded per call and shown on the Usage page.

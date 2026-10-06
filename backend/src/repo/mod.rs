@@ -39,10 +39,32 @@ macro_rules! graph_access {
     };
 }
 
+/// SQL predicate: user `$u`, whose workspace membership row is aliased
+/// `$wm`, may see the team row aliased `$t`. The SQL form of
+/// `domain::workspace::TeamAccess::can_view`.
+macro_rules! team_visible {
+    ($t:literal, $wm:literal, $u:literal) => {
+        concat!(
+            "(",
+            $wm,
+            ".role IN ('owner', 'admin') OR (NOT ",
+            $t,
+            ".private AND ",
+            $wm,
+            ".role <> 'guest') OR EXISTS (SELECT 1 FROM team_members tv WHERE tv.team_id = ",
+            $t,
+            ".id AND tv.user_id = ",
+            $u,
+            "))"
+        )
+    };
+}
+
 pub mod agents;
 pub mod artifacts;
 pub mod edges;
 pub mod graphs;
+pub mod issues;
 pub mod memories;
 pub mod nodes;
 pub mod outbox;

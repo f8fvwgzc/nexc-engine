@@ -36,6 +36,7 @@ use handlers::*;
         (name = "settings", description = "Per-user LLM settings"),
         (name = "workspaces", description = "Organisations, their members and invitations"),
         (name = "teams", description = "Teams of a workspace"),
+        (name = "issues", description = "Issues, workflow states and projects"),
         (name = "graphs", description = "Graphs, dependency detection and analysis"),
         (name = "nodes"), (name = "edges"),
         (name = "plans", description = "LLM planning"),
@@ -98,6 +99,14 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(teams::get, teams::update, teams::delete))
         .routes(routes!(teams::members))
         .routes(routes!(teams::set_member, teams::remove_member))
+        .routes(routes!(issues::list))
+        .routes(routes!(issues::create))
+        .routes(routes!(issues::get, issues::update, issues::delete))
+        .routes(routes!(issues::create_graph))
+        .routes(routes!(issues::states, issues::create_state))
+        .routes(routes!(issues::update_state, issues::delete_state))
+        .routes(routes!(issues::projects, issues::create_project))
+        .routes(routes!(issues::update_project, issues::delete_project))
         .routes(routes!(graphs::list, graphs::create))
         .routes(routes!(graphs::get, graphs::update, graphs::delete))
         .routes(routes!(graphs::replace_ontology))
@@ -169,7 +178,9 @@ mod tests {
     /// accepts and emits; generated client types depend on it.
     #[test]
     fn spec_enum_values_match_the_wire_format() {
-        use crate::domain::{agent, graph, memory, plan, run, settings, usage, user, workspace};
+        use crate::domain::{
+            agent, graph, issue, memory, plan, run, settings, usage, user, workspace,
+        };
         use serde_json::Value;
 
         fn check<T: serde::de::DeserializeOwned + serde::Serialize>(values: &[Value]) {
@@ -203,6 +214,8 @@ mod tests {
                 "KeySource" => check::<settings::KeySource>(values),
                 "ConfigScope" => check::<settings::ConfigScope>(values),
                 "UsagePurpose" => check::<usage::UsagePurpose>(values),
+                "StateCategory" => check::<issue::StateCategory>(values),
+                "ProjectStatus" => check::<issue::ProjectStatus>(values),
                 "UsageScope" => check::<usage::UsageScope>(values),
                 "AgentStatus" => check::<agent::AgentStatus>(values),
                 "AgentRuntime" => check::<agent::AgentRuntime>(values),
@@ -210,6 +223,6 @@ mod tests {
             }
             checked += 1;
         }
-        assert_eq!(checked, 17, "every string enum schema is covered");
+        assert_eq!(checked, 19, "every string enum schema is covered");
     }
 }

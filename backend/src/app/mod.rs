@@ -67,6 +67,11 @@ pub async fn seed_missing_workspaces(state: &AppState) -> anyhow::Result<()> {
     if adopted > 0 {
         tracing::info!(adopted, "graphs assigned to their creators' workspaces");
     }
+    for team in repo::issues::teams_without_states(&state.db).await? {
+        let mut tx = state.db.begin().await?;
+        repo::issues::seed_states(&mut tx, team).await?;
+        tx.commit().await?;
+    }
     let adopted = repo::memories::adopt_orphans(&state.db).await?;
     if adopted > 0 {
         tracing::info!(adopted, "memories assigned to workspaces");

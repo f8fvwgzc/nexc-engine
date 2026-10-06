@@ -1,0 +1,495 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { CircleDotIcon, NetworkIcon, PlusIcon, Trash2Icon, WorkflowIcon } from 'lucide-react';
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+
+import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
+import { EmptyState } from '@/components/custom-ui/empty-state';
+import { OptionSelect } from '@/components/custom-ui/option-select';
+import { PageHeader } from '@/components/custom-ui/page-header';
+import { PageSkeleton } from '@/components/layout/page-skeleton';
+import { Seo } from '@/components/seo/seo';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  createIssue,
+  createIssueGraph,
+  deleteIssue,
+  issuesQuery,
+  projectsQuery,
+  statesQuery,
+  updateIssue,
+} from '@/features/issues/api';
+import { membersQuery, teamsQuery } from '@/features/workspaces/api';
+import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
+import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import { errorMessage } from '@/lib/api/errors';
+import { formatRelative } from '@/lib/format';
+import { qk } from '@/lib/query-keys';
+import { PRIORITY_LABEL, type Issue, type IssueInput, type StateCategory } from '@/schemas/issue';
+import type { Team, Workspace } from '@/schemas/workspace';
+
+const ALL = '__all__';
+const NONE = '__none__';
+
+/** Order in which groups of states are listed: what is being worked on first. */
+const CATEGORY_ORDER: StateCategory[] = [
+  'started',
+  'unstarted',
+  'backlog',
+  'completed',
+  'canceled',
+];
+
+const PRIORITY_OPTIONS = PRIORITY_LABEL.map((label, value) => ({ value: String(value), label }));
+
+function StateDot({ color }: { color: string }) {
+  return (
+    <span
+      aria-hidden
+      className="inline-block size-2.5 shrink-0 rounded-full"
+      style={{ backgroundColor: color }}
+    />
+  );
+}
+
+function useIssueRefresh() {
+  const queryClient = useQueryClient();
+  return () => queryClient.invalidateQueries({ queryKey: qk.issues.all });
+}
+
+function NewIssueDialog({
+  workspace,
+  teams,
+  defaultTeam,
+  open,
+  onClose,
+}: {
+  workspace: Workspace;
+  teams: Team[];
+  defaultTeam: string | undefined;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const refresh = useIssueRefresh();
+  const [teamId, setTeamId] = useState(defaultTeam ?? teams[0]?.id ?? '');
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [priority, setPriority] = useState('0');
+  const create = useMutation({
+    mutationFn: () =>
+      createIssue(workspace.id, teamId, {
+        title: title.trim(),
+        description,
+        priority: Number(priority),
+      }),
+    meta: { errorToast: false, successMessage: 'Issue created' },
+    onSuccess: () => {
+      void refresh();
+      setTitle('');
+      setDescription('');
+      setPriority('0');
+      onClose();
+    },
+  });
+  return (
+    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <form
+          className="space-y-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (title.trim() && teamId) create.mutate();
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>New issue</DialogTitle>
+            <DialogDescription>
+              It gets the team’s next number and starts in the team’s first open state.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-2">
+            <OptionSelect
+              value={teamId}
+              onValueChange={setTeamId}
+              options={teams.map((t) => ({ value: t.id, label: `${t.key} · ${t.name}` }))}
+              aria-label="Team"
+            />
+            <OptionSelect
+              value={priority}
+              onValueChange={setPriority}
+              options={PRIORITY_OPTIONS}
+              aria-label="Priority"
+            />
+          </div>
+          <Input
+            autoFocus
+            value={title}
+            maxLength={200}
+            placeholder="Issue title"
+            aria-label="Title"
+            onChange={(e) => setTitle(e.target.value)}
+          />
+          <Textarea
+            value={description}
+            rows={5}
+            placeholder="What needs to happen, and why (optional). This becomes the goal when the issue is planned as a graph."
+            aria-label="Description"
+            onChange={(e) => setDescription(e.target.value)}
+          />
+          {create.error && (
+            <p role="alert" className="text-sm text-destructive">
+              {errorMessage(create.error)}
+            </p>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!title.trim() || !teamId || create.isPending}>
+              Create issue
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Everything about one issue, editable in place. */
+function IssueDialog({
+  workspace,
+  issue,
+  onClose,
+}: {
+  workspace: Workspace;
+  issue: Issue;
+  onClose: () => void;
+}) {
+  const refresh = useIssueRefresh();
+  const navigate = useNavigate();
+  const [title, setTitle] = useState(issue.title);
+  const [description, setDescription] = useState(issue.description);
+  const [confirming, setConfirming] = useState(false);
+  const { data: states = [] } = useQuery(statesQuery(workspace.id, issue.team_id));
+  const { data: projects = [] } = useQuery(projectsQuery(workspace.id));
+  // Guests cannot list the workspace's members; they keep whoever is assigned.
+  const { data: members = [] } = useQuery({
+    ...membersQuery(workspace.id),
+    enabled: workspace.role !== 'guest',
+  });
+  const save = useMutation({
+    mutationFn: (body: Partial<IssueInput>) => updateIssue(issue.id, body),
+    onSuccess: refresh,
+  });
+  const plan = useMutation({
+    mutationFn: () => createIssueGraph(issue.id),
+    meta: { successMessage: 'Graph created for this issue' },
+    onSuccess: (linked) => {
+      void refresh();
+      if (linked.graph_id) void navigate(`/app/graphs/${linked.graph_id}`);
+    },
+  });
+  const remove = useMutation({
+    mutationFn: () => deleteIssue(issue.id),
+    meta: { successMessage: 'Issue deleted' },
+    onSuccess: () => {
+      void refresh();
+      onClose();
+    },
+  });
+  const textDirty = title.trim() !== issue.title || description !== issue.description;
+
+  return (
+    <Dialog open onOpenChange={(next) => !next && onClose()}>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Badge variant="outline" className="font-mono">
+              {issue.identifier}
+            </Badge>
+            <span className="truncate">{issue.title}</span>
+          </DialogTitle>
+          <DialogDescription>
+            Updated {formatRelative(issue.updated_at)}
+            {issue.completed_at ? ` · closed ${formatRelative(issue.completed_at)}` : ''}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <Input
+            value={title}
+            maxLength={200}
+            aria-label="Title"
+            onChange={(e) => setTitle(e.target.value)}
+          />
+          <Textarea
+            value={description}
+            rows={6}
+            aria-label="Description"
+            placeholder="Describe the work. This is the goal of the issue’s graph."
+            onChange={(e) => setDescription(e.target.value)}
+          />
+          <div className="grid gap-2 sm:grid-cols-2">
+            <OptionSelect
+              value={issue.state.id}
+              onValueChange={(state_id) => save.mutate({ state_id })}
+              options={states.map((s) => ({
+                value: s.id,
+                label: (
+                  <span className="flex items-center gap-2">
+                    <StateDot color={s.color} />
+                    {s.name}
+                  </span>
+                ),
+              }))}
+              aria-label="State"
+            />
+            <OptionSelect
+              value={String(issue.priority)}
+              onValueChange={(p) => save.mutate({ priority: Number(p) })}
+              options={PRIORITY_OPTIONS}
+              aria-label="Priority"
+            />
+            <OptionSelect
+              value={issue.assignee?.user_id ?? NONE}
+              onValueChange={(id) => save.mutate({ assignee_id: id === NONE ? null : id })}
+              options={[
+                { value: NONE, label: 'Unassigned' },
+                ...(issue.assignee && !members.some((m) => m.user_id === issue.assignee?.user_id)
+                  ? [{ value: issue.assignee.user_id, label: issue.assignee.name }]
+                  : []),
+                ...members.map((m) => ({ value: m.user_id, label: m.name })),
+              ]}
+              aria-label="Assignee"
+            />
+            <OptionSelect
+              value={issue.project_id ?? NONE}
+              onValueChange={(id) => save.mutate({ project_id: id === NONE ? null : id })}
+              options={[
+                { value: NONE, label: 'No project' },
+                ...projects.map((p) => ({ value: p.id, label: p.name })),
+              ]}
+              aria-label="Project"
+            />
+          </div>
+          {(save.error ?? plan.error) && (
+            <p role="alert" className="text-sm text-destructive">
+              {errorMessage(save.error ?? plan.error)}
+            </p>
+          )}
+        </div>
+        <DialogFooter className="sm:justify-between">
+          <Button variant="ghost" className="text-destructive" onClick={() => setConfirming(true)}>
+            <Trash2Icon />
+            Delete
+          </Button>
+          <div className="flex flex-wrap gap-2">
+            {issue.graph_id ? (
+              <Button
+                variant="outline"
+                onClick={() => void navigate(`/app/graphs/${issue.graph_id}`)}
+              >
+                <NetworkIcon />
+                Open graph
+              </Button>
+            ) : (
+              <Button variant="outline" disabled={plan.isPending} onClick={() => plan.mutate()}>
+                <WorkflowIcon />
+                Plan as graph
+              </Button>
+            )}
+            <Button
+              disabled={!textDirty || !title.trim() || save.isPending}
+              onClick={() => save.mutate({ title: title.trim(), description })}
+            >
+              Save
+            </Button>
+          </div>
+        </DialogFooter>
+        <ConfirmDialog
+          open={confirming}
+          onOpenChange={setConfirming}
+          title={`Delete ${issue.identifier}?`}
+          description="The issue is removed. A graph created for it stays."
+          confirmLabel="Delete issue"
+          destructive
+          onConfirm={() => remove.mutate()}
+        />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function IssueRow({ issue, onOpen }: { issue: Issue; onOpen: () => void }) {
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm outline-none hover:bg-muted/50 focus-visible:bg-muted/50"
+      >
+        <StateDot color={issue.state.color} />
+        <span className="w-20 shrink-0 font-mono text-xs text-muted-foreground">
+          {issue.identifier}
+        </span>
+        <span className="min-w-0 flex-1 truncate">{issue.title}</span>
+        {issue.graph_id && (
+          <NetworkIcon
+            className="size-3.5 shrink-0 text-muted-foreground"
+            aria-label="Has a graph"
+          />
+        )}
+        {issue.priority > 0 && (
+          <Badge variant={issue.priority === 1 ? 'destructive' : 'secondary'}>
+            {PRIORITY_LABEL[issue.priority]}
+          </Badge>
+        )}
+        <span className="hidden w-28 shrink-0 truncate text-right text-xs text-muted-foreground sm:block">
+          {issue.assignee?.name ?? 'Unassigned'}
+        </span>
+      </button>
+    </li>
+  );
+}
+
+function Issues({ workspace }: { workspace: Workspace }) {
+  const [teamId, setTeamId] = useState(ALL);
+  const [openOnly, setOpenOnly] = useState(true);
+  const [q, setQ] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const debouncedQ = useDebouncedValue(q.trim(), 300);
+  const { data: teams = [] } = useQuery(teamsQuery(workspace.id));
+  const { data: issues, isPending } = useQuery(
+    issuesQuery(workspace.id, {
+      team_id: teamId === ALL ? undefined : teamId,
+      open: openOnly,
+      q: debouncedQ || undefined,
+    }),
+  );
+  const opened = issues?.find((i) => i.id === openId);
+
+  // One group per state name, ordered by what the state means and then by the workflow.
+  const groups = new Map<string, Issue[]>();
+  for (const issue of issues ?? []) {
+    const group = groups.get(issue.state.name) ?? [];
+    group.push(issue);
+    groups.set(issue.state.name, group);
+  }
+  const ordered = [...groups.values()].sort((a, b) => {
+    const [x, y] = [a[0]!.state, b[0]!.state];
+    return (
+      CATEGORY_ORDER.indexOf(x.category) - CATEGORY_ORDER.indexOf(y.category) ||
+      x.position - y.position
+    );
+  });
+
+  return (
+    <div className="mx-auto w-full max-w-5xl space-y-5 p-4 sm:p-6">
+      <PageHeader
+        title="Issues"
+        description={`Work tracked in ${workspace.name}. Open an issue to plan and run it as a graph.`}
+        actions={
+          <Button onClick={() => setCreating(true)} disabled={teams.length === 0}>
+            <PlusIcon />
+            New issue
+          </Button>
+        }
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <OptionSelect
+          value={teamId}
+          onValueChange={setTeamId}
+          options={[
+            { value: ALL, label: 'All teams' },
+            ...teams.map((t) => ({ value: t.id, label: `${t.key} · ${t.name}` })),
+          ]}
+          aria-label="Team"
+          className="w-52"
+        />
+        <Input
+          value={q}
+          placeholder="Search title or ENG-12…"
+          aria-label="Search issues"
+          onChange={(e) => setQ(e.target.value)}
+          className="w-56"
+        />
+        <label className="ml-auto flex items-center gap-2 text-sm text-muted-foreground">
+          <Switch checked={openOnly} onCheckedChange={setOpenOnly} />
+          Open only
+        </label>
+      </div>
+      {isPending ? (
+        <Skeleton className="h-64 rounded-xl" />
+      ) : teams.length === 0 ? (
+        <EmptyState
+          icon={CircleDotIcon}
+          title="Create a team first"
+          description="Issues belong to a team. Add one under Teams, then come back."
+        />
+      ) : ordered.length === 0 ? (
+        <EmptyState
+          icon={CircleDotIcon}
+          title="No issues here"
+          description="Nothing matches these filters yet."
+          action={<Button onClick={() => setCreating(true)}>Create an issue</Button>}
+        />
+      ) : (
+        <div className="space-y-4">
+          {ordered.map((group) => (
+            <section key={group[0]!.state.name} className="overflow-hidden rounded-xl border">
+              <h2 className="flex items-center gap-2 border-b bg-muted/40 px-3 py-2 text-sm font-medium">
+                <StateDot color={group[0]!.state.color} />
+                {group[0]!.state.name}
+                <span className="text-xs font-normal text-muted-foreground">{group.length}</span>
+              </h2>
+              <ul className="divide-y">
+                {group.map((issue) => (
+                  <IssueRow key={issue.id} issue={issue} onOpen={() => setOpenId(issue.id)} />
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
+      )}
+      <NewIssueDialog
+        key={`${creating}:${teamId}`}
+        workspace={workspace}
+        teams={teams}
+        defaultTeam={teamId === ALL ? undefined : teamId}
+        open={creating}
+        onClose={() => setCreating(false)}
+      />
+      {opened && (
+        <IssueDialog
+          key={opened.id}
+          workspace={workspace}
+          issue={opened}
+          onClose={() => setOpenId(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+export default function IssuesPage() {
+  const { current } = useCurrentWorkspace();
+  return (
+    <>
+      <Seo title="Issues" noIndex />
+      {current ? <Issues key={current.id} workspace={current} /> : <PageSkeleton />}
+    </>
+  );
+}

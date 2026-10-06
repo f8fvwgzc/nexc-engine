@@ -7,6 +7,7 @@ pub mod auth;
 pub mod edges;
 pub mod graphs;
 pub mod health;
+pub mod issues;
 pub mod memories;
 pub mod nodes;
 pub mod orchestrator;

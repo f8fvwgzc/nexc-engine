@@ -3,6 +3,8 @@ import {
   BotIcon,
   BrainIcon,
   ChartNoAxesColumnIcon,
+  CircleDotIcon,
+  FolderKanbanIcon,
   type LucideIcon,
   NetworkIcon,
   PlayIcon,
@@ -23,6 +25,8 @@ export interface NavItem {
 }
 
 export const NAV_ITEMS: NavItem[] = [
+  { title: 'Issues', to: '/app/issues', icon: CircleDotIcon },
+  { title: 'Projects', to: '/app/projects', icon: FolderKanbanIcon },
   { title: 'Graphs', to: '/app', icon: NetworkIcon, end: true },
   { title: 'Runs', to: '/app/runs', icon: PlayIcon },
   { title: 'Agents', to: '/app/agents', icon: BotIcon },

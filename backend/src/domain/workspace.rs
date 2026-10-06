@@ -134,6 +134,13 @@ impl TeamAccess {
         self.team_role.is_some()
     }
 
+    /// File and edit the team's issues: its members, plus everyone in the
+    /// workspace who can see the team and is more than a guest (as in Linear,
+    /// where anyone may file an issue with a public team).
+    pub fn can_file_issues(self) -> bool {
+        self.team_role.is_some() || (self.can_view() && self.workspace_role.is_member())
+    }
+
     /// Join without an invitation: public teams, workspace members only.
     pub fn can_join(self) -> bool {
         self.team_role.is_none() && !self.private && self.workspace_role.is_member()
@@ -311,6 +318,12 @@ mod tests {
         assert!(access(Admin, None, true).can_manage());
         assert!(!access(Admin, None, true).can_contribute());
         assert!(access(Member, Some(TeamRole::Owner), true).can_manage());
+        // Issues: anyone who sees the team and is more than a guest; guests only in their teams.
+        assert!(access(Member, None, false).can_file_issues());
+        assert!(!access(Member, None, true).can_file_issues());
+        assert!(access(Admin, None, true).can_file_issues());
+        assert!(!access(Guest, None, false).can_file_issues());
+        assert!(access(Guest, Some(TeamRole::Member), true).can_file_issues());
         assert!(!access(Member, Some(TeamRole::Member), false).can_manage());
     }
 
