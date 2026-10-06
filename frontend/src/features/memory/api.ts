@@ -15,10 +15,21 @@ export const memoriesQuery = (query: MemoryQuery) =>
           q: query.q,
           graph_id: query.graph_id,
           limit: query.limit,
+          offset: query.offset,
+          preview: query.preview,
         },
         signal,
       }),
     placeholderData: keepPreviousData,
+  });
+
+/** One memory in full. Read again every time it is opened, so the dialog never shows a stale copy. */
+export const memoryQuery = (memoryId: string) =>
+  queryOptions({
+    queryKey: qk.memories.one(memoryId),
+    queryFn: ({ signal }) => apiRequest(`/memories/${memoryId}`, memorySchema, { signal }),
+    staleTime: 0,
+    gcTime: 0,
   });
 
 export function deleteMemory(memoryId: string) {

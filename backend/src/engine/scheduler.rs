@@ -432,15 +432,14 @@ impl Execution {
             .filter(|e| e.blocking && selected.contains(&e.target) && !selected.contains(&e.source))
             .map(|e| e.source)
             .collect();
-        let mut outputs = HashMap::new();
-        for id in upstream {
-            if let Ok(Some(node)) = repo::nodes::find(&self.state.db, self.data.graph_id, id).await
-                && let Some(output) = node.output
-            {
-                outputs.insert(id, output);
-            }
-        }
-        outputs
+        // One read for all of them, not one per upstream node.
+        let ids: Vec<Uuid> = upstream.into_iter().collect();
+        repo::nodes::find_many(&self.state.db, self.data.graph_id, &ids)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|node| node.output.map(|output| (node.id, output)))
+            .collect()
     }
 }
 
@@ -697,15 +696,20 @@ impl NodeTask {
             _ => UPSTREAM_CHARS,
         };
         let mut context_saved = 0;
+        // The titles of all upstream nodes in one read, not one per node.
+        let upstream_ids: Vec<Uuid> = upstream.iter().map(|(id, _)| *id).collect();
+        let titles: HashMap<Uuid, String> =
+            repo::nodes::find_many(&state.db, data.graph_id, &upstream_ids)
+                .await?
+                .into_iter()
+                .map(|n| (n.id, n.title))
+                .collect();
         let mut upstream_outputs = Vec::with_capacity(upstream.len());
         for (id, output) in upstream {
             let fitted = context::fit(&output, &query, budget);
             context_saved += fitted.saved_chars() as i64;
             let output = data.policy.scrub(fitted.text);
-            let title = repo::nodes::find(&state.db, data.graph_id, id)
-                .await?
-                .map(|n| n.title)
-                .unwrap_or_default();
+            let title = titles.get(&id).cloned().unwrap_or_default();
             let edge = data
                 .edges
                 .iter()

@@ -566,7 +566,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * One memory in full, if the caller may read it: their own notes, and what
+         *     the graphs they can open learned.
+         */
+        get: operations["get"];
         put?: never;
         post?: never;
         /**
@@ -4338,6 +4342,13 @@ export interface operations {
                 q?: string | null;
                 /** @description 1–100, default 20. */
                 limit?: number | null;
+                /** @description How many results to skip, for paging (0–5000, default 0). */
+                offset?: number | null;
+                /**
+                 * @description Cut each `content` to this many characters (20–2000) and end it with `…`: a list
+                 *     shows previews and reads the whole memory with `GET /memories/{id}` when it is opened.
+                 */
+                preview?: number | null;
             };
             header?: never;
             path?: never;
@@ -4351,6 +4362,36 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Memory"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Memory id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Memory"];
                 };
             };
             404: {

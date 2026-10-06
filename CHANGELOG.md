@@ -105,6 +105,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   redirect there, and the app sidebar keeps a single Settings link.
 - The app sidebar uses the default layout and stays open on desktop; it no longer collapses to
   icons.
+- Memory moved into settings (`/app/settings/memory`) and shows ten memories a page as one-line
+  previews; opening one reads it in full (`GET /memories/{id}`, and `offset`/`preview` on the
+  list). An opened issue is likewise read again on its own instead of shown from the list.
+- A run reads the outputs and titles of a node's upstream nodes in one query each instead of one
+  per upstream node.
 - Linear-style interface pass: a denser type scale, thinner icons, a sidebar grouped into Work,
   Your teams, Build and Workspace, and issue rows and board cards that show state and priority as
   glyphs instead of labels.

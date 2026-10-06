@@ -701,12 +701,14 @@ export function IssueExplorer({ workspace, project }: { workspace: Workspace; pr
     }),
   );
   const listed = issues?.find((i) => i.id === openId);
-  // A linked issue may be closed or filtered out of the list; it is fetched on its own.
-  const { data: linked } = useQuery({
+  // The opened issue is read again on its own: the list may be minutes old, and a linked
+  // issue may be closed or filtered out of it. The list's copy shows until the fresh one lands.
+  const { data: fresh } = useQuery({
     ...issueQuery(openId ?? ''),
-    enabled: openId !== null && issues !== undefined && !listed,
+    enabled: openId !== null,
+    staleTime: 0,
   });
-  const opened = listed ?? (linked?.id === openId ? linked : undefined);
+  const opened = (fresh?.id === openId ? fresh : undefined) ?? listed;
   const closeIssue = () => {
     setOpenId(null);
     if (params.has('issue')) {

@@ -142,7 +142,7 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(agents::list, agents::create))
         .routes(routes!(agents::update, agents::delete))
         .routes(routes!(memories::list))
-        .routes(routes!(memories::delete))
+        .routes(routes!(memories::get, memories::delete))
         .routes(routes!(orchestrator::status))
         .routes(routes!(realtime::ticket))
         .routes(routes!(realtime::events))

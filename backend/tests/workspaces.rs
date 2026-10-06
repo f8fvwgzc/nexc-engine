@@ -1191,6 +1191,24 @@ async fn agents_and_memory_belong_to_the_workspace(pool: PgPool) {
         contents(owner.clone(), in_ws.clone()).await,
         ["Gold", "The "]
     );
+
+    // A list pages and can carry previews; a memory is read in full by those who may read it.
+    let paged = format!("/memories{in_ws}&limit=1&offset=1&preview=20");
+    let (_, page) = call(&app, Method::GET, &paged, &owner, None).await;
+    assert_eq!(page.as_array().unwrap().len(), 1, "{page}");
+    assert_eq!(page[0]["content"], "Gold reacts to real…");
+    let beyond = format!("/memories{in_ws}&offset=2");
+    let (_, none) = call(&app, Method::GET, &beyond, &owner, None).await;
+    assert_eq!(none.as_array().unwrap().len(), 0);
+    let one = format!("/memories/{shared_memory}");
+    let (status, full) = call(&app, Method::GET, &one, &member, None).await;
+    assert_eq!(status, StatusCode::OK, "{full}");
+    assert_eq!(
+        full["content"],
+        "Gold reacts to real yields and the dollar index"
+    );
+    let (status, _) = call(&app, Method::GET, &one, &outsider, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(
         contents(member.clone(), in_ws.clone()).await,
         ["Gold"],

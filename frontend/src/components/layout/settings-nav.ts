@@ -1,4 +1,5 @@
 import {
+  BrainIcon,
   ChartNoAxesColumnIcon,
   KeyRoundIcon,
   type LucideIcon,
@@ -36,6 +37,7 @@ export const SETTINGS_GROUPS: { label: string; items: SettingsItem[] }[] = [
       { title: 'Teams', to: `${SETTINGS_ROOT}/teams`, icon: UsersRoundIcon },
       { title: 'AI accounts', to: `${SETTINGS_ROOT}/ai`, icon: KeyRoundIcon },
       { title: 'Guardrails', to: `${SETTINGS_ROOT}/guardrails`, icon: ShieldCheckIcon },
+      { title: 'Memory', to: `${SETTINGS_ROOT}/memory`, icon: BrainIcon },
       { title: 'Usage', to: `${SETTINGS_ROOT}/usage`, icon: ChartNoAxesColumnIcon },
       {
         title: 'Audit log',

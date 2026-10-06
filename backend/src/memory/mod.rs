@@ -160,6 +160,22 @@ pub async fn visible(
         .collect())
 }
 
+/// One memory of a workspace, if `user` may read it.
+pub async fn find(
+    index: &MemoryIndex,
+    db: &PgPool,
+    user: Uuid,
+    workspace: Uuid,
+    id: Uuid,
+) -> anyhow::Result<Option<Memory>> {
+    let reader = reader(db, user, workspace).await?;
+    let all = index.load(db, workspace).await?;
+    Ok(all
+        .iter()
+        .find(|m| m.memory.id == id && reader.may_read(m))
+        .map(|m| m.memory.clone()))
+}
+
 /// Hybrid retrieval over the memory of a workspace, limited to what `user`
 /// may read. Counts an access for each returned memory in the background, so
 /// the caller never waits for that write.

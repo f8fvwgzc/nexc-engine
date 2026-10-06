@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { BrainIcon, SearchIcon } from 'lucide-react';
+import { BrainIcon, ChevronLeftIcon, ChevronRightIcon, SearchIcon } from 'lucide-react';
 import { useState } from 'react';
 
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
@@ -8,10 +8,12 @@ import { OptionSelect } from '@/components/custom-ui/option-select';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { TableSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
+import { Button } from '@/components/ui/button';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
 import { Spinner } from '@/components/ui/spinner';
 import { graphsQuery } from '@/features/graphs/api';
 import { memoriesQuery } from '@/features/memory/api';
+import { MemoryDialog } from '@/features/memory/components/memory-dialog';
 import { MemoryList } from '@/features/memory/components/memory-list';
 import { useDeleteMemory } from '@/features/memory/hooks/use-delete-memory';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
@@ -19,17 +21,29 @@ import type { Memory } from '@/schemas/memory';
 import { useWorkspaceId } from '@/features/workspaces/use-current-workspace';
 
 const ALL_GRAPHS = '__all__';
-const LIMIT = 50;
+/** Memories per page. One more is asked for, to know whether a next page exists. */
+const PAGE_SIZE = 10;
+/** Characters of each memory the list carries; the rest is read when one is opened. */
+const PREVIEW_CHARS = 160;
 
 export default function MemoryPage() {
   const [q, setQ] = useState('');
   const [graphId, setGraphId] = useState(ALL_GRAPHS);
   const [deleting, setDeleting] = useState<Memory | null>(null);
+  const [opened, setOpened] = useState<Memory | null>(null);
+  const [page, setPage] = useState(0);
   const debouncedQ = useDebouncedValue(q.trim(), 300);
   const workspaceId = useWorkspaceId();
   const { data: graphs = [] } = useQuery(graphsQuery(workspaceId));
+  // A page belongs to one search and one graph filter; changing either starts over.
+  const filterKey = `${debouncedQ}|${graphId}`;
+  const [pagedFor, setPagedFor] = useState(filterKey);
+  if (pagedFor !== filterKey) {
+    setPagedFor(filterKey);
+    setPage(0);
+  }
   const {
-    data: memories,
+    data: fetched,
     isPending,
     isFetching,
   } = useQuery(
@@ -37,9 +51,13 @@ export default function MemoryPage() {
       workspace_id: workspaceId,
       q: debouncedQ || undefined,
       graph_id: graphId === ALL_GRAPHS ? undefined : graphId,
-      limit: LIMIT,
+      limit: PAGE_SIZE + 1,
+      offset: page * PAGE_SIZE,
+      preview: PREVIEW_CHARS,
     }),
   );
+  const memories = fetched?.slice(0, PAGE_SIZE);
+  const hasNext = (fetched?.length ?? 0) > PAGE_SIZE;
   const deleteMemory = useDeleteMemory();
   const graphNames = new Map(graphs.map((g) => [g.id, g.name]));
 
@@ -76,8 +94,36 @@ export default function MemoryPage() {
       </div>
       {isPending ? (
         <TableSkeleton rows={4} />
-      ) : memories && memories.length > 0 ? (
-        <MemoryList memories={memories} graphNames={graphNames} onDelete={setDeleting} />
+      ) : memories && (memories.length > 0 || page > 0) ? (
+        <div className="space-y-3">
+          <MemoryList memories={memories} graphNames={graphNames} onOpen={setOpened} />
+          {(page > 0 || hasNext) && (
+            <nav
+              aria-label="Pages"
+              className="flex items-center justify-end gap-2 text-[13px] text-muted-foreground"
+            >
+              <span className="mr-1 tabular-nums">Page {page + 1}</span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page === 0 || isFetching}
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+              >
+                <ChevronLeftIcon />
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!hasNext || isFetching}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Next
+                <ChevronRightIcon />
+              </Button>
+            </nav>
+          )}
+        </div>
       ) : (
         <EmptyState
           icon={BrainIcon}
@@ -89,6 +135,15 @@ export default function MemoryPage() {
           }
         />
       )}
+      {opened && (
+        <MemoryDialog
+          key={opened.id}
+          preview={opened}
+          graphName={opened.graph_id ? graphNames.get(opened.graph_id) : undefined}
+          onDelete={() => setDeleting(opened)}
+          onClose={() => setOpened(null)}
+        />
+      )}
       <ConfirmDialog
         open={deleting !== null}
         onOpenChange={(open) => !open && setDeleting(null)}
@@ -96,7 +151,11 @@ export default function MemoryPage() {
         description="Agents will no longer recall it in future runs."
         confirmLabel="Delete"
         destructive
-        onConfirm={() => deleting && deleteMemory.mutate(deleting.id)}
+        onConfirm={() => {
+          if (!deleting) return;
+          deleteMemory.mutate(deleting.id);
+          setOpened(null);
+        }}
       />
     </div>
   );

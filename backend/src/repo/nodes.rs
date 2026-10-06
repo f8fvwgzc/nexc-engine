@@ -80,6 +80,19 @@ pub async fn find(
         .await
 }
 
+/// The nodes of a graph with the given ids, in one statement.
+pub async fn find_many(
+    db: impl PgExecutor<'_>,
+    graph_id: Uuid,
+    ids: &[Uuid],
+) -> Result<Vec<GraphNode>, sqlx::Error> {
+    sqlx::query_as("SELECT * FROM nodes WHERE graph_id = $1 AND id = ANY($2)")
+        .bind(graph_id)
+        .bind(ids)
+        .fetch_all(db)
+        .await
+}
+
 /// Number of nodes in a graph.
 pub async fn count(db: impl PgExecutor<'_>, graph_id: Uuid) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar("SELECT count(*) FROM nodes WHERE graph_id = $1")

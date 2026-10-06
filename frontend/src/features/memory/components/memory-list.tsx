@@ -1,58 +1,45 @@
-import { Trash2Icon } from 'lucide-react';
-
-import { Stagger } from '@/components/custom-ui/motion';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { formatRelative } from '@/lib/format';
 import type { Memory } from '@/schemas/memory';
 
 interface MemoryListProps {
+  /** Previews: `content` may be cut short. */
   memories: Memory[];
   graphNames: Map<string, string>;
-  onDelete: (memory: Memory) => void;
+  onOpen: (memory: Memory) => void;
 }
 
-export function MemoryList({ memories, graphNames, onDelete }: MemoryListProps) {
+/** Memories as rows: kind, a one-line preview, where it was learned, and when. */
+export function MemoryList({ memories, graphNames, onOpen }: MemoryListProps) {
   return (
-    <Stagger className="space-y-2" stepMs={30}>
+    <ul className="divide-y overflow-hidden rounded-lg border">
       {memories.map((memory) => (
-        <article
-          key={memory.id}
-          className="group flex gap-3 rounded-xl border bg-card/60 p-4 transition-colors hover:border-foreground/15"
-        >
-          <div className="min-w-0 flex-1 space-y-2">
-            <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-              <Badge variant="secondary" className="capitalize">
-                {memory.kind}
-              </Badge>
-              <span className="capitalize">{memory.scope}</span>
-              {memory.graph_id && (
-                <span className="truncate">· {graphNames.get(memory.graph_id) ?? 'graph'}</span>
-              )}
-              <span>· importance {memory.importance.toFixed(2)}</span>
-              <span>· used {memory.access_count}×</span>
-              {memory.score !== null && (
-                <span className="font-medium text-brand">
-                  · match {(memory.score * 100).toFixed(0)}%
-                </span>
-              )}
-              <span className="ml-auto">{formatRelative(memory.updated_at)}</span>
-            </div>
-            <p className="text-sm leading-relaxed break-words whitespace-pre-wrap">
-              {memory.content}
-            </p>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="shrink-0 text-muted-foreground opacity-60 group-hover:opacity-100 hover:text-destructive focus-visible:opacity-100"
-            aria-label="Delete memory"
-            onClick={() => onDelete(memory)}
+        <li key={memory.id}>
+          <button
+            type="button"
+            onClick={() => onOpen(memory)}
+            className="flex min-h-10 w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] transition-colors outline-none hover:bg-muted/60 focus-visible:bg-muted/60"
           >
-            <Trash2Icon />
-          </Button>
-        </article>
+            <Badge variant="secondary" className="w-24 shrink-0 justify-center capitalize">
+              {memory.kind}
+            </Badge>
+            <span className="min-w-0 flex-1 truncate">{memory.content}</span>
+            {memory.score !== null && (
+              <span className="shrink-0 text-xs font-medium text-brand tabular-nums">
+                {(memory.score * 100).toFixed(0)}%
+              </span>
+            )}
+            {memory.graph_id && (
+              <span className="hidden max-w-40 shrink-0 truncate text-xs text-muted-foreground md:block">
+                {graphNames.get(memory.graph_id) ?? 'graph'}
+              </span>
+            )}
+            <span className="w-24 shrink-0 text-right text-xs text-muted-foreground tabular-nums">
+              {formatRelative(memory.updated_at)}
+            </span>
+          </button>
+        </li>
       ))}
-    </Stagger>
+    </ul>
   );
 }

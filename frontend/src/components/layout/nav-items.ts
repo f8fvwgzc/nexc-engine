@@ -40,7 +40,6 @@ export const BUILD_ITEMS: NavItem[] = [
   { title: 'Graphs', to: '/app', icon: NetworkIcon, end: true },
   { title: 'Runs', to: '/app/runs', icon: PlayIcon },
   { title: 'Agents', to: '/app/agents', icon: BotIcon },
-  { title: 'Memory', to: '/app/memory', icon: BrainIcon },
 ];
 
 /** The way into the settings area, which has its own sidebar. */
@@ -58,7 +57,7 @@ export const NAV_ITEMS: NavItem[] = [
   { title: 'Graphs', to: '/app', icon: NetworkIcon, end: true },
   { title: 'Runs', to: '/app/runs', icon: PlayIcon },
   { title: 'Agents', to: '/app/agents', icon: BotIcon },
-  { title: 'Memory', to: '/app/memory', icon: BrainIcon },
+  { title: 'Memory', to: '/app/settings/memory', icon: BrainIcon },
   { title: 'Teams', to: '/app/settings/teams', icon: UsersRoundIcon },
   { title: 'Members', to: '/app/settings/members', icon: UsersIcon },
   { title: 'Usage', to: '/app/settings/usage', icon: ChartNoAxesColumnIcon },

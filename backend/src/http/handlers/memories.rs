@@ -28,6 +28,19 @@ pub struct MemoryQuery {
     pub q: Option<String>,
     /// 1–100, default 20.
     pub limit: Option<u32>,
+    /// How many results to skip, for paging (0–5000, default 0).
+    pub offset: Option<u32>,
+    /// Cut each `content` to this many characters (20–2000) and end it with `…`: a list
+    /// shows previews and reads the whole memory with `GET /memories/{id}` when it is opened.
+    pub preview: Option<u32>,
+}
+
+/// `content` cut to `chars` characters, marked with an ellipsis when something was left out.
+fn preview(content: &str, chars: usize) -> String {
+    match content.char_indices().nth(chars) {
+        Some((end, _)) => format!("{}…", content[..end].trim_end()),
+        None => content.to_owned(),
+    }
 }
 
 /// Lists (newest first) or searches the memory of a workspace: what its
@@ -62,6 +75,7 @@ pub async fn list(
     };
     let view = query.graph_id.map_or(View::All, View::Only);
     let limit = query.limit.unwrap_or(20).clamp(1, 100) as usize;
+    let offset = query.offset.unwrap_or(0).min(5000) as usize;
     let q = query
         .q
         .as_deref()
@@ -70,10 +84,43 @@ pub async fn list(
         .map(|q| q.chars().take(500).collect::<String>());
     let (index, db) = (&state.memories, &state.db);
     let memories = match q {
-        Some(q) => memory::retrieve(index, db, auth.id, workspace, view, &q, limit).await?,
-        None => memory::visible(index, db, auth.id, workspace, view, limit).await?,
+        Some(q) => {
+            memory::retrieve(index, db, auth.id, workspace, view, &q, offset + limit).await?
+        }
+        None => memory::visible(index, db, auth.id, workspace, view, offset + limit).await?,
     };
-    Ok(Json(memories))
+    let chars = query.preview.map(|c| c.clamp(20, 2000) as usize);
+    let page = memories
+        .into_iter()
+        .skip(offset)
+        .map(|mut m| {
+            if let Some(chars) = chars {
+                m.content = preview(&m.content, chars);
+            }
+            m
+        })
+        .collect();
+    Ok(Json(page))
+}
+
+/// One memory in full, if the caller may read it: their own notes, and what
+/// the graphs they can open learned.
+#[utoipa::path(get, path = "/memories/{id}", tag = "memories", security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Memory id")),
+    responses((status = 200, body = Memory), (status = 404, body = Problem)))]
+pub async fn get(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Memory>, AppError> {
+    let (_, workspace, _) = repo::memories::provenance(&state.db, id)
+        .await
+        .or_not_found("memory")?;
+    let workspace = workspace.ok_or(AppError::NotFound("memory"))?;
+    memory::find(&state.memories, &state.db, auth.id, workspace, id)
+        .await?
+        .map(Json)
+        .ok_or(AppError::NotFound("memory"))
 }
 
 /// Forgets a memory. Its author may, and so may anyone who can work on the

@@ -27,4 +27,8 @@ export interface MemoryQuery {
   q?: string;
   graph_id?: string;
   limit?: number;
+  /** How many results to skip. */
+  offset?: number;
+  /** Cut each `content` to this many characters; the whole memory is read when it is opened. */
+  preview?: number;
 }
