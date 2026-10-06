@@ -13,8 +13,12 @@ export function AppHeader() {
   const openPalette = useCommandStore((s) => s.setPaletteOpen);
   return (
     <header className="sticky top-0 z-20 flex h-11 shrink-0 items-center gap-2 border-b bg-background/80 px-3 backdrop-blur-lg sm:px-4">
-      <SidebarTrigger className="-ml-1" aria-label="Toggle sidebar" />
-      <Separator orientation="vertical" className="mr-1 data-[orientation=vertical]:h-4" />
+      {/* Only a phone needs a way to open the sidebar; on desktop it is always there. */}
+      <SidebarTrigger className="-ml-1 md:hidden" aria-label="Open navigation" />
+      <Separator
+        orientation="vertical"
+        className="mr-1 data-[orientation=vertical]:h-4 md:hidden"
+      />
       <Breadcrumbs />
       <div className="ml-auto flex items-center gap-1">
         <Button

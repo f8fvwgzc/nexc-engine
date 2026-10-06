@@ -10,7 +10,6 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     items: [
       { keys: 'mod+k', label: 'Open command palette' },
       { keys: '?', label: 'Show keyboard shortcuts' },
-      { keys: 'mod+b', label: 'Toggle sidebar' },
     ],
   },
   {

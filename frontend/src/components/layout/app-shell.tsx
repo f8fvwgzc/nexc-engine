@@ -12,15 +12,12 @@ import { AssistantDot } from './assistant-dot';
 import { DemoBanner } from './demo-banner';
 import { PageSkeleton } from './page-skeleton';
 
-function sidebarDefaultOpen(): boolean {
-  return !document.cookie.split('; ').includes('sidebar_state=false');
-}
-
 /** Logged-in shell: sidebar + header + routed content, palette and global shortcuts. */
 export default function AppShell() {
   useGlobalShortcuts();
   return (
-    <SidebarProvider defaultOpen={sidebarDefaultOpen()}>
+    // The sidebar stays open on desktop: there is nothing to collapse it. On a phone it is a drawer.
+    <SidebarProvider open>
       <a
         href="#main"
         className="sr-only z-50 rounded-md bg-background px-3 py-2 focus:not-sr-only focus:fixed focus:top-2 focus:left-2"
