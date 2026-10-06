@@ -25,7 +25,9 @@ export const usageReportSchema = z.object({
   by_day: z.array(slice(z.string())),
   by_member: z.array(slice(z.object({ user_id: idSchema.nullable(), name: z.string() }))),
   by_model: z.array(slice(z.object({ provider: z.string(), model: z.string() }))),
-  by_purpose: z.array(slice(z.enum(['plan', 'node', 'memory', 'assistant', 'embedding']))),
+  by_purpose: z.array(
+    slice(z.enum(['plan', 'node', 'memory', 'assistant', 'embedding', 'summary'])),
+  ),
   /** Whose account paid: members' own, the workspace's, or the server's. */
   by_credential: z.array(slice(z.enum(['user', 'workspace', 'server']))),
 });

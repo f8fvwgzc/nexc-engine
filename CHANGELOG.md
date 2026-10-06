@@ -114,6 +114,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   documents and memory (`GET /workspaces/{wid}/timeline`, `…/timeline/days`), with a 30-day strip
   of busy days. Workspace map: the kinds of things in a workspace and the ties between them, with
   counts (`GET /workspaces/{wid}/map`). Both for admins and owners.
+- Day summaries: on the Activity page an admin can have the workspace's AI tell a day in a few
+  lines (a headline, what happened, what deserves a look). The summary is kept, so reading it
+  again spends nothing, and is marked when more has happened since. The day reaches the model
+  as a digest of bounded size, the call obeys the workspace's guardrails and is booked as
+  `summary` usage, and summaries travel with a workspace transfer
+  (`GET`/`POST /workspaces/{wid}/timeline/summary`). The demo provider answers with the counts.
+- A test fails when a table that belongs to a workspace is neither copied by a transfer nor
+  listed as an exception with its reason, so data added later cannot be left behind unnoticed.
 - Infrastructure page for server administrators: database, pgvector, migrations, agent runtime,
   embedding model, and a check that another PostgreSQL or Redis is reachable
   (`/admin/infrastructure`). `docs/INFRASTRUCTURE.md` explains what can be changed and how.

@@ -10,8 +10,9 @@ use uuid::Uuid;
 use super::workspaces::{member_of, require};
 use crate::app::AppState;
 use crate::domain::AppError;
-use crate::domain::insight::{TimelineDay, TimelineEntry, WorkspaceMap};
+use crate::domain::insight::{DaySummary, TimelineDay, TimelineEntry, WorkspaceMap};
 use crate::domain::workspace::WorkspaceAction;
+use crate::engine::summary;
 use crate::http::extract::{AuthUser, Path, Query};
 use crate::http::problem::Problem;
 use crate::repo;
@@ -44,11 +45,55 @@ pub async fn timeline(
         WorkspaceAction::UpdateSettings,
     )?;
     let day = query.day.unwrap_or_else(|| Utc::now().date_naive());
-    let from = day.and_time(NaiveTime::MIN).and_utc();
-    let to = from + Duration::days(1);
+    let (from, to) = summary::bounds(day);
     Ok(Json(
         repo::insight::timeline(&state.db, wid, from, to, DAY_LIMIT).await?,
     ))
+}
+
+/// The summary of a day (UTC) that the workspace's model wrote, or `null`
+/// when none was asked for yet. `stale` says that more has happened on the
+/// day since. Reading it spends no tokens. Admins and owners only.
+#[utoipa::path(get, path = "/workspaces/{wid}/timeline/summary", tag = "workspaces", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id"), TimelineQuery),
+    responses((status = 200, body = Option<DaySummary>), (status = 403, body = Problem), (status = 404, body = Problem)))]
+pub async fn day_summary(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(wid): Path<Uuid>,
+    Query(query): Query<TimelineQuery>,
+) -> Result<Json<Option<DaySummary>>, AppError> {
+    require(
+        &member_of(&state, auth, wid).await?,
+        WorkspaceAction::UpdateSettings,
+    )?;
+    let day = query.day.unwrap_or_else(|| Utc::now().date_naive());
+    Ok(Json(summary::read(&state, wid, day).await?))
+}
+
+/// Has the workspace's model summarise a day (UTC) from its timeline and
+/// keeps the result, in place of the summary there was. Spends tokens of the
+/// caller's or the workspace's AI account, within the workspace's
+/// guardrails, and is booked as `summary` usage. Admins and owners only.
+#[utoipa::path(post, path = "/workspaces/{wid}/timeline/summary", tag = "workspaces", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id"), TimelineQuery),
+    responses((status = 200, body = DaySummary),
+        (status = 403, description = "Not an admin, or refused by the workspace's guardrails", body = Problem),
+        (status = 404, body = Problem),
+        (status = 409, description = "Nothing happened on that day", body = Problem),
+        (status = 422, description = "No AI account to use, or the model failed", body = Problem)))]
+pub async fn write_day_summary(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(wid): Path<Uuid>,
+    Query(query): Query<TimelineQuery>,
+) -> Result<Json<DaySummary>, AppError> {
+    require(
+        &member_of(&state, auth, wid).await?,
+        WorkspaceAction::UpdateSettings,
+    )?;
+    let day = query.day.unwrap_or_else(|| Utc::now().date_naive());
+    Ok(Json(summary::write(&state, auth.id, wid, day).await?))
 }
 
 /// Query of `GET /workspaces/{wid}/timeline/days`.

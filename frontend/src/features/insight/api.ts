@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { apiRequest } from '@/lib/api/client';
 import {
   connectionCheckSchema,
+  daySummarySchema,
   infrastructureSchema,
   timelineDaySchema,
   timelineEntrySchema,
@@ -33,6 +34,25 @@ export const timelineDaysQuery = (workspaceId: string, days: number) =>
         signal,
       }),
   });
+
+/** The kept summary of a day, or `null` when none was written. Reading it spends no tokens. */
+export const daySummaryQuery = (workspaceId: string, day: string) =>
+  queryOptions({
+    queryKey: ['insight', workspaceId, 'summary', day] as const,
+    queryFn: ({ signal }) =>
+      apiRequest(`/workspaces/${workspaceId}/timeline/summary`, daySummarySchema.nullable(), {
+        query: { day },
+        signal,
+      }),
+  });
+
+/** Has the workspace's model write the summary of a day anew. This spends tokens. */
+export function writeDaySummary(workspaceId: string, day: string) {
+  return apiRequest(`/workspaces/${workspaceId}/timeline/summary`, daySummarySchema, {
+    method: 'POST',
+    query: { day },
+  });
+}
 
 export const workspaceMapQuery = (workspaceId: string) =>
   queryOptions({

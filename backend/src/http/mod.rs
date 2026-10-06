@@ -115,6 +115,7 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(transfer::list, transfer::start))
         .routes(routes!(transfer::files))
         .routes(routes!(insight::timeline))
+        .routes(routes!(insight::day_summary, insight::write_day_summary))
         .routes(routes!(insight::days))
         .routes(routes!(insight::map))
         .routes(routes!(workspaces::delete_invite))

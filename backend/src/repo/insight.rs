@@ -1,10 +1,13 @@
 //! Reads across a whole workspace: its timeline and its relationship map.
 
-use chrono::{DateTime, Utc};
-use sqlx::{PgExecutor, Row};
+use chrono::{DateTime, NaiveDate, Utc};
+use sqlx::postgres::PgRow;
+use sqlx::{FromRow, PgExecutor, Row};
 use uuid::Uuid;
 
-use crate::domain::insight::{MapEntity, MapRelation, TimelineDay, TimelineEntry, WorkspaceMap};
+use crate::domain::insight::{
+    DaySummary, DaySummaryOutput, MapEntity, MapRelation, TimelineDay, TimelineEntry, WorkspaceMap,
+};
 
 /// Everything that happened in workspace `$1` between `$2` (included) and
 /// `$3` (excluded), from the tables that record it. Every branch is bounded
@@ -95,6 +98,96 @@ pub async fn days(
     .bind(to)
     .fetch_all(db)
     .await
+}
+
+/// How many things happened in a workspace in a time range.
+pub async fn count(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(concat!(
+        "SELECT count(*) FROM (",
+        happenings!(),
+        ") happened"
+    ))
+    .bind(workspace_id)
+    .bind(from)
+    .bind(to)
+    .fetch_one(db)
+    .await
+}
+
+impl FromRow<'_, PgRow> for DaySummary {
+    fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
+        Ok(DaySummary {
+            day: row.try_get("day")?,
+            headline: row.try_get("headline")?,
+            highlights: row.try_get("highlights")?,
+            attention: row.try_get("attention")?,
+            event_count: row.try_get("event_count")?,
+            // Whether more has happened since is the caller's to work out.
+            stale: false,
+            model: row.try_get("model")?,
+            created_by: row.try_get("created_by")?,
+            created_at: row.try_get("created_at")?,
+        })
+    }
+}
+
+/// The stored summary of a day, if one was written.
+pub async fn summary(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    day: NaiveDate,
+) -> Result<Option<DaySummary>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT s.day, s.headline, s.highlights, s.attention, s.event_count, s.model,
+                u.name AS created_by, s.created_at
+         FROM day_summaries s LEFT JOIN users u ON u.id = s.created_by
+         WHERE s.workspace_id = $1 AND s.day = $2",
+    )
+    .bind(workspace_id)
+    .bind(day)
+    .fetch_optional(db)
+    .await
+}
+
+/// What to store of a day's summary.
+#[derive(Debug)]
+pub struct NewSummary<'a> {
+    pub workspace_id: Uuid,
+    pub day: NaiveDate,
+    pub output: &'a DaySummaryOutput,
+    pub event_count: i64,
+    pub model: &'a str,
+    pub created_by: Uuid,
+}
+
+/// Stores a day's summary in place of the one there was.
+pub async fn save_summary(db: impl PgExecutor<'_>, new: NewSummary<'_>) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO day_summaries
+             (id, workspace_id, day, headline, highlights, attention, event_count, model, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (workspace_id, day) DO UPDATE
+         SET headline = EXCLUDED.headline, highlights = EXCLUDED.highlights,
+             attention = EXCLUDED.attention, event_count = EXCLUDED.event_count,
+             model = EXCLUDED.model, created_by = EXCLUDED.created_by, created_at = now()",
+    )
+    .bind(Uuid::now_v7())
+    .bind(new.workspace_id)
+    .bind(new.day)
+    .bind(&new.output.headline)
+    .bind(&new.output.highlights)
+    .bind(&new.output.attention)
+    .bind(new.event_count)
+    .bind(new.model)
+    .bind(new.created_by)
+    .execute(db)
+    .await?;
+    Ok(())
 }
 
 /// The kinds of things in a workspace and the ties between them, counted in

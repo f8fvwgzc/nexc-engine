@@ -21,6 +21,8 @@ string_enum!(
         Assistant => "assistant",
         /// Embedding document passages and the questions asked of them.
         Embedding => "embedding",
+        /// Summarising a day of the workspace's timeline.
+        Summary => "summary",
     }
 );
 

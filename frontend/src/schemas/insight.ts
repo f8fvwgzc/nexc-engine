@@ -17,6 +17,21 @@ export type TimelineEntry = z.infer<typeof timelineEntrySchema>;
 export const timelineDaySchema = z.object({ day: z.string(), events: z.number().int() });
 export type TimelineDay = z.infer<typeof timelineDaySchema>;
 
+/** A day of the timeline, told in a few lines by the workspace's model. */
+export const daySummarySchema = z.object({
+  day: z.string(),
+  headline: z.string(),
+  highlights: z.array(z.string()),
+  attention: z.array(z.string()),
+  event_count: z.number().int(),
+  /** More has happened on the day since it was written. */
+  stale: z.boolean(),
+  model: z.string(),
+  created_by: z.string().nullable(),
+  created_at: timestampSchema,
+});
+export type DaySummary = z.infer<typeof daySummarySchema>;
+
 /** The kinds of things a workspace holds and the ties between them, counted. */
 export const workspaceMapSchema = z.object({
   entities: z.array(z.object({ key: z.string(), label: z.string(), count: z.number().int() })),

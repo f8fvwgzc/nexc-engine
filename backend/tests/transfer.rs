@@ -113,6 +113,11 @@ async fn a_workspace_moves_to_its_owners_database(pool: PgPool) {
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 
+    // A day summary is part of the workspace too: it travels with its points.
+    let summary = format!("{ws}/timeline/summary");
+    let (status, written) = call(&app, Method::POST, &summary, &owner, None).await;
+    assert_eq!(status, StatusCode::OK, "{written}");
+
     let (url, name) = empty_database(&pool).await;
     let report = transfer::copy_workspace(&pool, &url, workspace)
         .await
@@ -128,6 +133,7 @@ async fn a_workspace_moves_to_its_owners_database(pool: PgPool) {
     assert_eq!(copied("issue_labels"), (1, 1));
     assert_eq!(copied("issue_events"), (1, 1));
     assert_eq!(copied("graphs"), (1, 1));
+    assert_eq!(copied("day_summaries"), (1, 1));
     assert!(copied("issue_states").0 >= 6);
     assert!(report.iter().all(|r| r.read == r.written), "{report:?}");
 
@@ -142,6 +148,14 @@ async fn a_workspace_moves_to_its_owners_database(pool: PgPool) {
     .await
     .unwrap();
     assert_eq!((parents, sub_issues), (1, 1));
+    let (headline, highlights): (String, Vec<String>) =
+        sqlx::query_as("SELECT headline, highlights FROM day_summaries WHERE workspace_id = $1")
+            .bind(workspace)
+            .fetch_one(&target)
+            .await
+            .unwrap();
+    assert_eq!(Some(headline.as_str()), written["headline"].as_str());
+    assert_eq!(json!(highlights), written["highlights"]);
     let hashes: Vec<String> = sqlx::query_scalar("SELECT password_hash FROM users")
         .fetch_all(&target)
         .await
@@ -196,5 +210,63 @@ async fn a_workspace_moves_to_its_owners_database(pool: PgPool) {
         .execute(&pool)
         .await
         .unwrap();
+    }
+}
+
+/// Tables that hang off a workspace and are deliberately not copied.
+const NOT_COPIED: &[(&str, &str)] = &[
+    (
+        "realtime_tickets",
+        "single-use tickets that live for seconds",
+    ),
+    (
+        "workspace_llm_settings",
+        "the workspace's AI credential, sealed with this server's key; it is entered again",
+    ),
+    (
+        "workspace_transfers",
+        "the record of the transfers themselves, which stays where they were made",
+    ),
+];
+
+/// A transfer is how a workspace takes all of its data with it. Whatever
+/// refers to a workspace, directly or through other tables, is copied, or
+/// is named above with the reason why not: a table added later cannot be
+/// left behind without anyone deciding so.
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn everything_that_belongs_to_a_workspace_is_copied_or_exempt(pool: PgPool) {
+    let belonging: Vec<String> = sqlx::query_scalar(
+        "WITH RECURSIVE reach(tbl) AS (
+             SELECT 'workspaces'::regclass
+             UNION
+             SELECT c.conrelid::regclass FROM pg_constraint c JOIN reach r ON c.confrelid = r.tbl
+             WHERE c.contype = 'f' AND c.conrelid <> c.confrelid)
+         SELECT tbl::text FROM reach ORDER BY 1",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert!(belonging.len() > 25, "the schema was read: {belonging:?}");
+    let copied: Vec<&str> = transfer::tables().collect();
+    let left_behind: Vec<&String> = belonging
+        .iter()
+        .filter(|t| !copied.contains(&t.as_str()))
+        .filter(|t| !NOT_COPIED.iter().any(|(name, _)| name == t))
+        .collect();
+    assert!(
+        left_behind.is_empty(),
+        "not copied by a transfer and not exempt: {left_behind:?}"
+    );
+    for (name, reason) in NOT_COPIED {
+        assert!(
+            belonging.iter().any(|t| t == name) && !copied.contains(name),
+            "{name} is listed as not copied ({reason}) but that no longer holds"
+        );
+    }
+    for name in &copied {
+        assert!(
+            *name == "users" || belonging.iter().any(|t| t == name),
+            "{name} is copied but does not belong to a workspace"
+        );
     }
 }

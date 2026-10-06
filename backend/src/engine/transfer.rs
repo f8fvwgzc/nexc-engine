@@ -94,9 +94,17 @@ const REFERENCED_USERS: &str = "t.id IN (
     UNION SELECT p.owner_id FROM plans p JOIN graphs g ON g.id = p.graph_id
           WHERE g.workspace_id = $1
     UNION SELECT updated_by FROM workspace_guardrails WHERE workspace_id = $1
+    UNION SELECT created_by FROM day_summaries WHERE workspace_id = $1
     UNION SELECT updated_by FROM workspace_knowledge_settings WHERE workspace_id = $1)";
 
+/// Names of the tables a transfer copies, in the order it copies them.
+pub fn tables() -> impl Iterator<Item = &'static str> {
+    TABLES.iter().map(|t| t.name)
+}
+
 /// The tables of a workspace, parents before the tables that refer to them.
+/// A new table that hangs off a workspace belongs here, or among the
+/// exceptions `tests/transfer.rs` lists with their reasons.
 const TABLES: &[Table] = &[
     Table {
         name: "users",
@@ -151,6 +159,7 @@ const TABLES: &[Table] = &[
     table("memory_topics", IN_WORKSPACE, false),
     table("memories", IN_WORKSPACE, true),
     table("audit_log", IN_WORKSPACE, true),
+    table("day_summaries", IN_WORKSPACE, false),
     table("llm_usage", IN_WORKSPACE, true),
 ];
 

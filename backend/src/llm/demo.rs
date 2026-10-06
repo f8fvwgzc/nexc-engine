@@ -11,6 +11,7 @@ use serde_json::json;
 use super::{LlmEvent, LlmProvider, LlmRequest, LlmStream, StopReason, Usage, estimate_tokens};
 use crate::domain::assistant::{ASSISTANT_SCHEMA_NAME, TEAMS_MARKER, USER_MESSAGE_MARKER};
 use crate::domain::graph::Executor;
+use crate::domain::insight::DAY_SUMMARY_SCHEMA_NAME;
 use crate::domain::memory::MEMORY_SCHEMA_NAME;
 use crate::domain::ontology::Ontology;
 use crate::domain::plan::{
@@ -47,6 +48,7 @@ impl LlmProvider for DemoProvider {
             Some(PLAN_SCHEMA_NAME) => (plan_json(&prompt), 48),
             Some(MEMORY_SCHEMA_NAME) => (memories_json(&prompt), 64),
             Some(ASSISTANT_SCHEMA_NAME) => (assistant_json(&prompt), 48),
+            Some(DAY_SUMMARY_SCHEMA_NAME) => (day_summary_json(&prompt), 48),
             _ => (text_output(&prompt), 18),
         };
         let input_tokens = estimate_tokens(&req.system) + estimate_tokens(&prompt);
@@ -137,6 +139,37 @@ fn assistant_json(prompt: &str) -> String {
         })
         .collect();
     serde_json::json!({ "reply": reply, "issues": issues }).to_string()
+}
+
+/// A day summary without a model: the counts of the digest it was given,
+/// read back as sentences, and the entries that name a failure.
+fn day_summary_json(digest: &str) -> String {
+    let field = |name: &str| {
+        digest
+            .lines()
+            .find_map(|l| l.strip_prefix(name))
+            .unwrap_or_default()
+            .trim()
+    };
+    let attention: Vec<String> = digest
+        .lines()
+        .filter(|l| l.contains("· run_failed ·") || l.contains("· failed:"))
+        .take(5)
+        .map(|l| l.split_once(" · ").map_or(l, |(_, rest)| rest).to_owned())
+        .collect();
+    serde_json::json!({
+        "headline": format!(
+            "{DEMO_LABEL} {} entries were recorded on {}.", field("Entries:"), field("Day:")
+        ),
+        "highlights": [
+            format!("By kind of event: {}.", field("By kind:")),
+            format!("By person: {}.", field("By person:")),
+            "The demo provider only counts; configure a real model in Settings for a summary \
+             in words.",
+        ],
+        "attention": attention,
+    })
+    .to_string()
 }
 
 fn memories_json(prompt: &str) -> String {
@@ -642,6 +675,25 @@ mod tests {
         assert_eq!(
             runtime_markup, r#"{"memories":[]}"#,
             "markup is never remembered"
+        );
+    }
+
+    #[test]
+    fn a_day_is_counted_back_without_a_model() {
+        let digest = "Day: 2026-10-06 (UTC)\nEntries: 3\nBy kind: issue_created 2, run_failed 1\n\
+            By person: Bob 2, the system 1\n\n## Entries, oldest first\n\
+            09:10 · Bob · issue_created · ENG-1 Login\n\
+            09:30 · the system · run_failed · Launch graph · timeout\n";
+        let out: crate::domain::insight::DaySummaryOutput =
+            serde_json::from_str(&day_summary_json(digest)).unwrap();
+        assert!(
+            out.headline
+                .contains("3 entries were recorded on 2026-10-06 (UTC).")
+        );
+        assert!(out.highlights[0].contains("issue_created 2, run_failed 1"));
+        assert_eq!(
+            out.attention,
+            ["the system · run_failed · Launch graph · timeout"]
         );
     }
 }

@@ -1690,6 +1690,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{wid}/timeline/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The summary of a day (UTC) that the workspace's model wrote, or `null`
+         *     when none was asked for yet. `stale` says that more has happened on the
+         *     day since. Reading it spends no tokens. Admins and owners only.
+         */
+        get: operations["day_summary"];
+        put?: never;
+        /**
+         * Has the workspace's model summarise a day (UTC) from its timeline and
+         *     keeps the result, in place of the summary there was. Spends tokens of the
+         *     caller's or the workspace's AI account, within the workspace's
+         *     guardrails, and is booked as `summary` usage. Admins and owners only.
+         */
+        post: operations["write_day_summary"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{wid}/transfers": {
         parameters: {
             query?: never;
@@ -2147,6 +2174,33 @@ export interface components {
             /** Format: int64 */
             size_bytes: number;
             version: string;
+        };
+        /** @description A day of a workspace's timeline, told in a few lines by its model. */
+        DaySummary: {
+            /** @description What deserves a look: failures, blocked work, unusual changes. Often empty. */
+            attention: string[];
+            /** Format: date-time */
+            created_at: string;
+            /** @description Who asked for it, by name; `null` once the account is gone. */
+            created_by: string | null;
+            /**
+             * Format: date
+             * @description The day (UTC).
+             */
+            day: string;
+            /**
+             * Format: int64
+             * @description How many timeline entries it was written from.
+             */
+            event_count: number;
+            /** @description The day in one sentence. */
+            headline: string;
+            /** @description What happened, most important first. */
+            highlights: string[];
+            /** @description The model that wrote it. */
+            model: string;
+            /** @description Whether more has happened on the day since it was written. */
+            stale: boolean;
         };
         /** @description `POST /admin/workspaces/{wid}/delete` body. */
         DeleteWorkspace: {
@@ -3486,7 +3540,7 @@ export interface components {
              * @description What an LLM call was for.
              * @enum {string}
              */
-            key: "plan" | "node" | "memory" | "assistant" | "embedding";
+            key: "plan" | "node" | "memory" | "assistant" | "embedding" | "summary";
         };
         /** @description Sums over a set of calls. */
         UsageTotals: {
@@ -8690,6 +8744,107 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    day_summary: {
+        parameters: {
+            query?: {
+                /** @description The day to show (UTC, `YYYY-MM-DD`); today when left out. */
+                day?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DaySummary"] | null;
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    write_day_summary: {
+        parameters: {
+            query?: {
+                /** @description The day to show (UTC, `YYYY-MM-DD`); today when left out. */
+                day?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DaySummary"];
+                };
+            };
+            /** @description Not an admin, or refused by the workspace's guardrails */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Nothing happened on that day */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description No AI account to use, or the model failed */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

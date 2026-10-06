@@ -11,6 +11,7 @@ import { Seo } from '@/components/seo/seo';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { timelineDaysQuery, timelineQuery } from '@/features/insight/api';
+import { DaySummaryCard } from '@/features/insight/day-summary';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { errorMessage } from '@/lib/api/errors';
 import type { TimelineEntry } from '@/schemas/insight';
@@ -101,6 +102,15 @@ function Day({ workspace, day }: { workspace: Workspace; day: string }) {
       />
     );
   }
+  return (
+    <div className="space-y-4">
+      <DaySummaryCard workspaceId={workspace.id} day={day} entries={entries.length} />
+      <Entries entries={entries} />
+    </div>
+  );
+}
+
+function Entries({ entries }: { entries: TimelineEntry[] }) {
   return (
     <ol className="divide-y rounded-lg border">
       {entries.map((entry, index) => {
@@ -193,7 +203,7 @@ export default function ActivityPage() {
       <Seo title="Activity" noIndex />
       <PageHeader
         title="Activity"
-        description="What happened in the workspace on a day: people, teams, issues, graphs, runs, documents and memory, newest first."
+        description="What happened in the workspace on a day: people, teams, issues, graphs, runs, documents and memory, newest first, with a summary the workspace's AI writes when you ask."
       />
       {!current ? (
         <PageSkeleton />

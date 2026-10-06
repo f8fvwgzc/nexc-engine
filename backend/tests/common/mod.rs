@@ -129,6 +129,27 @@ impl LlmProvider for FakeLlm {
                 let text = json!({"memories": [{"kind": "fact", "content": "Reports use APA style.", "importance": 0.7}]});
                 return Self::events(text.to_string(), usage);
             }
+            Some(nexc::domain::insight::DAY_SUMMARY_SCHEMA_NAME) => {
+                // Says back what it was given, so tests see what reached the model.
+                let field = |name: &str| {
+                    prompt
+                        .lines()
+                        .find_map(|l| l.strip_prefix(name))
+                        .unwrap_or_default()
+                        .trim()
+                        .to_owned()
+                };
+                let attention: Vec<&str> = prompt
+                    .lines()
+                    .filter(|l| l.contains("run_failed"))
+                    .collect();
+                let text = json!({
+                    "headline": format!("{} things happened on {}.", field("Entries:"), field("Day:")),
+                    "highlights": [format!("By kind: {}", field("By kind:")), "  "],
+                    "attention": attention,
+                });
+                return Self::events(text.to_string(), usage);
+            }
             Some(nexc::domain::assistant::ASSISTANT_SCHEMA_NAME) => {
                 // Files two issues when asked to: one with a real team, one with a made-up key.
                 let issues = if prompt.contains("file an issue") {
