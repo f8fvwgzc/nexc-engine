@@ -27,6 +27,8 @@ function persistable(queryKey: QueryKey): boolean {
 }
 
 interface Snapshot {
+  /** The build that wrote the copy: another build may expect lists of another shape. */
+  build: string;
   userId: string;
   savedAt: number;
   state: DehydratedState;
@@ -52,7 +54,8 @@ function forget(): void {
 /**
  * Keeps a copy of the list queries in this browser so pages paint from it on the next visit and
  * refresh in the background (restored lists are marked stale). The copy belongs to
- * one account: it is restored only for the user who wrote it and removed when they sign out.
+ * one account and one build of the app: it is restored only for the user and the build that wrote
+ * it, and removed when they sign out.
  */
 export function startQueryPersistence(client: QueryClient): () => void {
   let restoredFor: string | null = null;
@@ -62,7 +65,12 @@ export function startQueryPersistence(client: QueryClient): () => void {
     if (restoredFor === userId) return;
     restoredFor = userId;
     const snapshot = read();
-    if (!snapshot || snapshot.userId !== userId || Date.now() - snapshot.savedAt > MAX_AGE_MS) {
+    if (
+      !snapshot ||
+      snapshot.build !== __NEXC_BUILD__ ||
+      snapshot.userId !== userId ||
+      Date.now() - snapshot.savedAt > MAX_AGE_MS
+    ) {
       forget();
       return;
     }
@@ -84,7 +92,7 @@ export function startQueryPersistence(client: QueryClient): () => void {
         query.state.status === 'success' && persistable(query.queryKey),
     });
     try {
-      const snapshot: Snapshot = { userId, savedAt: Date.now(), state };
+      const snapshot: Snapshot = { build: __NEXC_BUILD__, userId, savedAt: Date.now(), state };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
     } catch {
       // Over quota or storage disabled: the app works without the copy.

@@ -59,6 +59,22 @@ describe('query persistence', () => {
     stopSecond();
   });
 
+  it('does not restore a copy written by another build of the app', () => {
+    const first = new QueryClient();
+    const stop = startQueryPersistence(first);
+    first.setQueryData(['issues', 'w', 'list', {}], [{ id: 1 }]);
+    vi.advanceTimersByTime(1_500);
+    stop();
+    const snapshot = JSON.parse(localStorage.getItem(KEY) ?? '{}') as { build: string };
+    localStorage.setItem(KEY, JSON.stringify({ ...snapshot, build: 'an-older-build' }));
+
+    const second = new QueryClient();
+    const stopSecond = startQueryPersistence(second);
+    expect(second.getQueryData(['issues', 'w', 'list', {}])).toBeUndefined();
+    expect(localStorage.getItem(KEY)).toBeNull();
+    stopSecond();
+  });
+
   it('does not restore another account’s copy', () => {
     localStorage.setItem(
       KEY,

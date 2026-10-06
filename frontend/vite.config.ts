@@ -64,6 +64,8 @@ function productionHtmlPlugin(): Plugin {
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), productionHtmlPlugin()],
+  // Identifies this build, so data cached in the browser by another build is not reused.
+  define: { __NEXC_BUILD__: JSON.stringify(Date.now().toString(36)) },
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
