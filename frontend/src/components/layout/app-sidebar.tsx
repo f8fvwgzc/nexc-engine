@@ -10,7 +10,7 @@ import { WorkspaceSwitcher } from './workspace-switcher';
 /** Collapsible icon sidebar; the page renders as an inset card beside it. */
 export function AppSidebar(props: ComponentProps<typeof Sidebar>) {
   return (
-    <Sidebar variant="inset" {...props}>
+    <Sidebar {...props}>
       <SidebarHeader>
         <WorkspaceSwitcher />
       </SidebarHeader>

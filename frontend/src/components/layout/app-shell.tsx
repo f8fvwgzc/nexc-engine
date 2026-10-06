@@ -27,10 +27,7 @@ export default function AppShell() {
       <AppSidebar />
       {/* SidebarInset renders the page's <main> landmark. It is exactly one viewport tall:
           pages scroll inside it, so a full-height page (the canvas) never scrolls the window. */}
-      <SidebarInset
-        id="main"
-        className="h-svh min-w-0 overflow-hidden md:peer-data-[variant=inset]:h-[calc(100svh-1rem)]"
-      >
+      <SidebarInset id="main" className="h-svh min-w-0 overflow-hidden">
         <AppHeader />
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           <Suspense fallback={<PageSkeleton />}>
