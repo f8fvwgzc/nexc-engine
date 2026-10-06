@@ -19,6 +19,7 @@ export const auditActionSchema = z.enum([
   'guardrails_changed',
   'label_deleted',
   'knowledge_changed',
+  'workspace_transferred',
 ]);
 export type AuditAction = z.infer<typeof auditActionSchema>;
 

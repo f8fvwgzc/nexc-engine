@@ -110,6 +110,7 @@ export const routes: RouteObject[] = [
               { path: 'audit', ...page(routeModules.audit) },
               { path: 'activity', ...page(routeModules.settingsActivity) },
               { path: 'map', ...page(routeModules.settingsMap) },
+              { path: 'transfer', ...page(routeModules.settingsTransfer) },
               { path: 'infrastructure', ...page(routeModules.settingsInfrastructure) },
               { path: '*', element: <Navigate to="/app/settings/profile" replace /> },
             ],

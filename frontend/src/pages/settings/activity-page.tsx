@@ -59,6 +59,7 @@ const VERB: Record<string, string> = {
   credential_removed: 'removed the',
   guardrails_changed: 'changed the',
   knowledge_changed: 'changed the',
+  workspace_transferred: 'started copying the',
   label_deleted: 'deleted the label',
   workspace_renamed: 'renamed the workspace to',
 };

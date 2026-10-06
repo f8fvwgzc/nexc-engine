@@ -21,4 +21,5 @@ pub mod runs;
 pub mod settings;
 pub mod teams;
 pub mod templates;
+pub mod transfer;
 pub mod workspaces;

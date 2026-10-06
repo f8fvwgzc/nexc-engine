@@ -226,7 +226,17 @@ pub async fn delete(
             "this is your only workspace; create another one before deleting it".into(),
         ));
     }
+    // The uploaded files of its documents are on disk, outside what the database cascades to.
+    let documents: Vec<Uuid> =
+        sqlx::query_scalar("SELECT id FROM documents WHERE workspace_id = $1")
+            .bind(wid)
+            .fetch_all(&state.db)
+            .await?;
     repo::workspaces::delete(&state.db, wid).await?;
+    state.memories.invalidate(wid);
+    for id in documents {
+        let _ = tokio::fs::remove_file(state.settings.documents_dir().join(id.to_string())).await;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

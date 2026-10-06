@@ -1,5 +1,6 @@
 import {
   BookOpenIcon,
+  DatabaseIcon,
   CalendarDaysIcon,
   ServerIcon,
   WaypointsIcon,
@@ -62,6 +63,7 @@ export const SETTINGS_GROUPS: { label: string; items: SettingsItem[] }[] = [
         icon: ScrollTextIcon,
         adminOnly: true,
       },
+      { title: 'Data transfer', to: `${SETTINGS_ROOT}/transfer`, icon: DatabaseIcon },
     ],
   },
   {

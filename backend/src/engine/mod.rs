@@ -15,6 +15,7 @@ pub mod knowledge;
 pub mod planner;
 pub mod scheduler;
 pub mod templates;
+pub mod transfer;
 pub mod usage;
 
 use dashmap::{DashMap, DashSet};

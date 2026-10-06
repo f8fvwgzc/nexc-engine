@@ -104,6 +104,7 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(workspaces::audit_log))
         .routes(routes!(infrastructure::status))
         .routes(routes!(infrastructure::check))
+        .routes(routes!(transfer::list, transfer::start))
         .routes(routes!(insight::timeline))
         .routes(routes!(insight::days))
         .routes(routes!(insight::map))

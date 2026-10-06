@@ -26,6 +26,37 @@ database, and a web form that repoints a server at another database is a way to 
 For vector search use an image with pgvector: `deploy/postgres/pgvector.Dockerfile` builds one;
 `NEXC_DB_IMAGE` and `NEXC_DB_VOLUME` in `.env` select it for `make dev`.
 
+## Transferring one workspace to its owner's database
+
+An organisation that wants to hold its own data does not need the whole installation moved:
+Settings -> **Data transfer** (the workspace's owner only) copies one workspace to a PostgreSQL
+the owner names, and then offers to remove it from this server.
+
+1. The owner pastes `postgres://user:password@host:5432/database` of an empty database. The
+   string is used for that transfer only; what is recorded is the target without credentials.
+2. The server applies its migrations there and copies the workspace's rows table by table,
+   parents before children, in one transaction on the target (`engine/transfer.rs`): the copy
+   is there completely or not at all. Per-table counts are kept in `workspace_transfers`.
+3. After checking the copy, the owner removes the workspace here. Removal deletes every row of
+   the workspace and the uploaded files of its documents.
+
+Not copied, on purpose: password hashes (accounts are created on the target with a hash nothing
+matches), stored API keys (sealed with this server's master key), sessions, and files on disk.
+In production a target that resolves to a loopback, private or link-local address is refused, so
+a workspace owner cannot make the server connect into its own network.
+
+Queued work travels with the data because queues are rows. There is no Redis or message broker
+to migrate.
+
+### What this does and does not give you for GDPR or HIPAA
+
+It gives a workspace **portability** (a complete copy in the standard schema) and **erasure from
+the live database**. It is not, by itself, compliance. Outside what it reaches: this server's
+database backups and logs, run artifacts on disk, and whatever was sent to LLM and embedding
+providers while the workspace ran here. Encryption in transit to the target is the connection
+string's `sslmode`; encryption at rest is the target's. Agreements such as a BAA are between the
+organisations, not something the software provides.
+
 ## Secrets
 
 | Secret                                | How it is kept                                                                                                             |

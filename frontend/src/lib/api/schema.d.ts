@@ -1531,6 +1531,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{wid}/transfers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The workspace's transfers, latest first (owners only). */
+        get: operations["list"];
+        put?: never;
+        /**
+         * Starts copying the workspace to the PostgreSQL at `url` (owners only):
+         *     its teams, members, issues, graphs, runs, documents, memory, settings and
+         *     logs. Password hashes and stored API keys are not copied. Nothing changes
+         *     on this server; the copy runs in the background and its outcome is read
+         *     from `GET …/transfers`. One transfer runs at a time.
+         */
+        post: operations["start"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{wid}/usage": {
         parameters: {
             query?: never;
@@ -1651,7 +1675,7 @@ export interface components {
          * @description What an audit entry records.
          * @enum {string}
          */
-        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed";
+        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred";
         /** @description One entry of a workspace's audit log. */
         AuditEntry: {
             action: components["schemas"]["AuditAction"];
@@ -2835,6 +2859,15 @@ export interface components {
         } | {
             run: components["schemas"]["Run"];
         };
+        /** @description `POST /workspaces/{wid}/transfers` body. */
+        StartTransfer: {
+            /**
+             * @description `postgres://user:password@host:5432/database` of the database that
+             *     should receive the workspace. Used for this transfer only: it is
+             *     neither stored nor logged. The user needs the right to create tables.
+             */
+            url: string;
+        };
         /**
          * @description What a workflow state means, whatever a team calls it. Reports and
          *     "is this done?" questions use the category, never the name.
@@ -2847,6 +2880,20 @@ export interface components {
             closed: number;
             /** Format: int64 */
             total: number;
+        };
+        /** @description What a transfer copied for one table. */
+        TableReport: {
+            /**
+             * Format: int64
+             * @description Rows of the workspace on this server.
+             */
+            read: number;
+            table: string;
+            /**
+             * Format: int64
+             * @description Rows written to the target (fewer when a row was already there).
+             */
+            written: number;
         };
         /** @description A team as seen by the caller. */
         Team: {
@@ -2942,6 +2989,23 @@ export interface components {
             /** @description The words that set the topic apart: "customs · invoices · port". */
             label: string;
             terms: string[];
+        };
+        /** @description A transfer of a workspace and how it went. */
+        Transfer: {
+            /** Format: date-time */
+            created_at: string;
+            /** @description Why it failed; empty otherwise. */
+            error: string;
+            /** Format: date-time */
+            finished_at: string | null;
+            /** Format: uuid */
+            id: string;
+            /** @description Per table: rows read here and rows written there. */
+            report: components["schemas"]["TableReport"][];
+            /** @description `running`, `done` or `failed`. */
+            status: string;
+            /** @description Where the data went, without credentials. */
+            target: string;
         };
         /** @description `PATCH /agents/{id}` body (any subset; `reports_to: null` detaches). */
         UpdateAgent: {
@@ -7998,6 +8062,103 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Transfer"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    start: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartTransfer"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Transfer"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description A transfer is already running */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

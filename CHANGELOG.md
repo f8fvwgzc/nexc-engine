@@ -117,6 +117,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Infrastructure page for server administrators: database, pgvector, migrations, agent runtime,
   embedding model, and a check that another PostgreSQL or Redis is reachable
   (`/admin/infrastructure`). `docs/INFRASTRUCTURE.md` explains what can be changed and how.
+- Data transfer: a workspace's owner copies the whole workspace to a PostgreSQL they control
+  (`POST /workspaces/{wid}/transfers`, Settings -> Data transfer) and can then remove it from this
+  server. Password hashes and stored API keys never leave; the connection string is not kept.
+  Deleting a workspace now also deletes the uploaded files of its documents.
 - Workflow editor: the Teams page opens a team's workflow, where team owners and workspace admins
   add, rename, recolour, reorder and remove issue states; other members see it read-only.
 - "Your teams" in the sidebar opens a team's issues (`/app/issues?team=<id>`), and `C` on the

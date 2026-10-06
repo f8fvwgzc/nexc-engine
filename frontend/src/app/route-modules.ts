@@ -26,6 +26,7 @@ export const routeModules = {
   settingsKnowledge: () => import('@/pages/settings/knowledge-page'),
   settingsActivity: () => import('@/pages/settings/activity-page'),
   settingsMap: () => import('@/pages/settings/map-page'),
+  settingsTransfer: () => import('@/pages/settings/transfer-page'),
   settingsInfrastructure: () => import('@/pages/settings/infrastructure-page'),
   notFound: () => import('@/pages/not-found-page'),
 };

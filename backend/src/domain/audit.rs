@@ -27,6 +27,7 @@ string_enum!(
         GuardrailsChanged => "guardrails_changed",
         LabelDeleted => "label_deleted",
         KnowledgeChanged => "knowledge_changed",
+        WorkspaceTransferred => "workspace_transferred",
     }
 );
 
