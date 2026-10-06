@@ -49,6 +49,7 @@ case "${1:-}" in
         -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
         -e POSTGRES_DB="$POSTGRES_DB" \
         -v "$VOLUME":/var/lib/postgresql/data \
+        --shm-size=1g \
         --health-cmd "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB" \
         --health-interval 2s \
         "$IMAGE" >/dev/null

@@ -559,6 +559,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/memories/topics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The topics of a workspace's memory, largest first, with how many memories
+         *     of each the caller may read. They are found without supervision: memories
+         *     are clustered by their embeddings and each cluster is named by the words
+         *     that set it apart, drawn only from memories the whole workspace can read.
+         */
+        get: operations["topics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memories/topics/rebuild": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Finds the topics of a workspace's memory afresh (admins and owners). The
+         *     work runs in the background; read the topics again shortly.
+         */
+        post: operations["rebuild_topics"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/memories/{id}": {
         parameters: {
             query?: never;
@@ -2218,6 +2260,11 @@ export interface components {
             scope: components["schemas"]["MemoryScope"];
             /** Format: double */
             score: number | null;
+            /**
+             * Format: uuid
+             * @description The topic the memory was grouped under, once the workspace has topics.
+             */
+            topic_id: string | null;
             /** Format: date-time */
             updated_at: string;
         };
@@ -2231,6 +2278,22 @@ export interface components {
          * @enum {string}
          */
         MemoryScope: "user" | "graph" | "node";
+        /**
+         * @description What to do with a newly extracted memory candidate.
+         *     A topic of a workspace's memory, as one reader sees it.
+         */
+        MemoryTopic: {
+            /** Format: uuid */
+            id: string;
+            /** @description The words that set the topic apart: "pricing · discount · renewal". */
+            label: string;
+            /**
+             * Format: int64
+             * @description Memories under it that the reader may see.
+             */
+            memory_count: number;
+            terms: string[];
+        };
         /** @description What `GET /settings/llm/models` returns. */
         ModelCatalog: {
             /** @description Newest first; models without a release date come last, by id. */
@@ -4599,6 +4662,8 @@ export interface operations {
                 q?: string | null;
                 /** @description 1–100, default 20. */
                 limit?: number | null;
+                /** @description Only memories grouped under this topic. */
+                topic_id?: string | null;
                 /** @description How many results to skip, for paging (0–5000, default 0). */
                 offset?: number | null;
                 /**
@@ -4619,6 +4684,71 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Memory"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    topics: {
+        parameters: {
+            query: {
+                workspace_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryTopic"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    rebuild_topics: {
+        parameters: {
+            query: {
+                workspace_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Started */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
                 };
             };
             404: {

@@ -55,11 +55,25 @@ pub struct Memory {
     pub access_count: i64,
     #[schema(required = true)]
     pub score: Option<f64>,
+    /// The topic the memory was grouped under, once the workspace has topics.
+    #[schema(required = true)]
+    pub topic_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 /// What to do with a newly extracted memory candidate.
+/// A topic of a workspace's memory, as one reader sees it.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct MemoryTopic {
+    pub id: Uuid,
+    /// The words that set the topic apart: "pricing · discount · renewal".
+    pub label: String,
+    pub terms: Vec<String>,
+    /// Memories under it that the reader may see.
+    pub memory_count: i64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Consolidation {
     /// Already known: only reinforce the existing memory.

@@ -36,6 +36,7 @@ impl FromRow<'_, PgRow> for StoredMemory {
                 importance: row.try_get("importance")?,
                 access_count: row.try_get("access_count")?,
                 score: None,
+                topic_id: row.try_get("topic_id")?,
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
             },
@@ -149,6 +150,16 @@ macro_rules! readable {
     };
 }
 
+/// Which page of a reader's memories to read.
+#[derive(Debug, Clone, Copy)]
+pub struct Page {
+    /// Narrows to one graph plus the reader's own notes.
+    pub only_graph: Option<Uuid>,
+    pub topic_id: Option<Uuid>,
+    pub limit: i64,
+    pub offset: i64,
+}
+
 /// One page of the memories a reader may see, newest first, read from the
 /// database: `only_graph` narrows to one graph plus the reader's own notes.
 pub async fn page_readable(
@@ -156,24 +167,157 @@ pub async fn page_readable(
     workspace_id: Uuid,
     graphs: &[Uuid],
     reader: Uuid,
-    only_graph: Option<Uuid>,
-    limit: i64,
-    offset: i64,
+    page: Page,
 ) -> Result<Vec<StoredMemory>, sqlx::Error> {
     sqlx::query_as(concat!(
         "SELECT * FROM memories WHERE ",
         readable!(),
         " AND ($4::uuid IS NULL OR graph_id = $4 OR scope = 'user')
+           AND ($7::uuid IS NULL OR topic_id = $7)
          ORDER BY updated_at DESC, id LIMIT $5 OFFSET $6"
     ))
     .bind(workspace_id)
     .bind(graphs)
     .bind(reader)
-    .bind(only_graph)
-    .bind(limit)
-    .bind(offset)
+    .bind(page.only_graph)
+    .bind(page.limit)
+    .bind(page.offset)
+    .bind(page.topic_id)
     .fetch_all(db)
     .await
+}
+
+// ---------- topics ----------
+
+/// A stored topic with its centre.
+#[derive(Debug, Clone, FromRow)]
+pub struct StoredTopic {
+    pub id: Uuid,
+    pub label: String,
+    pub terms: Vec<String>,
+    pub centroid: Vec<u8>,
+}
+
+/// The topics of a workspace.
+pub async fn topics(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+) -> Result<Vec<StoredTopic>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT id, label, terms, centroid FROM memory_topics WHERE workspace_id = $1
+         ORDER BY label, id",
+    )
+    .bind(workspace_id)
+    .fetch_all(db)
+    .await
+}
+
+/// How many memories of each topic a reader may see.
+pub async fn topic_counts(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    graphs: &[Uuid],
+    reader: Uuid,
+) -> Result<Vec<(Uuid, i64)>, sqlx::Error> {
+    sqlx::query_as(concat!(
+        "SELECT topic_id, count(*) FROM memories WHERE ",
+        readable!(),
+        " AND topic_id IS NOT NULL GROUP BY topic_id"
+    ))
+    .bind(workspace_id)
+    .bind(graphs)
+    .bind(reader)
+    .fetch_all(db)
+    .await
+}
+
+/// Up to `limit` memories the whole workspace can read (learned in graphs
+/// that are not in a private team), picked evenly across the workspace: what
+/// topics are found in and named from. Personal notes and private teams'
+/// memories never shape a name others see.
+pub async fn sample_shared(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    limit: i64,
+) -> Result<Vec<(Uuid, String, Vec<u8>)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT m.id, m.content, m.embedding
+         FROM memories m
+         JOIN graphs g ON g.id = m.graph_id
+         LEFT JOIN teams t ON t.id = g.team_id
+         WHERE m.workspace_id = $1 AND (t.id IS NULL OR NOT t.private)
+         ORDER BY md5(m.id::text) LIMIT $2",
+    )
+    .bind(workspace_id)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
+/// The next memories of a workspace after `after` (by id) with their
+/// embeddings; `only_unplaced` skips those that already have a topic.
+pub async fn embeddings_after(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    after: Option<Uuid>,
+    only_unplaced: bool,
+    limit: i64,
+) -> Result<Vec<(Uuid, Vec<u8>)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT id, embedding FROM memories
+         WHERE workspace_id = $1 AND ($2::uuid IS NULL OR id > $2)
+           AND (NOT $3 OR topic_id IS NULL)
+         ORDER BY id LIMIT $4",
+    )
+    .bind(workspace_id)
+    .bind(after)
+    .bind(only_unplaced)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
+/// Replaces the topics of a workspace; memories lose their old topic.
+pub async fn replace_topics(
+    db: &mut sqlx::PgConnection,
+    workspace_id: Uuid,
+    topics: &[(Uuid, String, Vec<String>, Vec<u8>)],
+) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM memory_topics WHERE workspace_id = $1")
+        .bind(workspace_id)
+        .execute(&mut *db)
+        .await?;
+    for (id, label, terms, centroid) in topics {
+        sqlx::query(
+            "INSERT INTO memory_topics (id, workspace_id, label, terms, centroid)
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(id)
+        .bind(workspace_id)
+        .bind(label)
+        .bind(terms)
+        .bind(centroid)
+        .execute(&mut *db)
+        .await?;
+    }
+    Ok(())
+}
+
+/// Gives a batch of memories their topics.
+pub async fn assign_topics(
+    db: impl PgExecutor<'_>,
+    memory_ids: &[Uuid],
+    topic_ids: &[Uuid],
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE memories m SET topic_id = u.topic
+         FROM UNNEST($1::uuid[], $2::uuid[]) AS u(id, topic) WHERE m.id = u.id",
+    )
+    .bind(memory_ids)
+    .bind(topic_ids)
+    .execute(db)
+    .await?;
+    Ok(())
 }
 
 /// One memory by id, whoever may read it.

@@ -87,7 +87,14 @@ pub async fn ensure_index(db: &PgPool, support: &Support, dims: usize) -> Result
            ON document_chunks USING hnsw ((embedding_vec::vector({dims})) vector_cosine_ops)
            WHERE vector_dims(embedding_vec) = {dims}"
     );
-    sqlx::query(AssertSqlSafe(sql)).execute(db).await?;
+    // Built without parallel workers: they share memory through /dev/shm, which a container
+    // gives 64 MB by default, and a build on a table that already has rows then fails.
+    let mut tx = db.begin().await?;
+    sqlx::query("SET LOCAL max_parallel_maintenance_workers = 0")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(AssertSqlSafe(sql)).execute(&mut *tx).await?;
+    tx.commit().await?;
     Ok(())
 }
 

@@ -16,16 +16,27 @@ export const memorySchema = z.object({
   importance: z.number(),
   access_count: z.number().int().nonnegative(),
   score: z.number().nullable(),
+  topic_id: idSchema.nullable(),
   created_at: timestampSchema,
   updated_at: timestampSchema,
 });
 export type Memory = z.infer<typeof memorySchema>;
+
+/** A topic of the workspace's memory, with how many of its memories the reader may see. */
+export const memoryTopicSchema = z.object({
+  id: idSchema,
+  label: z.string(),
+  terms: z.array(z.string()),
+  memory_count: z.number().int().nonnegative(),
+});
+export type MemoryTopic = z.infer<typeof memoryTopicSchema>;
 
 export interface MemoryQuery {
   /** The workspace whose memory to read. */
   workspace_id?: string;
   q?: string;
   graph_id?: string;
+  topic_id?: string;
   limit?: number;
   /** How many results to skip. */
   offset?: number;

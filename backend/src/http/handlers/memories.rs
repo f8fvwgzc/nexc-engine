@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::AppError;
-use crate::domain::memory::Memory;
+use crate::domain::memory::{Memory, MemoryTopic};
 use crate::engine::editor;
 use crate::http::extract::{AuthUser, Path, Query};
 use crate::http::problem::Problem;
@@ -28,6 +28,8 @@ pub struct MemoryQuery {
     pub q: Option<String>,
     /// 1–100, default 20.
     pub limit: Option<u32>,
+    /// Only memories grouped under this topic.
+    pub topic_id: Option<Uuid>,
     /// How many results to skip, for paging (0–5000, default 0).
     pub offset: Option<u32>,
     /// Cut each `content` to this many characters (20–2000) and end it with `…`: a list
@@ -86,11 +88,22 @@ pub async fn list(
     let memories = match q {
         Some(q) => {
             // A search is ranked as a whole, so its pages are cut from the ranking.
-            let ranked =
-                memory::retrieve(index, db, auth.id, workspace, view, &q, offset + limit).await?;
-            ranked.into_iter().skip(offset).collect()
+            // A topic narrows the ranking afterwards, so more is ranked than is shown.
+            let wanted = match query.topic_id {
+                Some(_) => (offset + limit) * 5,
+                None => offset + limit,
+            };
+            let ranked = memory::retrieve(index, db, auth.id, workspace, view, &q, wanted).await?;
+            ranked
+                .into_iter()
+                .filter(|m| query.topic_id.is_none() || m.topic_id == query.topic_id)
+                .skip(offset)
+                .take(limit)
+                .collect()
         }
-        None => memory::visible(db, auth.id, workspace, view, limit, offset).await?,
+        None => {
+            memory::visible(db, auth.id, workspace, view, query.topic_id, limit, offset).await?
+        }
     };
     let chars = query.preview.map(|c| c.clamp(20, 2000) as usize);
     let page = memories
@@ -103,6 +116,59 @@ pub async fn list(
         })
         .collect();
     Ok(Json(page))
+}
+
+/// Query of the memory topic endpoints.
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+pub struct TopicQuery {
+    pub workspace_id: Uuid,
+}
+
+/// The topics of a workspace's memory, largest first, with how many memories
+/// of each the caller may read. They are found without supervision: memories
+/// are clustered by their embeddings and each cluster is named by the words
+/// that set it apart, drawn only from memories the whole workspace can read.
+#[utoipa::path(get, path = "/memories/topics", tag = "memories", security(("bearer" = [])), params(TopicQuery),
+    responses((status = 200, body = [MemoryTopic]), (status = 404, body = Problem)))]
+pub async fn topics(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Query(query): Query<TopicQuery>,
+) -> Result<Json<Vec<MemoryTopic>>, AppError> {
+    repo::workspaces::role_of(&state.db, query.workspace_id, auth.id)
+        .await
+        .or_not_found("workspace")?;
+    Ok(Json(
+        memory::topics::list(&state.db, auth.id, query.workspace_id).await?,
+    ))
+}
+
+/// Finds the topics of a workspace's memory afresh (admins and owners). The
+/// work runs in the background; read the topics again shortly.
+#[utoipa::path(post, path = "/memories/topics/rebuild", tag = "memories", security(("bearer" = [])), params(TopicQuery),
+    responses((status = 202, description = "Started"), (status = 403, body = Problem), (status = 404, body = Problem)))]
+pub async fn rebuild_topics(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Query(query): Query<TopicQuery>,
+) -> Result<StatusCode, AppError> {
+    let role = repo::workspaces::role_of(&state.db, query.workspace_id, auth.id)
+        .await
+        .or_not_found("workspace")?;
+    if !role.is_admin() {
+        return Err(AppError::Forbidden(
+            "only workspace admins rebuild the topics".into(),
+        ));
+    }
+    let workspace = query.workspace_id;
+    tokio::spawn(async move {
+        match memory::topics::rebuild(&state.db, workspace).await {
+            Ok(topics) => tracing::info!(%workspace, topics, "memory topics rebuilt"),
+            Err(err) => tracing::warn!(%workspace, error = %err, "memory topic rebuild failed"),
+        }
+    });
+    Ok(StatusCode::ACCEPTED)
 }
 
 /// One memory in full, if the caller may read it: their own notes, and what

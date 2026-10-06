@@ -10,6 +10,7 @@
 #![forbid(unsafe_code)]
 
 pub mod index;
+pub mod topics;
 pub mod vectors;
 
 use std::collections::HashSet;
@@ -179,6 +180,7 @@ pub async fn visible(
     user: Uuid,
     workspace: Uuid,
     view: View,
+    topic: Option<Uuid>,
     limit: usize,
     offset: usize,
 ) -> anyhow::Result<Vec<Memory>> {
@@ -188,16 +190,13 @@ pub async fn visible(
         View::Only(graph) => Some(graph),
         View::All | View::Prefer(_) => None,
     };
-    let page = memories::page_readable(
-        db,
-        workspace,
-        &graphs,
-        user,
-        only,
-        i64::try_from(limit).unwrap_or(i64::MAX),
-        i64::try_from(offset).unwrap_or(i64::MAX),
-    )
-    .await?;
+    let page = memories::Page {
+        only_graph: only,
+        topic_id: topic,
+        limit: i64::try_from(limit).unwrap_or(i64::MAX),
+        offset: i64::try_from(offset).unwrap_or(i64::MAX),
+    };
+    let page = memories::page_readable(db, workspace, &graphs, user, page).await?;
     Ok(page.into_iter().map(|m| m.memory).collect())
 }
 
@@ -456,6 +455,7 @@ pub async fn store(
                         importance: c.importance,
                         access_count: 0,
                         score: None,
+                        topic_id: None,
                         created_at: now,
                         updated_at: now,
                     },
@@ -470,6 +470,10 @@ pub async fn store(
         && !decisions.is_empty()
     {
         index.invalidate(workspace);
+        // Topics are a view on top of the memory: failing to place a new one is logged.
+        if let Err(err) = topics::place_new(db, workspace).await {
+            tracing::warn!(%workspace, error = %err, "cannot place new memories in topics");
+        }
     }
     Ok(decisions)
 }
@@ -491,6 +495,7 @@ mod tests {
                 importance,
                 access_count: 0,
                 score: None,
+                topic_id: None,
                 created_at: at,
                 updated_at: at,
             },

@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { BrainIcon, ChevronLeftIcon, ChevronRightIcon, SearchIcon } from 'lucide-react';
 import { useState } from 'react';
 
@@ -12,13 +12,14 @@ import { Button } from '@/components/ui/button';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
 import { Spinner } from '@/components/ui/spinner';
 import { graphsQuery } from '@/features/graphs/api';
-import { memoriesQuery } from '@/features/memory/api';
+import { memoriesQuery, memoryTopicsQuery, rebuildMemoryTopics } from '@/features/memory/api';
 import { MemoryDialog } from '@/features/memory/components/memory-dialog';
 import { MemoryList } from '@/features/memory/components/memory-list';
 import { useDeleteMemory } from '@/features/memory/hooks/use-delete-memory';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import type { Memory } from '@/schemas/memory';
-import { useWorkspaceId } from '@/features/workspaces/use-current-workspace';
+import { useCurrentWorkspace, useWorkspaceId } from '@/features/workspaces/use-current-workspace';
+import { qk } from '@/lib/query-keys';
 
 const ALL_GRAPHS = '__all__';
 /** Memories per page. One more is asked for, to know whether a next page exists. */
@@ -32,11 +33,26 @@ export default function MemoryPage() {
   const [deleting, setDeleting] = useState<Memory | null>(null);
   const [opened, setOpened] = useState<Memory | null>(null);
   const [page, setPage] = useState(0);
+  const [topicId, setTopicId] = useState<string | null>(null);
   const debouncedQ = useDebouncedValue(q.trim(), 300);
   const workspaceId = useWorkspaceId();
+  const queryClient = useQueryClient();
+  const { current } = useCurrentWorkspace();
+  const admin = current?.role === 'owner' || current?.role === 'admin';
+  const { data: topics = [] } = useQuery(memoryTopicsQuery(workspaceId ?? ''));
+  // A topic that a rebuild replaced stops filtering.
+  const topic = topics.find((t) => t.id === topicId);
+  const rebuild = useMutation({
+    mutationFn: () => rebuildMemoryTopics(workspaceId ?? ''),
+    meta: { successMessage: 'Finding topics again; this takes a moment' },
+    onSuccess: () => {
+      // The work runs in the background: look again shortly.
+      setTimeout(() => void queryClient.invalidateQueries({ queryKey: qk.memories.all }), 3_000);
+    },
+  });
   const { data: graphs = [] } = useQuery(graphsQuery(workspaceId));
   // A page belongs to one search and one graph filter; changing either starts over.
-  const filterKey = `${debouncedQ}|${graphId}`;
+  const filterKey = `${debouncedQ}|${graphId}|${topic?.id ?? ''}`;
   const [pagedFor, setPagedFor] = useState(filterKey);
   if (pagedFor !== filterKey) {
     setPagedFor(filterKey);
@@ -51,6 +67,7 @@ export default function MemoryPage() {
       workspace_id: workspaceId,
       q: debouncedQ || undefined,
       graph_id: graphId === ALL_GRAPHS ? undefined : graphId,
+      topic_id: topic?.id,
       limit: PAGE_SIZE + 1,
       offset: page * PAGE_SIZE,
       preview: PREVIEW_CHARS,
@@ -92,6 +109,39 @@ export default function MemoryPage() {
           ]}
         />
       </div>
+      {(topics.length > 0 || admin) && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="mr-1 text-xs text-muted-foreground">Topics</span>
+          {topics.length === 0 && (
+            <span className="text-xs text-muted-foreground">
+              appear once the workspace has about twenty shared memories
+            </span>
+          )}
+          {topics.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              aria-pressed={t.id === topic?.id}
+              onClick={() => setTopicId(t.id === topic?.id ? null : t.id)}
+              className="inline-flex h-6 items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors outline-none hover:bg-muted/60 focus-visible:border-ring aria-pressed:border-ring aria-pressed:bg-muted"
+            >
+              {t.label}
+              <span className="text-muted-foreground tabular-nums">{t.memory_count}</span>
+            </button>
+          ))}
+          {admin && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="ml-auto h-6 px-2 text-xs"
+              disabled={rebuild.isPending}
+              onClick={() => rebuild.mutate()}
+            >
+              Find topics again
+            </Button>
+          )}
+        </div>
+      )}
       {isPending ? (
         <TableSkeleton rows={4} />
       ) : memories && (memories.length > 0 || page > 0) ? (

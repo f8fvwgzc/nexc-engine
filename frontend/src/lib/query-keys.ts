@@ -76,6 +76,7 @@ export const qk = {
     all: ['memories'] as const,
     search: (query: MemoryQuery) => [...qk.memories.all, query] as const,
     one: (memoryId: string) => [...qk.memories.all, 'detail', memoryId] as const,
+    topics: (workspaceId: string) => [...qk.memories.all, 'topics', workspaceId] as const,
   },
   orchestrator: ['orchestrator', 'status'] as const,
 };

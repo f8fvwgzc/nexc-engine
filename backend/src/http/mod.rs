@@ -157,6 +157,8 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(knowledge::rebuild_topics))
         .routes(routes!(knowledge::settings, knowledge::put_settings))
         .routes(routes!(memories::list))
+        .routes(routes!(memories::topics))
+        .routes(routes!(memories::rebuild_topics))
         .routes(routes!(memories::get, memories::delete))
         .routes(routes!(orchestrator::status))
         .routes(routes!(realtime::ticket))

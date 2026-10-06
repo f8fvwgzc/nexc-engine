@@ -221,6 +221,7 @@ export const memory: Memory = {
   content: 'The report targets executives.',
   importance: 0.8,
   access_count: 3,
+  topic_id: null,
   score: 0.91,
   created_at: at,
   updated_at: at,

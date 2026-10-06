@@ -101,6 +101,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   one topic (`topic_id`), and admins can find the topics afresh.
 - `deploy/postgres/pgvector.Dockerfile` builds PostgreSQL 17 with pgvector; `scripts/db.sh` now
   reads `NEXC_DB_IMAGE` and `NEXC_DB_VOLUME` from `.env`.
+- Memory topics: a workspace's memories are grouped into topics the same way documents are
+  (`GET /memories/topics`, `topic_id` on `GET /memories`), shown as chips on the Memory page.
+  Topic names are drawn only from memories the whole workspace can read; personal notes and
+  private teams' memories are placed under a topic but never shape its name.
 - Workflow editor: the Teams page opens a team's workflow, where team owners and workspace admins
   add, rename, recolour, reorder and remove issue states; other members see it read-only.
 - "Your teams" in the sidebar opens a team's issues (`/app/issues?team=<id>`), and `C` on the

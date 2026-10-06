@@ -36,6 +36,10 @@ const STALLED_AFTER_SECS: i64 = 900;
 const CANDIDATES: i64 = 300;
 /// A word in more than this share of all passages is not searched for.
 const COMMON_TERM_SHARE: f64 = 0.02;
+/// Nearest neighbours taken from the vector index per search. Fewer than the keyword matches:
+/// the index is scanned further for every row another workspace's passages push out
+/// (about 90 ms for 100 neighbours of a workspace holding 5% of 500,000 passages).
+const VECTOR_CANDIDATES: i64 = 100;
 /// Reciprocal-rank-fusion constant: how much the very top ranks stand out.
 const RRF_K: f64 = 60.0;
 /// A passage found only by vector (no shared telling word) must be at least this similar
@@ -460,7 +464,7 @@ pub async fn search(
                 workspace,
                 model,
                 v,
-                CANDIDATES,
+                VECTOR_CANDIDATES,
             )
             .await;
             match found {
