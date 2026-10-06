@@ -1,4 +1,5 @@
-//! HS256 access tokens with `iss`, `aud`, `exp`, `nbf`, `iat` and `jti` claims.
+//! HS256 access tokens with `iss`, `aud`, `exp`, `nbf`, `iat` and `jti` claims,
+//! plus the account's role and session epoch.
 
 use std::time::Duration;
 
@@ -23,6 +24,9 @@ pub struct Claims {
     pub nbf: i64,
     pub iat: i64,
     pub jti: Uuid,
+    /// The account's session epoch when the token was issued (see `security::gate`).
+    #[serde(default)]
+    pub epoch: i32,
 }
 
 /// Signing / verification keys and the access token lifetime.
@@ -63,8 +67,8 @@ impl JwtKeys {
         self.ttl.as_secs() as i64
     }
 
-    /// Issues an access token for `user_id`.
-    pub fn issue(&self, user_id: Uuid, role: Role) -> anyhow::Result<String> {
+    /// Issues an access token for `user_id` at its session `epoch`.
+    pub fn issue(&self, user_id: Uuid, role: Role, epoch: i32) -> anyhow::Result<String> {
         let now = chrono::Utc::now().timestamp();
         let claims = Claims {
             sub: user_id,
@@ -75,6 +79,7 @@ impl JwtKeys {
             nbf: now,
             iat: now,
             jti: Uuid::now_v7(),
+            epoch,
         };
         Ok(encode(
             &Header::new(Algorithm::HS256),
@@ -101,9 +106,12 @@ mod tests {
     fn issues_and_verifies() {
         let keys = JwtKeys::new(SECRET, Duration::from_secs(900));
         let id = Uuid::now_v7();
-        let token = keys.issue(id, Role::Admin).unwrap();
+        let token = keys.issue(id, Role::Admin, 3).unwrap();
         let claims = keys.verify(&token).unwrap();
-        assert_eq!((claims.sub, claims.role), (id, Role::Admin));
+        assert_eq!(
+            (claims.sub, claims.role, claims.epoch),
+            (id, Role::Admin, 3)
+        );
         assert_eq!(claims.exp - claims.iat, 900);
     }
 
@@ -114,9 +122,9 @@ mod tests {
             b"ffffffffffffffffffffffffffffffff",
             Duration::from_secs(900),
         );
-        let token = other.issue(Uuid::now_v7(), Role::User).unwrap();
+        let token = other.issue(Uuid::now_v7(), Role::User, 0).unwrap();
         assert!(keys.verify(&token).is_none());
-        let mut tampered = keys.issue(Uuid::now_v7(), Role::User).unwrap();
+        let mut tampered = keys.issue(Uuid::now_v7(), Role::User, 0).unwrap();
         tampered.push('x');
         assert!(keys.verify(&tampered).is_none());
         assert!(keys.verify("not.a.jwt").is_none());
@@ -138,6 +146,7 @@ mod tests {
             nbf: now - 120,
             iat: now - 120,
             jti: Uuid::now_v7(),
+            epoch: 0,
         };
         let token = encode(
             &Header::new(Algorithm::HS256),

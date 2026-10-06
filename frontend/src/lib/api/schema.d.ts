@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/v1/admin/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What platform administrators did, newest first. */
+        get: operations["events"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/infrastructure": {
         parameters: {
             query?: never;
@@ -11,7 +28,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The infrastructure this server runs on (server administrators only). */
+        /** The infrastructure this server runs on (platform administrators). */
         get: operations["status"];
         put?: never;
         post?: never;
@@ -49,7 +66,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Every account of the installation, newest first (platform administrators). */
+        /** Every account of the installation, newest first. */
         get: operations["users"];
         put?: never;
         post?: never;
@@ -73,9 +90,12 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Makes an account a platform administrator, or an ordinary user again.
-         *     Nobody changes their own role, so the platform always keeps the
-         *     administrator who is acting.
+         * Changes an account's platform role, suspends it, or lets it back in.
+         * @description Both a role change and a suspension end the account's access tokens at
+         *     once. Nobody changes their own account here, so the platform always
+         *     keeps the administrator who is acting. An account that is the only
+         *     owner of a workspace other people work in cannot be made a platform
+         *     administrator before that workspace has another owner.
          */
         patch: operations["update_user"];
         trace?: never;
@@ -87,10 +107,70 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Every workspace of the installation, newest first (platform administrators). */
+        /** Every workspace of the installation, newest first. */
         get: operations["workspaces"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/workspaces/{wid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One workspace: its members and how much it holds, never what it holds. */
+        get: operations["workspace"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/workspaces/{wid}/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deletes a workspace with everything in it, files included. Members it
+         *     leaves without any workspace get an empty personal one, so that they can
+         *     still sign in and work. The name travels in the body, not in the
+         *     address, so that it does not end up in access logs.
+         */
+        post: operations["delete_workspace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/workspaces/{wid}/owners": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Makes a registered account an owner of a workspace: for a workspace
+         *     whose owner left, was suspended or now administers the platform. The
+         *     workspace's own audit log records it, so its members see who did it.
+         */
+        post: operations["assign_owner"];
         delete?: never;
         options?: never;
         head?: never;
@@ -191,7 +271,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The current user. */
+        /** The current user, whichever side of the platform boundary they work on. */
         get: operations["me"];
         put?: never;
         post?: never;
@@ -1723,6 +1803,11 @@ export interface components {
             /** Format: int64 */
             size: number;
         };
+        /** @description `POST /admin/workspaces/{wid}/owners` body. */
+        AssignOwner: {
+            /** @description E-mail address of a registered account. */
+            email: string;
+        };
         /** @description What the member gets back. */
         AssistantReply: {
             /** @description Issues the assistant filed while answering. */
@@ -1754,7 +1839,7 @@ export interface components {
          * @description What an audit entry records.
          * @enum {string}
          */
-        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred";
+        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned";
         /** @description One entry of a workspace's audit log. */
         AuditEntry: {
             action: components["schemas"]["AuditAction"];
@@ -2062,6 +2147,11 @@ export interface components {
             /** Format: int64 */
             size_bytes: number;
             version: string;
+        };
+        /** @description `POST /admin/workspaces/{wid}/delete` body. */
+        DeleteWorkspace: {
+            /** @description The workspace's name, exactly: deleting cannot be undone. */
+            confirm: string;
         };
         /** @description An uploaded document. */
         Document: {
@@ -2766,6 +2856,46 @@ export interface components {
          * @enum {string}
          */
         PlanStatus: "streaming" | "ready" | "failed" | "applied";
+        /**
+         * @description What a platform administrator did.
+         * @enum {string}
+         */
+        PlatformAction: "role_changed" | "account_suspended" | "account_reactivated" | "owner_assigned" | "workspace_deleted";
+        /** @description One entry of the platform's activity log. */
+        PlatformEvent: {
+            action: components["schemas"]["PlatformAction"];
+            /**
+             * Format: uuid
+             * @description `null` once the administrator's account is gone; `actor_name` stays.
+             */
+            actor_id: string | null;
+            actor_name: string;
+            /** Format: date-time */
+            created_at: string;
+            /** @description What changed, in words. */
+            detail: string;
+            /** Format: uuid */
+            id: string;
+            /** @description The account or workspace the action was about. */
+            subject: string;
+        };
+        /** @description A member of a workspace, as the platform sees them. */
+        PlatformMember: {
+            email: string;
+            /** Format: date-time */
+            joined_at: string;
+            name: string;
+            platform_admin: boolean;
+            /** @description Their role inside the workspace. */
+            role: components["schemas"]["WorkspaceRole"];
+            /**
+             * @description Whether the account can use the workspace at all: a suspended account
+             *     and a platform administrator cannot.
+             */
+            suspended: boolean;
+            /** Format: uuid */
+            user_id: string;
+        };
         /** @description An account as the platform sees it. */
         PlatformUser: {
             /** Format: date-time */
@@ -2779,7 +2909,10 @@ export interface components {
             /** Format: int64 */
             owned_count: number;
             /** @description `admin` administers the platform; `user` is everyone else. */
-            role: string;
+            role: components["schemas"]["Role"];
+            /** @description Whether a platform administrator suspended the account, and why. */
+            suspended: boolean;
+            suspended_reason: string;
             /**
              * Format: int64
              * @description Workspaces the account belongs to, and how many of them it owns.
@@ -2800,10 +2933,15 @@ export interface components {
             member_count: number;
             name: string;
             owner_email: string | null;
-            /** @description Its first owner, by name and e-mail; `null` when the account is gone. */
+            /** @description Its first owner, by name and e-mail; `null` when it has none. */
             owner_name: string | null;
             /** Format: int64 */
             team_count: number;
+        };
+        /** @description One workspace with its members and its size. */
+        PlatformWorkspaceDetail: components["schemas"]["PlatformWorkspace"] & {
+            footprint: components["schemas"]["WorkspaceFootprint"];
+            members: components["schemas"]["PlatformMember"][];
         };
         /** @description An RFC 7807 problem document. */
         Problem: {
@@ -3254,10 +3392,13 @@ export interface components {
             /** Format: double */
             y?: number | null;
         };
-        /** @description `PATCH /admin/users/{uid}` body. */
+        /** @description `PATCH /admin/users/{uid}` body: at least one of `role` and `suspended`. */
         UpdatePlatformUser: {
-            /** @description `admin` lets the account administer the platform; `user` takes that away. */
-            role: components["schemas"]["Role"];
+            /** @description Why the account is suspended (with `suspended: true`), for the activity log. */
+            reason?: string | null;
+            role?: components["schemas"]["Role"] | null;
+            /** @description `true` stops the account from signing in and ends its sessions; `false` lifts that. */
+            suspended?: boolean | null;
         };
         /**
          * @description `PATCH /workspaces/{wid}/projects/{pid}` body (any subset; `lead_id` and
@@ -3388,6 +3529,19 @@ export interface components {
             /** @description URL-safe unique identifier. */
             slug: string;
         };
+        /** @description How much a workspace holds, in counts. */
+        WorkspaceFootprint: {
+            /** Format: int64 */
+            document_bytes: number;
+            /** Format: int64 */
+            document_count: number;
+            /** Format: int64 */
+            memory_count: number;
+            /** Format: int64 */
+            project_count: number;
+            /** Format: int64 */
+            run_count: number;
+        };
         /** @description `POST /workspaces` and `PATCH /workspaces/{wid}` body. */
         WorkspaceInput: {
             name: string;
@@ -3475,6 +3629,39 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    events: {
+        parameters: {
+            query?: {
+                /** @description Part of a name or e-mail address. */
+                q?: string | null;
+                /** @description 1-100, default 25. */
+                limit?: number | null;
+                offset?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformEvent"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     status: {
         parameters: {
             query?: never;
@@ -3614,7 +3801,7 @@ export interface operations {
                     "application/json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Your own role */
+            /** @description Your own account, or the only owner of a shared workspace */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3649,6 +3836,154 @@ export interface operations {
                 };
             };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    workspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformWorkspaceDetail"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    delete_workspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteWorkspace"];
+            };
+        };
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The name does not match */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    assign_owner: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssignOwner"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformWorkspaceDetail"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Already an owner, suspended, or a platform administrator */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description No account has this address */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

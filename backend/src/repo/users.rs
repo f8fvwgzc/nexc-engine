@@ -27,6 +27,8 @@ pub struct Credentials {
     pub password_hash: String,
     pub failed_logins: i32,
     pub locked_until: Option<DateTime<Utc>>,
+    /// Suspended by a platform administrator.
+    pub suspended: bool,
 }
 
 /// Inserts a user. Fails with a unique violation when the e-mail exists.
@@ -58,13 +60,33 @@ pub async fn find(db: impl PgExecutor<'_>, id: Uuid) -> Result<Option<User>, sql
         .await
 }
 
+/// Finds a user who may hold a session: one that exists and is not suspended.
+pub async fn find_active(db: impl PgExecutor<'_>, id: Uuid) -> Result<Option<User>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT id, email, name, role, created_at FROM users
+         WHERE id = $1 AND suspended_at IS NULL",
+    )
+    .bind(id)
+    .fetch_optional(db)
+    .await
+}
+
+/// The session epoch new access tokens of a user carry.
+pub async fn session_epoch(db: impl PgExecutor<'_>, id: Uuid) -> Result<i32, sqlx::Error> {
+    sqlx::query_scalar("SELECT session_epoch FROM users WHERE id = $1")
+        .bind(id)
+        .fetch_one(db)
+        .await
+}
+
 /// Finds credentials by (normalised) e-mail.
 pub async fn credentials(
     db: impl PgExecutor<'_>,
     email: &str,
 ) -> Result<Option<Credentials>, sqlx::Error> {
     let row = sqlx::query(
-        "SELECT id, email, name, role, created_at, password_hash, failed_logins, locked_until
+        "SELECT id, email, name, role, created_at, password_hash, failed_logins, locked_until,
+                suspended_at IS NOT NULL AS suspended
          FROM users WHERE lower(email) = lower($1)",
     )
     .bind(email)
@@ -76,6 +98,7 @@ pub async fn credentials(
             password_hash: r.try_get("password_hash")?,
             failed_logins: r.try_get("failed_logins")?,
             locked_until: r.try_get("locked_until")?,
+            suspended: r.try_get("suspended")?,
         })
     })
     .transpose()

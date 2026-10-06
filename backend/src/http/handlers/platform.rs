@@ -1,23 +1,34 @@
-//! The platform console: what whoever runs this installation sees across
-//! all workspaces. It shows who registered and which workspaces exist, with
-//! counts, never a workspace's content. Platform administrators are the
-//! accounts whose role is `admin`; everyone else is a `user`, whatever they
-//! are inside their own workspaces.
+//! The platform console's API: every workspace and account of the
+//! installation, what a platform administrator may do to them, and the log
+//! of what was done.
+//!
+//! This is the other side of the platform boundary. Every handler takes
+//! [`PlatformAdmin`]; the workspace API takes `AuthUser`, which refuses the
+//! same accounts. Nothing here returns a workspace's content.
 
 use axum::Json;
 use axum::extract::State;
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use axum::http::StatusCode;
+use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
-use super::infrastructure::require_instance_admin;
+use super::workspaces::{audit, ensure_personal, erase};
 use crate::app::AppState;
 use crate::domain::AppError;
-use crate::domain::user::Role;
+use crate::domain::audit::AuditAction;
+use crate::domain::platform::{
+    PlatformAction, PlatformEvent, PlatformUser, PlatformWorkspace, PlatformWorkspaceDetail,
+    REASON_MAX,
+};
+use crate::domain::user::{self, Role};
 use crate::domain::validation::{FieldErrors, Validate};
-use crate::http::extract::{AuthUser, Path, Query, ValidatedJson};
+use crate::domain::workspace::WorkspaceRole;
+use crate::http::extract::{Path, PlatformAdmin, Query, ValidatedJson};
 use crate::http::problem::Problem;
+use crate::repo::audit::Subject;
+use crate::repo::platform::Page;
+use crate::repo::{self, OrNotFound};
 
 /// Query of the platform lists.
 #[derive(Debug, Deserialize, IntoParams)]
@@ -31,162 +42,352 @@ pub struct PlatformQuery {
 }
 
 impl PlatformQuery {
-    fn parts(&self) -> (Option<String>, i64, i64) {
-        let q = self
-            .q
-            .as_deref()
-            .map(str::trim)
-            .filter(|q| !q.is_empty())
-            .map(|q| q.chars().take(100).collect());
-        (
-            q,
-            self.limit.unwrap_or(25).clamp(1, 100),
-            self.offset.unwrap_or(0).clamp(0, 1_000_000),
-        )
+    fn page(&self) -> Page {
+        Page {
+            q: self
+                .q
+                .as_deref()
+                .map(str::trim)
+                .filter(|q| !q.is_empty())
+                .map(|q| q.chars().take(100).collect()),
+            limit: self.limit.unwrap_or(25).clamp(1, 100),
+            offset: self.offset.unwrap_or(0).clamp(0, 1_000_000),
+        }
     }
 }
 
-/// A workspace as the platform sees it: who owns it and how big it is.
-#[derive(Debug, Serialize, ToSchema, sqlx::FromRow)]
-pub struct PlatformWorkspace {
-    pub id: Uuid,
-    pub name: String,
-    /// Its first owner, by name and e-mail; `null` when the account is gone.
-    #[schema(required = true)]
-    pub owner_name: Option<String>,
-    #[schema(required = true)]
-    pub owner_email: Option<String>,
-    pub member_count: i64,
-    pub team_count: i64,
-    pub issue_count: i64,
-    pub graph_count: i64,
-    pub created_at: DateTime<Utc>,
+/// Writes an entry of the platform's activity log. A failure is logged, not
+/// returned: the action it describes has already happened.
+async fn log(
+    state: &AppState,
+    admin: PlatformAdmin,
+    action: PlatformAction,
+    subject: &str,
+    detail: &str,
+) {
+    if let Err(err) = repo::platform::record(&state.db, admin.id, action, subject, detail).await {
+        tracing::error!(actor = %admin.id, %action, error = %err, "platform event was not written");
+    }
 }
 
-/// Every workspace of the installation, newest first (platform administrators).
+fn named(user: &PlatformUser) -> String {
+    format!("{} <{}>", user.name, user.email)
+}
+
+async fn detail(state: &AppState, wid: Uuid) -> Result<PlatformWorkspaceDetail, AppError> {
+    let workspace = repo::platform::workspace(&state.db, wid)
+        .await
+        .or_not_found("workspace")?;
+    Ok(PlatformWorkspaceDetail {
+        workspace,
+        members: repo::platform::members(&state.db, wid).await?,
+        footprint: repo::platform::footprint(&state.db, wid).await?,
+    })
+}
+
+/// Every workspace of the installation, newest first.
 #[utoipa::path(get, path = "/admin/workspaces", tag = "admin", security(("bearer" = [])), params(PlatformQuery),
     responses((status = 200, body = [PlatformWorkspace]), (status = 403, body = Problem)))]
 pub async fn workspaces(
     State(state): State<AppState>,
-    auth: AuthUser,
+    _admin: PlatformAdmin,
     Query(query): Query<PlatformQuery>,
 ) -> Result<Json<Vec<PlatformWorkspace>>, AppError> {
-    require_instance_admin(auth)?;
-    let (q, limit, offset) = query.parts();
-    let rows = sqlx::query_as(
-        "SELECT w.id, w.name, o.name AS owner_name, o.email AS owner_email,
-                (SELECT count(*) FROM workspace_members m WHERE m.workspace_id = w.id) AS member_count,
-                (SELECT count(*) FROM teams t WHERE t.workspace_id = w.id) AS team_count,
-                (SELECT count(*) FROM issues i WHERE i.workspace_id = w.id) AS issue_count,
-                (SELECT count(*) FROM graphs g WHERE g.workspace_id = w.id) AS graph_count,
-                w.created_at
-         FROM workspaces w
-         LEFT JOIN LATERAL (
-             SELECT u.name, u.email FROM workspace_members m JOIN users u ON u.id = m.user_id
-             WHERE m.workspace_id = w.id AND m.role = 'owner'
-             ORDER BY m.created_at, u.id LIMIT 1) o ON true
-         WHERE $1::text IS NULL OR w.name ILIKE '%' || $1 || '%'
-            OR o.email ILIKE '%' || $1 || '%' OR o.name ILIKE '%' || $1 || '%'
-         ORDER BY w.created_at DESC, w.id LIMIT $2 OFFSET $3",
-    )
-    .bind(q)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(&state.db)
-    .await?;
-    Ok(Json(rows))
+    Ok(Json(
+        repo::platform::workspaces(&state.db, &query.page()).await?,
+    ))
 }
 
-/// An account as the platform sees it.
-#[derive(Debug, Serialize, ToSchema, sqlx::FromRow)]
-pub struct PlatformUser {
-    pub id: Uuid,
+/// One workspace: its members and how much it holds, never what it holds.
+#[utoipa::path(get, path = "/admin/workspaces/{wid}", tag = "admin", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id")),
+    responses((status = 200, body = PlatformWorkspaceDetail), (status = 403, body = Problem),
+        (status = 404, body = Problem)))]
+pub async fn workspace(
+    State(state): State<AppState>,
+    _admin: PlatformAdmin,
+    Path(wid): Path<Uuid>,
+) -> Result<Json<PlatformWorkspaceDetail>, AppError> {
+    Ok(Json(detail(&state, wid).await?))
+}
+
+/// `POST /admin/workspaces/{wid}/owners` body.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AssignOwner {
+    /// E-mail address of a registered account.
     pub email: String,
-    pub name: String,
-    /// `admin` administers the platform; `user` is everyone else.
-    pub role: String,
-    /// Workspaces the account belongs to, and how many of them it owns.
-    pub workspace_count: i64,
-    pub owned_count: i64,
-    /// Whether sign-in is locked right now (too many failed attempts).
-    pub locked: bool,
-    pub created_at: DateTime<Utc>,
 }
 
-const USER_COLUMNS: &str = "u.id, u.email, u.name, u.role,
-    (SELECT count(*) FROM workspace_members m WHERE m.user_id = u.id) AS workspace_count,
-    (SELECT count(*) FROM workspace_members m WHERE m.user_id = u.id AND m.role = 'owner')
-        AS owned_count,
-    COALESCE(u.locked_until > now(), false) AS locked, u.created_at";
+impl Validate for AssignOwner {
+    fn validate(&self, errors: &mut FieldErrors) {
+        user::check_email(errors, &user::normalize_email(&self.email));
+    }
+}
 
-/// Every account of the installation, newest first (platform administrators).
+/// Makes a registered account an owner of a workspace: for a workspace
+/// whose owner left, was suspended or now administers the platform. The
+/// workspace's own audit log records it, so its members see who did it.
+#[utoipa::path(post, path = "/admin/workspaces/{wid}/owners", tag = "admin", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id")), request_body = AssignOwner,
+    responses((status = 200, body = PlatformWorkspaceDetail), (status = 403, body = Problem),
+        (status = 404, body = Problem),
+        (status = 409, description = "Already an owner, suspended, or a platform administrator", body = Problem),
+        (status = 422, description = "No account has this address", body = Problem)))]
+pub async fn assign_owner(
+    State(state): State<AppState>,
+    admin: PlatformAdmin,
+    Path(wid): Path<Uuid>,
+    ValidatedJson(req): ValidatedJson<AssignOwner>,
+) -> Result<Json<PlatformWorkspaceDetail>, AppError> {
+    let workspace = repo::platform::workspace(&state.db, wid)
+        .await
+        .or_not_found("workspace")?;
+    let email = user::normalize_email(&req.email);
+    let Some(account) = repo::platform::user_by_email(&state.db, &email).await? else {
+        return Err(AppError::field(
+            "email",
+            "no account has this e-mail address",
+        ));
+    };
+    if account.role == Role::Admin {
+        return Err(AppError::Conflict(
+            "a platform administrator does not work inside workspaces; choose another account"
+                .into(),
+        ));
+    }
+    if account.suspended {
+        return Err(AppError::Conflict(
+            "this account is suspended; reactivate it first".into(),
+        ));
+    }
+    let was = repo::workspaces::role_of(&state.db, wid, account.id).await?;
+    let change = match was {
+        Some(WorkspaceRole::Owner) => {
+            return Err(AppError::Conflict(
+                "this account already owns the workspace".into(),
+            ));
+        }
+        Some(role) => {
+            repo::workspaces::set_role(&state.db, wid, account.id, WorkspaceRole::Owner).await?;
+            format!("{} is an owner now (was {role})", named(&account))
+        }
+        None => {
+            repo::workspaces::add_member(&state.db, wid, account.id, WorkspaceRole::Owner).await?;
+            format!("{} joined as an owner", named(&account))
+        }
+    };
+    log(
+        &state,
+        admin,
+        PlatformAction::OwnerAssigned,
+        &workspace.name,
+        &change,
+    )
+    .await;
+    audit(
+        &state,
+        wid,
+        admin.id,
+        AuditAction::PlatformOwnerAssigned,
+        Subject::User(account.id),
+        "from the platform console",
+    )
+    .await;
+    Ok(Json(detail(&state, wid).await?))
+}
+
+/// `POST /admin/workspaces/{wid}/delete` body.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteWorkspace {
+    /// The workspace's name, exactly: deleting cannot be undone.
+    pub confirm: String,
+}
+
+impl Validate for DeleteWorkspace {
+    fn validate(&self, _errors: &mut FieldErrors) {}
+}
+
+/// Deletes a workspace with everything in it, files included. Members it
+/// leaves without any workspace get an empty personal one, so that they can
+/// still sign in and work. The name travels in the body, not in the
+/// address, so that it does not end up in access logs.
+#[utoipa::path(post, path = "/admin/workspaces/{wid}/delete", tag = "admin", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id")), request_body = DeleteWorkspace,
+    responses((status = 204, description = "Deleted"), (status = 403, body = Problem),
+        (status = 404, body = Problem),
+        (status = 422, description = "The name does not match", body = Problem)))]
+pub async fn delete_workspace(
+    State(state): State<AppState>,
+    admin: PlatformAdmin,
+    Path(wid): Path<Uuid>,
+    ValidatedJson(req): ValidatedJson<DeleteWorkspace>,
+) -> Result<StatusCode, AppError> {
+    let workspace = repo::platform::workspace(&state.db, wid)
+        .await
+        .or_not_found("workspace")?;
+    if req.confirm != workspace.name {
+        return Err(AppError::field(
+            "confirm",
+            "type the workspace's name exactly to delete it",
+        ));
+    }
+    erase(&state, wid).await?;
+    let owner = workspace.owner_email.as_deref().unwrap_or("nobody");
+    let count = |n: i64, one: &str| format!("{n} {one}{}", if n == 1 { "" } else { "s" });
+    let summary = format!(
+        "owned by {owner}; {}, {}, {}",
+        count(workspace.member_count, "member"),
+        count(workspace.issue_count, "issue"),
+        count(workspace.graph_count, "graph"),
+    );
+    log(
+        &state,
+        admin,
+        PlatformAction::WorkspaceDeleted,
+        &workspace.name,
+        &summary,
+    )
+    .await;
+    ensure_personal(&state).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Every account of the installation, newest first.
 #[utoipa::path(get, path = "/admin/users", tag = "admin", security(("bearer" = [])), params(PlatformQuery),
     responses((status = 200, body = [PlatformUser]), (status = 403, body = Problem)))]
 pub async fn users(
     State(state): State<AppState>,
-    auth: AuthUser,
+    _admin: PlatformAdmin,
     Query(query): Query<PlatformQuery>,
 ) -> Result<Json<Vec<PlatformUser>>, AppError> {
-    require_instance_admin(auth)?;
-    let (q, limit, offset) = query.parts();
-    let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT {USER_COLUMNS} FROM users u
-         WHERE $1::text IS NULL OR u.email ILIKE '%' || $1 || '%' OR u.name ILIKE '%' || $1 || '%'
-         ORDER BY u.created_at DESC, u.id LIMIT $2 OFFSET $3"
-    )))
-    .bind(q)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(&state.db)
-    .await?;
-    Ok(Json(rows))
+    Ok(Json(repo::platform::users(&state.db, &query.page()).await?))
 }
 
-/// `PATCH /admin/users/{uid}` body.
+/// `PATCH /admin/users/{uid}` body: at least one of `role` and `suspended`.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UpdatePlatformUser {
     /// `admin` lets the account administer the platform; `user` takes that away.
-    pub role: Role,
+    pub role: Option<Role>,
+    /// `true` stops the account from signing in and ends its sessions; `false` lifts that.
+    pub suspended: Option<bool>,
+    /// Why the account is suspended (with `suspended: true`), for the activity log.
+    pub reason: Option<String>,
 }
 
 impl Validate for UpdatePlatformUser {
-    fn validate(&self, _errors: &mut FieldErrors) {}
+    fn validate(&self, errors: &mut FieldErrors) {
+        if self.role.is_none() && self.suspended.is_none() {
+            errors.add("role", "give a role, a suspension, or both");
+        }
+        match &self.reason {
+            Some(_) if self.suspended != Some(true) => {
+                errors.add("reason", "a reason goes with a suspension");
+            }
+            Some(reason) if reason.chars().count() > REASON_MAX => {
+                errors.add("reason", format!("at most {REASON_MAX} characters"));
+            }
+            _ => {}
+        }
+    }
 }
 
-/// Makes an account a platform administrator, or an ordinary user again.
-/// Nobody changes their own role, so the platform always keeps the
-/// administrator who is acting.
+/// Changes an account's platform role, suspends it, or lets it back in.
+///
+/// Both a role change and a suspension end the account's access tokens at
+/// once. Nobody changes their own account here, so the platform always
+/// keeps the administrator who is acting. An account that is the only
+/// owner of a workspace other people work in cannot be made a platform
+/// administrator before that workspace has another owner.
 #[utoipa::path(patch, path = "/admin/users/{uid}", tag = "admin", security(("bearer" = [])),
     params(("uid" = Uuid, Path, description = "User id")), request_body = UpdatePlatformUser,
     responses((status = 200, body = PlatformUser), (status = 403, body = Problem), (status = 404, body = Problem),
-        (status = 409, description = "Your own role", body = Problem)))]
+        (status = 409, description = "Your own account, or the only owner of a shared workspace", body = Problem)))]
 pub async fn update_user(
     State(state): State<AppState>,
-    auth: AuthUser,
+    admin: PlatformAdmin,
     Path(uid): Path<Uuid>,
     ValidatedJson(req): ValidatedJson<UpdatePlatformUser>,
 ) -> Result<Json<PlatformUser>, AppError> {
-    require_instance_admin(auth)?;
-    if uid == auth.id {
+    let account = repo::platform::user(&state.db, uid)
+        .await
+        .or_not_found("user")?;
+    if uid == admin.id {
         return Err(AppError::Conflict(
-            "you cannot change your own platform role; ask another administrator".into(),
+            "you cannot change your own account here; ask another administrator".into(),
         ));
     }
-    let changed = sqlx::query("UPDATE users SET role = $2, updated_at = now() WHERE id = $1")
-        .bind(uid)
-        .bind(req.role.as_str())
-        .execute(&state.db)
-        .await?
-        .rows_affected();
-    if changed == 0 {
-        return Err(AppError::NotFound("user"));
+    let subject = named(&account);
+    if let Some(role) = req.role.filter(|role| *role != account.role) {
+        if role == Role::Admin {
+            let orphaned = repo::platform::sole_owner_of(&state.db, uid).await?;
+            if !orphaned.is_empty() {
+                return Err(AppError::Conflict(format!(
+                    "{} is the only owner of {}; assign another owner there first",
+                    account.name,
+                    orphaned.join(", ")
+                )));
+            }
+        }
+        if let Some(epoch) = repo::platform::set_role(&state.db, uid, role).await? {
+            state.sessions.raise(uid, epoch);
+            let change = format!("{} → {role}", account.role);
+            log(
+                &state,
+                admin,
+                PlatformAction::RoleChanged,
+                &subject,
+                &change,
+            )
+            .await;
+        }
     }
-    let user = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT {USER_COLUMNS} FROM users u WHERE u.id = $1"
-    )))
-    .bind(uid)
-    .fetch_one(&state.db)
-    .await?;
-    Ok(Json(user))
+    match req.suspended {
+        Some(true) => {
+            let reason = req.reason.as_deref().unwrap_or("").trim();
+            if let Some(epoch) = repo::platform::suspend(&state.db, uid, reason).await? {
+                repo::tokens::revoke_user(&state.db, uid).await?;
+                state.sessions.raise(uid, epoch);
+                log(
+                    &state,
+                    admin,
+                    PlatformAction::AccountSuspended,
+                    &subject,
+                    reason,
+                )
+                .await;
+            }
+        }
+        Some(false) if repo::platform::reactivate(&state.db, uid).await? => {
+            log(
+                &state,
+                admin,
+                PlatformAction::AccountReactivated,
+                &subject,
+                "",
+            )
+            .await;
+        }
+        _ => {}
+    }
+    Ok(Json(
+        repo::platform::user(&state.db, uid)
+            .await
+            .or_not_found("user")?,
+    ))
+}
+
+/// What platform administrators did, newest first.
+#[utoipa::path(get, path = "/admin/events", tag = "admin", security(("bearer" = [])), params(PlatformQuery),
+    responses((status = 200, body = [PlatformEvent]), (status = 403, body = Problem)))]
+pub async fn events(
+    State(state): State<AppState>,
+    _admin: PlatformAdmin,
+    Query(query): Query<PlatformQuery>,
+) -> Result<Json<Vec<PlatformEvent>>, AppError> {
+    Ok(Json(
+        repo::platform::events(&state.db, &query.page()).await?,
+    ))
 }

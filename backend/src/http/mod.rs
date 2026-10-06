@@ -48,6 +48,7 @@ pub const UPLOAD_SLACK: usize = 64 * 1024;
         (name = "runs", description = "Execution"),
         (name = "artifacts"), (name = "templates"), (name = "agents"), (name = "memories"),
         (name = "orchestrator"), (name = "realtime"), (name = "health"),
+        (name = "admin", description = "The platform console: every workspace and account, for platform administrators only"),
     )
 )]
 pub struct ApiDoc;
@@ -103,8 +104,12 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(workspaces::assistant))
         .routes(routes!(workspaces::audit_log))
         .routes(routes!(platform::workspaces))
+        .routes(routes!(platform::workspace))
+        .routes(routes!(platform::delete_workspace))
+        .routes(routes!(platform::assign_owner))
         .routes(routes!(platform::users))
         .routes(routes!(platform::update_user))
+        .routes(routes!(platform::events))
         .routes(routes!(infrastructure::status))
         .routes(routes!(infrastructure::check))
         .routes(routes!(transfer::list, transfer::start))
@@ -218,8 +223,8 @@ mod tests {
     #[test]
     fn spec_enum_values_match_the_wire_format() {
         use crate::domain::{
-            agent, audit, cycle, graph, issue, knowledge, memory, plan, run, settings, usage, user,
-            workspace,
+            agent, audit, cycle, graph, issue, knowledge, memory, plan, platform, run, settings,
+            usage, user, workspace,
         };
         use serde_json::Value;
 
@@ -265,10 +270,11 @@ mod tests {
                 "UsageScope" => check::<usage::UsageScope>(values),
                 "AgentStatus" => check::<agent::AgentStatus>(values),
                 "AgentRuntime" => check::<agent::AgentRuntime>(values),
+                "PlatformAction" => check::<platform::PlatformAction>(values),
                 _ => continue,
             }
             checked += 1;
         }
-        assert_eq!(checked, 25, "every string enum schema is covered");
+        assert_eq!(checked, 26, "every string enum schema is covered");
     }
 }

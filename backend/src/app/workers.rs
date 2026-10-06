@@ -12,6 +12,8 @@ use crate::{orchestrator, realtime, repo};
 
 const HEARTBEAT_EVERY: Duration = Duration::from_secs(10);
 const HOUSEKEEPING_EVERY: Duration = Duration::from_secs(60);
+/// How soon a session ended on another server stops working on this one.
+const SESSIONS_EVERY: Duration = Duration::from_secs(10);
 /// How often waiting documents are looked for; a round lasts as long as its documents take.
 const INGEST_EVERY: Duration = Duration::from_secs(2);
 /// How often workspaces' memory forgetting policies are applied.
@@ -28,6 +30,15 @@ pub fn spawn(state: &AppState, shutdown: CancellationToken) {
         |s| async move {
             orchestrator::heartbeat(&s).await?;
             scheduler::reap_orphans(&s).await
+        },
+    ));
+    tokio::spawn(every(
+        SESSIONS_EVERY,
+        shutdown.clone(),
+        state.clone(),
+        |s| async move {
+            s.sessions.sync(&s.db, s.settings.access_ttl).await?;
+            Ok(())
         },
     ));
     tokio::spawn(every(

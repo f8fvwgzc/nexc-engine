@@ -28,6 +28,8 @@ string_enum!(
         LabelDeleted => "label_deleted",
         KnowledgeChanged => "knowledge_changed",
         WorkspaceTransferred => "workspace_transferred",
+        /// A platform administrator made someone an owner, from outside the workspace.
+        PlatformOwnerAssigned => "platform_owner_assigned",
     }
 );
 

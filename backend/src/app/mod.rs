@@ -48,21 +48,12 @@ pub async fn bootstrap_admin(state: &AppState) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Gives every account created before workspaces existed a personal one.
+/// Gives every account without a workspace a personal one, and adopts what
+/// predates workspaces into them.
 pub async fn seed_missing_workspaces(state: &AppState) -> anyhow::Result<()> {
-    use crate::http::handlers::{auth::personal_workspace_name, workspaces::create_owned};
-    for (user, name) in repo::workspaces::users_without_workspace(&state.db).await? {
-        let mut tx = state.db.begin().await?;
-        create_owned(
-            &mut tx,
-            user,
-            &personal_workspace_name(&name),
-            &state.settings.llm_model,
-        )
+    crate::http::handlers::workspaces::ensure_personal(state)
         .await
-        .map_err(|e| anyhow::anyhow!("cannot create a workspace for {user}: {e}"))?;
-        tx.commit().await?;
-    }
+        .map_err(|e| anyhow::anyhow!("cannot create personal workspaces: {e}"))?;
     let adopted = repo::graphs::adopt_orphans(&state.db).await?;
     if adopted > 0 {
         tracing::info!(adopted, "graphs assigned to their creators' workspaces");

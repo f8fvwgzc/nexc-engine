@@ -18,6 +18,7 @@ pub mod knowledge;
 pub mod memory;
 pub mod ontology;
 pub mod plan;
+pub mod platform;
 pub mod prompt;
 pub mod run;
 pub mod settings;

@@ -91,7 +91,7 @@ check that a Redis is reachable (`redis://…`), which is as far as the server u
 
 ## What the Infrastructure page shows
 
-Server administrators (the `admin` role of the installation, not workspace admins) see: the
+Platform administrators (the `admin` role of the installation, not workspace admins) see: the
 database location without credentials, its version and size, the pgvector version, applied versus
 known migrations, whether the agent runtime answers, the server's embedding model, and where
 queues and caches live. API: `GET /api/v1/admin/infrastructure`,

@@ -100,6 +100,7 @@ export const routes: RouteObject[] = [
               { index: true, element: <Navigate to="/app/platform/workspaces" replace /> },
               { path: 'workspaces', ...page(routeModules.platformWorkspaces) },
               { path: 'users', ...page(routeModules.platformUsers) },
+              { path: 'activity', ...page(routeModules.platformActivity) },
               { path: 'infrastructure', ...page(routeModules.platformInfrastructure) },
               { path: '*', element: <Navigate to="/app/platform/workspaces" replace /> },
             ],

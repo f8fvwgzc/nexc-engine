@@ -1,4 +1,4 @@
-import { Building2Icon, type LucideIcon, ServerIcon, UsersIcon } from 'lucide-react';
+import { Building2Icon, HistoryIcon, type LucideIcon, ServerIcon, UsersIcon } from 'lucide-react';
 import { Suspense } from 'react';
 import { Navigate, NavLink, Outlet, useLocation } from 'react-router-dom';
 
@@ -36,6 +36,10 @@ const GROUPS: PlatformGroup[] = [
       { title: 'Workspaces', to: '/app/platform/workspaces', icon: Building2Icon },
       { title: 'Accounts', to: '/app/platform/users', icon: UsersIcon },
     ],
+  },
+  {
+    label: 'Oversight',
+    items: [{ title: 'Activity', to: '/app/platform/activity', icon: HistoryIcon }],
   },
   {
     label: 'Server',

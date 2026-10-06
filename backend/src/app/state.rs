@@ -17,6 +17,7 @@ use crate::memory::index::MemoryIndex;
 use crate::observability::metrics::Metrics;
 use crate::orchestrator::health::HealthCache;
 use crate::realtime::hub::Hub;
+use crate::security::gate::SessionGate;
 use crate::security::jwt::JwtKeys;
 use crate::security::secret_box::SecretBox;
 
@@ -32,6 +33,8 @@ pub struct AppState {
     pub llm: Arc<LlmService>,
     pub metrics: Arc<Metrics>,
     pub limiters: Arc<RateLimiters>,
+    /// Accounts whose access tokens were ended early (suspension, platform role change).
+    pub sessions: Arc<SessionGate>,
     pub engine: Arc<Engine>,
     pub symphony: Arc<SymphonyBridge>,
     pub health: Arc<HealthCache>,
@@ -74,6 +77,7 @@ impl AppState {
             secret_box: Arc::new(SecretBox::new(settings.master_key.expose())),
             llm: Arc::new(LlmService::new(provider, metrics.clone())),
             limiters: Arc::new(RateLimiters::default()),
+            sessions: Arc::default(),
             engine: Arc::new(Engine::new(hub.instance())),
             symphony: Arc::new(SymphonyBridge::new(&settings)),
             health: Arc::new(HealthCache::default()),

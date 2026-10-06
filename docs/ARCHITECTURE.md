@@ -48,6 +48,14 @@ header). Reusing an old refresh token revokes the whole token family. Realtime c
 send headers, so the client first obtains a single-use, 30-second ticket from
 `POST /realtime/tickets` and passes it as `?ticket=`.
 
+Accounts are on one of two sides. A workspace-side account (`role: user`) works in its workspaces
+and is refused on `/admin/*`. A platform administrator (`role: admin`) runs the installation from
+the platform console and is refused on everything else: handlers take either `AuthUser` or
+`PlatformAdmin` (`http/extract.rs`), and only the session endpoints take both. Each access token
+carries the account's session epoch; suspending an account or changing its platform role raises
+the epoch (`security/gate.rs`), so the tokens already issued stop working at once on this server
+and within ten seconds on the others.
+
 ## Flow 1: plan refinement
 
 The user asks the LLM to turn a rough sketch into a concrete plan. The response is asynchronous:
@@ -194,6 +202,7 @@ flowchart LR
 | Boundary | Control |
 |---|---|
 | Browser → backend | JWT + refresh-cookie rotation, CSRF header on cookie endpoints, rate limits, 1 MiB body limit, problem+json errors without internals. |
+| Platform → workspaces | A platform administrator's token is refused on every workspace route; the console reads counts and members, never content. Its actions (roles, suspensions, owners, deletions) are written to an activity log, and an owner it assigns also to that workspace's audit log. |
 | Backend → runtime | Shared bearer token (constant-time compare), internal network only, 4 MiB request limit, API keys passed per request and never stored or logged. |
 | Agent → filesystem | Per-run workspace; `safe_path` rejects absolute paths, `..`, NUL/backslashes and symlink escapes; per-file and per-workspace quotas. |
 | Agent → code execution | Disabled by default. When enabled: `python -I`, scrubbed environment, rlimits (CPU, memory, file size, processes, open files), wall-clock timeout that kills the process group, truncated output. |

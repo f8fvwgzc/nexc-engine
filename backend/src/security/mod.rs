@@ -2,6 +2,7 @@
 //! sessions, the API-key secret box and secure randomness.
 #![forbid(unsafe_code)]
 
+pub mod gate;
 pub mod jwt;
 pub mod password;
 pub mod random;

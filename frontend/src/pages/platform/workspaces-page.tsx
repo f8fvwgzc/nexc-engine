@@ -1,23 +1,26 @@
 import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { Seo } from '@/components/seo/seo';
 import { Skeleton } from '@/components/ui/skeleton';
 import { platformWorkspacesQuery } from '@/features/platform/api';
 import { PLATFORM_PAGE_SIZE, usePlatformPage } from '@/features/platform/paged-list';
+import { WorkspaceSheet } from '@/features/platform/workspace-sheet';
 import { errorMessage } from '@/lib/api/errors';
 import { formatRelative } from '@/lib/format';
 
 export default function PlatformWorkspacesPage() {
   const { page, search, controls } = usePlatformPage();
   const { data, isPending, error } = useQuery(platformWorkspacesQuery(page));
+  const [opened, setOpened] = useState<string | null>(null);
   const rows = data?.slice(0, PLATFORM_PAGE_SIZE) ?? [];
   return (
     <div className="mx-auto w-full max-w-5xl space-y-5 p-4 sm:p-6">
       <Seo title="Workspaces" noIndex />
       <PageHeader
         title="Workspaces"
-        description="Every workspace on this installation, with who registered it and how big it is. Their content is not shown here."
+        description="Every workspace on this installation, with who owns it and how big it is. Open one to see its members, give it an owner or delete it. Their content is not shown here."
       />
       {search}
       {error ? (
@@ -44,30 +47,34 @@ export default function PlatformWorkspacesPage() {
               </li>
             )}
             {rows.map((w) => (
-              <li
-                key={w.id}
-                className="flex min-h-10 flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-[13px]"
-              >
-                <span className="min-w-0 flex-1 basis-40 truncate font-medium">{w.name}</span>
-                <span className="w-56 min-w-0">
-                  <span className="block truncate">{w.owner_name ?? 'No owner'}</span>
-                  <span className="block truncate text-xs text-muted-foreground">
-                    {w.owner_email ?? ''}
+              <li key={w.id}>
+                <button
+                  type="button"
+                  className="flex min-h-10 w-full flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-left text-[13px] hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none"
+                  onClick={() => setOpened(w.id)}
+                >
+                  <span className="min-w-0 flex-1 basis-40 truncate font-medium">{w.name}</span>
+                  <span className="w-56 min-w-0">
+                    <span className="block truncate">{w.owner_name ?? 'No owner'}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {w.owner_email ?? ''}
+                    </span>
                   </span>
-                </span>
-                <span className="w-16 text-right tabular-nums">{w.member_count}</span>
-                <span className="w-14 text-right tabular-nums">{w.team_count}</span>
-                <span className="w-14 text-right tabular-nums">{w.issue_count}</span>
-                <span className="w-14 text-right tabular-nums">{w.graph_count}</span>
-                <span className="w-24 text-right text-xs text-muted-foreground">
-                  {formatRelative(w.created_at)}
-                </span>
+                  <span className="w-16 text-right tabular-nums">{w.member_count}</span>
+                  <span className="w-14 text-right tabular-nums">{w.team_count}</span>
+                  <span className="w-14 text-right tabular-nums">{w.issue_count}</span>
+                  <span className="w-14 text-right tabular-nums">{w.graph_count}</span>
+                  <span className="w-24 text-right text-xs text-muted-foreground">
+                    {formatRelative(w.created_at)}
+                  </span>
+                </button>
               </li>
             ))}
           </ul>
         </div>
       )}
       {controls(data?.length ?? 0)}
+      <WorkspaceSheet id={opened} onClose={() => setOpened(null)} />
     </div>
   );
 }

@@ -102,8 +102,13 @@ const TABLES: &[Table] = &[
         name: "users",
         belongs: REFERENCED_USERS,
         page: Page::ById,
-        // A hash nothing matches: the account exists for the data to point at.
-        overlay: Some(r#"{"password_hash": "!", "failed_logins": 0, "locked_until": null}"#),
+        // A hash nothing matches: the account exists for the data to point at. Nobody
+        // administers, or is suspended on, another installation because they were here.
+        overlay: Some(
+            r#"{"password_hash": "!", "failed_logins": 0, "locked_until": null, "role": "user",
+                "suspended_at": null, "suspended_reason": "", "session_epoch": 0,
+                "session_epoch_at": null}"#,
+        ),
     },
     table("workspaces", "t.id = $1", false),
     table("workspace_members", IN_WORKSPACE, false),

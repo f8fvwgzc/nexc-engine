@@ -72,6 +72,17 @@ pub async fn revoke_family(db: impl PgExecutor<'_>, family_id: Uuid) -> Result<(
     Ok(())
 }
 
+/// Revokes every token of a user: all their sessions end at the next refresh.
+pub async fn revoke_user(db: impl PgExecutor<'_>, user_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL",
+    )
+    .bind(user_id)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
 /// Deletes tokens that expired more than a day ago.
 pub async fn purge_expired(db: impl PgExecutor<'_>) -> Result<u64, sqlx::Error> {
     let done =

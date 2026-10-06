@@ -369,13 +369,15 @@ pub async fn default_for(
     .await
 }
 
-/// Users that belong to no workspace yet, as `(id, name)`.
+/// Users that belong to no workspace, as `(id, name)`. Platform administrators are left out:
+/// they never work inside one.
 pub async fn users_without_workspace(
     db: impl PgExecutor<'_>,
 ) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
     sqlx::query_as(
         "SELECT u.id, u.name FROM users u
-         WHERE NOT EXISTS (SELECT 1 FROM workspace_members m WHERE m.user_id = u.id)
+         WHERE u.role <> 'admin'
+           AND NOT EXISTS (SELECT 1 FROM workspace_members m WHERE m.user_id = u.id)
          ORDER BY u.created_at",
     )
     .fetch_all(db)

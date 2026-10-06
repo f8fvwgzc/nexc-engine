@@ -130,6 +130,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   every workspace with its owner and size, every account with its platform role (which another
   administrator can change). The workspace app and its settings send a platform administrator
   there; everyone else is sent back to their workspace (`/admin/workspaces`, `/admin/users`).
+- Platform console actions: open a workspace to see its members and how much it holds, assign an
+  owner to a workspace whose owner left or cannot sign in (recorded in that workspace's audit
+  log), and delete a workspace after typing its name; suspend and reactivate accounts with a
+  reason. Everything done from the console is kept in its Activity log (`/admin/workspaces/{wid}`,
+  `/admin/workspaces/{wid}/owners`, `/admin/workspaces/{wid}/delete`, `/admin/events`).
+- Suspended accounts: sign-in answers 403 once the password was right, refresh is refused, and
+  the access token already in hand stops working at once.
 - `make seed-demo` (`scripts/seed-demo.py`): a demo workspace with five accounts in different
   roles, three teams, projects, cycles, issues and comments, created through the API so that
   each account's inbox holds real notifications.
@@ -140,6 +147,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- The platform and the workspaces are separate APIs. A platform administrator's token is refused
+  (403) on every workspace route, whatever the account is a member of, and is accepted on
+  `/auth/*` and `/admin/*` only; before, the separation was in the interface alone. A platform
+  administrator created by the server or the command line no longer gets a personal workspace,
+  and the only owner of a workspace other people work in cannot be made one until the workspace
+  has another owner.
+- Changing an account's platform role takes hold at once instead of at the next token refresh:
+  access tokens carry a session epoch (`epoch` claim) that the change raises.
+- `PATCH /admin/users/{uid}` takes `suspended` and `reason` next to `role`, all optional.
+- A workspace transfer copies every referenced account as an ordinary, active user: nobody
+  administers, or is suspended on, another installation because they were here.
 - `kind` on nodes and edges is a key of the graph's ontology; edges gain `blocking`, which replaces
   the special meaning of `depends_on` in scheduling, cycle checks and analysis.
 - Node type attributes are part of the result-cache hash, so cached node results from earlier

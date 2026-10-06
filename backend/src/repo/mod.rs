@@ -74,6 +74,7 @@ pub mod memories;
 pub mod nodes;
 pub mod outbox;
 pub mod plans;
+pub mod platform;
 pub mod runs;
 pub mod settings;
 pub mod teams;

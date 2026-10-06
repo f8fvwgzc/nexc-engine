@@ -226,7 +226,13 @@ pub async fn delete(
             "this is your only workspace; create another one before deleting it".into(),
         ));
     }
-    // Uploaded documents and run artifacts are on disk, outside what the database cascades to.
+    erase(&state, wid).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Removes a workspace with everything in it: its rows, and the uploaded
+/// documents and run artifacts on disk, which the database does not reach.
+pub async fn erase(state: &AppState, wid: Uuid) -> Result<(), AppError> {
     let documents: Vec<Uuid> =
         sqlx::query_scalar("SELECT id FROM documents WHERE workspace_id = $1")
             .bind(wid)
@@ -240,11 +246,29 @@ pub async fn delete(
     .await?;
     repo::workspaces::delete(&state.db, wid).await?;
     state.memories.invalidate(wid);
-    engine::artifacts::remove_runs(&state, &runs).await;
+    engine::artifacts::remove_runs(state, &runs).await;
     for id in documents {
         let _ = tokio::fs::remove_file(state.settings.documents_dir().join(id.to_string())).await;
     }
-    Ok(StatusCode::NO_CONTENT)
+    Ok(())
+}
+
+/// Gives every account that belongs to no workspace a personal one, so that
+/// everyone who signs in has somewhere to work. Returns how many were made.
+pub async fn ensure_personal(state: &AppState) -> Result<usize, AppError> {
+    let stranded = repo::workspaces::users_without_workspace(&state.db).await?;
+    for (user, name) in &stranded {
+        let mut tx = state.db.begin().await?;
+        create_owned(
+            &mut tx,
+            *user,
+            &super::auth::personal_workspace_name(name),
+            &state.settings.llm_model,
+        )
+        .await?;
+        tx.commit().await?;
+    }
+    Ok(stranded.len())
 }
 
 /// Members of a workspace (not visible to guests).

@@ -17,24 +17,13 @@ use utoipa::ToSchema;
 
 use crate::app::AppState;
 use crate::domain::AppError;
-use crate::domain::user::Role;
 use crate::domain::validation::{FieldErrors, Validate};
 use crate::engine::knowledge;
-use crate::http::extract::{AuthUser, ValidatedJson};
+use crate::http::extract::{PlatformAdmin, ValidatedJson};
 use crate::http::problem::Problem;
 use crate::repo;
 
 const CHECK_TIMEOUT: Duration = Duration::from_secs(5);
-
-pub(super) fn require_instance_admin(auth: AuthUser) -> Result<(), AppError> {
-    if auth.role == Role::Admin {
-        Ok(())
-    } else {
-        Err(AppError::Forbidden(
-            "only administrators of this server see its infrastructure".into(),
-        ))
-    }
-}
 
 /// A connection URL without its credentials: `postgres://host:5432/db`.
 fn without_credentials(url: &str) -> String {
@@ -74,14 +63,13 @@ pub struct Infrastructure {
     pub cache: String,
 }
 
-/// The infrastructure this server runs on (server administrators only).
+/// The infrastructure this server runs on (platform administrators).
 #[utoipa::path(get, path = "/admin/infrastructure", tag = "admin", security(("bearer" = [])),
     responses((status = 200, body = Infrastructure), (status = 403, body = Problem)))]
 pub async fn status(
     State(state): State<AppState>,
-    auth: AuthUser,
+    _admin: PlatformAdmin,
 ) -> Result<Json<Infrastructure>, AppError> {
-    require_instance_admin(auth)?;
     let (version, size_bytes): (String, i64) =
         sqlx::query_as("SELECT version(), pg_database_size(current_database())")
             .fetch_one(&state.db)
@@ -217,10 +205,9 @@ async fn check_redis(url: &str) -> anyhow::Result<String> {
     responses((status = 200, body = ConnectionCheck), (status = 403, body = Problem), (status = 422, body = Problem)))]
 pub async fn check(
     State(_state): State<AppState>,
-    auth: AuthUser,
+    _admin: PlatformAdmin,
     ValidatedJson(req): ValidatedJson<CheckConnection>,
 ) -> Result<Json<ConnectionCheck>, AppError> {
-    require_instance_admin(auth)?;
     let unreachable = |detail: String| ConnectionCheck {
         reachable: false,
         detail,

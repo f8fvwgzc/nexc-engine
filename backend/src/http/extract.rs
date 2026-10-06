@@ -15,11 +15,27 @@ use crate::domain::AppError;
 use crate::domain::user::Role;
 use crate::domain::validation::{FieldErrors, Validate};
 
-/// The authenticated caller (from a valid bearer access token).
+/// Any signed-in account, on either side of the platform boundary. Only
+/// the session endpoints take it; everything else takes [`AuthUser`] or
+/// [`PlatformAdmin`].
+#[derive(Debug, Clone, Copy)]
+pub struct Caller {
+    pub id: Uuid,
+    pub role: Role,
+}
+
+/// A signed-in account working in its workspaces. Platform administrators
+/// are refused: they run the installation from `/admin/*` and never act
+/// inside a workspace, whatever memberships their account has.
 #[derive(Debug, Clone, Copy)]
 pub struct AuthUser {
     pub id: Uuid,
-    pub role: Role,
+}
+
+/// A signed-in platform administrator: the caller of `/admin/*`.
+#[derive(Debug, Clone, Copy)]
+pub struct PlatformAdmin {
+    pub id: Uuid,
 }
 
 /// Extracts the bearer token from request headers, if any.
@@ -32,6 +48,34 @@ pub fn bearer_token(headers: &HeaderMap) -> Option<&str> {
         .filter(|t| !t.is_empty())
 }
 
+/// The caller of a request: a valid access token that was not ended early.
+fn caller(headers: &HeaderMap, state: &AppState) -> Result<Caller, AppError> {
+    let token = bearer_token(headers).ok_or(AppError::Unauthorized("missing bearer token"))?;
+    let claims = state
+        .jwt
+        .verify(token)
+        .ok_or(AppError::Unauthorized("invalid or expired token"))?;
+    if !state.sessions.admits(claims.sub, claims.epoch) {
+        return Err(AppError::Unauthorized("invalid or expired token"));
+    }
+    state.limiters.check_user(claims.sub)?;
+    Ok(Caller {
+        id: claims.sub,
+        role: claims.role,
+    })
+}
+
+impl FromRequestParts<AppState> for Caller {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        caller(&parts.headers, state)
+    }
+}
+
 impl FromRequestParts<AppState> for AuthUser {
     type Rejection = AppError;
 
@@ -39,17 +83,34 @@ impl FromRequestParts<AppState> for AuthUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        let token =
-            bearer_token(&parts.headers).ok_or(AppError::Unauthorized("missing bearer token"))?;
-        let claims = state
-            .jwt
-            .verify(token)
-            .ok_or(AppError::Unauthorized("invalid or expired token"))?;
-        state.limiters.check_user(claims.sub)?;
-        Ok(AuthUser {
-            id: claims.sub,
-            role: claims.role,
-        })
+        match caller(&parts.headers, state)? {
+            Caller {
+                role: Role::Admin, ..
+            } => Err(AppError::Forbidden(
+                "platform administrators work in the platform console, not inside workspaces"
+                    .into(),
+            )),
+            Caller { id, .. } => Ok(AuthUser { id }),
+        }
+    }
+}
+
+impl FromRequestParts<AppState> for PlatformAdmin {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        match caller(&parts.headers, state)? {
+            Caller {
+                id,
+                role: Role::Admin,
+            } => Ok(PlatformAdmin { id }),
+            _ => Err(AppError::Forbidden(
+                "only administrators of this installation use the platform console".into(),
+            )),
+        }
     }
 }
 

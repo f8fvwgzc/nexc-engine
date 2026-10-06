@@ -10,7 +10,7 @@ import type { PlatformPage } from './api';
 export const PLATFORM_PAGE_SIZE = 25;
 
 /** The search box and page of a platform list. One more row than a page is asked for. */
-export function usePlatformPage(): {
+export function usePlatformPage(placeholder = 'Search by name or e-mail…'): {
   page: PlatformPage;
   controls: (rows: number) => ReactNode;
   search: ReactNode;
@@ -33,7 +33,7 @@ export function usePlatformPage(): {
       <Input
         type="search"
         value={q}
-        placeholder="Search by name or e-mail…"
+        placeholder={placeholder}
         aria-label="Search"
         className="h-8 max-w-xs text-[13px]"
         onChange={(e) => setQ(e.target.value)}

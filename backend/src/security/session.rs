@@ -18,6 +18,7 @@ use crate::repo::{tokens, users};
 
 const INVALID_CREDENTIALS: &str = "invalid email or password";
 const INVALID_SESSION: &str = "session expired, please log in again";
+const SUSPENDED: &str = "this account is suspended; contact whoever administers this installation";
 
 /// A freshly issued session; `refresh_token` goes into the HttpOnly cookie.
 #[derive(Debug)]
@@ -39,7 +40,8 @@ async fn issue(
     user: User,
     family_id: uuid::Uuid,
 ) -> Result<Session, AppError> {
-    let access_token = cfg.jwt.issue(user.id, user.role)?;
+    let epoch = users::session_epoch(db, user.id).await?;
+    let access_token = cfg.jwt.issue(user.id, user.role, epoch)?;
     let refresh_token = random_token();
     let expires_at =
         Utc::now() + chrono::Duration::from_std(cfg.refresh_ttl).map_err(anyhow::Error::from)?;
@@ -67,7 +69,8 @@ pub async fn start(db: &PgPool, cfg: SessionConfig<'_>, user: User) -> Result<Se
 }
 
 /// Verifies credentials with timing-safe failure paths and account lockout.
-/// Every failure returns the same generic 401.
+/// Every failure returns the same generic 401. A suspended account is told
+/// so, but only once its password was right.
 pub async fn login(
     db: &PgPool,
     cfg: SessionConfig<'_>,
@@ -105,6 +108,9 @@ pub async fn login(
         return Err(AppError::Unauthorized(INVALID_CREDENTIALS));
     }
     users::reset_login_failures(db, creds.user.id).await?;
+    if creds.suspended {
+        return Err(AppError::Forbidden(SUSPENDED.into()));
+    }
     start(db, cfg, creds.user).await
 }
 
@@ -125,7 +131,7 @@ pub async fn rotate(
         tracing::warn!(user_id = %stored.user_id, family = %stored.family_id, "refresh token reuse detected; family revoked");
         return Err(AppError::Unauthorized(INVALID_SESSION));
     }
-    let user = users::find(db, stored.user_id)
+    let user = users::find_active(db, stored.user_id)
         .await?
         .ok_or(AppError::Unauthorized(INVALID_SESSION))?;
     issue(db, cfg, user, stored.family_id).await

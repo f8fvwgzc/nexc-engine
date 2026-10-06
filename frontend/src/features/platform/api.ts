@@ -1,8 +1,9 @@
 import { keepPreviousData, queryOptions } from '@tanstack/react-query';
 import { z } from 'zod';
 
-import { apiRequest } from '@/lib/api/client';
+import { apiRequest, apiSend } from '@/lib/api/client';
 import { idSchema, timestampSchema } from '@/schemas/common';
+import { workspaceRoleSchema } from '@/schemas/workspace';
 
 /** A workspace as the platform sees it: its owner and its size, never its content. */
 export const platformWorkspaceSchema = z.object({
@@ -16,6 +17,31 @@ export const platformWorkspaceSchema = z.object({
   graph_count: z.number().int(),
   created_at: timestampSchema,
 });
+export type PlatformWorkspace = z.infer<typeof platformWorkspaceSchema>;
+
+/** A member as the platform sees them: their role in the workspace and whether they can use it. */
+export const platformMemberSchema = z.object({
+  user_id: idSchema,
+  name: z.string(),
+  email: z.string(),
+  role: workspaceRoleSchema,
+  suspended: z.boolean(),
+  platform_admin: z.boolean(),
+  joined_at: timestampSchema,
+});
+export type PlatformMember = z.infer<typeof platformMemberSchema>;
+
+export const platformWorkspaceDetailSchema = platformWorkspaceSchema.extend({
+  members: z.array(platformMemberSchema),
+  footprint: z.object({
+    project_count: z.number().int(),
+    document_count: z.number().int(),
+    document_bytes: z.number().int(),
+    memory_count: z.number().int(),
+    run_count: z.number().int(),
+  }),
+});
+export type PlatformWorkspaceDetail = z.infer<typeof platformWorkspaceDetailSchema>;
 
 export const platformUserSchema = z.object({
   id: idSchema,
@@ -25,9 +51,32 @@ export const platformUserSchema = z.object({
   workspace_count: z.number().int(),
   owned_count: z.number().int(),
   locked: z.boolean(),
+  suspended: z.boolean(),
+  suspended_reason: z.string(),
   created_at: timestampSchema,
 });
 export type PlatformUser = z.infer<typeof platformUserSchema>;
+
+export const platformActionSchema = z.enum([
+  'role_changed',
+  'account_suspended',
+  'account_reactivated',
+  'owner_assigned',
+  'workspace_deleted',
+]);
+export type PlatformAction = z.infer<typeof platformActionSchema>;
+
+/** One thing a platform administrator did. Names are copies: they outlive what they name. */
+export const platformEventSchema = z.object({
+  id: idSchema,
+  action: platformActionSchema,
+  actor_id: idSchema.nullable(),
+  actor_name: z.string(),
+  subject: z.string(),
+  detail: z.string(),
+  created_at: timestampSchema,
+});
+export type PlatformEvent = z.infer<typeof platformEventSchema>;
 
 export interface PlatformPage {
   q?: string;
@@ -55,10 +104,45 @@ export const platformUsersQuery = (page: PlatformPage) =>
     placeholderData: keepPreviousData,
   });
 
-/** Makes an account a platform administrator, or an ordinary user again. */
-export function setPlatformRole(userId: string, role: PlatformUser['role']) {
+export const platformWorkspaceQuery = (id: string) =>
+  queryOptions({
+    queryKey: ['platform', 'workspaces', 'one', id] as const,
+    queryFn: ({ signal }) =>
+      apiRequest(`/admin/workspaces/${id}`, platformWorkspaceDetailSchema, { signal }),
+  });
+
+export const platformEventsQuery = (page: PlatformPage) =>
+  queryOptions({
+    queryKey: ['platform', 'events', page] as const,
+    queryFn: ({ signal }) =>
+      apiRequest('/admin/events', z.array(platformEventSchema), { query: { ...page }, signal }),
+    placeholderData: keepPreviousData,
+  });
+
+/** A platform role, a suspension with its reason, or lifting one. */
+export type PlatformUserChange =
+  { role: PlatformUser['role'] } | { suspended: true; reason: string } | { suspended: false };
+
+/** Changes an account's platform role or suspends it; either ends its sessions at once. */
+export function updatePlatformUser(userId: string, change: PlatformUserChange) {
   return apiRequest(`/admin/users/${userId}`, platformUserSchema, {
     method: 'PATCH',
-    body: { role },
+    body: change,
+  });
+}
+
+/** Makes a registered account an owner of a workspace. */
+export function assignOwner(workspaceId: string, email: string) {
+  return apiRequest(`/admin/workspaces/${workspaceId}/owners`, platformWorkspaceDetailSchema, {
+    method: 'POST',
+    body: { email },
+  });
+}
+
+/** Deletes a workspace with everything in it; `name` must be its exact name. */
+export function deletePlatformWorkspace(workspaceId: string, name: string) {
+  return apiSend(`/admin/workspaces/${workspaceId}/delete`, {
+    method: 'POST',
+    body: { confirm: name },
   });
 }

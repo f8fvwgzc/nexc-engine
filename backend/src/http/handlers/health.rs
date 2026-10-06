@@ -70,6 +70,9 @@ pub async fn metrics(
             .jwt
             .verify(token)
             .ok_or(AppError::Unauthorized("invalid token"))?;
+        if !state.sessions.admits(claims.sub, claims.epoch) {
+            return Err(AppError::Unauthorized("invalid token"));
+        }
         if claims.role != Role::Admin {
             return Err(AppError::Forbidden("metrics require an admin".into()));
         }

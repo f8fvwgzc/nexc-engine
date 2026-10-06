@@ -11,7 +11,7 @@ use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::user::{self, AuthResponse, Role, User};
 use crate::domain::validation::{FieldErrors, Validate};
-use crate::http::extract::{AuthUser, ClientIp, ValidatedJson};
+use crate::http::extract::{Caller, ClientIp, ValidatedJson};
 use crate::http::middleware::rate_limit::AuthRateLimit;
 use crate::http::problem::Problem;
 use crate::repo::{self, OrNotFound};
@@ -154,6 +154,8 @@ pub fn personal_workspace_name(user_name: &str) -> String {
 }
 
 /// Inserts a user and its first workspace membership in one transaction.
+/// A platform administrator gets neither: such an account never works
+/// inside a workspace.
 pub async fn create_user(
     state: &AppState,
     email: &str,
@@ -165,7 +167,8 @@ pub async fn create_user(
     let user = repo::users::create(&mut *tx, email, name, role, hash).await?;
     // Join the workspaces this address was invited to; without any, start a personal one so
     // that every account works in at least one workspace.
-    if repo::workspaces::accept_invites(&mut tx, user.id, email).await? == 0 {
+    if role != Role::Admin && repo::workspaces::accept_invites(&mut tx, user.id, email).await? == 0
+    {
         super::workspaces::create_owned(
             &mut tx,
             user.id,
@@ -245,10 +248,10 @@ pub async fn logout(
         .into_response())
 }
 
-/// The current user.
+/// The current user, whichever side of the platform boundary they work on.
 #[utoipa::path(get, path = "/auth/me", tag = "auth", security(("bearer" = [])),
     responses((status = 200, body = User), (status = 401, body = Problem)))]
-pub async fn me(State(state): State<AppState>, auth: AuthUser) -> Result<Json<User>, AppError> {
+pub async fn me(State(state): State<AppState>, auth: Caller) -> Result<Json<User>, AppError> {
     Ok(Json(
         repo::users::find(&state.db, auth.id)
             .await

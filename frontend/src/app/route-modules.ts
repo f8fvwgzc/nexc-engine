@@ -30,6 +30,7 @@ export const routeModules = {
   platformShell: () => import('@/components/layout/platform-shell'),
   platformWorkspaces: () => import('@/pages/platform/workspaces-page'),
   platformUsers: () => import('@/pages/platform/users-page'),
+  platformActivity: () => import('@/pages/platform/activity-page'),
   platformInfrastructure: () => import('@/pages/settings/infrastructure-page'),
   notFound: () => import('@/pages/not-found-page'),
 };
