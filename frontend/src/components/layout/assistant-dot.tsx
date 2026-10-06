@@ -63,7 +63,8 @@ function AssistantPanel({ current }: { current: Workspace }) {
   };
 
   return (
-    <div className="fixed right-4 bottom-4 z-40 flex flex-col items-end gap-3">
+    // A notch on the right edge of the screen, halfway down; the panel opens beside it.
+    <div className="pointer-events-none fixed inset-y-0 right-0 z-40 flex items-center gap-2 [&>*]:pointer-events-auto">
       {open && (
         <section
           aria-label="Assistant"
@@ -159,15 +160,18 @@ function AssistantPanel({ current }: { current: Workspace }) {
           </form>
         </section>
       )}
-      <Button
-        size="icon"
-        className="size-11 rounded-full shadow-lg"
+      <button
+        type="button"
+        className="flex h-28 w-7 flex-col items-center justify-center gap-1.5 rounded-l-xl bg-primary text-primary-foreground shadow-lg transition-[width] outline-none hover:w-8 focus-visible:ring-2 focus-visible:ring-ring"
         aria-label={open ? 'Hide assistant' : 'Open assistant'}
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        <SparklesIcon />
-      </Button>
+        <SparklesIcon className="size-3.5" aria-hidden />
+        <span className="text-[11px] font-medium tracking-wide [writing-mode:vertical-rl]">
+          Ask
+        </span>
+      </button>
     </div>
   );
 }

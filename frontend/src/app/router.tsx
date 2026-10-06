@@ -93,6 +93,18 @@ export const routes: RouteObject[] = [
             ],
           },
           {
+            // The platform console: the whole installation, for platform administrators.
+            path: 'platform',
+            ...page(routeModules.platformShell),
+            children: [
+              { index: true, element: <Navigate to="/app/platform/workspaces" replace /> },
+              { path: 'workspaces', ...page(routeModules.platformWorkspaces) },
+              { path: 'users', ...page(routeModules.platformUsers) },
+              { path: 'infrastructure', ...page(routeModules.platformInfrastructure) },
+              { path: '*', element: <Navigate to="/app/platform/workspaces" replace /> },
+            ],
+          },
+          {
             // Settings are their own screen, with their own sidebar, in place of the app's.
             path: 'settings',
             ...page(routeModules.settingsShell),
@@ -111,7 +123,10 @@ export const routes: RouteObject[] = [
               { path: 'activity', ...page(routeModules.settingsActivity) },
               { path: 'map', ...page(routeModules.settingsMap) },
               { path: 'transfer', ...page(routeModules.settingsTransfer) },
-              { path: 'infrastructure', ...page(routeModules.settingsInfrastructure) },
+              {
+                path: 'infrastructure',
+                element: <Navigate to="/app/platform/infrastructure" replace />,
+              },
               { path: '*', element: <Navigate to="/app/settings/profile" replace /> },
             ],
           },

@@ -26,7 +26,7 @@ use crate::repo;
 
 const CHECK_TIMEOUT: Duration = Duration::from_secs(5);
 
-fn require_instance_admin(auth: AuthUser) -> Result<(), AppError> {
+pub(super) fn require_instance_admin(auth: AuthUser) -> Result<(), AppError> {
     if auth.role == Role::Admin {
         Ok(())
     } else {

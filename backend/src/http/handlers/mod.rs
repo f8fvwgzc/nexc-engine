@@ -16,6 +16,7 @@ pub mod memories;
 pub mod nodes;
 pub mod orchestrator;
 pub mod plans;
+pub mod platform;
 pub mod realtime;
 pub mod runs;
 pub mod settings;

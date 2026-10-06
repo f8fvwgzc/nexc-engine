@@ -1849,3 +1849,66 @@ async fn owners_see_what_happened_and_how_things_relate(pool: PgPool) {
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn platform_administrators_see_every_workspace_and_account(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), &[]).await;
+    let (owner, owner_id) = user(&app, "owner@example.com").await;
+    let (_, root_id) = user(&app, "root@example.com").await;
+    // The platform role is in the token: sign in again after it was given.
+    sqlx::query("UPDATE users SET role = 'admin' WHERE id = $1::uuid")
+        .bind(&root_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let login = json!({"email": "root@example.com", "password": common::PASSWORD});
+    let session = app
+        .request(Method::POST, "/api/v1/auth/login", None, Some(login))
+        .await;
+    let root = session.body["access_token"].as_str().unwrap().to_owned();
+
+    // A workspace owner is not a platform administrator.
+    for path in ["/admin/workspaces", "/admin/users"] {
+        let (status, _) = call(&app, Method::GET, path, &owner, None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{path}");
+    }
+
+    let (status, workspaces) = call(&app, Method::GET, "/admin/workspaces", &root, None).await;
+    assert_eq!(status, StatusCode::OK, "{workspaces}");
+    assert_eq!(
+        workspaces.as_array().unwrap().len(),
+        2,
+        "one per registration"
+    );
+    let (_, mine) = call(&app, Method::GET, "/admin/workspaces?q=owner@", &root, None).await;
+    assert_eq!(mine.as_array().unwrap().len(), 1);
+    assert_eq!(
+        (
+            mine[0]["owner_email"].as_str(),
+            mine[0]["member_count"].as_i64()
+        ),
+        (Some("owner@example.com"), Some(1))
+    );
+
+    let (_, users) = call(&app, Method::GET, "/admin/users", &root, None).await;
+    assert_eq!(users.as_array().unwrap().len(), 2);
+    assert!(
+        users[0]["password_hash"].is_null(),
+        "no credentials in the list"
+    );
+
+    // Roles: another account can be promoted; nobody changes their own.
+    let promote = json!({"role": "admin"});
+    let own = format!("/admin/users/{root_id}");
+    let (status, _) = call(&app, Method::PATCH, &own, &root, Some(promote.clone())).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let other = format!("/admin/users/{owner_id}");
+    let (status, _) = call(&app, Method::PATCH, &other, &owner, Some(promote.clone())).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, promoted) = call(&app, Method::PATCH, &other, &root, Some(promote)).await;
+    assert_eq!(status, StatusCode::OK, "{promoted}");
+    assert_eq!(
+        (promoted["role"].as_str(), promoted["owned_count"].as_i64()),
+        (Some("admin"), Some(1))
+    );
+}

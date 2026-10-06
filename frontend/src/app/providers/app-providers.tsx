@@ -22,7 +22,6 @@ export function AppProviders({ children }: { children: ReactNode }) {
                 richColors
                 closeButton
                 position="bottom-right"
-                offset={{ bottom: 76 }}
                 mobileOffset={{ bottom: 76 }}
               />
             </TooltipProvider>

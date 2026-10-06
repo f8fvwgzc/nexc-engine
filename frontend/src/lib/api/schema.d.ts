@@ -42,6 +42,61 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every account of the installation, newest first (platform administrators). */
+        get: operations["users"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users/{uid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Makes an account a platform administrator, or an ordinary user again.
+         *     Nobody changes their own role, so the platform always keeps the
+         *     administrator who is acting.
+         */
+        patch: operations["update_user"];
+        trace?: never;
+    };
+    "/api/v1/admin/workspaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every workspace of the installation, newest first (platform administrators). */
+        get: operations["workspaces"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agents": {
         parameters: {
             query?: never;
@@ -2711,6 +2766,45 @@ export interface components {
          * @enum {string}
          */
         PlanStatus: "streaming" | "ready" | "failed" | "applied";
+        /** @description An account as the platform sees it. */
+        PlatformUser: {
+            /** Format: date-time */
+            created_at: string;
+            email: string;
+            /** Format: uuid */
+            id: string;
+            /** @description Whether sign-in is locked right now (too many failed attempts). */
+            locked: boolean;
+            name: string;
+            /** Format: int64 */
+            owned_count: number;
+            /** @description `admin` administers the platform; `user` is everyone else. */
+            role: string;
+            /**
+             * Format: int64
+             * @description Workspaces the account belongs to, and how many of them it owns.
+             */
+            workspace_count: number;
+        };
+        /** @description A workspace as the platform sees it: who owns it and how big it is. */
+        PlatformWorkspace: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: int64 */
+            graph_count: number;
+            /** Format: uuid */
+            id: string;
+            /** Format: int64 */
+            issue_count: number;
+            /** Format: int64 */
+            member_count: number;
+            name: string;
+            owner_email: string | null;
+            /** @description Its first owner, by name and e-mail; `null` when the account is gone. */
+            owner_name: string | null;
+            /** Format: int64 */
+            team_count: number;
+        };
         /** @description An RFC 7807 problem document. */
         Problem: {
             detail?: string | null;
@@ -3160,6 +3254,11 @@ export interface components {
             /** Format: double */
             y?: number | null;
         };
+        /** @description `PATCH /admin/users/{uid}` body. */
+        UpdatePlatformUser: {
+            /** @description `admin` lets the account administer the platform; `user` takes that away. */
+            role: components["schemas"]["Role"];
+        };
         /**
          * @description `PATCH /workspaces/{wid}/projects/{pid}` body (any subset; `lead_id` and
          *     `target_date` accept `null`).
@@ -3433,6 +3532,123 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    users: {
+        parameters: {
+            query?: {
+                /** @description Part of a name or e-mail address. */
+                q?: string | null;
+                /** @description 1-100, default 25. */
+                limit?: number | null;
+                offset?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformUser"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    update_user: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description User id */
+                uid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdatePlatformUser"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformUser"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Your own role */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    workspaces: {
+        parameters: {
+            query?: {
+                /** @description Part of a name or e-mail address. */
+                q?: string | null;
+                /** @description 1-100, default 25. */
+                limit?: number | null;
+                offset?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformWorkspace"][];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -1,4 +1,4 @@
-import { ArrowUpRightIcon, ChevronLeftIcon } from 'lucide-react';
+import { ArrowUpRightIcon, ChevronLeftIcon, ShieldIcon } from 'lucide-react';
 import { Suspense } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 
@@ -20,6 +20,7 @@ import { CommandPalette } from '@/features/command/components/command-palette';
 import { ShortcutsDialog } from '@/features/command/components/shortcuts-dialog';
 import { useGlobalShortcuts } from '@/features/command/hooks/use-global-shortcuts';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
+import { useAuthStore } from '@/stores/auth-store';
 
 import { DemoBanner } from './demo-banner';
 import { API_DOCS_ITEM } from './nav-items';
@@ -35,6 +36,7 @@ export default function SettingsShell() {
   const { pathname } = useLocation();
   const { current } = useCurrentWorkspace();
   const admin = current?.role === 'owner' || current?.role === 'admin';
+  const platformAdmin = useAuthStore((s) => s.user?.role === 'admin');
   return (
     <SidebarProvider open>
       <a
@@ -59,7 +61,7 @@ export default function SettingsShell() {
         <SidebarContent>
           {SETTINGS_GROUPS.map((group) => (
             <SidebarGroup key={group.label} className="py-1">
-              <SidebarGroupLabel className="h-7">
+              <SidebarGroupLabel className="h-7" title={group.hint}>
                 {group.label === 'Workspace' && current ? current.name : group.label}
               </SidebarGroupLabel>
               <SidebarMenu className="gap-0.5">
@@ -85,6 +87,16 @@ export default function SettingsShell() {
         </SidebarContent>
         <SidebarFooter>
           <SidebarMenu>
+            {platformAdmin && (
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild className="h-7 text-[13px]">
+                  <Link to="/app/platform">
+                    <ShieldIcon />
+                    <span>Platform console</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            )}
             <SidebarMenuItem>
               <SidebarMenuButton asChild className="h-7 text-[13px]">
                 <a href={API_DOCS_ITEM.to} target="_blank" rel="noopener noreferrer">

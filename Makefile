@@ -15,7 +15,7 @@ LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a;
 
 .PHONY: help init setup dev dev-backend dev-frontend dev-runtime db-up db-down db-shell \
         build test test-backend test-frontend test-runtime lint fmt check \
-        docker-build docker-up docker-down docker-logs demo \
+        docker-build docker-up docker-down docker-logs demo seed-demo \
         minikube-up minikube-down k8s-render openapi doctor clean
 
 help: ## Show this help
@@ -99,6 +99,9 @@ docker-up: ## Build and start the full stack on http://localhost:8080
 
 smoke: ## End-to-end smoke test against a running stack (SMOKE_URL, default http://localhost:8080)
 	scripts/smoke.sh $${SMOKE_URL:-http://localhost:8080}
+
+seed-demo: ## Fill the running app with a demo workspace, five accounts and their inboxes
+	@python3 scripts/seed-demo.py
 
 demo: ## Start the stack in demo mode (offline LLM, no API key needed)
 	@[ -f .env ] || scripts/init-env.sh
