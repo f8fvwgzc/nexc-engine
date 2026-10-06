@@ -1,7 +1,7 @@
 //! Issues, workflow states and projects.
 
 use chrono::{DateTime, NaiveDate, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -18,6 +18,9 @@ pub const STATES_MAX: usize = 30;
 /// Lowest priority value (`0` none, `1` urgent, `2` high, `3` medium, `4` low).
 pub const PRIORITY_MAX: i16 = 4;
 pub const COMMENT_MAX_BYTES: usize = 16 * 1024;
+pub const LABEL_NAME_MAX: usize = 40;
+pub const LABELS_MAX: i64 = 200;
+pub const ISSUE_LABELS_MAX: usize = 20;
 /// Priority names by value, as shown in an issue's history.
 pub const PRIORITY_NAMES: [&str; 5] = ["No priority", "Urgent", "High", "Medium", "Low"];
 
@@ -82,6 +85,15 @@ pub struct IssuePerson {
 }
 
 /// An issue.
+/// A label of a workspace, as carried by an issue.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct Label {
+    pub id: Uuid,
+    pub name: String,
+    /// `#rrggbb`.
+    pub color: String,
+}
+
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Issue {
     pub id: Uuid,
@@ -95,6 +107,8 @@ pub struct Issue {
     pub state: IssueState,
     /// `0` none, `1` urgent, `2` high, `3` medium, `4` low.
     pub priority: i16,
+    /// The issue's labels, by name.
+    pub labels: Vec<Label>,
     #[schema(required = true)]
     pub assignee: Option<IssuePerson>,
     /// The agent the issue is delegated to.

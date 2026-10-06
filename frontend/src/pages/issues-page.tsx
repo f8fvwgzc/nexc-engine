@@ -13,7 +13,12 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
 import { EmptyState } from '@/components/custom-ui/empty-state';
-import { PersonGlyph, PriorityGlyph, StateGlyph } from '@/components/custom-ui/issue-glyphs';
+import {
+  LabelChip,
+  PersonGlyph,
+  PriorityGlyph,
+  StateGlyph,
+} from '@/components/custom-ui/issue-glyphs';
 import { OptionSelect } from '@/components/custom-ui/option-select';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { PageSkeleton } from '@/components/layout/page-skeleton';
@@ -37,11 +42,13 @@ import {
   createIssueGraph,
   deleteIssue,
   issuesQuery,
+  labelsQuery,
   projectsQuery,
   statesQuery,
   updateIssue,
 } from '@/features/issues/api';
 import { IssueTimeline } from '@/features/issues/issue-timeline';
+import { LabelPicker } from '@/features/issues/label-picker';
 import { membersQuery, teamsQuery } from '@/features/workspaces/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
@@ -295,6 +302,11 @@ function IssueDialog({
               aria-label="Project"
             />
           </div>
+          <LabelPicker
+            workspace={workspace}
+            selected={issue.labels}
+            onChange={(label_ids) => save.mutate({ label_ids })}
+          />
           {(save.error ?? plan.error) && (
             <p role="alert" className="text-sm text-destructive">
               {errorMessage(save.error ?? plan.error)}
@@ -361,6 +373,11 @@ function IssueRow({ issue, onOpen }: { issue: Issue; onOpen: () => void }) {
         </span>
         <StateGlyph category={issue.state.category} color={issue.state.color} />
         <span className="min-w-0 flex-1 truncate">{issue.title}</span>
+        <span className="hidden max-w-[40%] shrink-0 items-center gap-1 overflow-hidden md:flex">
+          {issue.labels.map((label) => (
+            <LabelChip key={label.id} name={label.name} color={label.color} />
+          ))}
+        </span>
         {issue.graph_id && (
           <NetworkIcon
             className="size-3.5 shrink-0 text-muted-foreground"
@@ -474,7 +491,12 @@ function IssueBoard({
                       <PersonGlyph name={issue.assignee?.name} className="ml-auto font-sans" />
                     </span>
                     <span className="line-clamp-2 text-[13px]">{issue.title}</span>
-                    <PriorityGlyph priority={issue.priority} />
+                    <span className="flex flex-wrap items-center gap-1">
+                      <PriorityGlyph priority={issue.priority} />
+                      {issue.labels.map((label) => (
+                        <LabelChip key={label.id} name={label.name} color={label.color} />
+                      ))}
+                    </span>
                   </button>
                 </li>
               ))}
@@ -492,15 +514,20 @@ function Issues({ workspace }: { workspace: Workspace }) {
   const teamId = params.get('team') ?? ALL;
   const setTeamId = (id: string) => setParams(id === ALL ? {} : { team: id }, { replace: true });
   const [openOnly, setOpenOnly] = useState(true);
+  const [labelId, setLabelId] = useState(ALL);
   const [q, setQ] = useState('');
   const [creating, setCreating] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [view, setView] = useState<View>(rememberedView);
   const debouncedQ = useDebouncedValue(q.trim(), 300);
   const { data: teams = [] } = useQuery(teamsQuery(workspace.id));
+  const { data: labels = [] } = useQuery(labelsQuery(workspace.id));
+  // A label deleted elsewhere stops filtering.
+  const activeLabel = labels.some((l) => l.id === labelId) ? labelId : ALL;
   const { data: issues, isPending } = useQuery(
     issuesQuery(workspace.id, {
       team_id: teamId === ALL ? undefined : teamId,
+      label_id: activeLabel === ALL ? undefined : activeLabel,
       open: openOnly,
       q: debouncedQ || undefined,
     }),
@@ -582,6 +609,30 @@ function Issues({ workspace }: { workspace: Workspace }) {
           aria-label="Team"
           className="w-52"
         />
+        {labels.length > 0 && (
+          <OptionSelect
+            value={activeLabel}
+            onValueChange={setLabelId}
+            options={[
+              { value: ALL, label: 'Any label' },
+              ...labels.map((l) => ({
+                value: l.id,
+                label: (
+                  <span className="flex items-center gap-2">
+                    <span
+                      aria-hidden
+                      className="size-2 rounded-full"
+                      style={{ backgroundColor: l.color }}
+                    />
+                    {l.name}
+                  </span>
+                ),
+              })),
+            ]}
+            aria-label="Label"
+            className="w-40"
+          />
+        )}
         <Input
           value={q}
           placeholder="Search title or ENG-12…"

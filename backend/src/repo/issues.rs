@@ -3,12 +3,14 @@
 
 use chrono::NaiveDate;
 use sqlx::postgres::PgRow;
+use sqlx::types::Json;
 use sqlx::{FromRow, PgConnection, PgExecutor, Row};
 use uuid::Uuid;
 
 use super::enum_col;
 use crate::domain::issue::{
-    Issue, IssueChange, IssueEvent, IssuePerson, IssueState, Project, STARTER_STATES, StateCategory,
+    Issue, IssueChange, IssueEvent, IssuePerson, IssueState, Label, Project, STARTER_STATES,
+    StateCategory,
 };
 
 impl FromRow<'_, PgRow> for IssueState {
@@ -31,6 +33,7 @@ impl FromRow<'_, PgRow> for Issue {
         let team_key: String = row.try_get("team_key")?;
         let assignee_id: Option<Uuid> = row.try_get("assignee_id")?;
         let assignee_name: Option<String> = row.try_get("assignee_name")?;
+        let Json(labels): Json<Vec<Label>> = row.try_get("labels")?;
         Ok(Issue {
             id: row.try_get("id")?,
             workspace_id: row.try_get("workspace_id")?,
@@ -48,6 +51,7 @@ impl FromRow<'_, PgRow> for Issue {
                 position: row.try_get("state_position")?,
             },
             priority: row.try_get("priority")?,
+            labels,
             assignee: assignee_id.map(|user_id| IssuePerson {
                 user_id,
                 name: assignee_name.unwrap_or_default(),
@@ -90,7 +94,12 @@ macro_rules! issue_for_user {
                     i.project_id, i.graph_id, i.creator_id, i.created_at, i.updated_at,
                     i.completed_at, s.id AS state_id, s.name AS state_name,
                     s.category AS state_category, s.color AS state_color,
-                    s.position AS state_position
+                    s.position AS state_position,
+                    COALESCE((SELECT jsonb_agg(jsonb_build_object(
+                                         'id', l.id, 'name', l.name, 'color', l.color)
+                                     ORDER BY lower(l.name))
+                              FROM issue_labels il JOIN labels l ON l.id = il.label_id
+                              WHERE il.issue_id = i.id), '[]'::jsonb) AS labels
              FROM issues i
              JOIN teams t ON t.id = i.team_id
              JOIN issue_states s ON s.id = i.state_id
@@ -239,6 +248,8 @@ pub struct IssueFilter {
     pub open_only: bool,
     /// Matches the title or the identifier, case-insensitively.
     pub q: Option<String>,
+    /// Only issues that carry this label.
+    pub label_id: Option<Uuid>,
     pub limit: i64,
 }
 
@@ -257,6 +268,8 @@ pub async fn list(
          AND (NOT $6 OR s.category NOT IN ('completed', 'canceled'))
          AND ($7::text IS NULL OR i.title ILIKE '%' || $7 || '%'
               OR (t.key || '-' || i.number) ILIKE $7 || '%')
+         AND ($9::uuid IS NULL OR EXISTS (
+              SELECT 1 FROM issue_labels fl WHERE fl.issue_id = i.id AND fl.label_id = $9))
          ORDER BY i.updated_at DESC, i.id LIMIT $8"
     ))
     .bind(user_id)
@@ -267,6 +280,7 @@ pub async fn list(
     .bind(f.open_only)
     .bind(f.q.as_deref())
     .bind(f.limit)
+    .bind(f.label_id)
     .fetch_all(db)
     .await
 }
@@ -377,6 +391,128 @@ pub async fn delete(db: impl PgExecutor<'_>, id: Uuid) -> Result<(), sqlx::Error
     sqlx::query("DELETE FROM issues WHERE id = $1")
         .bind(id)
         .execute(db)
+        .await?;
+    Ok(())
+}
+
+// ---------- labels ----------
+
+impl FromRow<'_, PgRow> for Label {
+    fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
+        Ok(Label {
+            id: row.try_get("id")?,
+            name: row.try_get("name")?,
+            color: row.try_get("color")?,
+        })
+    }
+}
+
+/// The labels of a workspace, by name.
+pub async fn labels(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+) -> Result<Vec<Label>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT id, name, color FROM labels WHERE workspace_id = $1 ORDER BY lower(name)",
+    )
+    .bind(workspace_id)
+    .fetch_all(db)
+    .await
+}
+
+/// One label of a workspace.
+pub async fn find_label(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    id: Uuid,
+) -> Result<Option<Label>, sqlx::Error> {
+    sqlx::query_as("SELECT id, name, color FROM labels WHERE workspace_id = $1 AND id = $2")
+        .bind(workspace_id)
+        .bind(id)
+        .fetch_optional(db)
+        .await
+}
+
+pub async fn count_labels(db: impl PgExecutor<'_>, workspace_id: Uuid) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar("SELECT count(*) FROM labels WHERE workspace_id = $1")
+        .bind(workspace_id)
+        .fetch_one(db)
+        .await
+}
+
+/// Adds a label. Names are unique in a workspace, ignoring case.
+pub async fn create_label(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    name: &str,
+    color: &str,
+) -> Result<Label, sqlx::Error> {
+    sqlx::query_as(
+        "INSERT INTO labels (id, workspace_id, name, color) VALUES ($1, $2, $3, $4)
+         RETURNING id, name, color",
+    )
+    .bind(Uuid::now_v7())
+    .bind(workspace_id)
+    .bind(name)
+    .bind(color)
+    .fetch_one(db)
+    .await
+}
+
+pub async fn save_label(db: impl PgExecutor<'_>, label: &Label) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE labels SET name = $2, color = $3 WHERE id = $1")
+        .bind(label.id)
+        .bind(&label.name)
+        .bind(&label.color)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// Deletes a label; issues that carried it lose it.
+pub async fn delete_label(db: impl PgExecutor<'_>, id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM labels WHERE id = $1")
+        .bind(id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// How many of `ids` are labels of the workspace.
+pub async fn count_known_labels(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    ids: &[Uuid],
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar("SELECT count(*) FROM labels WHERE workspace_id = $1 AND id = ANY($2)")
+        .bind(workspace_id)
+        .bind(ids)
+        .fetch_one(db)
+        .await
+}
+
+/// Makes `ids` the labels of an issue.
+pub async fn set_labels(
+    db: &mut PgConnection,
+    issue_id: Uuid,
+    ids: &[Uuid],
+) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM issue_labels WHERE issue_id = $1 AND label_id <> ALL($2)")
+        .bind(issue_id)
+        .bind(ids)
+        .execute(&mut *db)
+        .await?;
+    sqlx::query(
+        "INSERT INTO issue_labels (issue_id, label_id) SELECT $1, unnest($2::uuid[])
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(issue_id)
+    .bind(ids)
+    .execute(&mut *db)
+    .await?;
+    sqlx::query("UPDATE issues SET updated_at = now() WHERE id = $1")
+        .bind(issue_id)
+        .execute(&mut *db)
         .await?;
     Ok(())
 }

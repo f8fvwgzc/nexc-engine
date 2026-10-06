@@ -105,6 +105,8 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(issues::create))
         .routes(routes!(issues::get, issues::update, issues::delete))
         .routes(routes!(issues::create_graph))
+        .routes(routes!(issues::labels, issues::create_label))
+        .routes(routes!(issues::update_label, issues::delete_label))
         .routes(routes!(issues::events))
         .routes(routes!(issues::create_comment))
         .routes(routes!(issues::update_comment, issues::delete_comment))

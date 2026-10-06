@@ -7,6 +7,7 @@ import {
   issueEventSchema,
   issueSchema,
   issueStateSchema,
+  labelSchema,
   projectSchema,
   type IssueInput,
   type ProjectStatus,
@@ -16,6 +17,7 @@ import {
 export interface IssueFilter {
   team_id?: string;
   project_id?: string;
+  label_id?: string;
   open?: boolean;
   q?: string;
 }
@@ -29,6 +31,7 @@ export const issuesQuery = (workspaceId: string, filter: IssueFilter = {}) =>
         query: {
           team_id: filter.team_id,
           project_id: filter.project_id,
+          label_id: filter.label_id,
           open: filter.open ? 'true' : undefined,
           q: filter.q,
         },
@@ -97,6 +100,23 @@ export function deleteIssue(issueId: string) {
 /** Gives the issue a graph that plans and executes it (or returns the one it has). */
 export function createIssueGraph(issueId: string) {
   return apiRequest(`/issues/${issueId}/graph`, issueSchema, { method: 'POST' });
+}
+
+/** The labels of a workspace, by name. */
+export const labelsQuery = (workspaceId: string) =>
+  queryOptions({
+    queryKey: qk.issues.labels(workspaceId),
+    queryFn: ({ signal }) =>
+      apiRequest(`/workspaces/${workspaceId}/labels`, z.array(labelSchema), { signal }),
+    staleTime: 5 * 60_000,
+  });
+
+export function createLabel(workspaceId: string, body: { name: string; color: string }) {
+  return apiRequest(`/workspaces/${workspaceId}/labels`, labelSchema, { method: 'POST', body });
+}
+
+export function deleteLabel(workspaceId: string, labelId: string) {
+  return apiSend(`/workspaces/${workspaceId}/labels/${labelId}`, { method: 'DELETE' });
 }
 
 /** The timeline of an issue, oldest first: comments and changes. */

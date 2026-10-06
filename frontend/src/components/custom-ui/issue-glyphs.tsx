@@ -136,3 +136,30 @@ export function PersonGlyph({ name, className }: { name: string | undefined; cla
     </span>
   );
 }
+
+/** A label as a small pill: a dot in the label's colour and its name. */
+export function LabelChip({
+  name,
+  color,
+  className,
+}: {
+  name: string;
+  color: string;
+  className?: string;
+}) {
+  return (
+    <span
+      className={cn(
+        'inline-flex h-5 max-w-32 shrink-0 items-center gap-1.5 rounded-full border px-2 text-xs text-muted-foreground',
+        className,
+      )}
+    >
+      <span
+        aria-hidden
+        className="size-2 shrink-0 rounded-full"
+        style={{ backgroundColor: color }}
+      />
+      <span className="truncate">{name}</span>
+    </span>
+  );
+}

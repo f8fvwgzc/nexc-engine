@@ -69,6 +69,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Issue timeline: comments (`POST /issues/{iid}/comments`, edited by their author, deleted by the
   author or whoever manages the team) and a history of changes to state, priority, assignee and
   title (`GET /issues/{iid}/events`), shown under the issue.
+- Labels: a workspace's labels (`/workspaces/{wid}/labels`) go on issues (`label_ids`, returned as
+  `labels`), show as chips in the list and on the board, are picked or created from the issue, and
+  filter the list (`label_id`).
 - Workflow editor: the Teams page opens a team's workflow, where team owners and workspace admins
   add, rename, recolour, reorder and remove issue states; other members see it read-only.
 - "Your teams" in the sidebar opens a team's issues (`/app/issues?team=<id>`), and `C` on the

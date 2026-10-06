@@ -13,9 +13,9 @@ use super::workspaces::member_of;
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::issue::{
-    COMMENT_MAX_BYTES, DESCRIPTION_MAX_BYTES, Issue, IssueEvent, IssuePerson, IssueState,
-    PRIORITY_MAX, Project, ProjectStatus, STATE_NAME_MAX, STATES_MAX, StateCategory, TITLE_MAX,
-    changes, is_hex_color,
+    COMMENT_MAX_BYTES, DESCRIPTION_MAX_BYTES, ISSUE_LABELS_MAX, Issue, IssueEvent, IssuePerson,
+    IssueState, LABEL_NAME_MAX, LABELS_MAX, Label, PRIORITY_MAX, Project, ProjectStatus,
+    STATE_NAME_MAX, STATES_MAX, StateCategory, TITLE_MAX, changes, is_hex_color,
 };
 use crate::domain::validation::{FieldErrors, Validate, check_text};
 use crate::domain::workspace::TeamAccess;
@@ -44,6 +44,31 @@ fn check_priority(errors: &mut FieldErrors, priority: i16) {
             "must be 0 (none), 1 (urgent), 2 (high), 3 (medium) or 4 (low)",
         );
     }
+}
+
+fn check_label_count(errors: &mut FieldErrors, labels: &[Uuid]) {
+    if labels.len() > ISSUE_LABELS_MAX {
+        errors.add("label_ids", "an issue carries at most 20 labels");
+    }
+}
+
+/// The distinct `ids`, checked to be labels of the workspace.
+async fn known_labels(
+    state: &AppState,
+    workspace_id: Uuid,
+    ids: &[Uuid],
+) -> Result<Vec<Uuid>, AppError> {
+    let mut ids = ids.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+    let known = repo::issues::count_known_labels(&state.db, workspace_id, &ids).await?;
+    if usize::try_from(known).ok() != Some(ids.len()) {
+        return Err(AppError::field(
+            "label_ids",
+            "unknown label in this workspace",
+        ));
+    }
+    Ok(ids)
 }
 
 fn require_issue_rights(access: TeamAccess) -> Result<(), AppError> {
@@ -104,6 +129,8 @@ pub struct IssueQuery {
     pub team_id: Option<Uuid>,
     pub assignee_id: Option<Uuid>,
     pub project_id: Option<Uuid>,
+    /// Only issues that carry this label.
+    pub label_id: Option<Uuid>,
     /// `true` leaves out completed and canceled issues.
     pub open: Option<bool>,
     /// Matches the title, or the start of the identifier (`ENG-1`).
@@ -126,6 +153,9 @@ pub struct CreateIssue {
     pub assignee_id: Option<Uuid>,
     pub agent_id: Option<Uuid>,
     pub project_id: Option<Uuid>,
+    /// Labels of the workspace to put on the issue (at most 20).
+    #[serde(default)]
+    pub label_ids: Vec<Uuid>,
 }
 
 impl Validate for CreateIssue {
@@ -133,6 +163,7 @@ impl Validate for CreateIssue {
         check_text(errors, "title", &self.title, TITLE_MAX);
         check_description(errors, &self.description);
         check_priority(errors, self.priority.unwrap_or_default());
+        check_label_count(errors, &self.label_ids);
     }
 }
 
@@ -154,6 +185,8 @@ pub struct UpdateIssue {
     #[serde(default, deserialize_with = "double_option")]
     #[schema(value_type = Option<Uuid>, nullable)]
     pub project_id: Option<Option<Uuid>>,
+    /// Replaces the issue's labels.
+    pub label_ids: Option<Vec<Uuid>>,
 }
 
 impl Validate for UpdateIssue {
@@ -166,6 +199,9 @@ impl Validate for UpdateIssue {
         }
         if let Some(priority) = self.priority {
             check_priority(errors, priority);
+        }
+        if let Some(labels) = &self.label_ids {
+            check_label_count(errors, labels);
         }
     }
 }
@@ -186,6 +222,7 @@ pub async fn list(
         team_id: query.team_id,
         assignee_id: query.assignee_id,
         project_id: query.project_id,
+        label_id: query.label_id,
         open_only: query.open.unwrap_or(false),
         q: query
             .q
@@ -220,6 +257,7 @@ pub async fn create(
             .ok_or_else(|| AppError::Unprocessable("this team has no workflow states".into()))?,
     };
     check_references(&state, wid, req.assignee_id, req.agent_id, req.project_id).await?;
+    let labels = known_labels(&state, wid, &req.label_ids).await?;
     let new = NewIssue {
         workspace_id: wid,
         team_id: tid,
@@ -235,6 +273,9 @@ pub async fn create(
     };
     let mut tx = state.db.begin().await?;
     let id = repo::issues::create(&mut tx, &new).await?;
+    if !labels.is_empty() {
+        repo::issues::set_labels(&mut tx, id, &labels).await?;
+    }
     tx.commit().await?;
     let issue = repo::issues::find(&state.db, auth.id, id)
         .await
@@ -295,6 +336,10 @@ pub async fn update(
         req.project_id.flatten(),
     )
     .await?;
+    let labels = match &req.label_ids {
+        Some(ids) => Some(known_labels(&state, issue.workspace_id, ids).await?),
+        None => None,
+    };
     if let Some(title) = req.title {
         issue.title = title.trim().to_owned();
     }
@@ -319,6 +364,9 @@ pub async fn update(
     }
     let mut tx = state.db.begin().await?;
     repo::issues::save(&mut *tx, &issue).await?;
+    if let Some(labels) = &labels {
+        repo::issues::set_labels(&mut tx, iid, labels).await?;
+    }
     // Read back for the assignee's name, which the timeline shows.
     let after = repo::issues::find(&mut *tx, auth.id, iid)
         .await
@@ -339,6 +387,149 @@ pub async fn delete(
 ) -> Result<StatusCode, AppError> {
     let issue = editable(&state, auth, iid).await?;
     repo::issues::delete(&state.db, issue.id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------- labels ----------
+
+/// `POST /workspaces/{wid}/labels` body.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateLabel {
+    pub name: String,
+    /// `#rrggbb`.
+    pub color: String,
+}
+
+/// `PATCH /workspaces/{wid}/labels/{lid}` body: any subset.
+#[derive(Debug, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateLabel {
+    pub name: Option<String>,
+    pub color: Option<String>,
+}
+
+fn check_label(errors: &mut FieldErrors, name: Option<&str>, color: Option<&str>) {
+    if let Some(name) = name {
+        check_text(errors, "name", name, LABEL_NAME_MAX);
+    }
+    if let Some(color) = color
+        && !is_hex_color(color)
+    {
+        errors.add("color", "must be a colour like #10b981");
+    }
+}
+
+impl Validate for CreateLabel {
+    fn validate(&self, errors: &mut FieldErrors) {
+        check_label(errors, Some(&self.name), Some(&self.color));
+    }
+}
+
+impl Validate for UpdateLabel {
+    fn validate(&self, errors: &mut FieldErrors) {
+        check_label(errors, self.name.as_deref(), self.color.as_deref());
+    }
+}
+
+fn label_taken(err: sqlx::Error) -> AppError {
+    match &err {
+        sqlx::Error::Database(db) if db.is_unique_violation() => {
+            AppError::Conflict("this workspace already has a label with that name".into())
+        }
+        _ => err.into(),
+    }
+}
+
+/// The labels of a workspace, by name.
+#[utoipa::path(get, path = "/workspaces/{wid}/labels", tag = "issues", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id")),
+    responses((status = 200, body = [Label]), (status = 404, body = Problem)))]
+pub async fn labels(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(wid): Path<Uuid>,
+) -> Result<Json<Vec<Label>>, AppError> {
+    member_of(&state, auth, wid).await?;
+    Ok(Json(repo::issues::labels(&state.db, wid).await?))
+}
+
+/// Adds a label to the workspace. Everyone but guests can.
+#[utoipa::path(post, path = "/workspaces/{wid}/labels", tag = "issues", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id")), request_body = CreateLabel,
+    responses((status = 201, body = Label), (status = 403, body = Problem), (status = 404, body = Problem),
+        (status = 409, description = "Name taken", body = Problem), (status = 422, body = Problem)))]
+pub async fn create_label(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(wid): Path<Uuid>,
+    ValidatedJson(req): ValidatedJson<CreateLabel>,
+) -> Result<(StatusCode, Json<Label>), AppError> {
+    let workspace = member_of(&state, auth, wid).await?;
+    if !workspace.role.is_member() {
+        return Err(AppError::Forbidden("guests cannot add labels".into()));
+    }
+    if repo::issues::count_labels(&state.db, wid).await? >= LABELS_MAX {
+        return Err(AppError::Unprocessable(format!(
+            "a workspace has at most {LABELS_MAX} labels"
+        )));
+    }
+    let label = repo::issues::create_label(&state.db, wid, req.name.trim(), &req.color)
+        .await
+        .map_err(label_taken)?;
+    Ok((StatusCode::CREATED, Json(label)))
+}
+
+/// Renames or recolours a label. Everyone but guests can.
+#[utoipa::path(patch, path = "/workspaces/{wid}/labels/{lid}", tag = "issues", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id"), ("lid" = Uuid, Path, description = "Label id")),
+    request_body = UpdateLabel,
+    responses((status = 200, body = Label), (status = 403, body = Problem), (status = 404, body = Problem),
+        (status = 409, description = "Name taken", body = Problem), (status = 422, body = Problem)))]
+pub async fn update_label(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((wid, lid)): Path<(Uuid, Uuid)>,
+    ValidatedJson(req): ValidatedJson<UpdateLabel>,
+) -> Result<Json<Label>, AppError> {
+    let workspace = member_of(&state, auth, wid).await?;
+    if !workspace.role.is_member() {
+        return Err(AppError::Forbidden("guests cannot change labels".into()));
+    }
+    let mut label = repo::issues::find_label(&state.db, wid, lid)
+        .await
+        .or_not_found("label")?;
+    if let Some(name) = req.name {
+        label.name = name.trim().to_owned();
+    }
+    if let Some(color) = req.color {
+        label.color = color;
+    }
+    repo::issues::save_label(&state.db, &label)
+        .await
+        .map_err(label_taken)?;
+    Ok(Json(label))
+}
+
+/// Deletes a label and takes it off every issue. Workspace admins only.
+#[utoipa::path(delete, path = "/workspaces/{wid}/labels/{lid}", tag = "issues", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id"), ("lid" = Uuid, Path, description = "Label id")),
+    responses((status = 204, description = "Deleted"), (status = 403, body = Problem), (status = 404, body = Problem)))]
+pub async fn delete_label(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((wid, lid)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, AppError> {
+    let workspace = member_of(&state, auth, wid).await?;
+    if !workspace.role.is_admin() {
+        return Err(AppError::Forbidden(
+            "only workspace admins delete labels".into(),
+        ));
+    }
+    let label = repo::issues::find_label(&state.db, wid, lid)
+        .await
+        .or_not_found("label")?;
+    repo::issues::delete_label(&state.db, label.id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

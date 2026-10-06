@@ -899,6 +899,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{wid}/labels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The labels of a workspace, by name. */
+        get: operations["labels"];
+        put?: never;
+        /** Adds a label to the workspace. Everyone but guests can. */
+        post: operations["create_label"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/labels/{lid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Deletes a label and takes it off every issue. Workspace admins only. */
+        delete: operations["delete_label"];
+        options?: never;
+        head?: never;
+        /** Renames or recolours a label. Everyone but guests can. */
+        patch: operations["update_label"];
+        trace?: never;
+    };
     "/api/v1/workspaces/{wid}/llm": {
         parameters: {
             query?: never;
@@ -1335,6 +1371,8 @@ export interface components {
             /** Format: uuid */
             assignee_id?: string | null;
             description?: string;
+            /** @description Labels of the workspace to put on the issue (at most 20). */
+            label_ids?: string[];
             /**
              * Format: int32
              * @description `0` none (default), `1` urgent, `2` high, `3` medium, `4` low.
@@ -1348,6 +1386,12 @@ export interface components {
              */
             state_id?: string | null;
             title: string;
+        };
+        /** @description `POST /workspaces/{wid}/labels` body. */
+        CreateLabel: {
+            /** @description `#rrggbb`. */
+            color: string;
+            name: string;
         };
         /** @description `POST /graphs/{gid}/nodes` body. */
         CreateNode: {
@@ -1616,7 +1660,6 @@ export interface components {
             invite: components["schemas"]["WorkspaceInvite"] | null;
             member: components["schemas"]["WorkspaceMember"] | null;
         };
-        /** @description An issue. */
         Issue: {
             /**
              * Format: uuid
@@ -1640,6 +1683,8 @@ export interface components {
             id: string;
             /** @description The team key and the issue number, e.g. `ENG-12`. */
             identifier: string;
+            /** @description The issue's labels, by name. */
+            labels: components["schemas"]["Label"][];
             /** Format: int32 */
             number: number;
             /**
@@ -1712,6 +1757,17 @@ export interface components {
          * @enum {string}
          */
         KeySource: "user" | "workspace" | "server" | "none";
+        /**
+         * @description An issue.
+         *     A label of a workspace, as carried by an issue.
+         */
+        Label: {
+            /** @description `#rrggbb`. */
+            color: string;
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
         /**
          * @description LLM backend family. `demo` is a deterministic offline provider; `claude_code` runs the
          *     local Claude Code CLI with the operator's own login (no API key).
@@ -2165,6 +2221,8 @@ export interface components {
             /** Format: uuid */
             assignee_id?: string | null;
             description?: string | null;
+            /** @description Replaces the issue's labels. */
+            label_ids?: string[] | null;
             /** Format: int32 */
             priority?: number | null;
             /** Format: uuid */
@@ -2172,6 +2230,11 @@ export interface components {
             /** Format: uuid */
             state_id?: string | null;
             title?: string | null;
+        };
+        /** @description `PATCH /workspaces/{wid}/labels/{lid}` body: any subset. */
+        UpdateLabel: {
+            color?: string | null;
+            name?: string | null;
         };
         /**
          * @description `PUT /settings/llm` body. `api_key`: omitted keeps the stored key,
@@ -4840,6 +4903,8 @@ export interface operations {
                 team_id?: string | null;
                 assignee_id?: string | null;
                 project_id?: string | null;
+                /** @description Only issues that carry this label. */
+                label_id?: string | null;
                 /** @description `true` leaves out completed and canceled issues. */
                 open?: boolean | null;
                 /** @description Matches the title, or the start of the identifier (`ENG-1`). */
@@ -4865,6 +4930,195 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    labels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Label"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    create_label: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateLabel"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Label"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Name taken */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    delete_label: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Label id */
+                lid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    update_label: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Label id */
+                lid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateLabel"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Label"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Name taken */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

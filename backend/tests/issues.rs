@@ -934,3 +934,113 @@ async fn an_issue_keeps_a_timeline_of_comments_and_changes(pool: PgPool) {
     assert_eq!(kinds, ["state", "priority", "assignee", "comment"]);
     assert_eq!(list[3]["body"], "Thanks");
 }
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn labels_belong_to_the_workspace_and_filter_issues(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let w = world(&app).await;
+    let labels = format!("{}/labels", w.ws);
+
+    // Members add labels; guests and outsiders do not; names are unique ignoring case.
+    let bug = json!({"name": " Bug ", "color": "#ef4444"});
+    let (status, _) = call(&app, Method::POST, &labels, &w.guest, Some(bug.clone())).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = call(&app, Method::POST, &labels, &w.outsider, Some(bug.clone())).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, bug) = call(&app, Method::POST, &labels, &w.member, Some(bug)).await;
+    assert_eq!(status, StatusCode::CREATED, "{bug}");
+    assert_eq!(bug["name"], "Bug");
+    let again = json!({"name": "bug", "color": "#000000"});
+    let (status, _) = call(&app, Method::POST, &labels, &w.member, Some(again)).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let bad = json!({"name": "UI", "color": "red"});
+    let (status, _) = call(&app, Method::POST, &labels, &w.member, Some(bad)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let ui = json!({"name": "UI", "color": "#0ea5e9"});
+    let (_, ui) = call(&app, Method::POST, &labels, &w.member, Some(ui)).await;
+    let (bug_id, ui_id) = (bug["id"].as_str().unwrap(), ui["id"].as_str().unwrap());
+
+    // An issue is filed with labels and lists them by name.
+    let issues = format!("{}/teams/{}/issues", w.ws, w.eng);
+    let body = json!({"title": "Button overlaps", "label_ids": [ui_id, bug_id, ui_id]});
+    let (status, issue) = call(&app, Method::POST, &issues, &w.member, Some(body)).await;
+    assert_eq!(status, StatusCode::CREATED, "{issue}");
+    let names = |issue: &Value| -> Vec<String> {
+        issue["labels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|l| l["name"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(names(&issue), ["Bug", "UI"]);
+    let (_, plain) = call(
+        &app,
+        Method::POST,
+        &issues,
+        &w.member,
+        Some(json!({"title": "Write docs"})),
+    )
+    .await;
+    assert_eq!(names(&plain), Vec::<String>::new());
+
+    // A label of another workspace is refused.
+    let (_, theirs) = call(&app, Method::GET, "/workspaces", &w.outsider, None).await;
+    let other = format!("/workspaces/{}/labels", theirs[0]["id"].as_str().unwrap());
+    let foreign = json!({"name": "Theirs", "color": "#111111"});
+    let (_, foreign) = call(&app, Method::POST, &other, &w.outsider, Some(foreign)).await;
+    let path = format!("/issues/{}", issue["id"].as_str().unwrap());
+    let body = json!({"label_ids": [foreign["id"]]});
+    let (status, problem) = call(&app, Method::PATCH, &path, &w.member, Some(body)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
+
+    // PATCH replaces the set; leaving the field out keeps it.
+    let body = json!({"label_ids": [ui_id]});
+    let (_, issue) = call(&app, Method::PATCH, &path, &w.member, Some(body)).await;
+    assert_eq!(names(&issue), ["UI"]);
+    let body = json!({"priority": 2});
+    let (_, issue) = call(&app, Method::PATCH, &path, &w.member, Some(body)).await;
+    assert_eq!(names(&issue), ["UI"]);
+
+    // The list filters by label.
+    let (_, list) = call(
+        &app,
+        Method::GET,
+        &format!("{}/issues?label_id={ui_id}", w.ws),
+        &w.member,
+        None,
+    )
+    .await;
+    assert_eq!(list.as_array().unwrap().len(), 1, "{list}");
+    assert_eq!(list[0]["title"], "Button overlaps");
+    let (_, list) = call(
+        &app,
+        Method::GET,
+        &format!("{}/issues?label_id={bug_id}", w.ws),
+        &w.member,
+        None,
+    )
+    .await;
+    assert_eq!(list.as_array().unwrap().len(), 0);
+
+    // Renaming shows on the issue; only admins delete, and the issue loses the label.
+    let one = format!("{labels}/{ui_id}");
+    let body = json!({"name": "Interface"});
+    let (status, _) = call(&app, Method::PATCH, &one, &w.member, Some(body)).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, issue) = call(&app, Method::GET, &path, &w.guest, None).await;
+    assert!(
+        issue["labels"].is_null(),
+        "guests outside the team see no issue"
+    );
+    let (_, issue) = call(&app, Method::GET, &path, &w.member, None).await;
+    assert_eq!(names(&issue), ["Interface"]);
+    let (status, _) = call(&app, Method::DELETE, &one, &w.member, None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = call(&app, Method::DELETE, &one, &w.owner, None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, issue) = call(&app, Method::GET, &path, &w.member, None).await;
+    assert_eq!(names(&issue), Vec::<String>::new());
+    let (_, all) = call(&app, Method::GET, &labels, &w.guest, None).await;
+    assert_eq!(all.as_array().unwrap().len(), 1);
+}

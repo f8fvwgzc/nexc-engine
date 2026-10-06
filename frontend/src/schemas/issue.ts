@@ -22,6 +22,10 @@ export const issueStateSchema = z.object({
 });
 export type IssueState = z.infer<typeof issueStateSchema>;
 
+/** A label of the workspace, as carried by an issue. */
+export const labelSchema = z.object({ id: idSchema, name: z.string(), color: z.string() });
+export type Label = z.infer<typeof labelSchema>;
+
 export const issueSchema = z.object({
   id: idSchema,
   workspace_id: idSchema,
@@ -34,6 +38,7 @@ export const issueSchema = z.object({
   state: issueStateSchema,
   /** 0 none, 1 urgent, 2 high, 3 medium, 4 low. */
   priority: z.number().int().min(0).max(4),
+  labels: z.array(labelSchema),
   assignee: z.object({ user_id: idSchema, name: z.string() }).nullable(),
   agent_id: idSchema.nullable(),
   project_id: idSchema.nullable(),
@@ -96,4 +101,5 @@ export interface IssueInput {
   assignee_id?: string | null;
   agent_id?: string | null;
   project_id?: string | null;
+  label_ids?: string[];
 }
