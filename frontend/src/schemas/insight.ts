@@ -41,6 +41,42 @@ export const workspaceMapSchema = z.object({
 });
 export type WorkspaceMap = z.infer<typeof workspaceMapSchema>;
 
+/** The kinds of things whose ties can be followed on the map. */
+export const mapKindSchema = z.enum([
+  'member',
+  'team',
+  'project',
+  'issue',
+  'graph',
+  'document',
+  'agent',
+]);
+export type MapKind = z.infer<typeof mapKindSchema>;
+
+/** One thing of a workspace. `kind` is open: labels, cycles and topics are named but not followed. */
+export const mapItemSchema = z.object({
+  kind: z.string(),
+  id: idSchema,
+  title: z.string(),
+  subtitle: z.string(),
+});
+export type MapItem = z.infer<typeof mapItemSchema>;
+
+/** What one thing is tied to in one way: how many, and the first of them. */
+export const mapTieSchema = z.object({
+  label: z.string(),
+  kind: z.string(),
+  count: z.number().int(),
+  items: z.array(mapItemSchema),
+});
+export type MapTie = z.infer<typeof mapTieSchema>;
+
+export const mapNeighbourhoodSchema = z.object({
+  item: mapItemSchema,
+  ties: z.array(mapTieSchema),
+});
+export type MapNeighbourhood = z.infer<typeof mapNeighbourhoodSchema>;
+
 /** What the server runs on (server administrators only). */
 export const infrastructureSchema = z.object({
   database: z.object({

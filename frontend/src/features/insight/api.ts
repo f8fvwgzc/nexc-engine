@@ -1,4 +1,4 @@
-import { queryOptions } from '@tanstack/react-query';
+import { keepPreviousData, queryOptions } from '@tanstack/react-query';
 import { z } from 'zod';
 
 import { apiRequest } from '@/lib/api/client';
@@ -6,6 +6,9 @@ import {
   connectionCheckSchema,
   daySummarySchema,
   infrastructureSchema,
+  mapItemSchema,
+  mapNeighbourhoodSchema,
+  type MapKind,
   timelineDaySchema,
   timelineEntrySchema,
   workspaceMapSchema,
@@ -59,6 +62,28 @@ export const workspaceMapQuery = (workspaceId: string) =>
     queryKey: ['insight', workspaceId, 'map'] as const,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/map`, workspaceMapSchema, { signal }),
+  });
+
+/** The things of one kind in a workspace, by name, to pick one and follow its ties. */
+export const mapItemsQuery = (workspaceId: string, kind: MapKind, q: string) =>
+  queryOptions({
+    queryKey: ['insight', workspaceId, 'map', kind, 'list', q] as const,
+    queryFn: ({ signal }) =>
+      apiRequest(`/workspaces/${workspaceId}/map/${kind}`, z.array(mapItemSchema), {
+        query: { q: q || undefined, limit: 20 },
+        signal,
+      }),
+    placeholderData: keepPreviousData,
+  });
+
+/** One thing with everything it is tied to. */
+export const mapNeighbourhoodQuery = (workspaceId: string, kind: MapKind, id: string) =>
+  queryOptions({
+    queryKey: ['insight', workspaceId, 'map', kind, id] as const,
+    queryFn: ({ signal }) =>
+      apiRequest(`/workspaces/${workspaceId}/map/${kind}/${id}`, mapNeighbourhoodSchema, {
+        signal,
+      }),
   });
 
 export const infrastructureQuery = () =>

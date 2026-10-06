@@ -70,6 +70,7 @@ pub mod insight;
 pub mod issues;
 pub mod knowledge;
 pub mod knowledge_vectors;
+pub mod map;
 pub mod memories;
 pub mod nodes;
 pub mod outbox;

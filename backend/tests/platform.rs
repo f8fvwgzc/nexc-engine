@@ -106,6 +106,8 @@ async fn the_platform_and_the_workspaces_are_separate_apis(pool: PgPool) {
     let spec = serde_json::to_value(nexc::http::openapi()).unwrap();
     let id = uuid::Uuid::now_v7().to_string();
     let mut refused = 0;
+    // An account may send a burst of 120 requests: the walk changes administrator before that.
+    let mut walker = root.clone();
     for (path, methods) in spec["paths"].as_object().unwrap() {
         let open = [
             "/api/v1/auth/",
@@ -130,7 +132,11 @@ async fn the_platform_and_the_workspaces_are_separate_apis(pool: PgPool) {
         }
         for method in methods.as_object().unwrap().keys() {
             let method = Method::from_bytes(method.to_uppercase().as_bytes()).unwrap();
-            let r = app.request(method.clone(), &url, Some(&root), None).await;
+            if refused > 0 && refused % 80 == 0 {
+                let email = format!("walker{refused}@example.com");
+                walker = platform_admin(&app, &email).await.0;
+            }
+            let r = app.request(method.clone(), &url, Some(&walker), None).await;
             assert_eq!(
                 r.status,
                 StatusCode::FORBIDDEN,

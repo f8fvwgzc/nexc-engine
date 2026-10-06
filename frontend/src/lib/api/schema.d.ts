@@ -1403,6 +1403,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{wid}/map/{kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The things of one kind in the workspace, by name: the members, the
+         *     teams, the issues, to pick one and follow its ties. Admins and owners
+         *     only: the list spans private teams.
+         */
+        get: operations["map_items"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/map/{kind}/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One thing of the workspace with everything it is tied to: a member's
+         *     teams, issues and graphs; an issue's team, project, people, sub-issues
+         *     and graph. Each tie gives its count and its first items, whose own ties
+         *     can be followed in turn. Admins and owners only.
+         */
+        get: operations["map_item"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{wid}/members": {
         parameters: {
             query?: never;
@@ -2658,6 +2701,31 @@ export interface components {
             key: string;
             label: string;
         };
+        /** @description One thing of a workspace, as the map names it. */
+        MapItem: {
+            /** Format: uuid */
+            id: string;
+            /**
+             * @description A [`MapKind`] when its ties can be followed; otherwise a kind that is
+             *     only named here: `label`, `cycle`, `topic`.
+             */
+            kind: string;
+            /** @description What tells it apart at a glance: an e-mail, a team key, a state. */
+            subtitle: string;
+            /** @description A member's name, an issue's identifier and title, a graph's name. */
+            title: string;
+        };
+        /**
+         * @description A kind of thing on the workspace map whose ties can be followed.
+         * @enum {string}
+         */
+        MapKind: "member" | "team" | "project" | "issue" | "graph" | "document" | "agent";
+        /** @description One thing of a workspace with everything it is tied to. */
+        MapNeighbourhood: {
+            item: components["schemas"]["MapItem"];
+            /** @description Its ties that exist; a tie to nothing is left out. */
+            ties: components["schemas"]["MapTie"][];
+        };
         /** @description How two kinds of things are tied together in this workspace. */
         MapRelation: {
             /**
@@ -2669,6 +2737,23 @@ export interface components {
             /** @description The relation, read from `from` to `to`: "belongs to", "plans", … */
             label: string;
             to: string;
+        };
+        /** @description What one thing is tied to in one way. */
+        MapTie: {
+            /**
+             * Format: int64
+             * @description How many there are.
+             */
+            count: number;
+            /** @description The first of them; empty for kinds that are only counted. */
+            items: components["schemas"]["MapItem"][];
+            /**
+             * @description The kind of thing at the other end (also `run`, `node`, `memory`,
+             *     `passage`, which are only counted).
+             */
+            kind: string;
+            /** @description The relation, read from the thing: "is on", "tracks", "was filed by". */
+            label: string;
         };
         /** @description `POST /workspaces/{wid}/inbox/read` body. */
         MarkRead: {
@@ -7510,6 +7595,94 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkspaceMap"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    map_items: {
+        parameters: {
+            query?: {
+                /** @description Part of a name, an e-mail, an identifier. */
+                q?: string | null;
+                /** @description 1-50, default 20. */
+                limit?: number | null;
+                offset?: number | null;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Kind of thing */
+                kind: components["schemas"]["MapKind"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MapItem"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    map_item: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Kind of thing */
+                kind: components["schemas"]["MapKind"];
+                /** @description Id of the thing */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MapNeighbourhood"];
                 };
             };
             403: {

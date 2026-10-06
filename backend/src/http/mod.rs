@@ -35,6 +35,8 @@ pub const UPLOAD_SLACK: usize = 64 * 1024;
         problem::Problem,
         crate::realtime::events::SseEvent,
         crate::realtime::events::WsMessage,
+        // Only used as a path parameter, which does not register a schema by itself.
+        crate::domain::insight::MapKind,
     )),
     tags(
         (name = "auth", description = "Accounts and sessions"),
@@ -118,6 +120,8 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(insight::day_summary, insight::write_day_summary))
         .routes(routes!(insight::days))
         .routes(routes!(insight::map))
+        .routes(routes!(insight::map_items))
+        .routes(routes!(insight::map_item))
         .routes(routes!(workspaces::delete_invite))
         .routes(routes!(teams::list, teams::create))
         .routes(routes!(teams::get, teams::update, teams::delete))
@@ -219,13 +223,46 @@ mod tests {
         assert!(spec["components"]["securitySchemes"]["bearer"].is_object());
     }
 
+    /// Every `$ref` of the spec points at a schema it defines: a dangling one
+    /// breaks the generated client types.
+    #[test]
+    fn spec_references_resolve() {
+        fn collect(value: &serde_json::Value, refs: &mut Vec<String>) {
+            match value {
+                serde_json::Value::Object(map) => {
+                    for (key, inner) in map {
+                        match (key.as_str(), inner.as_str()) {
+                            ("$ref", Some(target)) => refs.push(target.to_owned()),
+                            _ => collect(inner, refs),
+                        }
+                    }
+                }
+                serde_json::Value::Array(items) => items.iter().for_each(|i| collect(i, refs)),
+                _ => {}
+            }
+        }
+        let spec = serde_json::to_value(openapi()).unwrap();
+        let mut refs = Vec::new();
+        collect(&spec, &mut refs);
+        assert!(refs.len() > 100, "the spec was walked");
+        let schemas = spec["components"]["schemas"].as_object().unwrap();
+        let dangling: Vec<&String> = refs
+            .iter()
+            .filter(|r| {
+                r.strip_prefix("#/components/schemas/")
+                    .is_none_or(|name| !schemas.contains_key(name))
+            })
+            .collect();
+        assert!(dangling.is_empty(), "unresolved references: {dangling:?}");
+    }
+
     /// Every enum value the spec documents must be a value the API really
     /// accepts and emits; generated client types depend on it.
     #[test]
     fn spec_enum_values_match_the_wire_format() {
         use crate::domain::{
-            agent, audit, cycle, graph, issue, knowledge, memory, plan, platform, run, settings,
-            usage, user, workspace,
+            agent, audit, cycle, graph, insight, issue, knowledge, memory, plan, platform, run,
+            settings, usage, user, workspace,
         };
         use serde_json::Value;
 
@@ -272,10 +309,11 @@ mod tests {
                 "AgentStatus" => check::<agent::AgentStatus>(values),
                 "AgentRuntime" => check::<agent::AgentRuntime>(values),
                 "PlatformAction" => check::<platform::PlatformAction>(values),
+                "MapKind" => check::<insight::MapKind>(values),
                 _ => continue,
             }
             checked += 1;
         }
-        assert_eq!(checked, 26, "every string enum schema is covered");
+        assert_eq!(checked, 27, "every string enum schema is covered");
     }
 }

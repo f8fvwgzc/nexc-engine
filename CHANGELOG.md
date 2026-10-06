@@ -120,6 +120,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   as a digest of bounded size, the call obeys the workspace's guardrails and is booked as
   `summary` usage, and summaries travel with a workspace transfer
   (`GET`/`POST /workspaces/{wid}/timeline/summary`). The demo provider answers with the counts.
+- Workspace map, one thing at a time: pick a member, team, project, issue, graph, document or
+  agent and see exactly what it is tied to (a member's teams, issues and graphs; an issue's
+  team, project, people, sub-issues, graph, labels and cycle), then step on to any of those.
+  The trail of steps stays on screen (`GET /workspaces/{wid}/map/{kind}`, `…/map/{kind}/{id}`).
 - A test fails when a table that belongs to a workspace is neither copied by a transfer nor
   listed as an exception with its reason, so data added later cannot be left behind unnoticed.
 - Infrastructure page for server administrators: database, pgvector, migrations, agent runtime,
@@ -153,6 +157,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   add, rename, recolour, reorder and remove issue states; other members see it read-only.
 - "Your teams" in the sidebar opens a team's issues (`/app/issues?team=<id>`), and `C` on the
   Issues page starts a new issue.
+
+### Fixed
+
+- The API description referenced a schema it did not define (a path parameter's type), which
+  broke generating the client types; a test now checks that every reference resolves.
 
 ### Changed
 

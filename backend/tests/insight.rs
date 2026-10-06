@@ -148,3 +148,324 @@ async fn a_day_is_summarised_on_request_and_kept(pool: PgPool) {
         "the kept one stays readable"
     );
 }
+
+/// The ties of a tie list as `(label, kind, count, first title)`.
+fn ties(view: &Value) -> Vec<(String, String, i64, String)> {
+    view["ties"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| {
+            (
+                t["label"].as_str().unwrap().to_owned(),
+                t["kind"].as_str().unwrap().to_owned(),
+                t["count"].as_i64().unwrap(),
+                t["items"][0]["title"].as_str().unwrap_or("").to_owned(),
+            )
+        })
+        .collect()
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_thing_shows_what_it_is_tied_to(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let (owner, _) = app.register("owner@example.com").await;
+    let (member, _) = app.register("member@example.com").await;
+    let me = |token: String| {
+        let app = &app;
+        async move {
+            let (_, me) = call(app, Method::GET, "/auth/me", &token, None).await;
+            me["id"].as_str().unwrap().to_owned()
+        }
+    };
+    let (owner_id, member_id) = (me(owner.clone()).await, me(member.clone()).await);
+    let (_, list) = call(&app, Method::GET, "/workspaces", &owner, None).await;
+    let wid = list[0]["id"].as_str().unwrap().to_owned();
+    let ws = format!("/workspaces/{wid}");
+    let invite = json!({"email": "member@example.com", "role": "member"});
+    call(
+        &app,
+        Method::POST,
+        &format!("{ws}/members"),
+        &owner,
+        Some(invite),
+    )
+    .await;
+    let team = json!({"name": "Engineering", "key": "ENG"});
+    let (_, team) = call(
+        &app,
+        Method::POST,
+        &format!("{ws}/teams"),
+        &owner,
+        Some(team),
+    )
+    .await;
+    let team_id = team["id"].as_str().unwrap().to_owned();
+    let seat = json!({"role": "member"});
+    let path = format!("{ws}/teams/{team_id}/members/{member_id}");
+    let (status, _) = call(&app, Method::PUT, &path, &owner, Some(seat)).await;
+    assert_eq!(status, StatusCode::OK);
+    let project = json!({"name": "Launch"});
+    let (_, project) = call(
+        &app,
+        Method::POST,
+        &format!("{ws}/projects"),
+        &owner,
+        Some(project),
+    )
+    .await;
+    let label = json!({"name": "Bug", "color": "#ef4444"});
+    let (_, label) = call(
+        &app,
+        Method::POST,
+        &format!("{ws}/labels"),
+        &owner,
+        Some(label),
+    )
+    .await;
+    let issues = format!("{ws}/teams/{team_id}/issues");
+    let parent = json!({"title": "Ship login", "assignee_id": member_id,
+        "project_id": project["id"], "label_ids": [label["id"]]});
+    let (status, parent) = call(&app, Method::POST, &issues, &owner, Some(parent)).await;
+    assert_eq!(status, StatusCode::CREATED, "{parent}");
+    let parent_id = parent["id"].as_str().unwrap().to_owned();
+    let part = json!({"title": "Form", "parent_id": parent_id});
+    call(&app, Method::POST, &issues, &member, Some(part)).await;
+    let (status, planned) = call(
+        &app,
+        Method::POST,
+        &format!("/issues/{parent_id}/graph"),
+        &owner,
+        None,
+    )
+    .await;
+    assert!(status.is_success(), "{planned}");
+    let map = format!("{ws}/map");
+
+    // The things of a kind, by name, to pick one from.
+    let (status, found) = call(&app, Method::GET, &format!("{map}/issue"), &owner, None).await;
+    assert_eq!(status, StatusCode::OK, "{found}");
+    let titles: Vec<&str> = found
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["title"].as_str().unwrap())
+        .collect();
+    assert_eq!(titles, ["ENG-1 Ship login", "ENG-2 Form"]);
+    assert_eq!(found[0]["kind"], "issue");
+    let (_, found) = call(
+        &app,
+        Method::GET,
+        &format!("{map}/issue?q=form"),
+        &owner,
+        None,
+    )
+    .await;
+    assert_eq!(found.as_array().unwrap().len(), 1);
+    let (_, people) = call(
+        &app,
+        Method::GET,
+        &format!("{map}/member?q=member@"),
+        &owner,
+        None,
+    )
+    .await;
+    assert_eq!(people[0]["id"].as_str(), Some(member_id.as_str()));
+
+    // An issue: its team, project, people, parts, graph and labels.
+    let (status, view) = call(
+        &app,
+        Method::GET,
+        &format!("{map}/issue/{parent_id}"),
+        &owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    assert_eq!(view["item"]["title"], "ENG-1 Ship login");
+    let tie = |label: &str, kind: &str, count: i64, first: &str| {
+        (label.to_owned(), kind.to_owned(), count, first.to_owned())
+    };
+    assert_eq!(
+        ties(&view),
+        [
+            tie("belongs to", "team", 1, "Engineering"),
+            tie("is part of", "project", 1, "Launch"),
+            tie("is assigned to", "member", 1, "Test"),
+            tie("was filed by", "member", 1, "Test"),
+            tie("is split into", "issue", 1, "ENG-2 Form"),
+            tie("is planned as", "graph", 1, "ENG-1 Ship login"),
+            tie("is labelled", "label", 1, "Bug"),
+        ],
+        "ties to nothing (a parent, an agent, a cycle) are left out"
+    );
+    let assignee = &view["ties"][2]["items"][0];
+    assert_eq!(assignee["id"].as_str(), Some(member_id.as_str()));
+
+    // Followed on: the member it is assigned to, then the team.
+    let (_, person) = call(
+        &app,
+        Method::GET,
+        &format!("{map}/member/{member_id}"),
+        &owner,
+        None,
+    )
+    .await;
+    assert_eq!(person["item"]["subtitle"], "member@example.com");
+    assert_eq!(
+        ties(&person),
+        [
+            tie("is on", "team", 1, "Engineering"),
+            tie("is assigned", "issue", 1, "ENG-1 Ship login"),
+            tie("filed", "issue", 1, "ENG-2 Form"),
+        ]
+    );
+    let (_, squad) = call(
+        &app,
+        Method::GET,
+        &format!("{map}/team/{team_id}"),
+        &owner,
+        None,
+    )
+    .await;
+    let reached = ties(&squad);
+    assert_eq!(reached[0].0, "has");
+    assert_eq!(
+        reached[0].2, 2,
+        "the owner who made it and the member: {squad}"
+    );
+    assert_eq!(reached[1], tie("tracks", "issue", 2, "ENG-1 Ship login"));
+    assert_eq!(reached[2], tie("owns", "graph", 1, "ENG-1 Ship login"));
+    // A graph's nodes and runs are counted, not listed.
+    let graph_id = view["ties"][5]["items"][0]["id"].as_str().unwrap();
+    let (_, graph) = call(
+        &app,
+        Method::GET,
+        &format!("{map}/graph/{graph_id}"),
+        &owner,
+        None,
+    )
+    .await;
+    assert!(
+        ties(&graph).contains(&tie("plans", "issue", 1, "ENG-1 Ship login")),
+        "{graph}"
+    );
+
+    // A document: who uploaded it, what it is about, and how many passages it has.
+    let (document, topic) = (uuid::Uuid::now_v7(), uuid::Uuid::now_v7());
+    let workspace: uuid::Uuid = wid.parse().unwrap();
+    let uploader: uuid::Uuid = member_id.parse().unwrap();
+    sqlx::query(
+        "WITH d AS (
+             INSERT INTO documents (id, workspace_id, name, size_bytes, sha256, status, uploaded_by)
+             VALUES ($1, $2, 'customs.pdf', 10, 'abc', 'ready', $4)),
+         k AS (
+             INSERT INTO knowledge_topics (id, workspace_id, label, centroid, embedding_model)
+             VALUES ($3, $2, 'customs · invoices', ''::bytea, 'test'))
+         INSERT INTO document_chunks (id, document_id, workspace_id, ordinal, kind, content, topic_id)
+         SELECT gen_random_uuid(), $1, $2, n, 'text', 'Goods under 150 EUR are exempt.', $3
+         FROM generate_series(1, 2) n",
+    )
+    .bind(document)
+    .bind(workspace)
+    .bind(topic)
+    .bind(uploader)
+    .execute(&app.state.db)
+    .await
+    .unwrap();
+    let (status, paper) = call(
+        &app,
+        Method::GET,
+        &format!("{map}/document/{document}"),
+        &owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{paper}");
+    assert_eq!(
+        ties(&paper),
+        [
+            tie("was uploaded by", "member", 1, "Test"),
+            tie("is about", "topic", 1, "customs · invoices"),
+            tie("has", "passage", 2, ""),
+        ]
+    );
+    assert_eq!(paper["ties"][1]["items"][0]["subtitle"], "2 passages");
+    let (_, person) = call(
+        &app,
+        Method::GET,
+        &format!("{map}/member/{member_id}"),
+        &owner,
+        None,
+    )
+    .await;
+    assert!(ties(&person).contains(&tie("uploaded", "document", 1, "customs.pdf")));
+
+    // Admins and owners only; nothing of another workspace; only kinds there are.
+    for path in [format!("{map}/issue"), format!("{map}/issue/{parent_id}")] {
+        let (status, _) = call(&app, Method::GET, &path, &member, None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{path}");
+    }
+    let (_, theirs) = call(&app, Method::GET, "/workspaces", &member, None).await;
+    let other = theirs
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|w| w["role"] == "owner")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (status, _) = call(
+        &app,
+        Method::GET,
+        &format!("/workspaces/{other}/map/issue/{parent_id}"),
+        &member,
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "an issue of another workspace"
+    );
+    let (status, _) = call(
+        &app,
+        Method::GET,
+        &format!("/workspaces/{other}/map/member/{owner_id}"),
+        &member,
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "someone who is not a member there"
+    );
+    let (status, _) = call(&app, Method::GET, &format!("{map}/galaxy"), &owner, None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    for kind in [
+        "member", "team", "project", "issue", "graph", "document", "agent",
+    ] {
+        let (status, body) = call(&app, Method::GET, &format!("{map}/{kind}"), &owner, None).await;
+        assert_eq!(status, StatusCode::OK, "{kind}: {body}");
+    }
+    // Every tie of every kind runs: each thing of the workspace opens.
+    for kind in [
+        "member", "team", "project", "issue", "graph", "document", "agent",
+    ] {
+        let (_, things) = call(&app, Method::GET, &format!("{map}/{kind}"), &owner, None).await;
+        let first = things[0]["id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("no {kind}"));
+        let (status, body) = call(
+            &app,
+            Method::GET,
+            &format!("{map}/{kind}/{first}"),
+            &owner,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{kind}: {body}");
+    }
+}
