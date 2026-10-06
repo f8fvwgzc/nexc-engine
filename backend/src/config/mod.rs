@@ -55,6 +55,8 @@ pub struct Settings {
     pub symphony_enabled: bool,
     pub symphony_url: String,
     pub symphony_workflow: PathBuf,
+    /// Agent command for texc-symphony; Symphony's default (Codex) when unset.
+    pub symphony_agent_command: Option<String>,
     pub max_concurrency: usize,
     pub max_attempts: u32,
     pub node_timeout: Duration,
@@ -131,6 +133,7 @@ impl Settings {
             symphony_workflow: PathBuf::from(
                 r.string("NEXC_SYMPHONY_WORKFLOW", "./data/symphony/WORKFLOW.md"),
             ),
+            symphony_agent_command: r.optional("NEXC_SYMPHONY_AGENT_COMMAND"),
             max_concurrency: r.parse("NEXC_MAX_CONCURRENCY", 4),
             max_attempts: r.parse("NEXC_MAX_ATTEMPTS", 3),
             node_timeout: Duration::from_secs(r.parse("NEXC_NODE_TIMEOUT_SECS", 600)),

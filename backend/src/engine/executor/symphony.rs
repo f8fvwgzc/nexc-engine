@@ -4,11 +4,20 @@
 //! nexc fully manages: the backend rewrites `WORKFLOW.md` atomically, asks
 //! Symphony to poll (`POST /api/v1/refresh`) and follows
 //! `GET /api/v1/runs?issue=…` until the issue's run ends. The issue then
-//! moves to `Done` (or `Cancelled`). Symphony owns retries and workspaces,
-//! so failures reported by it are not retried by nexc.
+//! moves to `Done` (or `Cancelled`).
+//!
+//! Every graph has one git repository under `<workflow dir>/repos`. An
+//! issue's workspace is a clone of it, and when the run succeeds the bridge
+//! commits the workspace, rebases it on the repository's `main` and pushes,
+//! so nodes that run later build on the code of the nodes before them. A
+//! change that cannot be rebased is a retryable failure: the next attempt
+//! starts from the newer `main`.
+//!
+//! The bridge and Symphony must see the workflow directory at the same path.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -24,8 +33,30 @@ use crate::config::Settings;
 use crate::domain::graph::GraphNode;
 use crate::realtime::events::LogLevel;
 
-const POLL_INTERVAL: Duration = Duration::from_secs(3);
+const POLL_INTERVAL: Duration = Duration::from_millis(500);
 const CLOCK_SKEW: chrono::Duration = chrono::Duration::seconds(5);
+/// How long Symphony waits after a run before it runs a still-open issue
+/// again. The bridge closes the issue well inside this window.
+const CONTINUATION_DELAY_MS: u64 = 15_000;
+const PUSH_ATTEMPTS: u32 = 8;
+const GITIGNORE: &str = "node_modules/\ntarget/\ndist/\n__pycache__/\n.venv/\n.DS_Store\n";
+
+/// Clones the graph repository into a new issue workspace (`sh`, cwd = the
+/// workspace, whose directory name is the issue identifier).
+const AFTER_CREATE_HOOK: &str = r#"set -e
+id="${PWD##*/}"
+git clone -q "$(cat __DIR__/issues/"$id")" .
+"#;
+
+const PROMPT: &str = "You are working on {{ issue.identifier }}: {{ issue.title }}
+
+{{ issue.description }}
+
+The current directory is a clone of the project's shared repository. Other tasks of the same
+project have already added files to it and more will follow, so build on what is there and keep
+to the files this task needs. Do not use git: your changes are committed and merged for you when
+you finish. End with a short summary of what you changed.
+";
 
 /// An issue of the managed memory tracker.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -62,6 +93,19 @@ struct RunList {
 #[derive(Debug, Deserialize)]
 struct RunEvent {
     message: Option<String>,
+    #[serde(default)]
+    payload: serde_json::Value,
+}
+
+/// What became of a workspace's changes in the graph repository.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Integration {
+    /// The agent changed nothing.
+    Unchanged,
+    /// The changes are on `main`.
+    Merged { commit: String, files: Vec<String> },
+    /// The changes do not apply on top of the current `main`.
+    Conflict,
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,17 +118,57 @@ pub struct SymphonyBridge {
     enabled: bool,
     url: String,
     workflow: PathBuf,
+    layout: Layout,
     issues: Mutex<BTreeMap<String, Issue>>,
+    repos: Mutex<()>,
+}
+
+/// Where the bridge keeps its files and how the workflow runs agents.
+#[derive(Debug, Clone)]
+pub struct Layout {
+    /// Absolute directory of the managed workflow.
+    pub dir: PathBuf,
+    /// Agent command for Symphony (`codex.command`); Symphony's default when absent.
+    pub agent_command: Option<String>,
+    /// Symphony's concurrency limit.
+    pub max_agents: usize,
+}
+
+impl Layout {
+    /// Git repository of a graph.
+    pub fn repo(&self, graph_id: Uuid) -> PathBuf {
+        self.dir.join("repos").join(format!("{graph_id}.git"))
+    }
+
+    /// Workspace of an issue (Symphony names it after the identifier).
+    pub fn workspace(&self, identifier: &str) -> PathBuf {
+        self.dir.join("workspaces").join(identifier)
+    }
+
+    fn issue_file(&self, identifier: &str) -> PathBuf {
+        self.dir.join("issues").join(identifier)
+    }
 }
 
 impl SymphonyBridge {
     /// Bridge configured from settings.
     pub fn new(settings: &Settings) -> Self {
+        let workflow = std::path::absolute(&settings.symphony_workflow)
+            .unwrap_or_else(|_| settings.symphony_workflow.clone());
+        let dir = workflow
+            .parent()
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
         SymphonyBridge {
             enabled: settings.symphony_enabled,
             url: settings.symphony_url.trim_end_matches('/').to_owned(),
-            workflow: settings.symphony_workflow.clone(),
+            workflow,
+            layout: Layout {
+                dir,
+                agent_command: settings.symphony_agent_command.clone(),
+                max_agents: settings.max_concurrency,
+            },
             issues: Mutex::new(BTreeMap::new()),
+            repos: Mutex::new(()),
         }
     }
 
@@ -98,10 +182,35 @@ impl SymphonyBridge {
         &self.url
     }
 
-    async fn set_issue(&self, issue: Issue) -> std::io::Result<()> {
+    /// Files and agent settings of the bridge.
+    pub fn layout(&self) -> &Layout {
+        &self.layout
+    }
+
+    /// Queues an issue whose workspace will be a clone of `repo`.
+    async fn set_issue(&self, issue: Issue, repo: &Path) -> std::io::Result<()> {
+        let pointer = self.layout.issue_file(&issue.identifier);
+        if let Some(dir) = pointer.parent() {
+            tokio::fs::create_dir_all(dir).await?;
+        }
+        tokio::fs::write(&pointer, repo.to_string_lossy().as_bytes()).await?;
         let mut issues = self.issues.lock().await;
         issues.insert(issue.identifier.clone(), issue);
-        write_atomic(&self.workflow, &render_workflow(issues.values())).await
+        write_atomic(
+            &self.workflow,
+            &render_workflow(issues.values(), &self.layout),
+        )
+        .await
+    }
+
+    /// The graph's repository, created with an initial commit on first use.
+    async fn ensure_repo(&self, graph_id: Uuid) -> std::io::Result<PathBuf> {
+        let _guard = self.repos.lock().await;
+        let repo = self.layout.repo(graph_id);
+        if !tokio::fs::try_exists(&repo).await? {
+            create_repo(&repo).await?;
+        }
+        Ok(repo)
     }
 
     async fn set_state(&self, identifier: &str, state: &str) -> std::io::Result<()> {
@@ -109,7 +218,11 @@ impl SymphonyBridge {
         if let Some(issue) = issues.get_mut(identifier) {
             issue.state = state.to_owned();
         }
-        write_atomic(&self.workflow, &render_workflow(issues.values())).await
+        write_atomic(
+            &self.workflow,
+            &render_workflow(issues.values(), &self.layout),
+        )
+        .await
     }
 }
 
@@ -122,15 +235,154 @@ pub fn identifier(node_id: Uuid) -> String {
 }
 
 /// Renders the managed workflow. JSON front matter is valid YAML 1.2.
-pub fn render_workflow<'a>(issues: impl Iterator<Item = &'a Issue>) -> String {
-    let front = json!({
+///
+/// Each issue runs for one turn; the bridge then merges its work and closes
+/// it, which is why Symphony is told to wait before running it again.
+pub fn render_workflow<'a>(issues: impl Iterator<Item = &'a Issue>, layout: &Layout) -> String {
+    let dir = sh_quote(&layout.dir.to_string_lossy());
+    let mut front = json!({
         "tracker": { "kind": "memory", "provider": { "issues": issues.collect::<Vec<_>>() } },
         "polling": { "interval_ms": 5000 },
+        "workspace": { "root": layout.dir.join("workspaces") },
+        "agent": {
+            "max_turns": 1,
+            "max_concurrent_agents": layout.max_agents,
+            "continuation_delay_ms": CONTINUATION_DELAY_MS,
+        },
+        "hooks": { "after_create": AFTER_CREATE_HOOK.replace("__DIR__", &dir) },
     });
+    if let Some(command) = &layout.agent_command {
+        front["codex"] = json!({ "command": command, "approval_policy": "never" });
+    }
     format!(
-        "---\n{}\n---\n\nYou are working on {{{{ issue.identifier }}}}: {{{{ issue.title }}}}\n\n{{{{ issue.description }}}}\n",
+        "---\n{}\n---\n\n{PROMPT}",
         serde_json::to_string_pretty(&front).expect("json serialises")
     )
+}
+
+/// Single-quotes `value` for `sh`.
+fn sh_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+/// Output of a git command that exited successfully, or `None`.
+async fn git(dir: &Path, args: &[&str], stdin: Option<&str>) -> std::io::Result<Option<String>> {
+    use tokio::io::AsyncWriteExt;
+
+    let mut child = tokio::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        // The workspace was written by an agent: never run hooks it may have left behind.
+        .args(["-c", "core.hooksPath=/dev/null"])
+        .args(args)
+        .env("GIT_AUTHOR_NAME", "nexc symphony")
+        .env("GIT_AUTHOR_EMAIL", "symphony@nexc.invalid")
+        .env("GIT_COMMITTER_NAME", "nexc symphony")
+        .env("GIT_COMMITTER_EMAIL", "symphony@nexc.invalid")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()?;
+    if let (Some(text), Some(mut pipe)) = (stdin, child.stdin.take()) {
+        pipe.write_all(text.as_bytes()).await?;
+    }
+    let output = child.wait_with_output().await?;
+    Ok(output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned()))
+}
+
+/// Like [`git`], but a failing command is an error.
+async fn git_ok(dir: &Path, args: &[&str], stdin: Option<&str>) -> std::io::Result<String> {
+    git(dir, args, stdin)
+        .await?
+        .ok_or_else(|| std::io::Error::other(format!("git {} failed", args.join(" "))))
+}
+
+/// Creates a bare repository whose `main` holds one commit with a `.gitignore`.
+async fn create_repo(repo: &Path) -> std::io::Result<()> {
+    let parent = repo.parent().unwrap_or(Path::new("."));
+    tokio::fs::create_dir_all(parent).await?;
+    let tmp = parent.join(format!(".{}.tmp", Uuid::now_v7()));
+    tokio::fs::create_dir_all(&tmp).await?;
+    git_ok(
+        &tmp,
+        &["init", "-q", "--bare", "--initial-branch=main"],
+        None,
+    )
+    .await?;
+    let blob = git_ok(&tmp, &["hash-object", "-w", "--stdin"], Some(GITIGNORE)).await?;
+    let entry = format!("100644 blob {blob}\t.gitignore\n");
+    let tree = git_ok(&tmp, &["mktree"], Some(&entry)).await?;
+    let commit = git_ok(
+        &tmp,
+        &["commit-tree", &tree, "-m", "Start the project"],
+        None,
+    )
+    .await?;
+    git_ok(&tmp, &["update-ref", "refs/heads/main", &commit], None).await?;
+    tokio::fs::rename(&tmp, repo).await
+}
+
+/// Commits the workspace and lands it on the repository's `main`.
+pub async fn integrate(workspace: &Path, message: &str) -> std::io::Result<Integration> {
+    git_ok(workspace, &["add", "-A"], None).await?;
+    if git(workspace, &["diff", "--cached", "--quiet"], None)
+        .await?
+        .is_none()
+    {
+        git_ok(workspace, &["commit", "-q", "-m", message], None).await?;
+    }
+    for _ in 0..PUSH_ATTEMPTS {
+        if git(workspace, &["fetch", "-q", "origin", "main"], None)
+            .await?
+            .is_none()
+        {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            continue;
+        }
+        let ahead = git_ok(
+            workspace,
+            &["rev-list", "--count", "origin/main..HEAD"],
+            None,
+        )
+        .await?;
+        if ahead == "0" {
+            return Ok(Integration::Unchanged);
+        }
+        let base = git_ok(workspace, &["rev-parse", "origin/main"], None).await?;
+        if git(workspace, &["rebase", "-q", "origin/main"], None)
+            .await?
+            .is_none()
+        {
+            git(workspace, &["rebase", "--abort"], None).await?;
+            // The next attempt redoes the work on top of the newer main.
+            git_ok(workspace, &["reset", "-q", "--hard", "origin/main"], None).await?;
+            return Ok(Integration::Conflict);
+        }
+        // A concurrent push makes this one fail; fetch and rebase again.
+        if git(workspace, &["push", "-q", "origin", "HEAD:main"], None)
+            .await?
+            .is_some()
+        {
+            let commit = git_ok(workspace, &["rev-parse", "--short", "HEAD"], None).await?;
+            let files = git_ok(workspace, &["diff", "--name-only", &base, "HEAD"], None).await?;
+            return Ok(Integration::Merged {
+                commit,
+                files: files.lines().map(str::to_owned).collect(),
+            });
+        }
+    }
+    Err(std::io::Error::other(
+        "could not push to the project repository",
+    ))
 }
 
 async fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
@@ -203,9 +455,13 @@ async fn run(ctx: &ExecContext) -> Result<ExecOutput, ExecError> {
         state: "Todo".into(),
         labels: vec!["nexc".into(), node.kind.to_string()],
     };
+    let repo = bridge
+        .ensure_repo(ctx.graph_id)
+        .await
+        .map_err(|e| ExecError::fatal(format!("cannot create the project repository: {e}")))?;
     let dispatched_at = Utc::now() - CLOCK_SKEW;
     bridge
-        .set_issue(issue)
+        .set_issue(issue, &repo)
         .await
         .map_err(|e| ExecError::fatal(format!("cannot write WORKFLOW.md: {e}")))?;
     let mut guard = IssueGuard {
@@ -235,7 +491,19 @@ async fn run(ctx: &ExecContext) -> Result<ExecOutput, ExecError> {
         }
         break run;
     };
-    let succeeded = record.status == "succeeded";
+    let mut succeeded = record.status == "succeeded";
+    // Merge before the issue closes: closing it makes Symphony delete the workspace.
+    let integration = if succeeded {
+        let message = format!("{identifier}: {}", node.title);
+        let merged = integrate(&bridge.layout().workspace(&identifier), &message).await;
+        succeeded = matches!(
+            merged,
+            Ok(Integration::Unchanged | Integration::Merged { .. })
+        );
+        Some(merged)
+    } else {
+        None
+    };
     guard.armed = false;
     let final_state = if succeeded { "Done" } else { "Cancelled" };
     bridge
@@ -244,16 +512,38 @@ async fn run(ctx: &ExecContext) -> Result<ExecOutput, ExecError> {
         .map_err(|e| ExecError::fatal(format!("cannot write WORKFLOW.md: {e}")))?;
     refresh(http, bridge.url()).await?;
     ctx.tokens(record.tokens.input, record.tokens.output);
-    if !succeeded {
-        let reason = record.error.unwrap_or_else(|| record.status.clone());
-        return Err(ExecError::fatal(format!(
-            "symphony run {} {}: {reason}",
-            record.id, record.status
-        )));
-    }
-    let output = final_message(http, bridge.url(), record.id)
+    let landed = match integration {
+        None => {
+            let reason = record.error.unwrap_or_else(|| record.status.clone());
+            return Err(ExecError::fatal(format!(
+                "symphony run {} {}: {reason}",
+                record.id, record.status
+            )));
+        }
+        Some(Err(err)) => {
+            return Err(ExecError::fatal(format!(
+                "cannot merge the work of symphony run {}: {err}",
+                record.id
+            )));
+        }
+        Some(Ok(Integration::Conflict)) => {
+            return Err(ExecError::transient(format!(
+                "the work of symphony run {} conflicts with changes merged meanwhile",
+                record.id
+            )));
+        }
+        Some(Ok(Integration::Unchanged)) => "No files were changed.".to_owned(),
+        Some(Ok(Integration::Merged { commit, files })) => format!(
+            "Merged commit {commit} into {} ({}).",
+            repo.display(),
+            files.join(", ")
+        ),
+    };
+    ctx.log(LogLevel::Info, landed.clone());
+    let message = final_message(http, bridge.url(), record.id)
         .await
         .unwrap_or_else(|| "symphony run succeeded".into());
+    let output = format!("{message}\n\n{landed}");
     ctx.output(&output);
     Ok(ExecOutput {
         output,
@@ -316,10 +606,28 @@ async fn final_message(http: &reqwest::Client, base: &str, run_id: i64) -> Optio
         .await
         .ok()?;
     let list: RunEventList = resp.json().await.ok()?;
-    list.events
-        .into_iter()
+    last_agent_message(&list.events)
+}
+
+/// The agent's last message of a run, or failing that the last event message.
+fn last_agent_message(events: &[RunEvent]) -> Option<String> {
+    let agent_text = |e: &RunEvent| {
+        let item = e.payload.pointer("/payload/params/item")?;
+        (item.get("type")?.as_str()? == "agentMessage")
+            .then(|| item.get("text")?.as_str().map(str::to_owned))
+            .flatten()
+    };
+    let present = |text: &String| !text.trim().is_empty();
+    events
+        .iter()
         .rev()
-        .find_map(|e| e.message.filter(|m| !m.trim().is_empty()))
+        .find_map(|e| agent_text(e).filter(present))
+        .or_else(|| {
+            events
+                .iter()
+                .rev()
+                .find_map(|e| e.message.clone().filter(present))
+        })
 }
 
 #[cfg(test)]
@@ -343,13 +651,115 @@ mod tests {
             state: "Todo".into(),
             labels: vec!["nexc".into()],
         };
-        let text = render_workflow([issue].iter());
+        let layout = Layout {
+            dir: PathBuf::from("/data/it's here"),
+            agent_command: Some("/opt/agent.py".into()),
+            max_agents: 4,
+        };
+        let text = render_workflow([issue.clone()].iter(), &layout);
         assert!(text.starts_with("---\n{"));
         let front = text.split("---\n").nth(1).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(front.trim()).unwrap();
         assert_eq!(parsed["tracker"]["kind"], "memory");
         assert_eq!(parsed["tracker"]["provider"]["issues"][0]["state"], "Todo");
+        assert_eq!(parsed["agent"]["max_turns"], 1);
+        assert_eq!(parsed["agent"]["max_concurrent_agents"], 4);
+        assert_eq!(parsed["agent"]["continuation_delay_ms"], 15_000);
+        assert_eq!(parsed["workspace"]["root"], "/data/it's here/workspaces");
+        assert_eq!(parsed["codex"]["command"], "/opt/agent.py");
+        let hook = parsed["hooks"]["after_create"].as_str().unwrap();
+        assert!(hook.contains(r#"cat '/data/it'\''s here'/issues/"$id""#));
         assert!(text.contains("{{ issue.identifier }}"));
+
+        let default_agent = Layout {
+            agent_command: None,
+            ..layout
+        };
+        let text = render_workflow([issue].iter(), &default_agent);
+        let front = text.split("---\n").nth(1).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(front.trim()).unwrap();
+        assert!(parsed.get("codex").is_none());
+    }
+
+    #[test]
+    fn output_is_the_agents_last_message() {
+        let events: RunEventList = serde_json::from_value(json!({"events": [
+            {"message": "session started (x)", "payload": {}},
+            {"message": "item/completed", "payload": {"payload": {"method": "item/completed",
+                "params": {"item": {"type": "agentMessage", "text": "Added hello.py"}}}}},
+            {"message": "turn/completed", "payload": {"details": {}}}
+        ]}))
+        .unwrap();
+        assert_eq!(
+            last_agent_message(&events.events).as_deref(),
+            Some("Added hello.py")
+        );
+
+        let plain: RunEventList =
+            serde_json::from_value(json!({"events": [{"message": "turn/completed"}]})).unwrap();
+        assert_eq!(
+            last_agent_message(&plain.events).as_deref(),
+            Some("turn/completed")
+        );
+    }
+
+    /// A clone of `repo`, as the `after_create` hook makes it.
+    async fn clone(repo: &Path, into: &Path) {
+        tokio::fs::create_dir_all(into).await.unwrap();
+        git_ok(into, &["clone", "-q", &repo.to_string_lossy(), "."], None)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn work_of_parallel_nodes_lands_on_main_and_conflicts_are_reported() {
+        let root = std::env::temp_dir().join(format!("nexc-symphony-{}", Uuid::now_v7()));
+        let repo = root.join("repos/graph.git");
+        create_repo(&repo).await.unwrap();
+        let (a, b, c) = (root.join("ws/a"), root.join("ws/b"), root.join("ws/c"));
+        for workspace in [&a, &b, &c] {
+            clone(&repo, workspace).await;
+        }
+
+        // Nothing changed.
+        assert_eq!(integrate(&a, "a").await.unwrap(), Integration::Unchanged);
+
+        // Two nodes that started from the same commit and touch different files both land.
+        tokio::fs::write(a.join("api.py"), "api = 1\n")
+            .await
+            .unwrap();
+        tokio::fs::write(b.join("ui.js"), "ui = 1\n").await.unwrap();
+        tokio::fs::write(c.join("api.py"), "api = 2\n")
+            .await
+            .unwrap();
+        let Integration::Merged { files, .. } = integrate(&a, "a").await.unwrap() else {
+            panic!("a should merge");
+        };
+        assert_eq!(files, ["api.py"]);
+        let Integration::Merged { files, .. } = integrate(&b, "b").await.unwrap() else {
+            panic!("b should merge after a rebase");
+        };
+        assert_eq!(files, ["ui.js"]);
+
+        // The same file changed differently: reported, and the workspace is back on main.
+        assert_eq!(integrate(&c, "c").await.unwrap(), Integration::Conflict);
+        assert_eq!(
+            tokio::fs::read_to_string(c.join("api.py")).await.unwrap(),
+            "api = 1\n"
+        );
+        assert!(tokio::fs::try_exists(c.join("ui.js")).await.unwrap());
+
+        // A node that starts later sees the work of both.
+        let later = root.join("ws/later");
+        clone(&repo, &later).await;
+        assert!(tokio::fs::try_exists(later.join("api.py")).await.unwrap());
+        assert!(tokio::fs::try_exists(later.join("ui.js")).await.unwrap());
+        assert!(
+            tokio::fs::try_exists(later.join(".gitignore"))
+                .await
+                .unwrap()
+        );
+        tokio::fs::remove_dir_all(&root).await.unwrap();
     }
 
     #[test]

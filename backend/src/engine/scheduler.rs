@@ -239,6 +239,7 @@ struct RunData {
     goal: String,
     force: bool,
     target: LlmTarget,
+    workspace_id: Option<Uuid>,
     ontology: Ontology,
     edges: Vec<GraphEdge>,
 }
@@ -289,6 +290,7 @@ impl Execution {
             goal: graph.goal,
             force: row.force,
             target,
+            workspace_id: graph.workspace_id,
             ontology: graph.ontology,
             edges,
         };
@@ -612,21 +614,23 @@ impl NodeTask {
         upstream: Vec<(Uuid, String)>,
     ) -> anyhow::Result<Self> {
         let hash = content_hash(&data, &node, &upstream);
-        let agent = orchestrator::assign(&state, data.owner, &node, &data.ontology).await?;
+        let agent = orchestrator::assign(&state, data.workspace_id, &node, &data.ontology).await?;
         let query = format!("{} {}", node.title, node.content);
-        let memories = memory::retrieve(
-            &state.memories,
-            &state.db,
-            data.owner,
-            Some(data.graph_id),
-            &query,
-            5,
-        )
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .map(|m| m.content)
-        .collect();
+        let recalled = match data.workspace_id {
+            Some(workspace) => memory::retrieve(
+                &state.memories,
+                &state.db,
+                data.owner,
+                workspace,
+                memory::View::Prefer(data.graph_id),
+                &query,
+                5,
+            )
+            .await
+            .unwrap_or_default(),
+            None => Vec::new(),
+        };
+        let memories = recalled.into_iter().map(|m| m.content).collect();
         let mut upstream_outputs = Vec::with_capacity(upstream.len());
         for (id, output) in upstream {
             let title = repo::nodes::find(&state.db, data.graph_id, id)
@@ -894,10 +898,19 @@ impl NodeTask {
             ctx.node.clone(),
         );
         let (owner, graph_id) = (self.data.owner, self.data.graph_id);
+        let workspace = self.data.workspace_id;
         tokio::spawn(async move {
             let result = async {
                 let candidates = memory::extract(&state.llm, target, &goal, &node, &output).await?;
-                memory::store(&state.memories, &state.db, owner, graph_id, &candidates).await
+                memory::store(
+                    &state.memories,
+                    &state.db,
+                    owner,
+                    workspace,
+                    graph_id,
+                    &candidates,
+                )
+                .await
             }
             .await;
             if let Err(err) = result {

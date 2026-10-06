@@ -188,6 +188,10 @@ Public: `GET /healthz`, `GET /readyz`, `POST /auth/register`, `POST /auth/login`
 | GET/PATCH/DELETE `/workspaces/{wid}` | PATCH `{name}` (admin+) | `Workspace` / 204 (owner; 409 for the caller's only workspace) |
 | GET/POST `/workspaces/{wid}/members` | POST `{email, role?}` (admin+; `owner` only by owners) | `WorkspaceMember[]` (not guests) / 201 `{member, invite}`: registered users join at once, others get an invite that is accepted on sign-up |
 | PATCH/DELETE `/workspaces/{wid}/members/{uid}` | PATCH `{role}` | `WorkspaceMember[]` / 204; only owners change owners; 409 if no owner would remain; anyone may remove themselves |
+| GET/POST `/agents?workspace_id=` | POST `{name, role, title?, model?, system_prompt?, reports_to?, budget_tokens?, runtime?, workspace_id?}` | `Agent[]` of the workspace (any member) / 201 `Agent` (member+; guests 403). A new workspace starts with a default organisation |
+| PATCH/DELETE `/agents/{id}` | any subset of the agent fields | `Agent` / 204 (member+ of the agent's workspace; others 404) |
+| GET `/memories?workspace_id=&graph_id=&q=&limit=` | — | `Memory[]`: what the workspace's graphs learned, limited to graphs the caller can open, plus the caller's own notes; with `q` a hybrid search with `score`. `graph_id` narrows to one graph |
+| DELETE `/memories/{id}` | — | 204 for the author or anyone who can work on the memory's graph |
 | GET `/workspaces/{wid}/invites`, DELETE `/workspaces/{wid}/invites/{iid}` | — | `WorkspaceInvite[]` / 204 (admin+) |
 | GET/POST `/workspaces/{wid}/teams` | POST `{name, key?, description?, private?}` (member+) | `Team[]` visible to the caller / 201 `Team`; 409 if the key is taken |
 | GET/PATCH/DELETE `/workspaces/{wid}/teams/{tid}` | PATCH `{name?, description?, private?}` | `Team` / 204 (team owner or workspace admin) |
@@ -216,9 +220,6 @@ Public: `GET /healthz`, `GET /readyz`, `POST /auth/register`, `POST /auth/login`
 | GET `/artifacts/{aid}/download` | — | file, `Content-Disposition: attachment` |
 | GET `/templates` | — | `GraphTemplate[]` (built-in starter graphs) |
 | POST `/graphs/from-template` | `{template_id, name?, topic?}` (`topic` leads the graph goal: `Topic: …`) | 201 `Graph` |
-| GET/POST `/agents`, PATCH/DELETE `/agents/{id}` | `{name, role, title?, model?, system_prompt?, reports_to?, budget_tokens?, runtime?}` | `Agent[]` / `Agent` |
-| GET `/memories?graph_id=&q=&limit=` | — | `Memory[]` (with `score` when `q` given) |
-| DELETE `/memories/{id}` | — | 204 |
 | GET `/orchestrator/status` | — | `OrchestratorStatus` |
 | POST `/realtime/tickets` | `{graph_id}` | `{ticket, expires_in}` single-use, 30 s |
 | GET `/graphs/{gid}/events?ticket=` | — | SSE stream (§6) |

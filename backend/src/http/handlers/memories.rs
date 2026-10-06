@@ -13,13 +13,16 @@ use crate::domain::memory::Memory;
 use crate::engine::editor;
 use crate::http::extract::{AuthUser, Path, Query};
 use crate::http::problem::Problem;
-use crate::{memory, repo};
+use crate::memory::{self, View};
+use crate::repo::{self, OrNotFound};
 
 /// Query of `GET /memories`.
 #[derive(Debug, Deserialize, IntoParams)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryQuery {
-    /// Restrict to a graph (plus user-scope memories).
+    /// The workspace whose memory to read (default: the caller's first workspace).
+    pub workspace_id: Option<Uuid>,
+    /// Restrict to a graph (plus the caller's user-scope memories).
     pub graph_id: Option<Uuid>,
     /// Hybrid search query; results then carry a `score`.
     pub q: Option<String>,
@@ -27,7 +30,9 @@ pub struct MemoryQuery {
     pub limit: Option<u32>,
 }
 
-/// Lists (newest first) or searches the caller's memories.
+/// Lists (newest first) or searches the memory of a workspace: what its
+/// graphs learned, as far as the caller can open those graphs, plus the
+/// caller's own notes.
 #[utoipa::path(get, path = "/memories", tag = "memories", security(("bearer" = [])), params(MemoryQuery),
     responses((status = 200, body = [Memory]), (status = 404, body = Problem)))]
 pub async fn list(
@@ -35,9 +40,27 @@ pub async fn list(
     auth: AuthUser,
     Query(query): Query<MemoryQuery>,
 ) -> Result<Json<Vec<Memory>>, AppError> {
-    if let Some(gid) = query.graph_id {
-        editor::owned_graph(&state, auth.id, gid).await?;
-    }
+    // A graph names its workspace; otherwise the caller does, or their first one is used.
+    let workspace = match query.graph_id {
+        Some(gid) => {
+            editor::owned_graph(&state, auth.id, gid)
+                .await?
+                .workspace_id
+        }
+        None => match query.workspace_id {
+            Some(id) => {
+                repo::workspaces::role_of(&state.db, id, auth.id)
+                    .await
+                    .or_not_found("workspace")?;
+                Some(id)
+            }
+            None => repo::workspaces::default_for(&state.db, auth.id).await?,
+        },
+    };
+    let Some(workspace) = workspace else {
+        return Ok(Json(Vec::new()));
+    };
+    let view = query.graph_id.map_or(View::All, View::Only);
     let limit = query.limit.unwrap_or(20).clamp(1, 100) as usize;
     let q = query
         .q
@@ -45,28 +68,16 @@ pub async fn list(
         .map(str::trim)
         .filter(|q| !q.is_empty())
         .map(|q| q.chars().take(500).collect::<String>());
+    let (index, db) = (&state.memories, &state.db);
     let memories = match q {
-        Some(q) => {
-            memory::retrieve(
-                &state.memories,
-                &state.db,
-                auth.id,
-                query.graph_id,
-                &q,
-                limit,
-            )
-            .await?
-        }
-        None => repo::memories::list(&state.db, auth.id, query.graph_id, limit as i64)
-            .await?
-            .into_iter()
-            .map(|m| m.memory)
-            .collect(),
+        Some(q) => memory::retrieve(index, db, auth.id, workspace, view, &q, limit).await?,
+        None => memory::visible(index, db, auth.id, workspace, view, limit).await?,
     };
     Ok(Json(memories))
 }
 
-/// Forgets a memory.
+/// Forgets a memory. Its author may, and so may anyone who can work on the
+/// graph it was learned in.
 #[utoipa::path(delete, path = "/memories/{id}", tag = "memories", security(("bearer" = [])),
     params(("id" = Uuid, Path, description = "Memory id")),
     responses((status = 204, description = "Deleted"), (status = 404, body = Problem)))]
@@ -75,10 +86,19 @@ pub async fn delete(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
-    if repo::memories::delete(&state.db, auth.id, id).await? {
-        state.memories.invalidate(auth.id);
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(AppError::NotFound("memory"))
+    let (author, workspace, graph) = repo::memories::provenance(&state.db, id)
+        .await
+        .or_not_found("memory")?;
+    let allowed = author == auth.id
+        || match graph {
+            Some(gid) => editor::owned_graph(&state, auth.id, gid).await.is_ok(),
+            None => false,
+        };
+    if !allowed || !repo::memories::delete(&state.db, id).await? {
+        return Err(AppError::NotFound("memory"));
     }
+    if let Some(workspace) = workspace {
+        state.memories.invalidate(workspace);
+    }
+    Ok(StatusCode::NO_CONTENT)
 }

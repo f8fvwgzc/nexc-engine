@@ -5,13 +5,19 @@ import { apiRequest, apiSend } from '@/lib/api/client';
 import { qk } from '@/lib/query-keys';
 import { agentSchema, type AgentInput } from '@/schemas/agent';
 
-export const agentsQuery = () =>
+/** The agents of a workspace (the caller's first workspace when none is given). */
+export const agentsQuery = (workspaceId?: string) =>
   queryOptions({
-    queryKey: qk.agents.all,
-    queryFn: ({ signal }) => apiRequest('/agents', z.array(agentSchema), { signal }),
+    queryKey: qk.agents.list(workspaceId),
+    queryFn: ({ signal }) =>
+      apiRequest(
+        workspaceId ? `/agents?workspace_id=${workspaceId}` : '/agents',
+        z.array(agentSchema),
+        { signal },
+      ),
   });
 
-export function createAgent(body: AgentInput) {
+export function createAgent(body: AgentInput & { workspace_id?: string }) {
   return apiRequest('/agents', agentSchema, { method: 'POST', body });
 }
 

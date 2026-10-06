@@ -131,6 +131,22 @@ pub async fn list(
     .await
 }
 
+/// Ids of the graphs of a workspace that `user_id` may work on.
+pub async fn accessible_ids(
+    db: impl PgExecutor<'_>,
+    user_id: Uuid,
+    workspace_id: Uuid,
+) -> Result<Vec<Uuid>, sqlx::Error> {
+    sqlx::query_scalar(concat!(
+        "SELECT g.id FROM graphs g WHERE g.workspace_id = $2 AND ",
+        graph_access!("g", "$1")
+    ))
+    .bind(user_id)
+    .bind(workspace_id)
+    .fetch_all(db)
+    .await
+}
+
 /// Assigns graphs created before workspaces existed to their creator's first workspace.
 pub async fn adopt_orphans(db: impl PgExecutor<'_>) -> Result<u64, sqlx::Error> {
     let done = sqlx::query(

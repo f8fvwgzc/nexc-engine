@@ -10,7 +10,12 @@ export const memoriesQuery = (query: MemoryQuery) =>
     queryKey: qk.memories.search(query),
     queryFn: ({ signal }) =>
       apiRequest('/memories', z.array(memorySchema), {
-        query: { q: query.q, graph_id: query.graph_id, limit: query.limit },
+        query: {
+          workspace_id: query.workspace_id,
+          q: query.q,
+          graph_id: query.graph_id,
+          limit: query.limit,
+        },
         signal,
       }),
     placeholderData: keepPreviousData,

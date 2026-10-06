@@ -152,6 +152,12 @@ pub const ENV_VARS: &[EnvVar] = &[
         "managed workflow file",
     ),
     var(
+        "NEXC_SYMPHONY_AGENT_COMMAND",
+        "",
+        false,
+        "agent command for texc-symphony (default: Symphony's own, Codex)",
+    ),
+    var(
         "NEXC_MAX_CONCURRENCY",
         "4",
         false,

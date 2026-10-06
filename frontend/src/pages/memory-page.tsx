@@ -34,6 +34,7 @@ export default function MemoryPage() {
     isFetching,
   } = useQuery(
     memoriesQuery({
+      workspace_id: workspaceId,
       q: debouncedQ || undefined,
       graph_id: graphId === ALL_GRAPHS ? undefined : graphId,
       limit: LIMIT,

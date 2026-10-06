@@ -13,6 +13,7 @@ import { FieldGroup } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { agentsQuery } from '@/features/agents/api';
+import { useWorkspaceId } from '@/features/workspaces/use-current-workspace';
 import { applyProblemToForm } from '@/lib/api/form-errors';
 import { nodeFormSchema, parseTags, type GraphNode, type NodeFormValues } from '@/schemas/graph';
 
@@ -34,10 +35,11 @@ const FIELDS = ['title', 'content', 'kind', 'executor', 'agent_role', 'tags'] as
 
 export function NodeEditorForm({ node, onDelete }: { node: GraphNode; onDelete: () => void }) {
   const rolesListId = useId();
+  const workspaceId = useWorkspaceId();
   const ontology = useOntology();
   const updateNode = useUpdateNode(node.graph_id);
   const { data: roles = [] } = useQuery({
-    ...agentsQuery(),
+    ...agentsQuery(workspaceId),
     select: (agents) => [...new Set(agents.map((a) => a.role))],
   });
   const form = useForm<NodeFormValues>({

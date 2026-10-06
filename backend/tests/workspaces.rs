@@ -1013,3 +1013,238 @@ async fn a_workspace_credential_backs_members_without_their_own(pool: PgPool) {
         "server"
     );
 }
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn agents_and_memory_belong_to_the_workspace(pool: PgPool) {
+    use nexc::domain::memory::{MemoryKind, MemoryScope};
+    use nexc::repo::memories::{self, NewMemory};
+
+    let app = TestApp::new(pool, &[]).await;
+    let (owner, owner_id) = user(&app, "owner@example.com").await;
+    let (member, _) = user(&app, "member@example.com").await;
+    let (guest, guest_id) = user(&app, "guest@example.com").await;
+    let (outsider, _) = user(&app, "outsider@example.com").await;
+    let wid = personal_workspace(&app, &owner).await;
+    let ws = format!("/workspaces/{wid}");
+    for (email, role) in [
+        ("member@example.com", "member"),
+        ("guest@example.com", "guest"),
+    ] {
+        let body = json!({"email": email, "role": role});
+        call(
+            &app,
+            Method::POST,
+            &format!("{ws}/members"),
+            &owner,
+            Some(body),
+        )
+        .await;
+    }
+
+    // Every workspace starts with the default organisation, shared by its members.
+    let agents = format!("/agents?workspace_id={wid}");
+    let (_, seeded) = call(&app, Method::GET, &agents, &owner, None).await;
+    let seeded = seeded.as_array().unwrap().len();
+    assert!(seeded > 0, "a new workspace has agents");
+    let new_agent = json!({"name": "Quant", "role": "quant", "workspace_id": wid});
+    let (status, quant) = call(
+        &app,
+        Method::POST,
+        "/agents",
+        &member,
+        Some(new_agent.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{quant}");
+    let quant_path = format!("/agents/{}", quant["id"].as_str().unwrap());
+    let (_, list) = call(&app, Method::GET, &agents, &owner, None).await;
+    assert_eq!(
+        list.as_array().unwrap().len(),
+        seeded + 1,
+        "the owner sees the member's agent"
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::PATCH,
+            &quant_path,
+            &owner,
+            Some(json!({"title": "Lead"}))
+        )
+        .await
+        .1["title"],
+        "Lead"
+    );
+    // Guests may look, not change; strangers see nothing at all.
+    assert_eq!(
+        call(&app, Method::GET, &agents, &guest, None).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            "/agents",
+            &guest,
+            Some(new_agent.clone())
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::PATCH,
+            &quant_path,
+            &guest,
+            Some(json!({"title": "x"}))
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        call(&app, Method::GET, &agents, &outsider, None).await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        call(&app, Method::DELETE, &quant_path, &outsider, None)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    // The same name is free in another workspace.
+    let (_, mine) = call(&app, Method::GET, "/agents", &member, None).await;
+    assert_eq!(
+        mine.as_array().unwrap().len(),
+        seeded,
+        "the member's own workspace is untouched"
+    );
+
+    // Memory: what a graph learned is readable by whoever can open the graph.
+    let (_, team) = call(
+        &app,
+        Method::POST,
+        &format!("{ws}/teams"),
+        &owner,
+        Some(json!({"name": "Lead", "private": true})),
+    )
+    .await;
+    let tid = team["id"].as_str().unwrap();
+    let (_, shared) = call(
+        &app,
+        Method::POST,
+        "/graphs",
+        &owner,
+        Some(json!({"name": "Shared", "workspace_id": wid})),
+    )
+    .await;
+    let (_, secret) = call(
+        &app,
+        Method::POST,
+        "/graphs",
+        &owner,
+        Some(json!({"name": "Secret", "team_id": tid})),
+    )
+    .await;
+    let learn = |graph: &Value, content: &'static str| {
+        let (db, owner_id, wid) = (app.state.db.clone(), owner_id.clone(), wid.clone());
+        let graph_id = graph["id"].as_str().unwrap().parse().unwrap();
+        async move {
+            let embedding = nexc::kernel::embed(content);
+            let new = NewMemory {
+                owner_id: owner_id.parse().unwrap(),
+                workspace_id: Some(wid.parse().unwrap()),
+                scope: MemoryScope::Graph,
+                graph_id: Some(graph_id),
+                node_id: None,
+                kind: MemoryKind::Fact,
+                content,
+                embedding: &embedding,
+                importance: 0.8,
+            };
+            memories::insert(&db, &new).await.unwrap()
+        }
+    };
+    let shared_memory = learn(&shared, "Gold reacts to real yields and the dollar index").await;
+    learn(&secret, "The reorganisation is announced in March").await;
+
+    let contents = |token: String, query: String| {
+        let app = &app;
+        async move {
+            let (status, list) =
+                call(app, Method::GET, &format!("/memories{query}"), &token, None).await;
+            assert_eq!(status, StatusCode::OK, "{list}");
+            let mut contents: Vec<String> = list
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|m| m["content"].as_str().unwrap()[..4].to_owned())
+                .collect();
+            contents.sort();
+            contents
+        }
+    };
+    let in_ws = format!("?workspace_id={wid}");
+    assert_eq!(
+        contents(owner.clone(), in_ws.clone()).await,
+        ["Gold", "The "]
+    );
+    assert_eq!(
+        contents(member.clone(), in_ws.clone()).await,
+        ["Gold"],
+        "a teammate reads the shared graph's memory"
+    );
+    assert_eq!(
+        contents(member.clone(), format!("{in_ws}&q=reorganisation%20march")).await,
+        ["Gold"],
+        "search does not leak the private team"
+    );
+    assert!(contents(guest.clone(), in_ws.clone()).await.is_empty());
+    assert!(
+        contents(member.clone(), String::new()).await.is_empty(),
+        "nothing in their own workspace"
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::GET,
+            &format!("/memories{in_ws}"),
+            &outsider,
+            None
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    // Joining the team opens its memory.
+    call(
+        &app,
+        Method::PUT,
+        &format!("{ws}/teams/{tid}/members/{guest_id}"),
+        &owner,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(contents(guest.clone(), in_ws.clone()).await, ["The "]);
+    // Anyone who can work on the graph may forget what it learned; others cannot.
+    let memory_path = format!("/memories/{shared_memory}");
+    assert_eq!(
+        call(&app, Method::DELETE, &memory_path, &guest, None)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        call(&app, Method::DELETE, &memory_path, &member, None)
+            .await
+            .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        contents(owner.clone(), in_ws).await,
+        ["The "],
+        "the index was refreshed"
+    );
+}

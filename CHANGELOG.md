@@ -20,8 +20,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and a personal workspace for every account.
 - Graphs belong to a workspace and optionally a team (`workspace_id`, `team_id`); access to a
   graph, its runs and artifacts follows membership instead of who created it. The sidebar has a
-  workspace switcher and lists are scoped to the open workspace. Agents, memories and LLM
-  settings are still per user.
+  workspace switcher and lists are scoped to the open workspace.
 - Workspace credentials: admins set one LLM credential per workspace (`/workspaces/{wid}/llm`);
   a member's own connected account takes precedence, then the workspace's, then the server
   default. `DELETE /settings/llm` disconnects a personal account. `LlmSettings` gains `scope`.
@@ -29,7 +28,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   provider at request time (Anthropic and OpenAI-compatible endpoints).
 - Members and Teams pages, and a settings page split into "Your AI account" and "Workspace
   credential".
-- Memory retrieval reads from an in-process index (one `DashMap` entry per owner, 30 s TTL,
+- Agents belong to a workspace: every workspace gets the default organisation, members share
+  and edit its agents, and nodes are assigned to agents of the graph's workspace.
+- Memory belongs to a workspace: what a graph learned is readable by everyone who can open that
+  graph, and work on one graph also recalls what the workspace's other graphs learned (weighted
+  below the graph's own memories). Private-team graphs keep their memory to the team.
+- Memory retrieval reads from an in-process index (one `DashMap` entry per workspace, 30 s TTL,
   dropped on write) instead of querying PostgreSQL per node, ranks every memory in scope, and
   records accesses in the background.
 - The agent runtime stops the `claude` CLI when a node is cancelled or times out.

@@ -218,14 +218,26 @@ async fn build_context(
         })
         .collect();
     let query = format!("{} {instructions}", graph.goal);
-    let memories = memory::retrieve(&state.memories, &state.db, owner, Some(graph.id), &query, 8)
+    let recalled = match graph.workspace_id {
+        Some(workspace) => memory::retrieve(
+            &state.memories,
+            &state.db,
+            owner,
+            workspace,
+            memory::View::Prefer(graph.id),
+            &query,
+            8,
+        )
         .await
-        .unwrap_or_default()
-        .into_iter()
-        .map(|m| m.content)
-        .collect();
-    let mut agent_roles: Vec<String> = repo::agents::list(&state.db, owner)
-        .await
+        .unwrap_or_default(),
+        None => Vec::new(),
+    };
+    let memories = recalled.into_iter().map(|m| m.content).collect();
+    let workspace_agents = match graph.workspace_id {
+        Some(workspace) => repo::agents::list(&state.db, workspace).await,
+        None => Ok(Vec::new()),
+    };
+    let mut agent_roles: Vec<String> = workspace_agents
         .unwrap_or_default()
         .into_iter()
         .map(|a| a.role)

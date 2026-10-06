@@ -40,7 +40,10 @@ export const qk = {
     artifacts: (runId: string) => [...qk.runs.all, runId, 'artifacts'] as const,
   },
   templates: ['templates'] as const,
-  agents: { all: ['agents'] as const },
+  agents: {
+    all: ['agents'] as const,
+    list: (workspaceId?: string) => ['agents', workspaceId ?? 'default'] as const,
+  },
   memories: {
     all: ['memories'] as const,
     search: (query: MemoryQuery) => [...qk.memories.all, query] as const,

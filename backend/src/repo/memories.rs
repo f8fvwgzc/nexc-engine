@@ -12,6 +12,8 @@ use crate::kernel::{self, Embedding};
 #[derive(Debug, Clone)]
 pub struct StoredMemory {
     pub memory: Memory,
+    /// Who the memory was learned for (the author of the run that produced it).
+    pub owner_id: Uuid,
     pub embedding: Embedding,
 }
 
@@ -37,6 +39,7 @@ impl FromRow<'_, PgRow> for StoredMemory {
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
             },
+            owner_id: row.try_get("owner_id")?,
             embedding,
         })
     }
@@ -46,6 +49,7 @@ impl FromRow<'_, PgRow> for StoredMemory {
 #[derive(Debug, Clone)]
 pub struct NewMemory<'a> {
     pub owner_id: Uuid,
+    pub workspace_id: Option<Uuid>,
     pub scope: MemoryScope,
     pub graph_id: Option<Uuid>,
     pub node_id: Option<Uuid>,
@@ -58,8 +62,9 @@ pub struct NewMemory<'a> {
 /// Inserts a memory.
 pub async fn insert(db: impl PgExecutor<'_>, m: &NewMemory<'_>) -> Result<Uuid, sqlx::Error> {
     sqlx::query_scalar(
-        "INSERT INTO memories (id, owner_id, scope, graph_id, node_id, kind, content, embedding, importance)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id",
+        "INSERT INTO memories (id, owner_id, scope, graph_id, node_id, kind, content, embedding, importance,
+                               workspace_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id",
     )
     .bind(Uuid::now_v7())
     .bind(m.owner_id)
@@ -70,6 +75,7 @@ pub async fn insert(db: impl PgExecutor<'_>, m: &NewMemory<'_>) -> Result<Uuid, 
     .bind(m.content)
     .bind(kernel::embedding_to_bytes(m.embedding))
     .bind(m.importance)
+    .bind(m.workspace_id)
     .fetch_one(db)
     .await
 }
@@ -94,33 +100,31 @@ pub async fn list(
     .await
 }
 
-/// Every memory of an owner (the `limit` most recently updated), for the
+/// Every memory of a workspace (the `limit` most recently updated), for the
 /// in-process index.
 pub async fn all_for(
     db: impl PgExecutor<'_>,
-    owner_id: Uuid,
+    workspace_id: Uuid,
     limit: i64,
 ) -> Result<Vec<StoredMemory>, sqlx::Error> {
-    sqlx::query_as("SELECT * FROM memories WHERE owner_id = $1 ORDER BY updated_at DESC LIMIT $2")
-        .bind(owner_id)
-        .bind(limit)
-        .fetch_all(db)
-        .await
+    sqlx::query_as(
+        "SELECT * FROM memories WHERE workspace_id = $1 ORDER BY updated_at DESC LIMIT $2",
+    )
+    .bind(workspace_id)
+    .bind(limit)
+    .fetch_all(db)
+    .await
 }
 
-/// Memories in exactly one scope (for consolidation).
-pub async fn in_scope(
+/// What a graph has learned so far, whoever ran it (for consolidation).
+pub async fn of_graph(
     db: impl PgExecutor<'_>,
-    owner_id: Uuid,
-    scope: MemoryScope,
-    graph_id: Option<Uuid>,
+    graph_id: Uuid,
 ) -> Result<Vec<StoredMemory>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT * FROM memories WHERE owner_id = $1 AND scope = $2 AND graph_id IS NOT DISTINCT FROM $3
+        "SELECT * FROM memories WHERE scope = 'graph' AND graph_id = $1
          ORDER BY updated_at DESC LIMIT 1000",
     )
-    .bind(owner_id)
-    .bind(scope.as_str())
     .bind(graph_id)
     .fetch_all(db)
     .await
@@ -173,16 +177,43 @@ pub async fn record_access(db: impl PgExecutor<'_>, ids: &[Uuid]) -> Result<(), 
     Ok(())
 }
 
-/// Deletes a memory of the owner. Returns false if absent.
-pub async fn delete(
+/// Who wrote a memory and where it lives: `(author, workspace, graph)`.
+pub async fn provenance(
     db: impl PgExecutor<'_>,
-    owner_id: Uuid,
     id: Uuid,
-) -> Result<bool, sqlx::Error> {
-    let done = sqlx::query("DELETE FROM memories WHERE owner_id = $1 AND id = $2")
-        .bind(owner_id)
+) -> Result<Option<(Uuid, Option<Uuid>, Option<Uuid>)>, sqlx::Error> {
+    sqlx::query_as("SELECT owner_id, workspace_id, graph_id FROM memories WHERE id = $1")
+        .bind(id)
+        .fetch_optional(db)
+        .await
+}
+
+/// Deletes a memory. Returns false if absent.
+pub async fn delete(db: impl PgExecutor<'_>, id: Uuid) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query("DELETE FROM memories WHERE id = $1")
         .bind(id)
         .execute(db)
         .await?;
     Ok(done.rows_affected() == 1)
+}
+
+/// Gives memories that predate workspaces the workspace of their graph, or
+/// of their author when they are not tied to a graph.
+pub async fn adopt_orphans(db: &sqlx::PgPool) -> Result<u64, sqlx::Error> {
+    let by_graph = sqlx::query(
+        "UPDATE memories m SET workspace_id = g.workspace_id FROM graphs g
+         WHERE m.workspace_id IS NULL AND m.graph_id = g.id AND g.workspace_id IS NOT NULL",
+    )
+    .execute(db)
+    .await?;
+    let by_author = sqlx::query(
+        "UPDATE memories m SET workspace_id = (
+            SELECT w.workspace_id FROM workspace_members w
+            WHERE w.user_id = m.owner_id AND w.role <> 'guest'
+            ORDER BY w.created_at, w.workspace_id LIMIT 1)
+         WHERE m.workspace_id IS NULL AND m.graph_id IS NULL",
+    )
+    .execute(db)
+    .await?;
+    Ok(by_graph.rows_affected() + by_author.rows_affected())
 }

@@ -11,6 +11,8 @@
 
 pub mod index;
 
+use std::collections::HashSet;
+
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::json;
@@ -33,6 +35,49 @@ use index::MemoryIndex;
 const MAX_CANDIDATES_PER_NODE: usize = 8;
 const OUTPUT_CHARS_FOR_EXTRACTION: usize = 8_000;
 
+/// How much a memory learned in another graph counts next to the same
+/// memory learned in the graph being worked on.
+const OTHER_GRAPH_WEIGHT: f64 = 0.85;
+
+/// Which memories a retrieval looks at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum View {
+    /// Everything the reader may see in the workspace.
+    All,
+    /// One graph and the reader's own user-scope memories (a filter in the UI).
+    Only(Uuid),
+    /// Everything the reader may see, favouring what this graph learned
+    /// itself: work on a graph draws on the rest of the workspace.
+    Prefer(Uuid),
+}
+
+/// Who is reading: memories of a graph are visible to those who can open the
+/// graph, user-scope memories only to their author.
+#[derive(Debug, Clone)]
+pub struct Reader {
+    pub user: Uuid,
+    /// Graphs of the workspace the user may work on.
+    pub graphs: HashSet<Uuid>,
+}
+
+impl Reader {
+    fn may_read(&self, m: &StoredMemory) -> bool {
+        match m.memory.graph_id {
+            Some(graph) => self.graphs.contains(&graph),
+            None => m.owner_id == self.user,
+        }
+    }
+}
+
+fn in_view(m: &StoredMemory, view: View) -> bool {
+    match view {
+        View::All | View::Prefer(_) => true,
+        View::Only(graph) => {
+            m.memory.graph_id == Some(graph) || m.memory.scope == MemoryScope::User
+        }
+    }
+}
+
 /// Ranks `candidates` for `query` and returns the best `limit` with scores.
 /// Only the winners are cloned.
 pub fn rank(
@@ -40,6 +85,7 @@ pub fn rank(
     query: &str,
     limit: usize,
     now: DateTime<Utc>,
+    view: View,
 ) -> Vec<Memory> {
     if candidates.is_empty() || limit == 0 {
         return Vec::new();
@@ -58,7 +104,12 @@ pub fn rank(
         .map(|(c, lex)| {
             let age_days = (now - c.memory.updated_at).num_seconds() as f64 / 86_400.0;
             let cosine = f64::from(kernel::dot(&q, &c.embedding));
-            let score = hybrid_score(cosine, lex, age_days, c.memory.importance);
+            let mut score = hybrid_score(cosine, lex, age_days, c.memory.importance);
+            if let View::Prefer(home) = view
+                && c.memory.graph_id.is_some_and(|g| g != home)
+            {
+                score *= OTHER_GRAPH_WEIGHT;
+            }
             ((score * 1000.0).round() / 1000.0, *c)
         })
         .collect();
@@ -78,33 +129,52 @@ pub fn rank(
         .collect()
 }
 
-/// Whether a memory is visible to a retrieval restricted to `graph_id`:
-/// memories of that graph plus the owner's user-scope memories. Without a
-/// graph, everything the owner has.
-fn in_view(memory: &Memory, graph_id: Option<Uuid>) -> bool {
-    match graph_id {
-        None => true,
-        Some(id) => memory.graph_id == Some(id) || memory.scope == MemoryScope::User,
-    }
+async fn reader(db: &PgPool, user: Uuid, workspace: Uuid) -> Result<Reader, sqlx::Error> {
+    let graphs = crate::repo::graphs::accessible_ids(db, user, workspace).await?;
+    Ok(Reader {
+        user,
+        graphs: graphs.into_iter().collect(),
+    })
 }
 
-/// Hybrid retrieval of a user's memories (optionally restricted to a graph
-/// plus user-scope memories). Counts an access for each returned memory in
-/// the background, so the caller never waits for that write.
+/// The memories of `workspace` that `user` may read, newest first, from the index.
+pub async fn visible(
+    index: &MemoryIndex,
+    db: &PgPool,
+    user: Uuid,
+    workspace: Uuid,
+    view: View,
+    limit: usize,
+) -> anyhow::Result<Vec<Memory>> {
+    let reader = reader(db, user, workspace).await?;
+    let all = index.load(db, workspace).await?;
+    Ok(all
+        .iter()
+        .filter(|m| reader.may_read(m) && in_view(m, view))
+        .take(limit)
+        .map(|m| m.memory.clone())
+        .collect())
+}
+
+/// Hybrid retrieval over the memory of a workspace, limited to what `user`
+/// may read. Counts an access for each returned memory in the background, so
+/// the caller never waits for that write.
 pub async fn retrieve(
     index: &MemoryIndex,
     db: &PgPool,
-    owner: Uuid,
-    graph_id: Option<Uuid>,
+    user: Uuid,
+    workspace: Uuid,
+    view: View,
     query: &str,
     limit: usize,
 ) -> anyhow::Result<Vec<Memory>> {
-    let all = index.load(db, owner).await?;
+    let reader = reader(db, user, workspace).await?;
+    let all = index.load(db, workspace).await?;
     let candidates: Vec<&StoredMemory> = all
         .iter()
-        .filter(|m| in_view(&m.memory, graph_id))
+        .filter(|m| reader.may_read(m) && in_view(m, view))
         .collect();
-    let ranked = rank(&candidates, query, limit, Utc::now());
+    let ranked = rank(&candidates, query, limit, Utc::now(), view);
     let ids: Vec<Uuid> = ranked.iter().map(|m| m.id).collect();
     if !ids.is_empty() {
         let db = db.clone();
@@ -206,10 +276,12 @@ pub async fn store(
     index: &MemoryIndex,
     db: &PgPool,
     owner: Uuid,
+    workspace: Option<Uuid>,
     graph_id: Uuid,
     candidates: &[Candidate],
 ) -> anyhow::Result<Vec<Consolidation>> {
-    let mut existing = memories::in_scope(db, owner, MemoryScope::Graph, Some(graph_id)).await?;
+    // Everyone who runs the graph adds to the same memory.
+    let mut existing = memories::of_graph(db, graph_id).await?;
     let mut decisions = Vec::with_capacity(candidates.len());
     for c in candidates {
         let embedding = kernel::embed(&c.content);
@@ -233,6 +305,7 @@ pub async fn store(
             _ => {
                 let new = NewMemory {
                     owner_id: owner,
+                    workspace_id: workspace,
                     scope: MemoryScope::Graph,
                     graph_id: Some(graph_id),
                     node_id: None,
@@ -257,14 +330,17 @@ pub async fn store(
                         created_at: now,
                         updated_at: now,
                     },
+                    owner_id: owner,
                     embedding,
                 });
             }
         }
         decisions.push(decision);
     }
-    if !decisions.is_empty() {
-        index.invalidate(owner);
+    if let Some(workspace) = workspace
+        && !decisions.is_empty()
+    {
+        index.invalidate(workspace);
     }
     Ok(decisions)
 }
@@ -289,6 +365,7 @@ mod tests {
                 created_at: at,
                 updated_at: at,
             },
+            owner_id: Uuid::nil(),
             embedding: kernel::embed(content),
         }
     }
@@ -302,31 +379,73 @@ mod tests {
         ];
         let candidates: Vec<&StoredMemory> = memories.iter().collect();
         let query = "which citation style does the report use";
-        let ranked = rank(&candidates, query, 2, Utc::now());
+        let ranked = rank(&candidates, query, 2, Utc::now(), View::All);
         assert_eq!(ranked.len(), 2);
         assert!(ranked[0].content.contains("APA"));
         assert!(ranked[0].score.unwrap() >= ranked[1].score.unwrap());
-        assert!(rank(&[], "x", 5, Utc::now()).is_empty());
+        assert!(rank(&[], "x", 5, Utc::now(), View::All).is_empty());
         // Asking for fewer results returns a prefix of the full ranking.
-        let all = rank(&candidates, query, 10, Utc::now());
+        let all = rank(&candidates, query, 10, Utc::now(), View::All);
         assert_eq!(all.len(), 3);
         assert_eq!(ranked[0].id, all[0].id);
-        assert_eq!(rank(&candidates, query, 1, Utc::now())[0].id, all[0].id);
+        assert_eq!(
+            rank(&candidates, query, 1, Utc::now(), View::All)[0].id,
+            all[0].id
+        );
     }
 
     #[test]
-    fn graph_retrieval_sees_the_graph_and_user_scope() {
-        let graph = Uuid::now_v7();
-        let mut of_graph = stored("a", 0, 0.5).memory;
-        of_graph.graph_id = Some(graph);
-        let mut of_other = stored("b", 0, 0.5).memory;
-        of_other.graph_id = Some(Uuid::now_v7());
-        let mut of_user = stored("c", 0, 0.5).memory;
-        of_user.scope = MemoryScope::User;
-        assert!(in_view(&of_graph, Some(graph)));
-        assert!(!in_view(&of_other, Some(graph)));
-        assert!(in_view(&of_user, Some(graph)));
-        assert!(in_view(&of_other, None));
+    fn readers_see_their_graphs_and_their_own_notes() {
+        let (mine, theirs, me) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
+        let mut of_mine = stored("a", 0, 0.5);
+        of_mine.memory.graph_id = Some(mine);
+        let mut of_theirs = stored("b", 0, 0.5);
+        of_theirs.memory.graph_id = Some(theirs);
+        let mut my_note = stored("c", 0, 0.5);
+        my_note.memory.scope = MemoryScope::User;
+        my_note.owner_id = me;
+        let mut their_note = my_note.clone();
+        their_note.owner_id = Uuid::now_v7();
+        let reader = Reader {
+            user: me,
+            graphs: HashSet::from([mine]),
+        };
+        assert!(reader.may_read(&of_mine) && reader.may_read(&my_note));
+        assert!(
+            !reader.may_read(&of_theirs),
+            "a graph the reader cannot open"
+        );
+        assert!(
+            !reader.may_read(&their_note),
+            "someone else's personal note"
+        );
+        assert!(in_view(&of_mine, View::Only(mine)) && in_view(&my_note, View::Only(mine)));
+        assert!(!in_view(&of_theirs, View::Only(mine)));
+        assert!(
+            in_view(&of_theirs, View::Prefer(mine)),
+            "work draws on the whole workspace"
+        );
+    }
+
+    #[test]
+    fn the_graph_being_worked_on_is_preferred() {
+        let home = Uuid::now_v7();
+        let mut here = stored("Citation style is APA", 1, 0.5);
+        here.memory.graph_id = Some(home);
+        let mut elsewhere = stored("Citation style is APA", 1, 0.5);
+        elsewhere.memory.graph_id = Some(Uuid::now_v7());
+        let candidates = [&elsewhere, &here];
+        let ranked = rank(
+            &candidates,
+            "citation style",
+            2,
+            Utc::now(),
+            View::Prefer(home),
+        );
+        assert_eq!(ranked[0].id, here.memory.id);
+        assert!(ranked[0].score.unwrap() > ranked[1].score.unwrap());
+        let flat = rank(&candidates, "citation style", 2, Utc::now(), View::All);
+        assert_eq!(flat[0].score, flat[1].score);
     }
 
     /// Not a correctness test: prints how long ranking a large owner takes.
@@ -346,7 +465,14 @@ mod tests {
         let started = std::time::Instant::now();
         for _ in 0..20 {
             assert_eq!(
-                rank(&candidates, "detail 7 about topic 42", 5, Utc::now()).len(),
+                rank(
+                    &candidates,
+                    "detail 7 about topic 42",
+                    5,
+                    Utc::now(),
+                    View::All
+                )
+                .len(),
                 5
             );
         }

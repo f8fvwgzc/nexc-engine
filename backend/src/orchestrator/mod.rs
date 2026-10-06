@@ -17,11 +17,12 @@ use crate::engine::credentials;
 use crate::repo;
 use crate::repo::agents::AgentFields;
 
-/// Creates the default organisation for a user (planner at the top, the
+/// Creates the default organisation of a workspace (planner at the top, the
 /// specialists reporting to it). Must run inside a transaction.
 pub async fn seed_default_org(
     conn: &mut PgConnection,
     owner: Uuid,
+    workspace: Uuid,
     model: &str,
 ) -> Result<(), sqlx::Error> {
     let mut ids = std::collections::HashMap::new();
@@ -37,32 +38,46 @@ pub async fn seed_default_org(
             runtime: seed.runtime,
             status: AgentStatus::Active,
         };
-        let agent = repo::agents::create(&mut *conn, owner, &fields).await?;
+        let agent = repo::agents::create(&mut *conn, owner, workspace, &fields).await?;
         ids.insert(seed.role, agent.id);
     }
     Ok(())
 }
 
-/// Seeds the default organisation for every user that has no agents yet.
+/// Brings agents in line with workspaces: agents created before workspaces
+/// existed move into their creator's first workspace, then every workspace
+/// that still has none gets the default organisation.
 pub async fn seed_missing_orgs(state: &AppState) -> anyhow::Result<()> {
-    for user in repo::users::all_ids(&state.db).await? {
-        if !repo::agents::exists_for(&state.db, user).await? {
-            let mut tx = state.db.begin().await?;
-            seed_default_org(&mut tx, user, &state.settings.llm_model).await?;
-            tx.commit().await?;
-        }
+    let mut adopted = 0;
+    // One owner at a time, so that two people's "Researcher" do not race for the same workspace.
+    for owner in repo::agents::orphan_owners(&state.db).await? {
+        adopted += repo::agents::adopt_orphans_of(&state.db, owner).await?;
+    }
+    if adopted > 0 {
+        tracing::info!(adopted, "agents assigned to their creators' workspaces");
+    }
+    for (workspace, created_by) in repo::agents::workspaces_without_agents(&state.db).await? {
+        // Agents record who created them; a workspace whose creator is gone has nobody to name.
+        let Some(owner) = created_by else { continue };
+        let mut tx = state.db.begin().await?;
+        seed_default_org(&mut tx, owner, workspace, &state.settings.llm_model).await?;
+        tx.commit().await?;
     }
     Ok(())
 }
 
-/// The agent responsible for a node: by its `agent_role`, else by the
-/// default role of its type in `ontology`.
+/// The agent of the graph's workspace that is responsible for a node: by its
+/// `agent_role`, else by the default role of its type in `ontology`.
 pub async fn assign(
     state: &AppState,
-    owner: Uuid,
+    workspace: Option<Uuid>,
     node: &GraphNode,
     ontology: &Ontology,
 ) -> Result<Option<Agent>, sqlx::Error> {
+    // A graph that no workspace adopted has no agents to draw on.
+    let Some(workspace) = workspace else {
+        return Ok(None);
+    };
     let type_role = ontology.role_for(&node.kind);
     let role = node
         .agent_role
@@ -70,9 +85,9 @@ pub async fn assign(
         .map(str::trim)
         .filter(|r| !r.is_empty())
         .unwrap_or(type_role);
-    match repo::agents::find_by_role(&state.db, owner, role).await? {
+    match repo::agents::find_by_role(&state.db, workspace, role).await? {
         Some(agent) => Ok(Some(agent)),
-        None => repo::agents::find_by_role(&state.db, owner, type_role).await,
+        None => repo::agents::find_by_role(&state.db, workspace, type_role).await,
     }
 }
 

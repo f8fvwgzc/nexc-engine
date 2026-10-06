@@ -1,10 +1,10 @@
-//! The caller's agent organisation.
+//! The agent organisation of a workspace.
 
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use serde::{Deserialize, Deserializer};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use crate::app::AppState;
@@ -14,7 +14,7 @@ use crate::domain::agent::{
     is_valid_role,
 };
 use crate::domain::validation::{FieldErrors, Validate, check_max_len, check_text};
-use crate::http::extract::{AuthUser, Path, ValidatedJson};
+use crate::http::extract::{AuthUser, Path, Query, ValidatedJson};
 use crate::http::problem::Problem;
 use crate::repo::agents::AgentFields;
 use crate::repo::{self, OrNotFound};
@@ -39,6 +39,8 @@ pub struct CreateAgent {
     pub reports_to: Option<Uuid>,
     pub budget_tokens: Option<i64>,
     pub runtime: Option<AgentRuntime>,
+    /// Workspace to add the agent to (default: the caller's first workspace).
+    pub workspace_id: Option<Uuid>,
 }
 
 /// `PATCH /agents/{id}` body (any subset; `reports_to: null` detaches).
@@ -116,10 +118,58 @@ impl Validate for UpdateAgent {
     }
 }
 
-/// Validates `reports_to`: an agent of the same owner, not itself, no cycle.
+/// Query of `GET /agents`.
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+pub struct AgentQuery {
+    /// The workspace whose agents to list (default: the caller's first workspace).
+    pub workspace_id: Option<Uuid>,
+}
+
+/// The workspace the caller is addressing, after checking they belong to it.
+/// Every member may see its agents; changing them takes more than a guest.
+async fn workspace_for(
+    state: &AppState,
+    auth: AuthUser,
+    workspace_id: Option<Uuid>,
+    write: bool,
+) -> Result<Uuid, AppError> {
+    let workspace_id = match workspace_id {
+        Some(id) => id,
+        None => repo::workspaces::default_for(&state.db, auth.id)
+            .await?
+            .ok_or(AppError::NotFound("workspace"))?,
+    };
+    let role = repo::workspaces::role_of(&state.db, workspace_id, auth.id)
+        .await
+        .or_not_found("workspace")?;
+    if write && !role.is_member() {
+        return Err(AppError::Forbidden(
+            "guests cannot change a workspace's agents".into(),
+        ));
+    }
+    Ok(workspace_id)
+}
+
+/// The workspace of agent `id`, if the caller may change its agents.
+async fn workspace_of_agent(state: &AppState, auth: AuthUser, id: Uuid) -> Result<Uuid, AppError> {
+    let workspace = repo::agents::workspace_of(&state.db, id)
+        .await?
+        .flatten()
+        .ok_or(AppError::NotFound("agent"))?;
+    // An agent of a workspace the caller is not in is as good as missing.
+    workspace_for(state, auth, Some(workspace), true)
+        .await
+        .map_err(|err| match err {
+            AppError::NotFound(_) => AppError::NotFound("agent"),
+            other => other,
+        })
+}
+
+/// Validates `reports_to`: an agent of the same workspace, not itself, no cycle.
 async fn check_manager(
     state: &AppState,
-    owner: Uuid,
+    workspace: Uuid,
     agent: Option<Uuid>,
     manager: Option<Uuid>,
 ) -> Result<(), AppError> {
@@ -133,7 +183,7 @@ async fn check_manager(
                 "would create a reporting cycle",
             ));
         }
-        let m = repo::agents::find(&state.db, owner, current)
+        let m = repo::agents::find(&state.db, workspace, current)
             .await?
             .ok_or_else(|| AppError::field("reports_to", "unknown agent"))?;
         match m.reports_to {
@@ -144,24 +194,28 @@ async fn check_manager(
     Err(AppError::field("reports_to", "reporting chain too deep"))
 }
 
-/// The caller's agents.
-#[utoipa::path(get, path = "/agents", tag = "agents", security(("bearer" = [])),
-    responses((status = 200, body = [Agent]), (status = 401, body = Problem)))]
+/// The agents of a workspace.
+#[utoipa::path(get, path = "/agents", tag = "agents", security(("bearer" = [])), params(AgentQuery),
+    responses((status = 200, body = [Agent]), (status = 401, body = Problem), (status = 404, body = Problem)))]
 pub async fn list(
     State(state): State<AppState>,
     auth: AuthUser,
+    Query(query): Query<AgentQuery>,
 ) -> Result<Json<Vec<Agent>>, AppError> {
-    Ok(Json(repo::agents::list(&state.db, auth.id).await?))
+    let workspace = workspace_for(&state, auth, query.workspace_id, false).await?;
+    Ok(Json(repo::agents::list(&state.db, workspace).await?))
 }
 
-/// Adds an agent.
+/// Adds an agent to a workspace (members and above).
 #[utoipa::path(post, path = "/agents", tag = "agents", security(("bearer" = [])), request_body = CreateAgent,
-    responses((status = 201, body = Agent), (status = 409, body = Problem), (status = 422, body = Problem)))]
+    responses((status = 201, body = Agent), (status = 403, body = Problem), (status = 404, body = Problem),
+        (status = 409, body = Problem), (status = 422, body = Problem)))]
 pub async fn create(
     State(state): State<AppState>,
     auth: AuthUser,
     ValidatedJson(req): ValidatedJson<CreateAgent>,
 ) -> Result<(StatusCode, Json<Agent>), AppError> {
+    let workspace = workspace_for(&state, auth, req.workspace_id, true).await?;
     let fields = AgentFields {
         name: req.name.trim().to_owned(),
         role: req.role.trim().to_owned(),
@@ -175,24 +229,26 @@ pub async fn create(
         runtime: req.runtime.unwrap_or(AgentRuntime::Builtin),
         status: AgentStatus::Active,
     };
-    check_manager(&state, auth.id, None, fields.reports_to).await?;
+    check_manager(&state, workspace, None, fields.reports_to).await?;
     Ok((
         StatusCode::CREATED,
-        Json(repo::agents::create(&state.db, auth.id, &fields).await?),
+        Json(repo::agents::create(&state.db, auth.id, workspace, &fields).await?),
     ))
 }
 
-/// Updates an agent.
+/// Updates an agent (members of its workspace and above).
 #[utoipa::path(patch, path = "/agents/{id}", tag = "agents", security(("bearer" = [])),
     params(("id" = Uuid, Path, description = "Agent id")), request_body = UpdateAgent,
-    responses((status = 200, body = Agent), (status = 404, body = Problem), (status = 422, body = Problem)))]
+    responses((status = 200, body = Agent), (status = 403, body = Problem), (status = 404, body = Problem),
+        (status = 422, body = Problem)))]
 pub async fn update(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(id): Path<Uuid>,
     ValidatedJson(req): ValidatedJson<UpdateAgent>,
 ) -> Result<Json<Agent>, AppError> {
-    let current = repo::agents::find(&state.db, auth.id, id)
+    let workspace = workspace_of_agent(&state, auth, id).await?;
+    let current = repo::agents::find(&state.db, workspace, id)
         .await
         .or_not_found("agent")?;
     let fields = AgentFields {
@@ -206,9 +262,9 @@ pub async fn update(
         runtime: req.runtime.unwrap_or(current.runtime),
         status: req.status.unwrap_or(current.status),
     };
-    check_manager(&state, auth.id, Some(id), fields.reports_to).await?;
+    check_manager(&state, workspace, Some(id), fields.reports_to).await?;
     Ok(Json(
-        repo::agents::update(&state.db, auth.id, id, &fields)
+        repo::agents::update(&state.db, workspace, id, &fields)
             .await
             .or_not_found("agent")?,
     ))
@@ -217,13 +273,14 @@ pub async fn update(
 /// Removes an agent (its reports no longer report to anyone).
 #[utoipa::path(delete, path = "/agents/{id}", tag = "agents", security(("bearer" = [])),
     params(("id" = Uuid, Path, description = "Agent id")),
-    responses((status = 204, description = "Deleted"), (status = 404, body = Problem)))]
+    responses((status = 204, description = "Deleted"), (status = 403, body = Problem), (status = 404, body = Problem)))]
 pub async fn delete(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
-    if repo::agents::delete(&state.db, auth.id, id).await? {
+    let workspace = workspace_of_agent(&state, auth, id).await?;
+    if repo::agents::delete(&state.db, workspace, id).await? {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(AppError::NotFound("agent"))

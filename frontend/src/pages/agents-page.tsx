@@ -13,12 +13,14 @@ import { AgentFormDialog } from '@/features/agents/components/agent-form-dialog'
 import { AgentOrgChart } from '@/features/agents/components/agent-org-chart';
 import { AgentsTable } from '@/features/agents/components/agents-table';
 import { useDeleteAgent } from '@/features/agents/hooks/use-agent-mutations';
+import { useWorkspaceId } from '@/features/workspaces/use-current-workspace';
 import type { Agent } from '@/schemas/agent';
 
 type Editing = { agent: Agent | null } | null;
 
 function Agents() {
-  const { data: agents } = useSuspenseQuery(agentsQuery());
+  const workspaceId = useWorkspaceId();
+  const { data: agents } = useSuspenseQuery(agentsQuery(workspaceId));
   const [editing, setEditing] = useState<Editing>(null);
   const [deleting, setDeleting] = useState<Agent | null>(null);
   const deleteAgent = useDeleteAgent();
@@ -28,7 +30,7 @@ function Agents() {
     <div className="mx-auto w-full max-w-6xl space-y-8 p-4 sm:p-6">
       <PageHeader
         title="Agents"
-        description="Your AI org chart: who reports to whom, which roles execute which nodes, and how much budget each has left."
+        description="This workspace’s AI org chart: who reports to whom, which roles execute which nodes, and how much budget each has left."
         actions={
           <Button onClick={create}>
             <PlusIcon />

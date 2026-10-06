@@ -53,14 +53,23 @@ pub async fn seed_missing_workspaces(state: &AppState) -> anyhow::Result<()> {
     use crate::http::handlers::{auth::personal_workspace_name, workspaces::create_owned};
     for (user, name) in repo::workspaces::users_without_workspace(&state.db).await? {
         let mut tx = state.db.begin().await?;
-        create_owned(&mut tx, user, &personal_workspace_name(&name))
-            .await
-            .map_err(|e| anyhow::anyhow!("cannot create a workspace for {user}: {e}"))?;
+        create_owned(
+            &mut tx,
+            user,
+            &personal_workspace_name(&name),
+            &state.settings.llm_model,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("cannot create a workspace for {user}: {e}"))?;
         tx.commit().await?;
     }
     let adopted = repo::graphs::adopt_orphans(&state.db).await?;
     if adopted > 0 {
         tracing::info!(adopted, "graphs assigned to their creators' workspaces");
+    }
+    let adopted = repo::memories::adopt_orphans(&state.db).await?;
+    if adopted > 0 {
+        tracing::info!(adopted, "memories assigned to workspaces");
     }
     Ok(())
 }
@@ -72,8 +81,8 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
     let addr = SocketAddr::new(settings.host, settings.port);
     let state = AppState::new(settings, db)?;
     bootstrap_admin(&state).await?;
-    orchestrator::seed_missing_orgs(&state).await?;
     seed_missing_workspaces(&state).await?;
+    orchestrator::seed_missing_orgs(&state).await?;
     tokio::fs::create_dir_all(state.settings.artifacts_dir()).await?;
 
     let shutdown = CancellationToken::new();

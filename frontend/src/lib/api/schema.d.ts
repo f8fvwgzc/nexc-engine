@@ -11,10 +11,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The caller's agents. */
+        /** The agents of a workspace. */
         get: operations["list"];
         put?: never;
-        /** Adds an agent. */
+        /** Adds an agent to a workspace (members and above). */
         post: operations["create"];
         delete?: never;
         options?: never;
@@ -36,7 +36,7 @@ export interface paths {
         delete: operations["delete"];
         options?: never;
         head?: never;
-        /** Updates an agent. */
+        /** Updates an agent (members of its workspace and above). */
         patch: operations["update"];
         trace?: never;
     };
@@ -447,7 +447,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Lists (newest first) or searches the caller's memories. */
+        /**
+         * Lists (newest first) or searches the memory of a workspace: what its
+         *     graphs learned, as far as the caller can open those graphs, plus the
+         *     caller's own notes.
+         */
         get: operations["list"];
         put?: never;
         post?: never;
@@ -467,7 +471,10 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Forgets a memory. */
+        /**
+         * Forgets a memory. Its author may, and so may anyone who can work on the
+         *     graph it was learned in.
+         */
         delete: operations["delete"];
         options?: never;
         head?: never;
@@ -984,6 +991,11 @@ export interface components {
             runtime?: components["schemas"]["AgentRuntime"] | null;
             system_prompt?: string;
             title?: string;
+            /**
+             * Format: uuid
+             * @description Workspace to add the agent to (default: the caller's first workspace).
+             */
+            workspace_id?: string | null;
         };
         /** @description `POST /graphs/{gid}/edges` body. */
         CreateEdge: {
@@ -1794,7 +1806,10 @@ export type $defs = Record<string, never>;
 export interface operations {
     list: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The workspace whose agents to list (default: the caller's first workspace). */
+                workspace_id?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -1810,6 +1825,14 @@ export interface operations {
                 };
             };
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1838,6 +1861,22 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Agent"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
                 };
             };
             409: {
@@ -1877,6 +1916,14 @@ export interface operations {
                 };
                 content?: never;
             };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -1909,6 +1956,14 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Agent"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
                 };
             };
             404: {
@@ -3022,7 +3077,9 @@ export interface operations {
     list: {
         parameters: {
             query?: {
-                /** @description Restrict to a graph (plus user-scope memories). */
+                /** @description The workspace whose memory to read (default: the caller's first workspace). */
+                workspace_id?: string | null;
+                /** @description Restrict to a graph (plus the caller's user-scope memories). */
                 graph_id?: string | null;
                 /** @description Hybrid search query; results then carry a `score`. */
                 q?: string | null;

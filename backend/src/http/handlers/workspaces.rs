@@ -17,6 +17,7 @@ use crate::domain::workspace::{
 };
 use crate::http::extract::{AuthUser, Path, ValidatedJson};
 use crate::http::problem::Problem;
+use crate::orchestrator;
 use crate::repo::{self, OrNotFound};
 
 /// Loads a workspace the caller belongs to. A workspace they are not a
@@ -40,11 +41,13 @@ pub fn require(workspace: &Workspace, action: WorkspaceAction) -> Result<(), App
 }
 
 /// Creates a workspace owned by `owner`, with a slug derived from `name`
-/// (suffixed when taken). Runs inside the caller's transaction.
+/// (suffixed when taken) and the default agent organisation running on
+/// `model`. Runs inside the caller's transaction.
 pub async fn create_owned(
     tx: &mut sqlx::PgConnection,
     owner: Uuid,
     name: &str,
+    model: &str,
 ) -> Result<Uuid, AppError> {
     let base = Some(slugify(name))
         .filter(|s| s.len() >= 2)
@@ -57,6 +60,7 @@ pub async fn create_owned(
     debug_assert!(slug.len() <= SLUG_MAX);
     let id = repo::workspaces::create(&mut *tx, name, &slug, owner).await?;
     repo::workspaces::add_member(&mut *tx, id, owner, WorkspaceRole::Owner).await?;
+    orchestrator::seed_default_org(&mut *tx, owner, id, model).await?;
     Ok(id)
 }
 
@@ -129,7 +133,7 @@ pub async fn create(
     ValidatedJson(req): ValidatedJson<WorkspaceInput>,
 ) -> Result<(StatusCode, Json<Workspace>), AppError> {
     let mut tx = state.db.begin().await?;
-    let id = create_owned(&mut tx, auth.id, req.name.trim()).await?;
+    let id = create_owned(&mut tx, auth.id, req.name.trim(), &state.settings.llm_model).await?;
     tx.commit().await?;
     Ok((
         StatusCode::CREATED,

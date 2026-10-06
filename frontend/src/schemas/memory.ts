@@ -22,6 +22,8 @@ export const memorySchema = z.object({
 export type Memory = z.infer<typeof memorySchema>;
 
 export interface MemoryQuery {
+  /** The workspace whose memory to read. */
+  workspace_id?: string;
   q?: string;
   graph_id?: string;
   limit?: number;
