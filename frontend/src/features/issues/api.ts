@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { apiRequest, apiSend } from '@/lib/api/client';
 import { qk } from '@/lib/query-keys';
 import {
+  issueEventSchema,
   issueSchema,
   issueStateSchema,
   projectSchema,
@@ -96,6 +97,32 @@ export function deleteIssue(issueId: string) {
 /** Gives the issue a graph that plans and executes it (or returns the one it has). */
 export function createIssueGraph(issueId: string) {
   return apiRequest(`/issues/${issueId}/graph`, issueSchema, { method: 'POST' });
+}
+
+/** The timeline of an issue, oldest first: comments and changes. */
+export const issueEventsQuery = (issueId: string) =>
+  queryOptions({
+    queryKey: qk.issues.events(issueId),
+    queryFn: ({ signal }) =>
+      apiRequest(`/issues/${issueId}/events`, z.array(issueEventSchema), { signal }),
+  });
+
+export function createComment(issueId: string, body: string) {
+  return apiRequest(`/issues/${issueId}/comments`, issueEventSchema, {
+    method: 'POST',
+    body: { body },
+  });
+}
+
+export function updateComment(issueId: string, commentId: string, body: string) {
+  return apiRequest(`/issues/${issueId}/comments/${commentId}`, issueEventSchema, {
+    method: 'PATCH',
+    body: { body },
+  });
+}
+
+export function deleteComment(issueId: string, commentId: string) {
+  return apiSend(`/issues/${issueId}/comments/${commentId}`, { method: 'DELETE' });
 }
 
 export const projectsQuery = (workspaceId: string) =>

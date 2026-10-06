@@ -105,6 +105,9 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(issues::create))
         .routes(routes!(issues::get, issues::update, issues::delete))
         .routes(routes!(issues::create_graph))
+        .routes(routes!(issues::events))
+        .routes(routes!(issues::create_comment))
+        .routes(routes!(issues::update_comment, issues::delete_comment))
         .routes(routes!(issues::states, issues::create_state))
         .routes(routes!(issues::update_state, issues::delete_state))
         .routes(routes!(issues::projects, issues::create_project))
@@ -218,6 +221,7 @@ mod tests {
                 "UsagePurpose" => check::<usage::UsagePurpose>(values),
                 "StateCategory" => check::<issue::StateCategory>(values),
                 "ProjectStatus" => check::<issue::ProjectStatus>(values),
+                "IssueEventKind" => check::<issue::IssueEventKind>(values),
                 "UsageScope" => check::<usage::UsageScope>(values),
                 "AgentStatus" => check::<agent::AgentStatus>(values),
                 "AgentRuntime" => check::<agent::AgentRuntime>(values),
@@ -225,6 +229,6 @@ mod tests {
             }
             checked += 1;
         }
-        assert_eq!(checked, 19, "every string enum schema is covered");
+        assert_eq!(checked, 20, "every string enum schema is covered");
     }
 }

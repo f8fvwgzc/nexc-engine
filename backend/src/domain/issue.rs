@@ -17,6 +17,9 @@ pub const STATE_NAME_MAX: usize = 40;
 pub const STATES_MAX: usize = 30;
 /// Lowest priority value (`0` none, `1` urgent, `2` high, `3` medium, `4` low).
 pub const PRIORITY_MAX: i16 = 4;
+pub const COMMENT_MAX_BYTES: usize = 16 * 1024;
+/// Priority names by value, as shown in an issue's history.
+pub const PRIORITY_NAMES: [&str; 5] = ["No priority", "Urgent", "High", "Medium", "Low"];
 
 string_enum!(
     /// What a workflow state means, whatever a team calls it. Reports and
@@ -127,6 +130,86 @@ pub struct Project {
     /// Of those, the ones in a completed or canceled state.
     pub closed_count: i64,
     pub created_at: DateTime<Utc>,
+}
+
+string_enum!(
+    /// What an entry of an issue's timeline records.
+    IssueEventKind {
+        Comment => "comment",
+        State => "state",
+        Priority => "priority",
+        Assignee => "assignee",
+        Title => "title",
+    }
+);
+
+/// One entry of an issue's timeline: a comment, or a change to the issue.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct IssueEvent {
+    pub id: Uuid,
+    pub issue_id: Uuid,
+    pub kind: IssueEventKind,
+    /// Who wrote the comment or made the change; `null` once the account is gone.
+    #[schema(required = true)]
+    pub actor: Option<IssuePerson>,
+    /// The text of a comment; empty for changes.
+    pub body: String,
+    /// What a change replaced, as it was shown then (a state name, a person).
+    #[schema(required = true)]
+    pub from: Option<String>,
+    /// What a change set.
+    #[schema(required = true)]
+    pub to: Option<String>,
+    pub created_at: DateTime<Utc>,
+    /// When a comment was last edited.
+    #[schema(required = true)]
+    pub edited_at: Option<DateTime<Utc>>,
+}
+
+/// A change to record in an issue's timeline.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IssueChange {
+    pub kind: IssueEventKind,
+    pub from: Option<String>,
+    pub to: Option<String>,
+}
+
+/// The timeline entries for an edit that turned `before` into `after`.
+pub fn changes(before: &Issue, after: &Issue) -> Vec<IssueChange> {
+    let mut out = Vec::new();
+    let mut push = |kind, from: Option<String>, to: Option<String>| {
+        if from != to {
+            out.push(IssueChange { kind, from, to });
+        }
+    };
+    push(
+        IssueEventKind::Title,
+        Some(before.title.clone()),
+        Some(after.title.clone()),
+    );
+    if before.state.id != after.state.id {
+        push(
+            IssueEventKind::State,
+            Some(before.state.name.clone()),
+            Some(after.state.name.clone()),
+        );
+    }
+    let priority = |i: &Issue| {
+        PRIORITY_NAMES
+            .get(usize::try_from(i.priority).unwrap_or_default())
+            .map(|name| (*name).to_owned())
+    };
+    push(IssueEventKind::Priority, priority(before), priority(after));
+    let assignee = |i: &Issue| i.assignee.as_ref().map(|a| a.user_id);
+    if assignee(before) != assignee(after) {
+        let name = |i: &Issue| i.assignee.as_ref().map(|a| a.name.clone());
+        out.push(IssueChange {
+            kind: IssueEventKind::Assignee,
+            from: name(before),
+            to: name(after),
+        });
+    }
+    out
 }
 
 /// `#rrggbb`.

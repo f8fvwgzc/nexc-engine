@@ -13,8 +13,9 @@ use super::workspaces::member_of;
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::issue::{
-    DESCRIPTION_MAX_BYTES, Issue, IssuePerson, IssueState, PRIORITY_MAX, Project, ProjectStatus,
-    STATE_NAME_MAX, STATES_MAX, StateCategory, TITLE_MAX, is_hex_color,
+    COMMENT_MAX_BYTES, DESCRIPTION_MAX_BYTES, Issue, IssueEvent, IssuePerson, IssueState,
+    PRIORITY_MAX, Project, ProjectStatus, STATE_NAME_MAX, STATES_MAX, StateCategory, TITLE_MAX,
+    changes, is_hex_color,
 };
 use crate::domain::validation::{FieldErrors, Validate, check_text};
 use crate::domain::workspace::TeamAccess;
@@ -280,6 +281,7 @@ pub async fn update(
     ValidatedJson(req): ValidatedJson<UpdateIssue>,
 ) -> Result<Json<Issue>, AppError> {
     let mut issue = editable(&state, auth, iid).await?;
+    let before = issue.clone();
     if let Some(id) = req.state_id {
         issue.state = repo::issues::find_state(&state.db, issue.team_id, id)
             .await?
@@ -315,12 +317,15 @@ pub async fn update(
     if let Some(project) = req.project_id {
         issue.project_id = project;
     }
-    repo::issues::save(&state.db, &issue).await?;
-    Ok(Json(
-        repo::issues::find(&state.db, auth.id, iid)
-            .await
-            .or_not_found("issue")?,
-    ))
+    let mut tx = state.db.begin().await?;
+    repo::issues::save(&mut *tx, &issue).await?;
+    // Read back for the assignee's name, which the timeline shows.
+    let after = repo::issues::find(&mut *tx, auth.id, iid)
+        .await
+        .or_not_found("issue")?;
+    repo::issues::record_changes(&mut tx, iid, auth.id, &changes(&before, &after)).await?;
+    tx.commit().await?;
+    Ok(Json(after))
 }
 
 /// Deletes an issue (a graph created for it stays).
@@ -334,6 +339,116 @@ pub async fn delete(
 ) -> Result<StatusCode, AppError> {
     let issue = editable(&state, auth, iid).await?;
     repo::issues::delete(&state.db, issue.id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------- timeline ----------
+
+/// `POST /issues/{iid}/comments` and `PATCH /issues/{iid}/comments/{cid}` body.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CommentBody {
+    /// Markdown, 1 byte to 16 KiB.
+    pub body: String,
+}
+
+impl Validate for CommentBody {
+    fn validate(&self, errors: &mut FieldErrors) {
+        if self.body.trim().is_empty() {
+            errors.add("body", "must not be empty");
+        } else if self.body.len() > COMMENT_MAX_BYTES {
+            errors.add("body", "must be at most 16 KiB");
+        }
+    }
+}
+
+/// The timeline of an issue, oldest first: its comments and the changes to
+/// its state, priority, assignee and title.
+#[utoipa::path(get, path = "/issues/{iid}/events", tag = "issues", security(("bearer" = [])),
+    params(("iid" = Uuid, Path, description = "Issue id")),
+    responses((status = 200, body = [IssueEvent]), (status = 404, body = Problem)))]
+pub async fn events(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(iid): Path<Uuid>,
+) -> Result<Json<Vec<IssueEvent>>, AppError> {
+    let issue = repo::issues::find(&state.db, auth.id, iid)
+        .await
+        .or_not_found("issue")?;
+    Ok(Json(repo::issues::events(&state.db, issue.id).await?))
+}
+
+/// Comments on an issue. Whoever may edit the issue may comment on it.
+#[utoipa::path(post, path = "/issues/{iid}/comments", tag = "issues", security(("bearer" = [])),
+    params(("iid" = Uuid, Path, description = "Issue id")), request_body = CommentBody,
+    responses((status = 201, body = IssueEvent), (status = 403, body = Problem), (status = 404, body = Problem),
+        (status = 422, body = Problem)))]
+pub async fn create_comment(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(iid): Path<Uuid>,
+    ValidatedJson(req): ValidatedJson<CommentBody>,
+) -> Result<(StatusCode, Json<IssueEvent>), AppError> {
+    let issue = editable(&state, auth, iid).await?;
+    let id = repo::issues::add_comment(&state.db, issue.id, auth.id, req.body.trim()).await?;
+    let comment = repo::issues::find_comment(&state.db, issue.id, id)
+        .await
+        .or_not_found("comment")?;
+    Ok((StatusCode::CREATED, Json(comment)))
+}
+
+/// Edits a comment. Only its author can.
+#[utoipa::path(patch, path = "/issues/{iid}/comments/{cid}", tag = "issues", security(("bearer" = [])),
+    params(("iid" = Uuid, Path, description = "Issue id"), ("cid" = Uuid, Path, description = "Comment id")),
+    request_body = CommentBody,
+    responses((status = 200, body = IssueEvent), (status = 403, body = Problem), (status = 404, body = Problem),
+        (status = 422, body = Problem)))]
+pub async fn update_comment(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((iid, cid)): Path<(Uuid, Uuid)>,
+    ValidatedJson(req): ValidatedJson<CommentBody>,
+) -> Result<Json<IssueEvent>, AppError> {
+    let issue = editable(&state, auth, iid).await?;
+    let comment = repo::issues::find_comment(&state.db, issue.id, cid)
+        .await
+        .or_not_found("comment")?;
+    if comment.actor.as_ref().map(|a| a.user_id) != Some(auth.id) {
+        return Err(AppError::Forbidden(
+            "only its author can edit a comment".into(),
+        ));
+    }
+    repo::issues::edit_comment(&state.db, cid, req.body.trim()).await?;
+    Ok(Json(
+        repo::issues::find_comment(&state.db, issue.id, cid)
+            .await
+            .or_not_found("comment")?,
+    ))
+}
+
+/// Deletes a comment: its author, or whoever manages the team.
+#[utoipa::path(delete, path = "/issues/{iid}/comments/{cid}", tag = "issues", security(("bearer" = [])),
+    params(("iid" = Uuid, Path, description = "Issue id"), ("cid" = Uuid, Path, description = "Comment id")),
+    responses((status = 204, description = "Deleted"), (status = 403, body = Problem), (status = 404, body = Problem)))]
+pub async fn delete_comment(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((iid, cid)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, AppError> {
+    let issue = repo::issues::find(&state.db, auth.id, iid)
+        .await
+        .or_not_found("issue")?;
+    let (_, access) = visible_team(&state, auth, issue.workspace_id, issue.team_id).await?;
+    let comment = repo::issues::find_comment(&state.db, issue.id, cid)
+        .await
+        .or_not_found("comment")?;
+    let own = comment.actor.as_ref().map(|a| a.user_id) == Some(auth.id);
+    if !(own && access.can_file_issues() || access.can_manage()) {
+        return Err(AppError::Forbidden(
+            "only its author or a team owner can delete a comment".into(),
+        ));
+    }
+    repo::issues::delete_comment(&state.db, cid).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use super::enum_col;
 use crate::domain::issue::{
-    Issue, IssuePerson, IssueState, Project, STARTER_STATES, StateCategory,
+    Issue, IssueChange, IssueEvent, IssuePerson, IssueState, Project, STARTER_STATES, StateCategory,
 };
 
 impl FromRow<'_, PgRow> for IssueState {
@@ -378,6 +378,133 @@ pub async fn delete(db: impl PgExecutor<'_>, id: Uuid) -> Result<(), sqlx::Error
         .bind(id)
         .execute(db)
         .await?;
+    Ok(())
+}
+
+// ---------- timeline ----------
+
+impl FromRow<'_, PgRow> for IssueEvent {
+    fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
+        let actor_id: Option<Uuid> = row.try_get("actor_id")?;
+        let actor_name: Option<String> = row.try_get("actor_name")?;
+        Ok(IssueEvent {
+            id: row.try_get("id")?,
+            issue_id: row.try_get("issue_id")?,
+            kind: enum_col(row, "kind")?,
+            actor: actor_id.map(|user_id| IssuePerson {
+                user_id,
+                name: actor_name.unwrap_or_default(),
+            }),
+            body: row.try_get("body")?,
+            from: row.try_get("from_value")?,
+            to: row.try_get("to_value")?,
+            created_at: row.try_get("created_at")?,
+            edited_at: row.try_get("edited_at")?,
+        })
+    }
+}
+
+macro_rules! event_select {
+    ($tail:literal) => {
+        concat!(
+            "SELECT e.id, e.issue_id, e.kind, e.actor_id, u.name AS actor_name, e.body,
+                    e.from_value, e.to_value, e.created_at, e.edited_at
+             FROM issue_events e LEFT JOIN users u ON u.id = e.actor_id
+             WHERE ",
+            $tail
+        )
+    };
+}
+
+/// The timeline of an issue, oldest first.
+pub async fn events(
+    db: impl PgExecutor<'_>,
+    issue_id: Uuid,
+) -> Result<Vec<IssueEvent>, sqlx::Error> {
+    sqlx::query_as(event_select!("e.issue_id = $1 ORDER BY e.created_at, e.id"))
+        .bind(issue_id)
+        .fetch_all(db)
+        .await
+}
+
+/// One comment of an issue.
+pub async fn find_comment(
+    db: impl PgExecutor<'_>,
+    issue_id: Uuid,
+    id: Uuid,
+) -> Result<Option<IssueEvent>, sqlx::Error> {
+    sqlx::query_as(event_select!(
+        "e.issue_id = $1 AND e.id = $2 AND e.kind = 'comment'"
+    ))
+    .bind(issue_id)
+    .bind(id)
+    .fetch_optional(db)
+    .await
+}
+
+/// Adds a comment and returns its id.
+pub async fn add_comment(
+    db: impl PgExecutor<'_>,
+    issue_id: Uuid,
+    actor_id: Uuid,
+    body: &str,
+) -> Result<Uuid, sqlx::Error> {
+    sqlx::query_scalar(
+        "INSERT INTO issue_events (id, issue_id, actor_id, kind, body)
+         VALUES ($1, $2, $3, 'comment', $4) RETURNING id",
+    )
+    .bind(Uuid::now_v7())
+    .bind(issue_id)
+    .bind(actor_id)
+    .bind(body)
+    .fetch_one(db)
+    .await
+}
+
+/// Replaces the text of a comment.
+pub async fn edit_comment(
+    db: impl PgExecutor<'_>,
+    id: Uuid,
+    body: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE issue_events SET body = $2, edited_at = now() WHERE id = $1")
+        .bind(id)
+        .bind(body)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// Deletes a comment.
+pub async fn delete_comment(db: impl PgExecutor<'_>, id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM issue_events WHERE id = $1 AND kind = 'comment'")
+        .bind(id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// Records changes to an issue in its timeline.
+pub async fn record_changes(
+    db: &mut PgConnection,
+    issue_id: Uuid,
+    actor_id: Uuid,
+    changes: &[IssueChange],
+) -> Result<(), sqlx::Error> {
+    for change in changes {
+        sqlx::query(
+            "INSERT INTO issue_events (id, issue_id, actor_id, kind, from_value, to_value)
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(Uuid::now_v7())
+        .bind(issue_id)
+        .bind(actor_id)
+        .bind(change.kind.as_str())
+        .bind(&change.from)
+        .bind(&change.to)
+        .execute(&mut *db)
+        .await?;
+    }
     Ok(())
 }
 

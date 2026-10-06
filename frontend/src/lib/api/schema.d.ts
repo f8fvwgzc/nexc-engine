@@ -462,6 +462,61 @@ export interface paths {
         patch: operations["update"];
         trace?: never;
     };
+    "/api/v1/issues/{iid}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Comments on an issue. Whoever may edit the issue may comment on it. */
+        post: operations["create_comment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/issues/{iid}/comments/{cid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Deletes a comment: its author, or whoever manages the team. */
+        delete: operations["delete_comment"];
+        options?: never;
+        head?: never;
+        /** Edits a comment. Only its author can. */
+        patch: operations["update_comment"];
+        trace?: never;
+    };
+    "/api/v1/issues/{iid}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The timeline of an issue, oldest first: its comments and the changes to
+         *     its state, priority, assignee and title.
+         */
+        get: operations["events"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/issues/{iid}/graph": {
         parameters: {
             query?: never;
@@ -1215,6 +1270,11 @@ export interface components {
             llm: components["schemas"]["BackendHealth"];
             symphony: components["schemas"]["BackendHealth"];
         };
+        /** @description `POST /issues/{iid}/comments` and `PATCH /issues/{iid}/comments/{cid}` body. */
+        CommentBody: {
+            /** @description Markdown, 1 byte to 16 KiB. */
+            body: string;
+        };
         /**
          * @description Whose LLM configuration is in effect.
          * @enum {string}
@@ -1598,6 +1658,33 @@ export interface components {
             /** Format: uuid */
             workspace_id: string;
         };
+        /** @description One entry of an issue's timeline: a comment, or a change to the issue. */
+        IssueEvent: {
+            actor: components["schemas"]["IssuePerson"] | null;
+            /** @description The text of a comment; empty for changes. */
+            body: string;
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: date-time
+             * @description When a comment was last edited.
+             */
+            edited_at: string | null;
+            /** @description What a change replaced, as it was shown then (a state name, a person). */
+            from: string | null;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            issue_id: string;
+            kind: components["schemas"]["IssueEventKind"];
+            /** @description What a change set. */
+            to: string | null;
+        };
+        /**
+         * @description What an entry of an issue's timeline records.
+         * @enum {string}
+         */
+        IssueEventKind: "comment" | "state" | "priority" | "assignee" | "title";
         /** @description Someone an issue refers to. */
         IssuePerson: {
             name: string;
@@ -3705,6 +3792,177 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    create_comment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Issue id */
+                iid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CommentBody"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueEvent"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    delete_comment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Issue id */
+                iid: string;
+                /** @description Comment id */
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    update_comment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Issue id */
+                iid: string;
+                /** @description Comment id */
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CommentBody"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueEvent"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    events: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Issue id */
+                iid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueEvent"][];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

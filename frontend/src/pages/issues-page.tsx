@@ -41,6 +41,7 @@ import {
   statesQuery,
   updateIssue,
 } from '@/features/issues/api';
+import { IssueTimeline } from '@/features/issues/issue-timeline';
 import { membersQuery, teamsQuery } from '@/features/workspaces/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
@@ -224,7 +225,7 @@ function IssueDialog({
 
   return (
     <Dialog open onOpenChange={(next) => !next && onClose()}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Badge variant="outline" className="font-mono">
@@ -328,6 +329,10 @@ function IssueDialog({
             </Button>
           </div>
         </DialogFooter>
+        <IssueTimeline
+          issue={issue}
+          canModerate={workspace.role === 'owner' || workspace.role === 'admin'}
+        />
         <ConfirmDialog
           open={confirming}
           onOpenChange={setConfirming}

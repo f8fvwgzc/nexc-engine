@@ -779,3 +779,158 @@ async fn the_assistant_files_issues_with_the_callers_rights(pool: PgPool) {
         StatusCode::UNPROCESSABLE_ENTITY
     );
 }
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn an_issue_keeps_a_timeline_of_comments_and_changes(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let w = world(&app).await;
+    let (_, issue) = call(
+        &app,
+        Method::POST,
+        &format!("{}/teams/{}/issues", w.ws, w.eng),
+        &w.member,
+        Some(json!({"title": "Fix login"})),
+    )
+    .await;
+    let path = format!("/issues/{}", issue["id"].as_str().unwrap());
+    let events = format!("{path}/events");
+    let comments = format!("{path}/comments");
+
+    // A new issue has an empty timeline; an edit that changes nothing adds nothing.
+    let (status, list) = call(&app, Method::GET, &events, &w.member, None).await;
+    assert_eq!(
+        (status, list.as_array().unwrap().len()),
+        (StatusCode::OK, 0)
+    );
+    let same = json!({"title": "Fix login", "priority": 0, "description": "more detail"});
+    call(&app, Method::PATCH, &path, &w.member, Some(same)).await;
+    let (_, list) = call(&app, Method::GET, &events, &w.member, None).await;
+    assert_eq!(list.as_array().unwrap().len(), 0, "{list}");
+
+    // One edit of state, priority and assignee is three entries, by the editor.
+    let (_, states) = call(
+        &app,
+        Method::GET,
+        &format!("{}/teams/{}/states", w.ws, w.eng),
+        &w.owner,
+        None,
+    )
+    .await;
+    let done = states
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "Done")
+        .unwrap()["id"]
+        .clone();
+    let edit = json!({"state_id": done, "priority": 1, "assignee_id": w.member_id});
+    let (status, body) = call(&app, Method::PATCH, &path, &w.owner, Some(edit)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (_, list) = call(&app, Method::GET, &events, &w.member, None).await;
+    let seen: Vec<(&str, Option<&str>, Option<&str>)> = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            (
+                e["kind"].as_str().unwrap(),
+                e["from"].as_str(),
+                e["to"].as_str(),
+            )
+        })
+        .collect();
+    let assignee = body["assignee"]["name"].as_str();
+    assert_eq!(
+        seen,
+        vec![
+            ("state", Some("Todo"), Some("Done")),
+            ("priority", Some("No priority"), Some("Urgent")),
+            ("assignee", None, assignee),
+        ]
+    );
+    assert!(assignee.is_some_and(|name| !name.is_empty()));
+    assert!(list[0]["actor"]["name"].is_string() && list[0]["body"] == "");
+
+    // Comments: trimmed, not empty, shown in order after the changes.
+    let (status, problem) = call(
+        &app,
+        Method::POST,
+        &comments,
+        &w.member,
+        Some(json!({"body": "  "})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
+    let (status, comment) = call(
+        &app,
+        Method::POST,
+        &comments,
+        &w.member,
+        Some(json!({"body": " Reproduced on staging. "})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{comment}");
+    assert_eq!(
+        (
+            comment["kind"].as_str(),
+            comment["body"].as_str(),
+            comment["actor"]["user_id"].as_str(),
+            &comment["edited_at"]
+        ),
+        (
+            Some("comment"),
+            Some("Reproduced on staging."),
+            Some(w.member_id.as_str()),
+            &Value::Null
+        )
+    );
+    let one = format!("{comments}/{}", comment["id"].as_str().unwrap());
+
+    // Only the author edits; the edit is stamped.
+    let edit = json!({"body": "Reproduced on staging and locally."});
+    let (status, _) = call(&app, Method::PATCH, &one, &w.owner, Some(edit.clone())).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, edited) = call(&app, Method::PATCH, &one, &w.member, Some(edit)).await;
+    assert_eq!(status, StatusCode::OK, "{edited}");
+    assert!(edited["edited_at"].is_string());
+    assert_eq!(edited["body"], "Reproduced on staging and locally.");
+
+    // A change entry is not a comment, so it cannot be edited or deleted.
+    let change = format!("{comments}/{}", list[0]["id"].as_str().unwrap());
+    let (status, _) = call(&app, Method::DELETE, &change, &w.owner, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Outsiders and guests outside the team see no issue, so no timeline.
+    for token in [&w.outsider, &w.guest] {
+        let (status, _) = call(&app, Method::GET, &events, token, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let body = json!({"body": "hello"});
+        let (status, _) = call(&app, Method::POST, &comments, token, Some(body)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    // A second comment by the owner: the member cannot delete it, the owner
+    // (who manages the team) can delete anyone's.
+    let (_, second) = call(
+        &app,
+        Method::POST,
+        &comments,
+        &w.owner,
+        Some(json!({"body": "Thanks"})),
+    )
+    .await;
+    let two = format!("{comments}/{}", second["id"].as_str().unwrap());
+    let (status, _) = call(&app, Method::DELETE, &two, &w.member, None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = call(&app, Method::DELETE, &one, &w.owner, None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, list) = call(&app, Method::GET, &events, &w.member, None).await;
+    let kinds: Vec<&str> = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds, ["state", "priority", "assignee", "comment"]);
+    assert_eq!(list[3]["body"], "Thanks");
+}

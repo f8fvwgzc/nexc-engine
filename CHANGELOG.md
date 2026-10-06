@@ -66,6 +66,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   records accesses in the background.
 - The agent runtime stops the `claude` CLI when a node is cancelled or times out.
 - Canvas legend with a switch for dependency suggestions (now off by default).
+- Issue timeline: comments (`POST /issues/{iid}/comments`, edited by their author, deleted by the
+  author or whoever manages the team) and a history of changes to state, priority, assignee and
+  title (`GET /issues/{iid}/events`), shown under the issue.
 - Workflow editor: the Teams page opens a team's workflow, where team owners and workspace admins
   add, rename, recolour, reorder and remove issue states; other members see it read-only.
 - "Your teams" in the sidebar opens a team's issues (`/app/issues?team=<id>`), and `C` on the

@@ -48,6 +48,7 @@ export const qk = {
     states: (workspaceId: string, teamId: string) =>
       ['issues', workspaceId, 'states', teamId] as const,
     projects: (workspaceId: string) => ['issues', workspaceId, 'projects'] as const,
+    events: (issueId: string) => ['issues', 'events', issueId] as const,
   },
   templates: ['templates'] as const,
   agents: {

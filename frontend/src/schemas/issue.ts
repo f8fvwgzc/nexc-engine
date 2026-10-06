@@ -46,6 +46,23 @@ export const issueSchema = z.object({
 });
 export type Issue = z.infer<typeof issueSchema>;
 
+export const issueEventKindSchema = z.enum(['comment', 'state', 'priority', 'assignee', 'title']);
+
+/** One entry of an issue's timeline: a comment, or a change to the issue. */
+export const issueEventSchema = z.object({
+  id: idSchema,
+  issue_id: idSchema,
+  kind: issueEventKindSchema,
+  actor: z.object({ user_id: idSchema, name: z.string() }).nullable(),
+  /** The text of a comment; empty for changes. */
+  body: z.string(),
+  from: z.string().nullable(),
+  to: z.string().nullable(),
+  created_at: timestampSchema,
+  edited_at: timestampSchema.nullable(),
+});
+export type IssueEvent = z.infer<typeof issueEventSchema>;
+
 export const projectStatusSchema = z.enum([
   'planned',
   'started',
