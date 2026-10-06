@@ -772,6 +772,24 @@ async fn a_person_sees_what_happened_to_their_access(pool: PgPool) {
             .contains(&entry("registered", ""))
     );
 
+    // Guessing at the account from many addresses cannot fill its log.
+    use nexc::domain::account::{AccountEventKind, FAILED_SIGN_INS_PER_HOUR};
+    let account_id: uuid::Uuid = ada.parse().unwrap();
+    for _ in 0..FAILED_SIGN_INS_PER_HOUR + 5 {
+        let failed = AccountEventKind::SignInFailed;
+        nexc::repo::account_events::record(&pool, account_id, failed, None, "")
+            .await
+            .unwrap();
+    }
+    let failures: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM account_events WHERE user_id = $1 AND kind = 'sign_in_failed'",
+    )
+    .bind(account_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(failures, FAILED_SIGN_INS_PER_HOUR);
+
     // Signing out everywhere is noted, for the next time they look.
     let (status, _) = call(&app, Method::POST, "/auth/sessions/end", &token, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT);

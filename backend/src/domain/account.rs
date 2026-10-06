@@ -10,6 +10,8 @@ use super::string_enum;
 
 /// How long an entry is kept.
 pub const ACTIVITY_KEPT_DAYS: i32 = 180;
+/// Most failed sign-ins written to one account's activity in an hour.
+pub const FAILED_SIGN_INS_PER_HOUR: i64 = 10;
 /// Most entries returned at once.
 pub const ACTIVITY_PAGE_MAX: i64 = 100;
 

@@ -8,7 +8,9 @@ use sqlx::{FromRow, PgExecutor, Row};
 use uuid::Uuid;
 
 use super::enum_col;
-use crate::domain::account::{ACTIVITY_KEPT_DAYS, AccountEvent, AccountEventKind};
+use crate::domain::account::{
+    ACTIVITY_KEPT_DAYS, AccountEvent, AccountEventKind, FAILED_SIGN_INS_PER_HOUR,
+};
 
 impl FromRow<'_, PgRow> for AccountEvent {
     fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
@@ -23,6 +25,10 @@ impl FromRow<'_, PgRow> for AccountEvent {
 }
 
 /// Appends an entry. An address that says nothing (unspecified) is left out.
+///
+/// Failed sign-ins are the one kind a stranger can cause, from any number of
+/// addresses: past [`FAILED_SIGN_INS_PER_HOUR`] in an hour no more are
+/// written, so that guessing at an account cannot fill its log.
 pub async fn record(
     db: impl PgExecutor<'_>,
     user_id: Uuid,
@@ -34,13 +40,19 @@ pub async fn record(
         .filter(|ip| !ip.is_unspecified())
         .map(|ip| ip.to_string());
     sqlx::query(
-        "INSERT INTO account_events (id, user_id, kind, ip, detail) VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO account_events (id, user_id, kind, ip, detail)
+         SELECT $1, $2, $3, $4, $5
+         WHERE $3 <> 'sign_in_failed' OR (
+             SELECT count(*) FROM account_events e
+             WHERE e.user_id = $2 AND e.kind = 'sign_in_failed'
+               AND e.created_at > now() - interval '1 hour') < $6",
     )
     .bind(Uuid::now_v7())
     .bind(user_id)
     .bind(kind.as_str())
     .bind(ip)
     .bind(detail)
+    .bind(FAILED_SIGN_INS_PER_HOUR)
     .execute(db)
     .await?;
     Ok(())
