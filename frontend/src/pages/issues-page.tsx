@@ -50,6 +50,7 @@ import {
 } from '@/features/issues/api';
 import { IssueTimeline } from '@/features/issues/issue-timeline';
 import { LabelPicker } from '@/features/issues/label-picker';
+import { SubIssues } from '@/features/issues/sub-issues';
 import { membersQuery, teamsQuery } from '@/features/workspaces/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
@@ -191,10 +192,13 @@ function NewIssueDialog({
 function IssueDialog({
   workspace,
   issue,
+  onOpen,
   onClose,
 }: {
   workspace: Workspace;
   issue: Issue;
+  /** Opens another issue in place of this one (its parent, a sub-issue). */
+  onOpen: (issueId: string) => void;
   onClose: () => void;
 }) {
   const refresh = useIssueRefresh();
@@ -242,6 +246,19 @@ function IssueDialog({
             <span className="truncate">{issue.title}</span>
           </DialogTitle>
           <DialogDescription>
+            {issue.parent && (
+              <>
+                Part of{' '}
+                <button
+                  type="button"
+                  className="font-medium text-foreground underline-offset-2 hover:underline"
+                  onClick={() => onOpen(issue.parent!.id)}
+                >
+                  {issue.parent.identifier} {issue.parent.title}
+                </button>
+                {' · '}
+              </>
+            )}
             Updated {formatRelative(issue.updated_at)}
             {issue.completed_at ? ` · closed ${formatRelative(issue.completed_at)}` : ''}
           </DialogDescription>
@@ -342,6 +359,7 @@ function IssueDialog({
             </Button>
           </div>
         </DialogFooter>
+        <SubIssues workspace={workspace} issue={issue} onOpen={onOpen} />
         <IssueTimeline
           issue={issue}
           canModerate={workspace.role === 'owner' || workspace.role === 'admin'}
@@ -374,6 +392,14 @@ function IssueRow({ issue, onOpen }: { issue: Issue; onOpen: () => void }) {
         </span>
         <StateGlyph category={issue.state.category} color={issue.state.color} />
         <span className="min-w-0 flex-1 truncate">{issue.title}</span>
+        {issue.sub_issues.total > 0 && (
+          <span
+            className="shrink-0 rounded-full border px-1.5 text-xs text-muted-foreground tabular-nums"
+            aria-label={`${issue.sub_issues.closed} of ${issue.sub_issues.total} sub-issues closed`}
+          >
+            {issue.sub_issues.closed}/{issue.sub_issues.total}
+          </span>
+        )}
         <span className="hidden max-w-[40%] shrink-0 items-center gap-1 overflow-hidden md:flex">
           {issue.labels.map((label) => (
             <LabelChip key={label.id} name={label.name} color={label.color} />
@@ -494,6 +520,14 @@ function IssueBoard({
                     <span className="line-clamp-2 text-[13px]">{issue.title}</span>
                     <span className="flex flex-wrap items-center gap-1">
                       <PriorityGlyph priority={issue.priority} />
+                      {issue.sub_issues.total > 0 && (
+                        <span
+                          className="rounded-full border px-1.5 text-xs text-muted-foreground tabular-nums"
+                          aria-label={`${issue.sub_issues.closed} of ${issue.sub_issues.total} sub-issues closed`}
+                        >
+                          {issue.sub_issues.closed}/{issue.sub_issues.total}
+                        </span>
+                      )}
                       {issue.labels.map((label) => (
                         <LabelChip key={label.id} name={label.name} color={label.color} />
                       ))}
@@ -731,7 +765,13 @@ function Issues({ workspace }: { workspace: Workspace }) {
         onClose={() => setCreating(false)}
       />
       {opened && (
-        <IssueDialog key={opened.id} workspace={workspace} issue={opened} onClose={closeIssue} />
+        <IssueDialog
+          key={opened.id}
+          workspace={workspace}
+          issue={opened}
+          onOpen={setOpenId}
+          onClose={closeIssue}
+        />
       )}
     </div>
   );

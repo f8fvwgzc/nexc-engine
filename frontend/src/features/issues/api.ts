@@ -19,6 +19,7 @@ export interface IssueFilter {
   team_id?: string;
   project_id?: string;
   label_id?: string;
+  parent_id?: string;
   open?: boolean;
   q?: string;
 }
@@ -33,6 +34,7 @@ export const issuesQuery = (workspaceId: string, filter: IssueFilter = {}) =>
           team_id: filter.team_id,
           project_id: filter.project_id,
           label_id: filter.label_id,
+          parent_id: filter.parent_id,
           open: filter.open ? 'true' : undefined,
           q: filter.q,
         },

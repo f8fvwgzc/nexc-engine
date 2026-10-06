@@ -1143,3 +1143,157 @@ async fn the_inbox_tells_members_about_their_issues(pool: PgPool) {
     let (status, _) = call(&app, Method::GET, &inbox, &w.outsider, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn issues_can_be_split_into_sub_issues(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let w = world(&app).await;
+    let eng = format!("{}/teams/{}/issues", w.ws, w.eng);
+    let file = |token: String, path: String, body: Value| {
+        let app = &app;
+        async move {
+            let (status, issue) = call(app, Method::POST, &path, &token, Some(body)).await;
+            assert_eq!(status, StatusCode::CREATED, "{issue}");
+            issue
+        }
+    };
+    let parent = file(
+        w.member.clone(),
+        eng.clone(),
+        json!({"title": "Ship login"}),
+    )
+    .await;
+    let pid = parent["id"].as_str().unwrap();
+    assert!(parent["parent"].is_null());
+    assert_eq!(parent["sub_issues"], json!({"total": 0, "closed": 0}));
+
+    // Two parts; one is closed. The parent counts them, the parts name it.
+    let a = file(
+        w.member.clone(),
+        eng.clone(),
+        json!({"title": "Form", "parent_id": pid}),
+    )
+    .await;
+    let b = file(
+        w.member.clone(),
+        eng.clone(),
+        json!({"title": "Session", "parent_id": pid}),
+    )
+    .await;
+    assert_eq!(
+        (
+            a["parent"]["identifier"].as_str(),
+            a["parent"]["title"].as_str()
+        ),
+        (Some("ENG-1"), Some("Ship login"))
+    );
+    let (_, states) = call(
+        &app,
+        Method::GET,
+        &format!("{}/teams/{}/states", w.ws, w.eng),
+        &w.owner,
+        None,
+    )
+    .await;
+    let done = states
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "Done")
+        .unwrap()["id"]
+        .clone();
+    let a_path = format!("/issues/{}", a["id"].as_str().unwrap());
+    let b_path = format!("/issues/{}", b["id"].as_str().unwrap());
+    let p_path = format!("/issues/{pid}");
+    call(
+        &app,
+        Method::PATCH,
+        &a_path,
+        &w.member,
+        Some(json!({"state_id": done})),
+    )
+    .await;
+    let (_, parent) = call(&app, Method::GET, &p_path, &w.member, None).await;
+    assert_eq!(parent["sub_issues"], json!({"total": 2, "closed": 1}));
+    let (_, parts) = call(
+        &app,
+        Method::GET,
+        &format!("{}/issues?parent_id={pid}", w.ws),
+        &w.member,
+        None,
+    )
+    .await;
+    assert_eq!(parts.as_array().unwrap().len(), 2, "{parts}");
+
+    // No loops: not itself, not under its own part.
+    for (path, parent_id) in [(&p_path, pid), (&p_path, a["id"].as_str().unwrap())] {
+        let body = json!({"parent_id": parent_id});
+        let (status, problem) = call(&app, Method::PATCH, path, &w.member, Some(body)).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
+    }
+    // Moving a part under another part is fine; other edits keep the parent.
+    let body = json!({"parent_id": a["id"]});
+    let (status, moved) = call(&app, Method::PATCH, &b_path, &w.member, Some(body)).await;
+    assert_eq!(status, StatusCode::OK, "{moved}");
+    assert_eq!(moved["parent"]["title"], "Form");
+    let (_, moved) = call(
+        &app,
+        Method::PATCH,
+        &b_path,
+        &w.member,
+        Some(json!({"priority": 1})),
+    )
+    .await;
+    assert_eq!(moved["parent"]["title"], "Form");
+    let (_, moved) = call(
+        &app,
+        Method::PATCH,
+        &b_path,
+        &w.member,
+        Some(json!({"parent_id": null})),
+    )
+    .await;
+    assert!(moved["parent"].is_null());
+
+    // An unknown parent, or one in another workspace, is refused.
+    let (_, theirs) = call(&app, Method::GET, "/workspaces", &w.outsider, None).await;
+    let other = format!("/workspaces/{}", theirs[0]["id"].as_str().unwrap());
+    let (_, team) = call(
+        &app,
+        Method::POST,
+        &format!("{other}/teams"),
+        &w.outsider,
+        Some(json!({"name": "Other", "key": "OTH"})),
+    )
+    .await;
+    let foreign = file(
+        w.outsider.clone(),
+        format!("{other}/teams/{}/issues", team["id"].as_str().unwrap()),
+        json!({"title": "Theirs"}),
+    )
+    .await;
+    let body = json!({"title": "Sneaky", "parent_id": foreign["id"]});
+    let (status, _) = call(&app, Method::POST, &eng, &w.member, Some(body)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // A parent in a private team is not named to those who cannot see that team.
+    let secret = file(
+        w.owner.clone(),
+        format!("{}/teams/{}/issues", w.ws, w.secret),
+        json!({"title": "Acquisition"}),
+    )
+    .await;
+    let body = json!({"parent_id": secret["id"]});
+    let (status, linked) = call(&app, Method::PATCH, &b_path, &w.owner, Some(body)).await;
+    assert_eq!(status, StatusCode::OK, "{linked}");
+    assert_eq!(linked["parent"]["title"], "Acquisition");
+    let (_, seen) = call(&app, Method::GET, &b_path, &w.member, None).await;
+    assert!(seen["parent"].is_null(), "{seen}");
+
+    // Deleting the parent leaves its parts as issues of their own.
+    let (status, _) = call(&app, Method::DELETE, &p_path, &w.member, None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, a) = call(&app, Method::GET, &a_path, &w.member, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(a["parent"].is_null());
+}

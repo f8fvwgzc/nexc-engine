@@ -55,6 +55,22 @@ fn check_label_count(errors: &mut FieldErrors, labels: &[Uuid]) {
     }
 }
 
+/// Checks that `parent_id` is an issue of the workspace the caller can see.
+async fn check_parent(
+    state: &AppState,
+    auth: AuthUser,
+    workspace_id: Uuid,
+    parent_id: Uuid,
+) -> Result<(), AppError> {
+    match repo::issues::find(&state.db, auth.id, parent_id).await? {
+        Some(parent) if parent.workspace_id == workspace_id => Ok(()),
+        _ => Err(AppError::field(
+            "parent_id",
+            "unknown issue in this workspace",
+        )),
+    }
+}
+
 /// The distinct `ids`, checked to be labels of the workspace.
 async fn known_labels(
     state: &AppState,
@@ -134,6 +150,8 @@ pub struct IssueQuery {
     pub project_id: Option<Uuid>,
     /// Only issues that carry this label.
     pub label_id: Option<Uuid>,
+    /// Only the sub-issues of this issue.
+    pub parent_id: Option<Uuid>,
     /// `true` leaves out completed and canceled issues.
     pub open: Option<bool>,
     /// Matches the title, or the start of the identifier (`ENG-1`).
@@ -156,6 +174,8 @@ pub struct CreateIssue {
     pub assignee_id: Option<Uuid>,
     pub agent_id: Option<Uuid>,
     pub project_id: Option<Uuid>,
+    /// The issue this one is part of: any issue of the workspace the caller can see.
+    pub parent_id: Option<Uuid>,
     /// Labels of the workspace to put on the issue (at most 20).
     #[serde(default)]
     pub label_ids: Vec<Uuid>,
@@ -188,6 +208,10 @@ pub struct UpdateIssue {
     #[serde(default, deserialize_with = "double_option")]
     #[schema(value_type = Option<Uuid>, nullable)]
     pub project_id: Option<Option<Uuid>>,
+    /// The issue this one is part of; `null` makes it an issue of its own.
+    #[serde(default, deserialize_with = "double_option")]
+    #[schema(value_type = Option<Uuid>, nullable)]
+    pub parent_id: Option<Option<Uuid>>,
     /// Replaces the issue's labels.
     pub label_ids: Option<Vec<Uuid>>,
 }
@@ -226,6 +250,7 @@ pub async fn list(
         assignee_id: query.assignee_id,
         project_id: query.project_id,
         label_id: query.label_id,
+        parent_id: query.parent_id,
         open_only: query.open.unwrap_or(false),
         q: query
             .q
@@ -261,6 +286,9 @@ pub async fn create(
     };
     check_references(&state, wid, req.assignee_id, req.agent_id, req.project_id).await?;
     let labels = known_labels(&state, wid, &req.label_ids).await?;
+    if let Some(parent) = req.parent_id {
+        check_parent(&state, auth, wid, parent).await?;
+    }
     let new = NewIssue {
         workspace_id: wid,
         team_id: tid,
@@ -276,6 +304,9 @@ pub async fn create(
     };
     let mut tx = state.db.begin().await?;
     let id = repo::issues::create(&mut tx, &new).await?;
+    if req.parent_id.is_some() {
+        repo::issues::set_parent(&mut *tx, id, req.parent_id).await?;
+    }
     if !labels.is_empty() {
         repo::issues::set_labels(&mut tx, id, &labels).await?;
     }
@@ -346,6 +377,15 @@ pub async fn update(
         Some(ids) => Some(known_labels(&state, issue.workspace_id, ids).await?),
         None => None,
     };
+    if let Some(Some(parent)) = req.parent_id {
+        check_parent(&state, auth, issue.workspace_id, parent).await?;
+        if repo::issues::is_within(&state.db, iid, parent).await? {
+            return Err(AppError::field(
+                "parent_id",
+                "an issue cannot be part of itself or of its own sub-issues",
+            ));
+        }
+    }
     if let Some(title) = req.title {
         issue.title = title.trim().to_owned();
     }
@@ -370,6 +410,9 @@ pub async fn update(
     }
     let mut tx = state.db.begin().await?;
     repo::issues::save(&mut *tx, &issue).await?;
+    if let Some(parent) = req.parent_id {
+        repo::issues::set_parent(&mut *tx, iid, parent).await?;
+    }
     if let Some(labels) = &labels {
         repo::issues::set_labels(&mut tx, iid, labels).await?;
     }

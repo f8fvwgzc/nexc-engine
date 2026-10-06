@@ -9,8 +9,8 @@ use uuid::Uuid;
 
 use super::enum_col;
 use crate::domain::issue::{
-    Issue, IssueChange, IssueEvent, IssuePerson, IssueState, Label, Notification,
-    NotificationIssue, NotificationKind, Project, STARTER_STATES, StateCategory,
+    Issue, IssueChange, IssueEvent, IssuePerson, IssueRef, IssueState, Label, Notification,
+    NotificationIssue, NotificationKind, Project, STARTER_STATES, StateCategory, SubIssueCount,
 };
 
 impl FromRow<'_, PgRow> for IssueState {
@@ -34,6 +34,19 @@ impl FromRow<'_, PgRow> for Issue {
         let assignee_id: Option<Uuid> = row.try_get("assignee_id")?;
         let assignee_name: Option<String> = row.try_get("assignee_name")?;
         let Json(labels): Json<Vec<Label>> = row.try_get("labels")?;
+        // Null unless the parent exists and its team is visible to the reader.
+        let parent_key: Option<String> = row.try_get("parent_key")?;
+        let parent = match parent_key {
+            Some(key) => {
+                let number: i32 = row.try_get("parent_number")?;
+                Some(IssueRef {
+                    id: row.try_get("parent_id")?,
+                    identifier: format!("{key}-{number}"),
+                    title: row.try_get("parent_title")?,
+                })
+            }
+            None => None,
+        };
         Ok(Issue {
             id: row.try_get("id")?,
             workspace_id: row.try_get("workspace_id")?,
@@ -52,6 +65,11 @@ impl FromRow<'_, PgRow> for Issue {
             },
             priority: row.try_get("priority")?,
             labels,
+            parent,
+            sub_issues: SubIssueCount {
+                total: row.try_get("sub_total")?,
+                closed: row.try_get("sub_closed")?,
+            },
             assignee: assignee_id.map(|user_id| IssuePerson {
                 user_id,
                 name: assignee_name.unwrap_or_default(),
@@ -99,12 +117,22 @@ macro_rules! issue_for_user {
                                          'id', l.id, 'name', l.name, 'color', l.color)
                                      ORDER BY lower(l.name))
                               FROM issue_labels il JOIN labels l ON l.id = il.label_id
-                              WHERE il.issue_id = i.id), '[]'::jsonb) AS labels
+                              WHERE il.issue_id = i.id), '[]'::jsonb) AS labels,
+                    p.id AS parent_id, pt.key AS parent_key, p.number AS parent_number,
+                    p.title AS parent_title,
+                    (SELECT count(*) FROM issues c WHERE c.parent_id = i.id) AS sub_total,
+                    (SELECT count(*) FROM issues c JOIN issue_states cs ON cs.id = c.state_id
+                     WHERE c.parent_id = i.id AND cs.category IN ('completed', 'canceled'))
+                        AS sub_closed
              FROM issues i
              JOIN teams t ON t.id = i.team_id
              JOIN issue_states s ON s.id = i.state_id
              JOIN workspace_members wm ON wm.workspace_id = i.workspace_id AND wm.user_id = $1
              LEFT JOIN users au ON au.id = i.assignee_id
+             LEFT JOIN issues p ON p.id = i.parent_id
+             LEFT JOIN teams pt ON pt.id = p.team_id AND ",
+            team_visible!("pt", "wm", "$1"),
+            "
              WHERE ",
             team_visible!("t", "wm", "$1"),
             " AND ",
@@ -250,6 +278,8 @@ pub struct IssueFilter {
     pub q: Option<String>,
     /// Only issues that carry this label.
     pub label_id: Option<Uuid>,
+    /// Only the sub-issues of this issue.
+    pub parent_id: Option<Uuid>,
     pub limit: i64,
 }
 
@@ -270,6 +300,7 @@ pub async fn list(
               OR (t.key || '-' || i.number) ILIKE $7 || '%')
          AND ($9::uuid IS NULL OR EXISTS (
               SELECT 1 FROM issue_labels fl WHERE fl.issue_id = i.id AND fl.label_id = $9))
+         AND ($10::uuid IS NULL OR i.parent_id = $10)
          ORDER BY i.updated_at DESC, i.id LIMIT $8"
     ))
     .bind(user_id)
@@ -281,6 +312,7 @@ pub async fn list(
     .bind(f.q.as_deref())
     .bind(f.limit)
     .bind(f.label_id)
+    .bind(f.parent_id)
     .fetch_all(db)
     .await
 }
@@ -370,6 +402,40 @@ pub async fn save(db: impl PgExecutor<'_>, issue: &Issue) -> Result<(), sqlx::Er
     .execute(db)
     .await?;
     Ok(())
+}
+
+/// Makes an issue part of another one, or an issue of its own.
+pub async fn set_parent(
+    db: impl PgExecutor<'_>,
+    id: Uuid,
+    parent_id: Option<Uuid>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE issues SET parent_id = $2, updated_at = now() WHERE id = $1")
+        .bind(id)
+        .bind(parent_id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// Whether `candidate` is `id` itself or one of the issues under it, which
+/// makes it unusable as `id`'s parent.
+pub async fn is_within(
+    db: impl PgExecutor<'_>,
+    id: Uuid,
+    candidate: Uuid,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "WITH RECURSIVE under AS (
+             SELECT $1::uuid AS id
+             UNION
+             SELECT c.id FROM issues c JOIN under u ON c.parent_id = u.id)
+         SELECT EXISTS (SELECT 1 FROM under WHERE id = $2)",
+    )
+    .bind(id)
+    .bind(candidate)
+    .fetch_one(db)
+    .await
 }
 
 /// Links an issue to the graph that plans and executes it.

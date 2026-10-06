@@ -94,6 +94,21 @@ pub struct Label {
     pub color: String,
 }
 
+/// Another issue, as much as a link to it shows.
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+pub struct IssueRef {
+    pub id: Uuid,
+    pub identifier: String,
+    pub title: String,
+}
+
+/// How many sub-issues an issue has, and how many of them are closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+pub struct SubIssueCount {
+    pub total: i64,
+    pub closed: i64,
+}
+
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Issue {
     pub id: Uuid,
@@ -109,6 +124,10 @@ pub struct Issue {
     pub priority: i16,
     /// The issue's labels, by name.
     pub labels: Vec<Label>,
+    /// The issue this one is part of, if the caller can see it.
+    #[schema(required = true)]
+    pub parent: Option<IssueRef>,
+    pub sub_issues: SubIssueCount,
     #[schema(required = true)]
     pub assignee: Option<IssuePerson>,
     /// The agent the issue is delegated to.

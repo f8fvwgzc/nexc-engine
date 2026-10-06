@@ -1455,6 +1455,11 @@ export interface components {
             /** @description Labels of the workspace to put on the issue (at most 20). */
             label_ids?: string[];
             /**
+             * Format: uuid
+             * @description The issue this one is part of: any issue of the workspace the caller can see.
+             */
+            parent_id?: string | null;
+            /**
              * Format: int32
              * @description `0` none (default), `1` urgent, `2` high, `3` medium, `4` low.
              */
@@ -1768,6 +1773,7 @@ export interface components {
             labels: components["schemas"]["Label"][];
             /** Format: int32 */
             number: number;
+            parent: components["schemas"]["IssueRef"] | null;
             /**
              * Format: int32
              * @description `0` none, `1` urgent, `2` high, `3` medium, `4` low.
@@ -1776,6 +1782,7 @@ export interface components {
             /** Format: uuid */
             project_id: string | null;
             state: components["schemas"]["IssueState"];
+            sub_issues: components["schemas"]["SubIssueCount"];
             /** Format: uuid */
             team_id: string;
             title: string;
@@ -1816,6 +1823,13 @@ export interface components {
             name: string;
             /** Format: uuid */
             user_id: string;
+        };
+        /** @description Another issue, as much as a link to it shows. */
+        IssueRef: {
+            /** Format: uuid */
+            id: string;
+            identifier: string;
+            title: string;
         };
         /** @description One state of a team's workflow. */
         IssueState: {
@@ -2251,6 +2265,13 @@ export interface components {
          * @enum {string}
          */
         StateCategory: "backlog" | "unstarted" | "started" | "completed" | "canceled";
+        /** @description How many sub-issues an issue has, and how many of them are closed. */
+        SubIssueCount: {
+            /** Format: int64 */
+            closed: number;
+            /** Format: int64 */
+            total: number;
+        };
         /** @description A team as seen by the caller. */
         Team: {
             /** Format: date-time */
@@ -2333,6 +2354,11 @@ export interface components {
             description?: string | null;
             /** @description Replaces the issue's labels. */
             label_ids?: string[] | null;
+            /**
+             * Format: uuid
+             * @description The issue this one is part of; `null` makes it an issue of its own.
+             */
+            parent_id?: string | null;
             /** Format: int32 */
             priority?: number | null;
             /** Format: uuid */
@@ -5130,6 +5156,8 @@ export interface operations {
                 project_id?: string | null;
                 /** @description Only issues that carry this label. */
                 label_id?: string | null;
+                /** @description Only the sub-issues of this issue. */
+                parent_id?: string | null;
                 /** @description `true` leaves out completed and canceled issues. */
                 open?: boolean | null;
                 /** @description Matches the title, or the start of the identifier (`ENG-1`). */

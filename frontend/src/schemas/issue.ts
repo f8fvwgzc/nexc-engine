@@ -39,6 +39,12 @@ export const issueSchema = z.object({
   /** 0 none, 1 urgent, 2 high, 3 medium, 4 low. */
   priority: z.number().int().min(0).max(4),
   labels: z.array(labelSchema),
+  /** The issue this one is part of, if the caller can see it. */
+  parent: z.object({ id: idSchema, identifier: z.string(), title: z.string() }).nullable(),
+  sub_issues: z.object({
+    total: z.number().int().nonnegative(),
+    closed: z.number().int().nonnegative(),
+  }),
   assignee: z.object({ user_id: idSchema, name: z.string() }).nullable(),
   agent_id: idSchema.nullable(),
   project_id: idSchema.nullable(),
@@ -113,4 +119,5 @@ export interface IssueInput {
   agent_id?: string | null;
   project_id?: string | null;
   label_ids?: string[];
+  parent_id?: string | null;
 }
