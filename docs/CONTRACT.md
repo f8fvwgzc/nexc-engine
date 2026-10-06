@@ -46,6 +46,7 @@ In Docker/K8s the frontend is served by unprivileged nginx on 8080 which proxies
 | `NEXC_SYMPHONY_ENABLED` | `false` | backend |
 | `NEXC_SYMPHONY_URL` | `http://localhost:4000` | backend |
 | `NEXC_SYMPHONY_WORKFLOW` | `./data/symphony/WORKFLOW.md` | backend writes the managed memory-tracker workflow here |
+| `NEXC_SYMPHONY_AGENT_COMMAND` | — (Symphony default: Codex) | backend: `codex.command` of the managed workflow, e.g. the absolute path of `scripts/symphony-claude-agent.py` to use the Claude Code CLI |
 | `NEXC_MAX_CONCURRENCY` / `NEXC_MAX_ATTEMPTS` / `NEXC_NODE_TIMEOUT_SECS` | `4` / `3` / `600` | backend scheduler |
 | `RUNTIME_HOST` / `RUNTIME_PORT` | `0.0.0.0` / `8090` | runtime |
 | `RUNTIME_WORKSPACE` | `/tmp/nexc-runtime` | runtime (per-run scratch dirs) |
@@ -139,6 +140,15 @@ interface Team { id: string; workspace_id: string; name: string; key: string /* 
   member_count: number; created_at: string }
 interface TeamMember { user_id: string; name: string; email: string; role: TeamRole; joined_at: string }
 
+// Token usage. Every LLM call that spent tokens is recorded with who caused it and whose account paid.
+interface UsageTotals { calls: number; tokens_in: number; tokens_out: number; cost_usd: number }
+type UsageSlice<K> = { key: K } & UsageTotals;
+interface UsageReport { scope: "workspace" | "own"; days: number; totals: UsageTotals;
+  by_day: UsageSlice<string /* UTC date */>[]; by_member: UsageSlice<{ user_id: string | null; name: string }>[];
+  by_model: UsageSlice<{ provider: string; model: string }>[];
+  by_purpose: UsageSlice<"plan" | "node" | "memory">[];
+  by_credential: UsageSlice<"user" | "workspace" | "server">[] /* whose account paid */ }
+
 interface GraphTemplate { id: string; name: string; description: string; category: string;
   node_count: number; tags: string[] }
 // built-ins (at least): research-report-docx, rest-api-service, market-analysis, blog-series, data-pipeline, product-launch-plan
@@ -192,6 +202,7 @@ Public: `GET /healthz`, `GET /readyz`, `POST /auth/register`, `POST /auth/login`
 | PATCH/DELETE `/agents/{id}` | any subset of the agent fields | `Agent` / 204 (member+ of the agent's workspace; others 404) |
 | GET `/memories?workspace_id=&graph_id=&q=&limit=` | — | `Memory[]`: what the workspace's graphs learned, limited to graphs the caller can open, plus the caller's own notes; with `q` a hybrid search with `score`. `graph_id` narrows to one graph |
 | DELETE `/memories/{id}` | — | 204 for the author or anyone who can work on the memory's graph |
+| GET `/workspaces/{wid}/usage?days=` | — (`days` 1–365, default 30) | `UsageReport`: admins get the whole workspace, other members only their own calls |
 | GET `/workspaces/{wid}/invites`, DELETE `/workspaces/{wid}/invites/{iid}` | — | `WorkspaceInvite[]` / 204 (admin+) |
 | GET/POST `/workspaces/{wid}/teams` | POST `{name, key?, description?, private?}` (member+) | `Team[]` visible to the caller / 201 `Team`; 409 if the key is taken |
 | GET/PATCH/DELETE `/workspaces/{wid}/teams/{tid}` | PATCH `{name?, description?, private?}` | `Team` / 204 (team owner or workspace admin) |
@@ -289,5 +300,32 @@ The stream always ends with exactly one `result` or `error`. Artifact paths are 
 When `NEXC_SYMPHONY_ENABLED=true`, nodes with `executor: "symphony"` are written as issues
 (`identifier: NEXC-<last 8 hex of node id>` (UUID v7 prefixes are timestamps and collide), `state: Todo`) into the managed `WORKFLOW.md`
 (`tracker.kind: memory`), then the backend calls `POST {SYMPHONY_URL}/api/v1/refresh` and follows
-`GET /api/v1/runs` until the issue's run ends; the issue is then moved to `Done`. Symphony owns
-retries/workspaces for those nodes; nexc records status, tokens and the final message.
+`GET /api/v1/runs` (every 500 ms) until the issue's run ends.
+
+The bridge owns a directory, the parent of `NEXC_SYMPHONY_WORKFLOW`, which the backend and Symphony
+must both see at the same path:
+
+| Path | Content |
+|---|---|
+| `WORKFLOW.md` | the managed workflow |
+| `repos/<graph id>.git` | one bare git repository per graph; `main` starts with a `.gitignore` commit |
+| `issues/<identifier>` | path of the repository the issue's workspace is cloned from |
+| `workspaces/<identifier>` | Symphony's issue workspaces (`workspace.root`) |
+
+The workflow sets `agent.max_turns: 1`, `agent.max_concurrent_agents: NEXC_MAX_CONCURRENCY`,
+`agent.continuation_delay_ms: 15000` (texc-symphony waits that long before running a still-open
+issue again; older versions ignore the key and may run a node twice), an `after_create` hook that
+clones the graph repository into the workspace and, when `NEXC_SYMPHONY_AGENT_COMMAND` is set,
+`codex.command` with `approval_policy: never`.
+
+When a run succeeds the backend commits the workspace, rebases it on the repository's `main` and
+pushes (retrying when a parallel node pushed first), then moves the issue to `Done`, which makes
+Symphony delete the workspace. Nodes that run later therefore start from the code of the nodes
+before them. A change that cannot be rebased fails the attempt as retryable and the next attempt
+starts from the newer `main`; a failed or cancelled run moves the issue to `Cancelled`. The node
+output is the agent's last message followed by the merged commit and its files; tokens come from
+the run record.
+
+`scripts/symphony-claude-agent.py` is an agent command that runs each turn with the Claude Code
+CLI (`claude -p`) instead of Codex.
+
