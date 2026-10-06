@@ -9,8 +9,8 @@ use uuid::Uuid;
 
 use super::enum_col;
 use crate::domain::issue::{
-    Issue, IssueChange, IssueEvent, IssuePerson, IssueState, Label, Project, STARTER_STATES,
-    StateCategory,
+    Issue, IssueChange, IssueEvent, IssuePerson, IssueState, Label, Notification,
+    NotificationIssue, NotificationKind, Project, STARTER_STATES, StateCategory,
 };
 
 impl FromRow<'_, PgRow> for IssueState {
@@ -641,6 +641,125 @@ pub async fn record_changes(
         .execute(&mut *db)
         .await?;
     }
+    Ok(())
+}
+
+// ---------- inbox ----------
+
+impl FromRow<'_, PgRow> for Notification {
+    fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
+        let actor_id: Option<Uuid> = row.try_get("actor_id")?;
+        let actor_name: Option<String> = row.try_get("actor_name")?;
+        let team_key: String = row.try_get("team_key")?;
+        let number: i32 = row.try_get("number")?;
+        Ok(Notification {
+            id: row.try_get("id")?,
+            kind: enum_col(row, "kind")?,
+            issue: NotificationIssue {
+                id: row.try_get("issue_id")?,
+                identifier: format!("{team_key}-{number}"),
+                title: row.try_get("title")?,
+            },
+            actor: actor_id.map(|user_id| IssuePerson {
+                user_id,
+                name: actor_name.unwrap_or_default(),
+            }),
+            created_at: row.try_get("created_at")?,
+            read_at: row.try_get("read_at")?,
+        })
+    }
+}
+
+/// Tells the issue's assignee and creator, other than the actor, that
+/// something happened to it.
+pub async fn notify_watchers(
+    db: impl PgExecutor<'_>,
+    issue_id: Uuid,
+    actor_id: Uuid,
+    kind: NotificationKind,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO notifications (id, user_id, workspace_id, issue_id, actor_id, kind)
+         SELECT gen_random_uuid(), r.user_id, i.workspace_id, i.id, $2, $3
+         FROM issues i
+         CROSS JOIN LATERAL (
+             SELECT DISTINCT x AS user_id FROM unnest(ARRAY[i.assignee_id, i.creator_id]) x
+             WHERE x IS NOT NULL AND x <> $2) r
+         WHERE i.id = $1",
+    )
+    .bind(issue_id)
+    .bind(actor_id)
+    .bind(kind.as_str())
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Tells one member about an issue.
+pub async fn notify(
+    db: impl PgExecutor<'_>,
+    issue_id: Uuid,
+    user_id: Uuid,
+    actor_id: Uuid,
+    kind: NotificationKind,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO notifications (id, user_id, workspace_id, issue_id, actor_id, kind)
+         SELECT $1, $3, i.workspace_id, i.id, $4, $5 FROM issues i WHERE i.id = $2",
+    )
+    .bind(Uuid::now_v7())
+    .bind(issue_id)
+    .bind(user_id)
+    .bind(actor_id)
+    .bind(kind.as_str())
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// A member's inbox in a workspace, newest first: only issues they can still see.
+pub async fn inbox(
+    db: impl PgExecutor<'_>,
+    user_id: Uuid,
+    workspace_id: Uuid,
+    limit: i64,
+) -> Result<Vec<Notification>, sqlx::Error> {
+    sqlx::query_as(concat!(
+        "SELECT n.id, n.kind, n.issue_id, t.key AS team_key, i.number, i.title, n.actor_id,
+                u.name AS actor_name, n.created_at, n.read_at
+         FROM notifications n
+         JOIN issues i ON i.id = n.issue_id
+         JOIN teams t ON t.id = i.team_id
+         JOIN workspace_members wm ON wm.workspace_id = n.workspace_id AND wm.user_id = $1
+         LEFT JOIN users u ON u.id = n.actor_id
+         WHERE n.user_id = $1 AND n.workspace_id = $2 AND ",
+        team_visible!("t", "wm", "$1"),
+        " ORDER BY n.created_at DESC, n.id DESC LIMIT $3"
+    ))
+    .bind(user_id)
+    .bind(workspace_id)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
+/// Marks a member's notifications read: the given ones, or all of them.
+pub async fn mark_read(
+    db: impl PgExecutor<'_>,
+    user_id: Uuid,
+    workspace_id: Uuid,
+    ids: Option<&[Uuid]>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE notifications SET read_at = now()
+         WHERE user_id = $1 AND workspace_id = $2 AND read_at IS NULL
+           AND ($3::uuid[] IS NULL OR id = ANY($3))",
+    )
+    .bind(user_id)
+    .bind(workspace_id)
+    .bind(ids)
+    .execute(db)
+    .await?;
     Ok(())
 }
 

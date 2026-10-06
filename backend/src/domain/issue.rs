@@ -226,6 +226,37 @@ pub fn changes(before: &Issue, after: &Issue) -> Vec<IssueChange> {
     out
 }
 
+string_enum!(
+    /// Why an issue is in someone's inbox.
+    NotificationKind {
+        Assigned => "assigned",
+        Comment => "comment",
+        State => "state",
+    }
+);
+
+/// The issue a notification is about, as much as a list row shows.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct NotificationIssue {
+    pub id: Uuid,
+    pub identifier: String,
+    pub title: String,
+}
+
+/// One entry of a member's inbox.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct Notification {
+    pub id: Uuid,
+    pub kind: NotificationKind,
+    pub issue: NotificationIssue,
+    /// Who assigned, commented or moved the issue; `null` once the account is gone.
+    #[schema(required = true)]
+    pub actor: Option<IssuePerson>,
+    pub created_at: DateTime<Utc>,
+    #[schema(required = true)]
+    pub read_at: Option<DateTime<Utc>>,
+}
+
 /// `#rrggbb`.
 pub fn is_hex_color(s: &str) -> bool {
     s.len() == 7 && s.starts_with('#') && s[1..].chars().all(|c| c.is_ascii_hexdigit())

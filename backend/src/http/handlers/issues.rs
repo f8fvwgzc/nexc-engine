@@ -14,9 +14,10 @@ use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::audit::AuditAction;
 use crate::domain::issue::{
-    COMMENT_MAX_BYTES, DESCRIPTION_MAX_BYTES, ISSUE_LABELS_MAX, Issue, IssueEvent, IssuePerson,
-    IssueState, LABEL_NAME_MAX, LABELS_MAX, Label, PRIORITY_MAX, Project, ProjectStatus,
-    STATE_NAME_MAX, STATES_MAX, StateCategory, TITLE_MAX, changes, is_hex_color,
+    COMMENT_MAX_BYTES, DESCRIPTION_MAX_BYTES, ISSUE_LABELS_MAX, Issue, IssueEvent, IssueEventKind,
+    IssuePerson, IssueState, LABEL_NAME_MAX, LABELS_MAX, Label, Notification, NotificationKind,
+    PRIORITY_MAX, Project, ProjectStatus, STATE_NAME_MAX, STATES_MAX, StateCategory, TITLE_MAX,
+    changes, is_hex_color,
 };
 use crate::domain::validation::{FieldErrors, Validate, check_text};
 use crate::domain::workspace::TeamAccess;
@@ -278,6 +279,9 @@ pub async fn create(
     if !labels.is_empty() {
         repo::issues::set_labels(&mut tx, id, &labels).await?;
     }
+    if let Some(assignee) = req.assignee_id.filter(|a| *a != auth.id) {
+        repo::issues::notify(&mut *tx, id, assignee, auth.id, NotificationKind::Assigned).await?;
+    }
     tx.commit().await?;
     let issue = repo::issues::find(&state.db, auth.id, id)
         .await
@@ -373,7 +377,24 @@ pub async fn update(
     let after = repo::issues::find(&mut *tx, auth.id, iid)
         .await
         .or_not_found("issue")?;
-    repo::issues::record_changes(&mut tx, iid, auth.id, &changes(&before, &after)).await?;
+    let changed = changes(&before, &after);
+    repo::issues::record_changes(&mut tx, iid, auth.id, &changed).await?;
+    for change in &changed {
+        match change.kind {
+            IssueEventKind::Assignee => {
+                let assignee = after.assignee.as_ref().map(|a| a.user_id);
+                if let Some(user) = assignee.filter(|a| *a != auth.id) {
+                    let kind = NotificationKind::Assigned;
+                    repo::issues::notify(&mut *tx, iid, user, auth.id, kind).await?;
+                }
+            }
+            IssueEventKind::State => {
+                let kind = NotificationKind::State;
+                repo::issues::notify_watchers(&mut *tx, iid, auth.id, kind).await?;
+            }
+            _ => {}
+        }
+    }
     tx.commit().await?;
     Ok(Json(after))
 }
@@ -390,6 +411,58 @@ pub async fn delete(
     let issue = editable(&state, auth, iid).await?;
     repo::issues::delete(&state.db, issue.id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------- inbox ----------
+
+/// `POST /workspaces/{wid}/inbox/read` body.
+#[derive(Debug, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MarkRead {
+    /// The notifications to mark read; all of them when left out.
+    pub ids: Option<Vec<Uuid>>,
+}
+
+impl Validate for MarkRead {
+    fn validate(&self, errors: &mut FieldErrors) {
+        if self.ids.as_ref().is_some_and(|ids| ids.len() > 500) {
+            errors.add("ids", "at most 500 at a time");
+        }
+    }
+}
+
+/// The caller's inbox in a workspace, newest first (the last 100): issues
+/// assigned to them, and comments on and moves of issues they created or
+/// are assigned.
+#[utoipa::path(get, path = "/workspaces/{wid}/inbox", tag = "issues", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id")),
+    responses((status = 200, body = [Notification]), (status = 404, body = Problem)))]
+pub async fn inbox(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(wid): Path<Uuid>,
+) -> Result<Json<Vec<Notification>>, AppError> {
+    member_of(&state, auth, wid).await?;
+    Ok(Json(
+        repo::issues::inbox(&state.db, auth.id, wid, 100).await?,
+    ))
+}
+
+/// Marks the caller's notifications read and returns the inbox.
+#[utoipa::path(post, path = "/workspaces/{wid}/inbox/read", tag = "issues", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id")), request_body = MarkRead,
+    responses((status = 200, body = [Notification]), (status = 404, body = Problem), (status = 422, body = Problem)))]
+pub async fn mark_read(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(wid): Path<Uuid>,
+    ValidatedJson(req): ValidatedJson<MarkRead>,
+) -> Result<Json<Vec<Notification>>, AppError> {
+    member_of(&state, auth, wid).await?;
+    repo::issues::mark_read(&state.db, auth.id, wid, req.ids.as_deref()).await?;
+    Ok(Json(
+        repo::issues::inbox(&state.db, auth.id, wid, 100).await?,
+    ))
 }
 
 // ---------- labels ----------
@@ -585,7 +658,10 @@ pub async fn create_comment(
     ValidatedJson(req): ValidatedJson<CommentBody>,
 ) -> Result<(StatusCode, Json<IssueEvent>), AppError> {
     let issue = editable(&state, auth, iid).await?;
-    let id = repo::issues::add_comment(&state.db, issue.id, auth.id, req.body.trim()).await?;
+    let mut tx = state.db.begin().await?;
+    let id = repo::issues::add_comment(&mut *tx, issue.id, auth.id, req.body.trim()).await?;
+    repo::issues::notify_watchers(&mut *tx, issue.id, auth.id, NotificationKind::Comment).await?;
+    tx.commit().await?;
     let comment = repo::issues::find_comment(&state.db, issue.id, id)
         .await
         .or_not_found("comment")?;

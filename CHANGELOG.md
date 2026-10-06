@@ -75,6 +75,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Audit log: changes to a workspace's members, invitations, teams, credential, guardrails and
   labels are recorded with who made them (`GET /workspaces/{wid}/audit`, admins and owners) and
   listed on a new Audit log page.
+- Inbox: members are told when an issue is assigned to them and when someone else comments on or
+  moves an issue they created or are assigned (`GET /workspaces/{wid}/inbox`, `POST …/inbox/read`).
+  The sidebar shows the unread count, and an issue opens by address (`/app/issues?issue=<id>`).
 - Workflow editor: the Teams page opens a team's workflow, where team owners and workspace admins
   add, rename, recolour, reorder and remove issue states; other members see it read-only.
 - "Your teams" in the sidebar opens a team's issues (`/app/issues?team=<id>`), and `C` on the

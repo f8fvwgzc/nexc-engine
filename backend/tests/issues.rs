@@ -1044,3 +1044,102 @@ async fn labels_belong_to_the_workspace_and_filter_issues(pool: PgPool) {
     let (_, all) = call(&app, Method::GET, &labels, &w.guest, None).await;
     assert_eq!(all.as_array().unwrap().len(), 1);
 }
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn the_inbox_tells_members_about_their_issues(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let w = world(&app).await;
+    let inbox = format!("{}/inbox", w.ws);
+    let kinds = |list: &Value| -> Vec<String> {
+        list.as_array()
+            .unwrap()
+            .iter()
+            .map(|n| n["kind"].as_str().unwrap().to_owned())
+            .collect()
+    };
+
+    // The owner files an issue for the member: the member is told, the owner is not.
+    let body = json!({"title": "Fix login", "assignee_id": w.member_id});
+    let (status, issue) = call(
+        &app,
+        Method::POST,
+        &format!("{}/teams/{}/issues", w.ws, w.eng),
+        &w.owner,
+        Some(body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{issue}");
+    let path = format!("/issues/{}", issue["id"].as_str().unwrap());
+    let (_, mine) = call(&app, Method::GET, &inbox, &w.member, None).await;
+    assert_eq!(kinds(&mine), ["assigned"]);
+    assert_eq!(
+        (
+            mine[0]["issue"]["identifier"].as_str(),
+            mine[0]["issue"]["title"].as_str(),
+            &mine[0]["read_at"]
+        ),
+        (Some("ENG-1"), Some("Fix login"), &Value::Null)
+    );
+    assert!(mine[0]["actor"]["name"].is_string());
+    let (_, theirs) = call(&app, Method::GET, &inbox, &w.owner, None).await;
+    assert_eq!(kinds(&theirs), Vec::<String>::new());
+
+    // The member comments and moves it: the owner (creator) hears of both, the member of neither.
+    let comment = json!({"body": "On it"});
+    call(
+        &app,
+        Method::POST,
+        &format!("{path}/comments"),
+        &w.member,
+        Some(comment),
+    )
+    .await;
+    let (_, states) = call(
+        &app,
+        Method::GET,
+        &format!("{}/teams/{}/states", w.ws, w.eng),
+        &w.owner,
+        None,
+    )
+    .await;
+    let done = states
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "Done")
+        .unwrap()["id"]
+        .clone();
+    let edit = json!({"state_id": done, "priority": 2});
+    call(&app, Method::PATCH, &path, &w.member, Some(edit)).await;
+    let (_, theirs) = call(&app, Method::GET, &inbox, &w.owner, None).await;
+    assert_eq!(kinds(&theirs), ["state", "comment"]);
+    let (_, mine) = call(&app, Method::GET, &inbox, &w.member, None).await;
+    assert_eq!(kinds(&mine), ["assigned"]);
+
+    // Reading one, then all; nobody reads another member's inbox.
+    let first = json!({"ids": [theirs[0]["id"]]});
+    let read = format!("{inbox}/read");
+    let (_, after) = call(&app, Method::POST, &read, &w.member, Some(first.clone())).await;
+    assert_eq!(
+        kinds(&after),
+        ["assigned"],
+        "the member's own inbox comes back"
+    );
+    let (_, theirs) = call(&app, Method::GET, &inbox, &w.owner, None).await;
+    assert!(
+        theirs[0]["read_at"].is_null(),
+        "another member cannot mark it"
+    );
+    let (_, theirs) = call(&app, Method::POST, &read, &w.owner, Some(first)).await;
+    assert!(theirs[0]["read_at"].is_string() && theirs[1]["read_at"].is_null());
+    let (_, theirs) = call(&app, Method::POST, &read, &w.owner, Some(json!({}))).await;
+    assert!(theirs[1]["read_at"].is_string());
+
+    // Unassigning tells nobody; outsiders have no inbox here.
+    let unassign = json!({"assignee_id": null});
+    call(&app, Method::PATCH, &path, &w.owner, Some(unassign)).await;
+    let (_, mine) = call(&app, Method::GET, &inbox, &w.member, None).await;
+    assert_eq!(kinds(&mine), ["assigned"]);
+    let (status, _) = call(&app, Method::GET, &inbox, &w.outsider, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

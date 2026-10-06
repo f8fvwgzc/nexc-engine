@@ -6,9 +6,11 @@ import {
   SidebarGroup,
   SidebarGroupLabel,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
 } from '@/components/ui/sidebar';
+import { inboxQuery } from '@/features/issues/api';
 import { teamsQuery } from '@/features/workspaces/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 
@@ -17,7 +19,23 @@ import { ADMIN_ITEMS, API_DOCS_ITEM, BUILD_ITEMS, WORK_ITEMS, type NavItem } fro
 /** Compact rows: 28px tall, 13px text. */
 const ROW = 'h-7 text-[13px]';
 
-function NavSection({ label, items }: { label?: string; items: NavItem[] }) {
+/** How many unread notifications the member has in the open workspace. */
+function useUnread(): number {
+  const { current } = useCurrentWorkspace();
+  const { data } = useQuery({ ...inboxQuery(current?.id ?? ''), enabled: !!current });
+  return data?.filter((n) => n.read_at === null).length ?? 0;
+}
+
+function NavSection({
+  label,
+  items,
+  badges = {},
+}: {
+  label?: string;
+  items: NavItem[];
+  /** Counts shown at the end of a row, by the row's address. */
+  badges?: Record<string, number>;
+}) {
   const { pathname, search } = useLocation();
   // A team's issue list is highlighted under "Your teams", not as "Issues".
   const teamOpen = pathname === '/app/issues' && new URLSearchParams(search).has('team');
@@ -42,6 +60,11 @@ function NavSection({ label, items }: { label?: string; items: NavItem[] }) {
                 <span>{item.title}</span>
               </NavLink>
             </SidebarMenuButton>
+            {(badges[item.to] ?? 0) > 0 && (
+              <SidebarMenuBadge aria-label={`${badges[item.to]} unread`}>
+                {badges[item.to]}
+              </SidebarMenuBadge>
+            )}
           </SidebarMenuItem>
         ))}
       </SidebarMenu>
@@ -84,9 +107,10 @@ function NavTeams() {
 export function NavMain() {
   const { current } = useCurrentWorkspace();
   const admin = current?.role === 'owner' || current?.role === 'admin';
+  const unread = useUnread();
   return (
     <>
-      <NavSection items={WORK_ITEMS} />
+      <NavSection items={WORK_ITEMS} badges={{ '/app/inbox': unread }} />
       <NavTeams />
       <NavSection label="Build" items={BUILD_ITEMS} />
       <NavSection

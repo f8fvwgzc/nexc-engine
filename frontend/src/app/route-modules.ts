@@ -10,6 +10,7 @@ export const routeModules = {
   runDetail: () => import('@/pages/run-detail-page'),
   agents: () => import('@/pages/agents-page'),
   issues: () => import('@/pages/issues-page'),
+  inbox: () => import('@/pages/inbox-page'),
   memory: () => import('@/pages/memory-page'),
   projects: () => import('@/pages/projects-page'),
   members: () => import('@/pages/members-page'),

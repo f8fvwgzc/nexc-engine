@@ -865,6 +865,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{wid}/inbox": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The caller's inbox in a workspace, newest first (the last 100): issues
+         *     assigned to them, and comments on and moves of issues they created or
+         *     are assigned.
+         */
+        get: operations["inbox"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/inbox/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Marks the caller's notifications read and returns the inbox. */
+        post: operations["mark_read"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{wid}/invites": {
         parameters: {
             query?: never;
@@ -1839,6 +1877,11 @@ export interface components {
             email: string;
             password: string;
         };
+        /** @description `POST /workspaces/{wid}/inbox/read` body. */
+        MarkRead: {
+            /** @description The notifications to mark read; all of them when left out. */
+            ids?: string[] | null;
+        };
         /** @description A stored memory. `score` is set only for search results. */
         Memory: {
             /** Format: int64 */
@@ -1966,6 +2009,30 @@ export interface components {
              */
             stage: number;
         };
+        /** @description One entry of a member's inbox. */
+        Notification: {
+            actor: components["schemas"]["IssuePerson"] | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            issue: components["schemas"]["NotificationIssue"];
+            kind: components["schemas"]["NotificationKind"];
+            /** Format: date-time */
+            read_at: string | null;
+        };
+        /** @description The issue a notification is about, as much as a list row shows. */
+        NotificationIssue: {
+            /** Format: uuid */
+            id: string;
+            identifier: string;
+            title: string;
+        };
+        /**
+         * @description Why an issue is in someone's inbox.
+         * @enum {string}
+         */
+        NotificationKind: "assigned" | "comment" | "state";
         /** @description The node types and relation types of one graph. */
         Ontology: {
             node_types: components["schemas"]["NodeType"][];
@@ -4886,6 +4953,78 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    inbox: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Notification"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    mark_read: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MarkRead"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Notification"][];
                 };
             };
             404: {

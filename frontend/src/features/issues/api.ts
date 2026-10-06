@@ -8,6 +8,7 @@ import {
   issueSchema,
   issueStateSchema,
   labelSchema,
+  notificationSchema,
   projectSchema,
   type IssueInput,
   type ProjectStatus,
@@ -100,6 +101,30 @@ export function deleteIssue(issueId: string) {
 /** Gives the issue a graph that plans and executes it (or returns the one it has). */
 export function createIssueGraph(issueId: string) {
   return apiRequest(`/issues/${issueId}/graph`, issueSchema, { method: 'POST' });
+}
+
+/** One issue, for opening it from a link when it is not in the list on screen. */
+export const issueQuery = (issueId: string) =>
+  queryOptions({
+    queryKey: qk.issues.one(issueId),
+    queryFn: ({ signal }) => apiRequest(`/issues/${issueId}`, issueSchema, { signal }),
+  });
+
+/** The caller's inbox in a workspace, newest first; checked again every minute. */
+export const inboxQuery = (workspaceId: string) =>
+  queryOptions({
+    queryKey: qk.issues.inbox(workspaceId),
+    queryFn: ({ signal }) =>
+      apiRequest(`/workspaces/${workspaceId}/inbox`, z.array(notificationSchema), { signal }),
+    refetchInterval: 60_000,
+  });
+
+/** Marks the given notifications read, or all of them. */
+export function markInboxRead(workspaceId: string, ids?: string[]) {
+  return apiRequest(`/workspaces/${workspaceId}/inbox/read`, z.array(notificationSchema), {
+    method: 'POST',
+    body: ids ? { ids } : {},
+  });
 }
 
 /** The labels of a workspace, by name. */

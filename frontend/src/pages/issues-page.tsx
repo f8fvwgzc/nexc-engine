@@ -41,6 +41,7 @@ import {
   createIssue,
   createIssueGraph,
   deleteIssue,
+  issueQuery,
   issuesQuery,
   labelsQuery,
   projectsQuery,
@@ -517,7 +518,8 @@ function Issues({ workspace }: { workspace: Workspace }) {
   const [labelId, setLabelId] = useState(ALL);
   const [q, setQ] = useState('');
   const [creating, setCreating] = useState(false);
-  const [openId, setOpenId] = useState<string | null>(null);
+  // An issue can be opened by address (`?issue=<id>`), as the inbox does.
+  const [openId, setOpenId] = useState<string | null>(() => params.get('issue'));
   const [view, setView] = useState<View>(rememberedView);
   const debouncedQ = useDebouncedValue(q.trim(), 300);
   const { data: teams = [] } = useQuery(teamsQuery(workspace.id));
@@ -532,7 +534,21 @@ function Issues({ workspace }: { workspace: Workspace }) {
       q: debouncedQ || undefined,
     }),
   );
-  const opened = issues?.find((i) => i.id === openId);
+  const listed = issues?.find((i) => i.id === openId);
+  // A linked issue may be closed or filtered out of the list; it is fetched on its own.
+  const { data: linked } = useQuery({
+    ...issueQuery(openId ?? ''),
+    enabled: openId !== null && issues !== undefined && !listed,
+  });
+  const opened = listed ?? (linked?.id === openId ? linked : undefined);
+  const closeIssue = () => {
+    setOpenId(null);
+    if (params.has('issue')) {
+      const next = new URLSearchParams(params);
+      next.delete('issue');
+      setParams(next, { replace: true });
+    }
+  };
 
   // `c` creates an issue, as long as the member is not typing somewhere.
   useEffect(() => {
@@ -715,12 +731,7 @@ function Issues({ workspace }: { workspace: Workspace }) {
         onClose={() => setCreating(false)}
       />
       {opened && (
-        <IssueDialog
-          key={opened.id}
-          workspace={workspace}
-          issue={opened}
-          onClose={() => setOpenId(null)}
-        />
+        <IssueDialog key={opened.id} workspace={workspace} issue={opened} onClose={closeIssue} />
       )}
     </div>
   );

@@ -68,6 +68,17 @@ export const issueEventSchema = z.object({
 });
 export type IssueEvent = z.infer<typeof issueEventSchema>;
 
+/** One entry of the caller's inbox. */
+export const notificationSchema = z.object({
+  id: idSchema,
+  kind: z.enum(['assigned', 'comment', 'state']),
+  issue: z.object({ id: idSchema, identifier: z.string(), title: z.string() }),
+  actor: z.object({ user_id: idSchema, name: z.string() }).nullable(),
+  created_at: timestampSchema,
+  read_at: timestampSchema.nullable(),
+});
+export type Notification = z.infer<typeof notificationSchema>;
+
 export const projectStatusSchema = z.enum([
   'planned',
   'started',
