@@ -86,6 +86,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Project page (`/app/projects/<id>`): a project's name, summary, status, lead, target date and
   progress, all saved as they are changed, over the project's own issues as a list or board. New
   issues can be filed straight into a project.
+- Knowledge base: a workspace uploads documents (PDF, Word, Excel, PowerPoint, HTML, CSV, Markdown,
+  text; Settings -> Knowledge). The agent runtime parses them (`POST /v1/parse`), they are split
+  into heading-aware passages (table rows carry their multi-row headers), embedded through an
+  OpenAI-compatible endpoint (`NEXC_EMBED_*`, or per workspace; a built-in word-matching embedding
+  otherwise) and searched by keywords and embedding similarity
+  (`GET /workspaces/{wid}/knowledge/search`). Running nodes and the planner get the passages that
+  bear on their task, with citations, within a per-workspace passage count and character budget.
 - Workflow editor: the Teams page opens a team's workflow, where team owners and workspace admins
   add, rename, recolour, reorder and remove issue states; other members see it read-only.
 - "Your teams" in the sidebar opens a team's issues (`/app/issues?team=<id>`), and `C` on the

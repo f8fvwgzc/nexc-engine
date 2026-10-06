@@ -1,4 +1,5 @@
 import {
+  BookOpenIcon,
   BrainIcon,
   ChartNoAxesColumnIcon,
   KeyRoundIcon,
@@ -38,6 +39,7 @@ export const SETTINGS_GROUPS: { label: string; items: SettingsItem[] }[] = [
       { title: 'AI accounts', to: `${SETTINGS_ROOT}/ai`, icon: KeyRoundIcon },
       { title: 'Guardrails', to: `${SETTINGS_ROOT}/guardrails`, icon: ShieldCheckIcon },
       { title: 'Memory', to: `${SETTINGS_ROOT}/memory`, icon: BrainIcon },
+      { title: 'Knowledge', to: `${SETTINGS_ROOT}/knowledge`, icon: BookOpenIcon },
       { title: 'Usage', to: `${SETTINGS_ROOT}/usage`, icon: ChartNoAxesColumnIcon },
       {
         title: 'Audit log',

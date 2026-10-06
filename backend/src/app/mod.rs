@@ -96,6 +96,7 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
     seed_missing_workspaces(&state).await?;
     orchestrator::seed_missing_orgs(&state).await?;
     tokio::fs::create_dir_all(state.settings.artifacts_dir()).await?;
+    tokio::fs::create_dir_all(state.settings.documents_dir()).await?;
 
     let shutdown = CancellationToken::new();
     workers::spawn(&state, shutdown.clone());

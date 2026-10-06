@@ -41,6 +41,7 @@ curl -sN localhost:8090/v1/execute \
 | `RUNTIME_MAX_CONCURRENT_RUNS` | `8` | further requests get `429` |
 | `RUNTIME_MAX_TURNS_CAP` / `RUNTIME_TIMEOUT_CAP_S` | `40` / `1800` | upper bounds for the request's `limits` |
 | `RUNTIME_MAX_REQUEST_BYTES` | `4194304` | request body limit (`413` above) |
+| `RUNTIME_MAX_PARSE_BYTES` | `52428800` | body limit of `/v1/parse`, i.e. the largest file it accepts (`413` above) |
 | `RUNTIME_MAX_FILE_BYTES` / `RUNTIME_MAX_WORKSPACE_BYTES` / `RUNTIME_MAX_ARTIFACTS` | 20 MiB / 100 MiB / 64 | workspace quotas |
 | `RUNTIME_PYTHON_TIMEOUT_S` / `RUNTIME_PYTHON_MEMORY_MB` | `60` / `512` | `run_python` limits |
 | `RUNTIME_KEEP_WORKSPACES` | `false` | keep run directories for debugging |
@@ -81,6 +82,53 @@ curl -sN localhost:8090/v1/execute \
 Every path goes through `safe_path`, which rejects empty, absolute and drive-letter paths, `..`,
 NUL bytes, backslashes and anything that resolves outside the workspace through symlinks.
 
+## Parsing documents
+
+`POST /v1/parse?filename=<url-encoded file name>` turns an uploaded file into ordered blocks the
+backend chunks and indexes. Same bearer token as `/v1/execute`; the request body is the raw file
+(`Content-Type: application/octet-stream`, no multipart), at most 50 MiB.
+
+```sh
+curl -s "localhost:8090/v1/parse?filename=report.pdf" \
+  -H "Authorization: Bearer $NEXC_RUNTIME_TOKEN" -H 'content-type: application/octet-stream' \
+  --data-binary @report.pdf
+# {"pages":12,"blocks":[
+#   {"kind":"heading","level":1,"text":"Quarterly report","page":1,"rows":null,"header_rows":null},
+#   {"kind":"text","level":null,"text":"A paragraph...","page":1,"rows":null,"header_rows":null},
+#   {"kind":"table","level":null,"text":"","page":2,"header_rows":2,
+#    "rows":[["Region","2024","2024"],["Region","Q1","Q2"],["EMEA","10","12"]]}]}
+```
+
+Blocks are in reading order; `kind` is `heading` (with `level` 1-6), `text` (one paragraph,
+whitespace collapsed) or `table`. A table's `rows` is a rectangular matrix of strings: short rows
+are padded with `""` and a merged cell's value is repeated over its span where the format exposes
+it. `header_rows` is the number of leading header rows: taken from the format when it says so
+(HTML `<th>` rows, CSV), otherwise estimated (a group label spanning columns above a row of
+sub-headers makes a multi-row header). `page` is the 1-based page / slide / sheet, `pages` their
+count; both are `null` for formats without pages.
+
+| Format | Detected by | How it is read |
+|---|---|---|
+| PDF | `.pdf`, `%PDF` | pdfplumber: ruled tables (text inside a table is not repeated as text), lines grouped into paragraphs, headings from font size / bold / all-caps lines |
+| Word | `.docx` | python-docx: `Heading N` / `Title` styles, paragraphs and tables in document order |
+| Excel | `.xlsx`, `.xlsm` | openpyxl (read-only, cached values): per non-empty sheet a level-2 heading with its name and one table, at most 5,000 rows (a text block notes the truncation) |
+| PowerPoint | `.pptx` | python-pptx: per slide the title as a level-2 heading, then text frames and tables |
+| HTML | `.html`, `.htm`, `.xhtml` | `html.parser`: `h1`-`h6`, paragraphs, list items, tables with `rowspan` / `colspan`; `script`, `style`, `nav` and `head` are ignored |
+| CSV / TSV | `.csv`, `.tsv` | one table, first row is the header; the CSV delimiter (`,` `;` tab `\|`) is detected |
+| Markdown | `.md`, `.markdown` | `#` and underlined headings, paragraphs, list items, pipe tables |
+| Text | `.txt`, `.log`, anything else that is text | paragraphs split on blank lines (JSON, YAML, source code...) |
+
+The type is decided by the extension, then by magic bytes (`%PDF`, the members of a zip-based
+Office file), and any other content that looks like text is read as text (UTF-8, falling back to
+latin-1). Errors are `{"detail": "..."}`: `415` for an unsupported type (images, `.doc`, `.xls`,
+archives...), `422` for a file that cannot be read (corrupt, empty, password-protected PDF), `413`
+above the size limit. Parsing runs in a worker thread, so a large PDF does not stall running
+`/v1/execute` streams.
+
+Limits: no OCR (a scanned page is counted in `pages` but yields no blocks), only tables drawn with
+ruling lines are recognised in PDFs, multi-column PDF pages are read across the columns, and Excel
+merged cells are left empty (read-only mode does not expose them).
+
 ## Develop
 
 ```sh
@@ -96,11 +144,12 @@ src/nexc_runtime/
   main.py, __main__.py   entry points (`nexc-runtime`, `python -m nexc_runtime`)
   config.py              pydantic-settings
   api/                   FastAPI app, schemas, bearer auth, body-size limit
+  parsing/               /v1/parse: one module per format, table helpers, dispatcher
   runner.py              one /v1/execute run: workspace -> agents -> artifacts -> terminal event
   agents/                AgentSpec, Agent (tool loop), AgentRegistry, Budget
   llm/                   anthropic, openai_compatible and demo providers
   tools/                 workspace + safe_path, file tools, make_docx, run_python, agent tools
   prompts.py             personas, system and task prompts
   streaming.py           NDJSON event stream and artifact collection
-tests/                   fake provider, API, tools, agents, demo and Anthropic (mock transport)
+tests/                   fake provider, API, tools, agents, parsing, demo and Anthropic (mock transport)
 ```

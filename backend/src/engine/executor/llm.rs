@@ -28,6 +28,7 @@ async fn run(ctx: &ExecContext) -> Result<ExecOutput, ExecError> {
         content: &ctx.node.content,
         upstream: &ctx.upstream,
         memories: &ctx.memories,
+        documents: &ctx.documents,
     });
     let request = LlmRequest {
         target: ctx.agent_target(),

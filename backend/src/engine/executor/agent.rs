@@ -99,7 +99,11 @@ fn request_body(ctx: &ExecContext) -> serde_json::Value {
             "upstream": ctx.upstream.iter().map(|u| json!({
                 "node_id": u.node_id, "title": u.title, "output": u.output,
             })).collect::<Vec<_>>(),
-            "memories": ctx.memories,
+            // The runtime lists these under what the agent already knows; a document
+            // passage keeps its citation so the agent can name its source.
+            "memories": ctx.memories.iter().cloned().chain(
+                ctx.documents.iter().map(|d| format!("From the workspace's documents {d}")),
+            ).collect::<Vec<_>>(),
         },
         "llm": {
             "provider": target.provider,

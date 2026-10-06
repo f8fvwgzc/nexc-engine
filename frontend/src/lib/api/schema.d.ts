@@ -848,6 +848,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{wid}/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One page of a workspace's documents, newest first. */
+        get: operations["list"];
+        put?: never;
+        /**
+         * Adds a file to the knowledge base. The body is the file itself (at most
+         *     50 MiB); it is parsed, split into passages and embedded in the background,
+         *     and `status` tells how far that is. The same file is stored once: sending
+         *     it again returns the document it already is.
+         */
+        post: operations["upload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/documents/{did}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One document. */
+        get: operations["get"];
+        put?: never;
+        post?: never;
+        /** Removes a document and its passages: whoever uploaded it, or an admin. */
+        delete: operations["delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{wid}/guardrails": {
         parameters: {
             query?: never;
@@ -954,6 +995,48 @@ export interface paths {
          */
         get: operations["list"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/knowledge/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Searches the workspace's documents: the passages that best answer `q`, by
+         *     keywords and by the similarity of their embeddings, best first.
+         */
+        get: operations["search"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/knowledge/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** How the workspace embeds and uses its documents. */
+        get: operations["settings"];
+        /**
+         * Sets how the workspace embeds and uses its documents (admins and owners).
+         *     When the embedding model changes, ready documents are embedded again in
+         *     the background; until then they are found by keywords.
+         */
+        put: operations["put_settings"];
         post?: never;
         delete?: never;
         options?: never;
@@ -1385,7 +1468,7 @@ export interface components {
          * @description What an audit entry records.
          * @enum {string}
          */
-        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted";
+        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed";
         /** @description One entry of a workspace's audit log. */
         AuditEntry: {
             action: components["schemas"]["AuditAction"];
@@ -1430,6 +1513,11 @@ export interface components {
             llm: components["schemas"]["BackendHealth"];
             symphony: components["schemas"]["BackendHealth"];
         };
+        /**
+         * @description What a passage was made from.
+         * @enum {string}
+         */
+        ChunkKind: "text" | "table";
         /** @description `POST /issues/{iid}/comments` and `PATCH /issues/{iid}/comments/{cid}` body. */
         CommentBody: {
             /** @description Markdown, 1 byte to 16 KiB. */
@@ -1650,6 +1738,40 @@ export interface components {
          * @enum {string}
          */
         CycleStatus: "upcoming" | "active" | "completed";
+        /** @description An uploaded document. */
+        Document: {
+            /**
+             * Format: int32
+             * @description Passages it was split into.
+             */
+            chunk_count: number;
+            /** Format: date-time */
+            created_at: string;
+            /** @description Why it failed; empty otherwise. */
+            error: string;
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /**
+             * Format: int32
+             * @description Pages, slides or sheets, when the format has them.
+             */
+            page_count: number | null;
+            /** Format: int64 */
+            size_bytes: number;
+            status: components["schemas"]["DocumentStatus"];
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: uuid */
+            uploaded_by: string | null;
+            /** Format: uuid */
+            workspace_id: string;
+        };
+        /**
+         * @description Where a document is on its way into the knowledge base.
+         * @enum {string}
+         */
+        DocumentStatus: "pending" | "parsing" | "embedding" | "ready" | "failed";
         /**
          * @description Who created an edge (`auto` = `[[wikilink]]` dependency detection).
          * @enum {string}
@@ -1961,6 +2083,35 @@ export interface components {
          */
         KeySource: "user" | "workspace" | "server" | "none";
         /**
+         * @description How a workspace embeds and uses its documents, as its members see it
+         *     (the key is never returned, only a hint of it).
+         */
+        KnowledgeSettings: {
+            /**
+             * Format: int32
+             * @description Characters those passages may take together.
+             */
+            budget_chars: number;
+            /** @description The OpenAI-compatible embeddings endpoint in use; `null` for the built-in embedding. */
+            embed_base_url: string | null;
+            /** Format: int32 */
+            embed_dims: number | null;
+            /** @description The embedding model in use (`builtin-hash-256` when none is configured). */
+            embed_model: string;
+            /** @description Whether the workspace stored its own key, and its last characters. */
+            has_api_key: boolean;
+            key_hint: string | null;
+            /**
+             * Format: int32
+             * @description Passages given to a node or to the planner (0 turns documents off for them).
+             */
+            passages: number;
+            /** @description True when the embedding understands meaning; the built-in one only matches words. */
+            semantic: boolean;
+            use_in_nodes: boolean;
+            use_in_plan: boolean;
+        };
+        /**
          * @description An issue.
          *     A label of a workspace, as carried by an issue.
          */
@@ -2173,6 +2324,24 @@ export interface components {
             queue_depth: number;
             /** Format: int64 */
             running_nodes: number;
+        };
+        /** @description A passage found by a search, with where it comes from. */
+        Passage: {
+            /** Format: uuid */
+            chunk_id: string;
+            content: string;
+            /** Format: uuid */
+            document_id: string;
+            document_name: string;
+            kind: components["schemas"]["ChunkKind"];
+            /** Format: int32 */
+            page: number | null;
+            /**
+             * Format: double
+             * @description 0-1, higher is better; comparable within one search only.
+             */
+            score: number;
+            section_path: string;
         };
         /** @description A plan as returned by the API. */
         Plan: {
@@ -2487,6 +2656,35 @@ export interface components {
             /** Format: uuid */
             state_id?: string | null;
             title?: string | null;
+        };
+        /** @description `PUT /workspaces/{wid}/knowledge/settings` body. */
+        UpdateKnowledgeSettings: {
+            /** @description Leave out to keep the stored key, send `""` to remove it. */
+            api_key?: string | null;
+            /**
+             * Format: int32
+             * @description 500-40000.
+             */
+            budget_chars: number;
+            /**
+             * @description An OpenAI-compatible endpoint (`https://api.openai.com/v1`); `null` or
+             *     empty uses the server's, else the built-in embedding.
+             */
+            embed_base_url?: string | null;
+            /**
+             * Format: int32
+             * @description Vector size to ask for, when the model can shorten its vectors (64-4096).
+             */
+            embed_dims?: number | null;
+            /** @description Required with `embed_base_url`. */
+            embed_model?: string | null;
+            /**
+             * Format: int32
+             * @description 0-20; 0 keeps documents out of prompts.
+             */
+            passages: number;
+            use_in_nodes: boolean;
+            use_in_plan: boolean;
         };
         /** @description `PATCH /workspaces/{wid}/labels/{lid}` body: any subset. */
         UpdateLabel: {
@@ -5077,6 +5275,199 @@ export interface operations {
             };
         };
     };
+    list: {
+        parameters: {
+            query?: {
+                /** @description Part of the file name. */
+                q?: string | null;
+                /** @description 1-100, default 20. */
+                limit?: number | null;
+                offset?: number | null;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Document"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    upload: {
+        parameters: {
+            query: {
+                /** @description The file's name, with its extension (it decides how the file is read). */
+                name: string;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": number[];
+            };
+        };
+        responses: {
+            /** @description Already in the knowledge base */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Document"];
+                };
+            };
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Document"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Document id */
+                did: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Document"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Document id */
+                did: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     guardrails: {
         parameters: {
             query?: never;
@@ -5343,6 +5734,136 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    search: {
+        parameters: {
+            query: {
+                q: string;
+                /** @description 1-20, default 8. */
+                limit?: number | null;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Passage"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeSettings"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    put_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateKnowledgeSettings"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeSettings"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

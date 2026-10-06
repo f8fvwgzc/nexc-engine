@@ -33,6 +33,7 @@ const VERB: Record<AuditAction, string> = {
   credential_removed: 'removed the',
   guardrails_changed: 'changed the',
   label_deleted: 'deleted the label',
+  knowledge_changed: 'changed the',
 };
 
 /** Actions whose subject is a thing of the workspace, not a name: it reads on in lower case. */
@@ -41,6 +42,7 @@ const GENERIC_SUBJECT = new Set<AuditAction>([
   'credential_set',
   'credential_removed',
   'guardrails_changed',
+  'knowledge_changed',
 ]);
 
 function Entry({ entry }: { entry: AuditEntry }) {

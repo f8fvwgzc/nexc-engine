@@ -38,6 +38,8 @@ pub struct NodePrompt<'a> {
     pub content: &'a str,
     pub upstream: &'a [UpstreamOutput],
     pub memories: &'a [String],
+    /// Passages of the workspace's documents, each headed by its citation.
+    pub documents: &'a [String],
 }
 
 /// Renders the user message for executing one node.
@@ -72,6 +74,15 @@ pub fn node_prompt(p: NodePrompt<'_>) -> String {
         out.push_str("\n## Relevant memories\n");
         for m in p.memories {
             out.push_str(&format!("- {m}\n"));
+        }
+    }
+    if !p.documents.is_empty() {
+        out.push_str(
+            "\n## Relevant passages from the workspace's documents\n\
+             Use them where they bear on the task and name the source in brackets when you do.\n",
+        );
+        for d in p.documents {
+            out.push_str(&format!("\n{d}\n"));
         }
     }
     out.push_str("\nComplete the task. Answer in Markdown and build on the upstream results.");
@@ -119,6 +130,7 @@ mod tests {
             content: "Write it.",
             upstream: &upstream,
             memories: &["User prefers APA".into()],
+            documents: &["[style.pdf, p. 2]\nCite sources in APA.".into()],
         });
         assert!(prompt.starts_with("# Task: Draft\nKind: document"));
         assert!(prompt.contains("- User prefers APA"));

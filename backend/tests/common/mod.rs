@@ -270,6 +270,32 @@ impl TestApp {
         }
     }
 
+    /// Sends raw bytes as the request body (a file upload).
+    #[allow(dead_code)]
+    pub async fn send_bytes(&self, path: &str, token: &str, bytes: Vec<u8>) -> Resp {
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri(path)
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(header::CONTENT_TYPE, "application/octet-stream")
+            .header(header::CONTENT_LENGTH, bytes.len())
+            .body(Body::from(bytes))
+            .unwrap();
+        let resp = tower::ServiceExt::oneshot(self.router.clone(), req)
+            .await
+            .unwrap();
+        let status = resp.status();
+        let headers = resp.headers().clone();
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let body = serde_json::from_slice(&bytes)
+            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into()));
+        Resp {
+            status,
+            headers,
+            body,
+        }
+    }
+
     /// Registers a user; returns `(access token, refresh cookie value)`.
     pub async fn register(&self, email: &str) -> (String, String) {
         let r = self

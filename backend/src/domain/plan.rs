@@ -131,6 +131,10 @@ pub struct PlanContext {
     /// Detected-but-unconfirmed dependencies, as "source title -> target title: reason".
     pub suggestions: Vec<String>,
     pub memories: Vec<String>,
+    /// Passages of the workspace's documents that bear on the goal, each
+    /// headed by where it comes from ("[file, p. N › section]").
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub documents: Vec<String>,
     /// Agent roles available in the user's organisation.
     pub agent_roles: Vec<String>,
 }
@@ -393,6 +397,7 @@ mod tests {
             edges: vec![],
             suggestions: vec![],
             memories: vec![],
+            documents: vec![],
             agent_roles: vec!["writer".into()],
         };
         let prompt = format!(

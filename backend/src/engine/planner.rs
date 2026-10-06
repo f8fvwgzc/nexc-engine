@@ -10,7 +10,7 @@ use uuid::Uuid;
 use super::analysis::dependency_graph;
 use super::credentials::Resolved;
 use super::json_stream::ArrayScanner;
-use super::{credentials, deps, editor, guardrails, usage};
+use super::{credentials, deps, editor, guardrails, knowledge, usage};
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::graph::{
@@ -238,6 +238,10 @@ async fn build_context(
         None => Vec::new(),
     };
     let memories = recalled.into_iter().map(|m| m.content).collect();
+    let documents = match graph.workspace_id {
+        Some(workspace) => knowledge::context(state, workspace, &query, knowledge::Use::Plan).await,
+        None => Vec::new(),
+    };
     let workspace_agents = match graph.workspace_id {
         Some(workspace) => repo::agents::list(&state.db, workspace).await,
         None => Ok(Vec::new()),
@@ -278,6 +282,7 @@ async fn build_context(
             .collect(),
         suggestions,
         memories,
+        documents,
         agent_roles,
     }
 }

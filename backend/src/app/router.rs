@@ -10,7 +10,6 @@ use axum::routing::get;
 use tower_http::compression::CompressionLayer;
 use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Predicate};
 use tower_http::cors::{AllowOrigin, CorsLayer};
-use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
@@ -79,7 +78,7 @@ pub fn build(state: AppState) -> Router {
         .fallback(middleware::not_found)
         .layer(from_fn_with_state(state.clone(), middleware::track_metrics))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
-        .layer(RequestBodyLimitLayer::new(BODY_LIMIT))
+        .layer(from_fn(middleware::limit_body))
         .layer(TimeoutLayer::with_status_code(
             StatusCode::GATEWAY_TIMEOUT,
             REQUEST_TIMEOUT,

@@ -7,13 +7,18 @@ pub mod handlers;
 pub mod middleware;
 pub mod problem;
 
+use axum::extract::DefaultBodyLimit;
 use utoipa::openapi::security::{Http, HttpAuthScheme, SecurityScheme};
 use utoipa::{Modify, OpenApi};
-use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::router::{OpenApiRouter, UtoipaMethodRouterExt};
 use utoipa_axum::routes;
 
 use crate::app::AppState;
+use crate::domain::knowledge::DOCUMENT_MAX_BYTES;
 use handlers::*;
+
+/// Room for a request's framing on top of the largest document.
+pub const UPLOAD_SLACK: usize = 64 * 1024;
 
 /// API description; paths are collected from the routers below.
 #[derive(OpenApi)]
@@ -141,6 +146,14 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(artifacts::download))
         .routes(routes!(agents::list, agents::create))
         .routes(routes!(agents::update, agents::delete))
+        .routes(
+            routes!(knowledge::upload)
+                .layer(DefaultBodyLimit::max(DOCUMENT_MAX_BYTES + UPLOAD_SLACK)),
+        )
+        .routes(routes!(knowledge::list))
+        .routes(routes!(knowledge::get, knowledge::delete))
+        .routes(routes!(knowledge::search))
+        .routes(routes!(knowledge::settings, knowledge::put_settings))
         .routes(routes!(memories::list))
         .routes(routes!(memories::get, memories::delete))
         .routes(routes!(orchestrator::status))
@@ -191,7 +204,8 @@ mod tests {
     #[test]
     fn spec_enum_values_match_the_wire_format() {
         use crate::domain::{
-            agent, audit, cycle, graph, issue, memory, plan, run, settings, usage, user, workspace,
+            agent, audit, cycle, graph, issue, knowledge, memory, plan, run, settings, usage, user,
+            workspace,
         };
         use serde_json::Value;
 
@@ -231,6 +245,8 @@ mod tests {
                 "IssueEventKind" => check::<issue::IssueEventKind>(values),
                 "AuditAction" => check::<audit::AuditAction>(values),
                 "CycleStatus" => check::<cycle::CycleStatus>(values),
+                "DocumentStatus" => check::<knowledge::DocumentStatus>(values),
+                "ChunkKind" => check::<knowledge::ChunkKind>(values),
                 "NotificationKind" => check::<issue::NotificationKind>(values),
                 "UsageScope" => check::<usage::UsageScope>(values),
                 "AgentStatus" => check::<agent::AgentStatus>(values),
@@ -239,6 +255,6 @@ mod tests {
             }
             checked += 1;
         }
-        assert_eq!(checked, 23, "every string enum schema is covered");
+        assert_eq!(checked, 25, "every string enum schema is covered");
     }
 }

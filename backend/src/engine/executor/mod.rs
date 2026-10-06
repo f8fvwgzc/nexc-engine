@@ -32,6 +32,8 @@ pub struct ExecContext {
     pub code_exec_allowed: bool,
     pub upstream: Vec<UpstreamOutput>,
     pub memories: Vec<String>,
+    /// Passages of the workspace's documents, each headed by its citation.
+    pub documents: Vec<String>,
     pub agent: Option<Agent>,
     pub target: LlmTarget,
     /// When true, cached LLM responses must not be reused.

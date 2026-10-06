@@ -125,7 +125,7 @@ pub enum KeyUpdate {
 
 impl KeyUpdate {
     /// `(keep the stored key, new ciphertext, new hint)` as the upserts bind them.
-    fn parts(self) -> (bool, Option<Vec<u8>>, Option<String>) {
+    pub(crate) fn parts(self) -> (bool, Option<Vec<u8>>, Option<String>) {
         match self {
             KeyUpdate::Keep => (true, None, None),
             KeyUpdate::Clear => (false, None, None),

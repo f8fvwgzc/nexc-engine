@@ -67,6 +67,7 @@ pub mod cycles;
 pub mod edges;
 pub mod graphs;
 pub mod issues;
+pub mod knowledge;
 pub mod memories;
 pub mod nodes;
 pub mod outbox;

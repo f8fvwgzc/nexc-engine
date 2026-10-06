@@ -541,6 +541,7 @@ mod tests {
             edges,
             suggestions: vec![],
             memories: vec![],
+            documents: vec![],
             agent_roles: vec![],
         }
     }

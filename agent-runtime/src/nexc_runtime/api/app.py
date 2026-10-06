@@ -6,19 +6,21 @@ import asyncio
 import contextlib
 from collections.abc import AsyncIterator
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .. import __version__
 from ..agents import Census
 from ..config import Settings
+from ..parsing import ParseError, UnsupportedFormatError, parse_document
 from ..runner import ProviderFactory, default_provider_factory, execute
 from ..streaming import EventStream
-from .schemas import ExecuteRequest, Health
+from .schemas import ExecuteRequest, Health, ParseBlock, ParseResponse
 from .security import BodySizeLimit, require_bearer
 
 NDJSON = "application/x-ndjson"
+PARSE_PATH = "/v1/parse"
 
 
 def create_app(
@@ -34,7 +36,11 @@ def create_app(
     app.state.settings = settings
     app.state.census = Census()
     app.state.provider_factory = provider_factory
-    app.add_middleware(BodySizeLimit, max_bytes=settings.runtime_max_request_bytes)
+    app.add_middleware(
+        BodySizeLimit,
+        max_bytes=settings.runtime_max_request_bytes,
+        path_limits={PARSE_PATH: settings.runtime_max_parse_bytes},
+    )
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
@@ -67,7 +73,42 @@ def create_app(
             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
 
+    @app.post(PARSE_PATH, dependencies=[Depends(require_bearer)], response_model=None)
+    async def parse(request: Request, filename: str = "") -> Response:
+        """Parse an uploaded file (the raw request body) into heading / text / table blocks."""
+        data = await request.body()
+        if len(data) > settings.runtime_max_parse_bytes:  # the middleware already enforces this
+            raise HTTPException(status_code=413, detail="request body is too large")
+        try:
+            # CPU-bound: a worker thread keeps the event loop free for /v1/execute streams.
+            payload = await asyncio.to_thread(_parse_to_json, filename, data)
+        except UnsupportedFormatError as error:
+            raise HTTPException(status_code=415, detail=str(error)) from error
+        except ParseError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        return Response(content=payload, media_type="application/json")
+
     return app
+
+
+def _parse_to_json(filename: str, data: bytes) -> bytes:
+    """Parse and serialise in one go, so neither step runs on the event loop."""
+    document = parse_document(filename, data)
+    response = ParseResponse(
+        pages=document.pages,
+        blocks=[
+            ParseBlock(
+                kind=block.kind,
+                level=block.level,
+                text=block.text,
+                page=block.page,
+                rows=block.rows,
+                header_rows=block.header_rows,
+            )
+            for block in document.blocks
+        ],
+    )
+    return response.model_dump_json().encode("utf-8")
 
 
 async def _stream(app: FastAPI, body: ExecuteRequest) -> AsyncIterator[bytes]:

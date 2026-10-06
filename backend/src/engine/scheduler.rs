@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 use super::analysis::dependency_graph;
 use super::executor::{self, ExecContext, ExecError, ExecOutput};
-use super::{artifacts, credentials, editor, guardrails, usage};
+use super::{artifacts, credentials, editor, guardrails, knowledge, usage};
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::agent::{Agent, AgentStatus};
@@ -690,6 +690,14 @@ impl NodeTask {
             .into_iter()
             .map(|m| data.policy.scrub(m.content))
             .collect();
+        let documents = match data.workspace_id {
+            Some(workspace) => knowledge::context(&state, workspace, &query, knowledge::Use::Node)
+                .await
+                .into_iter()
+                .map(|d| data.policy.scrub(d))
+                .collect(),
+            None => Vec::new(),
+        };
         // An agent works over several turns and takes more context than one LLM call.
         let budget = match node.executor {
             Executor::Agent => AGENT_UPSTREAM_CHARS,
@@ -735,6 +743,7 @@ impl NodeTask {
             node,
             upstream: upstream_outputs,
             memories,
+            documents,
             agent,
             target: data.target.clone(),
             force: data.force,

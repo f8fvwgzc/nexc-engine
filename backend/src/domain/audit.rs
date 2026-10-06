@@ -26,6 +26,7 @@ string_enum!(
         CredentialRemoved => "credential_removed",
         GuardrailsChanged => "guardrails_changed",
         LabelDeleted => "label_deleted",
+        KnowledgeChanged => "knowledge_changed",
     }
 );
 

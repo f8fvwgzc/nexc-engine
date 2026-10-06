@@ -29,25 +29,32 @@ def require_bearer(request: Request) -> None:
 
 
 class BodySizeLimit:
-    """Pure ASGI middleware rejecting bodies above `max_bytes` with 413 (header and stream)."""
+    """Pure ASGI middleware rejecting bodies above `max_bytes` with 413 (header and stream).
 
-    def __init__(self, app: ASGIApp, max_bytes: int) -> None:
+    `path_limits` gives single paths their own limit (file uploads are larger than JSON).
+    """
+
+    def __init__(
+        self, app: ASGIApp, max_bytes: int, path_limits: dict[str, int] | None = None
+    ) -> None:
         self.app = app
         self.max_bytes = max_bytes
+        self.path_limits = path_limits or {}
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
 
+        max_bytes = self.path_limits.get(scope.get("path", ""), self.max_bytes)
         for name, value in scope.get("headers", []):
             if name == b"content-length":
                 try:
                     declared = int(value)
                 except ValueError:
                     declared = -1
-                if declared < 0 or declared > self.max_bytes:
-                    await _reject(send, self.max_bytes)
+                if declared < 0 or declared > max_bytes:
+                    await _reject(send, max_bytes)
                     return
 
         received = 0
@@ -58,7 +65,7 @@ class BodySizeLimit:
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
-                if received > self.max_bytes:
+                if received > max_bytes:
                     raise _TooLarge
             return message
 
@@ -72,7 +79,7 @@ class BodySizeLimit:
             await self.app(scope, limited_receive, tracking_send)
         except _TooLarge:
             if not response_started:
-                await _reject(send, self.max_bytes)
+                await _reject(send, max_bytes)
 
 
 class _TooLarge(Exception):

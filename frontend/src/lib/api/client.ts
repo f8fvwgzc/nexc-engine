@@ -30,13 +30,20 @@ export function buildUrl(path: string, query?: Record<string, QueryValue>): stri
 
 async function send(path: string, opts: RequestOptions, token: string | null): Promise<Response> {
   const headers: Record<string, string> = { Accept: 'application/json', ...opts.headers };
-  if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
+  // A file goes as it is; anything else is JSON.
+  const raw = opts.body instanceof Blob;
+  if (raw) headers['Content-Type'] = 'application/octet-stream';
+  else if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
   if (token) headers.Authorization = `Bearer ${token}`;
   try {
     return await fetch(buildUrl(path, opts.query), {
       method: opts.method ?? 'GET',
       headers,
-      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+      body: raw
+        ? (opts.body as Blob)
+        : opts.body === undefined
+          ? undefined
+          : JSON.stringify(opts.body),
       credentials: 'include',
       signal: opts.signal,
     });

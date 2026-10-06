@@ -23,5 +23,6 @@ export const routeModules = {
   settingsPreferences: () => import('@/pages/settings/preferences-page'),
   settingsAi: () => import('@/pages/settings/ai-page'),
   settingsGuardrails: () => import('@/pages/settings/guardrails-page'),
+  settingsKnowledge: () => import('@/pages/settings/knowledge-page'),
   notFound: () => import('@/pages/not-found-page'),
 };

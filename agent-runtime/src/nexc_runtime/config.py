@@ -29,6 +29,8 @@ class Settings(BaseSettings):
         description="Shared bearer secret between the backend and this runtime (>= 32 chars).",
     )
     runtime_max_request_bytes: int = Field(default=4 * 1024 * 1024, ge=1024)
+    # /v1/parse takes a whole uploaded file as its body, so it has its own, larger limit.
+    runtime_max_parse_bytes: int = Field(default=50 * 1024 * 1024, ge=1024)
 
     # --- execution ---------------------------------------------------------------------------
     runtime_workspace: Path = Path("/tmp/nexc-runtime")  # noqa: S108 - per-run dirs are mkdtemp'd

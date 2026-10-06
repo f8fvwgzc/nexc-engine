@@ -63,6 +63,22 @@ class ExecuteRequest(_Model):
     limits: LimitsIn = Field(default_factory=LimitsIn)
 
 
+class ParseBlock(BaseModel):
+    """One block of a parsed document, in reading order (`POST /v1/parse`)."""
+
+    kind: Literal["heading", "text", "table"]
+    level: int | None = Field(default=None, ge=1, le=6)  # headings only
+    text: str = ""  # empty for tables
+    page: int | None = Field(default=None, ge=1)  # page / slide / sheet, 1-based
+    rows: list[list[str]] | None = None  # tables only: a rectangular matrix
+    header_rows: int | None = Field(default=None, ge=0)  # tables only: leading header rows
+
+
+class ParseResponse(BaseModel):
+    pages: int | None = None  # pages / slides / sheets when the format has them
+    blocks: list[ParseBlock]
+
+
 class Health(BaseModel):
     status: Literal["ok"] = "ok"
     version: str

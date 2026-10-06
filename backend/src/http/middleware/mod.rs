@@ -121,3 +121,31 @@ pub async fn track_metrics(State(state): State<AppState>, req: Request, next: Ne
 pub async fn not_found() -> Response {
     Problem::new(StatusCode::NOT_FOUND, Some("route not found".into())).into_response()
 }
+
+/// Caps the size of a request body: [`BODY_LIMIT`](crate::app::router::BODY_LIMIT)
+/// everywhere, except where a document is uploaded. A declared length over the
+/// cap is refused before anything is read; an undeclared one is cut off at it.
+pub async fn limit_body(req: Request, next: Next) -> Response {
+    use crate::domain::knowledge::DOCUMENT_MAX_BYTES;
+    use axum::http::Method;
+
+    let path = req.uri().path();
+    let upload = req.method() == Method::POST
+        && path.starts_with("/api/v1/workspaces/")
+        && path.ends_with("/documents");
+    let limit = if upload {
+        DOCUMENT_MAX_BYTES + crate::http::UPLOAD_SLACK
+    } else {
+        crate::app::router::BODY_LIMIT
+    };
+    let declared = req
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<usize>().ok());
+    if declared.is_some_and(|length| length > limit) {
+        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    }
+    let req = req.map(|body| axum::body::Body::new(http_body_util::Limited::new(body, limit)));
+    next.run(req).await
+}

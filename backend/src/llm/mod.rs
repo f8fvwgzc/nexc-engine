@@ -14,6 +14,7 @@ pub mod anthropic;
 pub mod catalog;
 pub mod claude_code;
 pub mod demo;
+pub mod embeddings;
 pub mod openai_compat;
 pub mod pricing;
 pub mod retry;

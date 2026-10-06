@@ -48,6 +48,13 @@ pub struct Settings {
     pub llm_base_url: Option<String>,
     pub llm_fallbacks: bool,
     pub anthropic_api_key: Option<Secret<String>>,
+    /// OpenAI-compatible embeddings endpoint for the knowledge base (e.g.
+    /// `https://api.openai.com/v1`); unset uses the built-in word-hashing embedding.
+    pub embed_base_url: Option<String>,
+    pub embed_model: Option<String>,
+    pub embed_api_key: Option<Secret<String>>,
+    /// Asks the endpoint for vectors of this size, when the model can shorten them.
+    pub embed_dims: Option<u32>,
     /// Claude Code CLI binary used by the `claude_code` provider.
     pub claude_bin: String,
     pub runtime_url: String,
@@ -125,6 +132,10 @@ impl Settings {
             llm_base_url: r.optional("NEXC_LLM_BASE_URL"),
             llm_fallbacks: r.parse("NEXC_LLM_FALLBACKS", true),
             anthropic_api_key: r.optional("ANTHROPIC_API_KEY").map(Secret::new),
+            embed_base_url: r.optional("NEXC_EMBED_BASE_URL"),
+            embed_model: r.optional("NEXC_EMBED_MODEL"),
+            embed_api_key: r.optional("NEXC_EMBED_API_KEY").map(Secret::new),
+            embed_dims: r.optional("NEXC_EMBED_DIMS").and_then(|d| d.parse().ok()),
             claude_bin: r.string("NEXC_CLAUDE_BIN", "claude"),
             runtime_url: r.string("NEXC_RUNTIME_URL", "http://localhost:8090"),
             runtime_token: Secret::new(r.runtime_token(prod)),
@@ -152,6 +163,11 @@ impl Settings {
     /// True in production.
     pub fn is_production(&self) -> bool {
         self.env == Environment::Production
+    }
+
+    /// Where uploaded documents are kept, one file per document id.
+    pub fn documents_dir(&self) -> PathBuf {
+        self.data_dir.join("documents")
     }
 
     /// Directory holding run artifacts.
