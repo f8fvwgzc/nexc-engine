@@ -8,7 +8,10 @@ cd "$ROOT"
 
 CONTAINER="${NEXC_DB_CONTAINER:-nexc-postgres}"
 VOLUME="${NEXC_DB_VOLUME:-nexc-pgdata-dev}"
-IMAGE="postgres:17-alpine"
+# NEXC_DB_IMAGE=pgvector/pgvector:pg17 gives memory search an HNSW index. Use it for a NEW
+# volume only: the stock image is Alpine (musl) and pgvector's is Debian (glibc), and text
+# indexes built under one are not valid under the other.
+IMAGE="${NEXC_DB_IMAGE:-postgres:17-alpine}"
 
 if [[ ! -f .env ]]; then
   echo "error: .env not found - run \`make init\` first" >&2

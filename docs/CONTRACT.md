@@ -43,6 +43,7 @@ In Docker/K8s the frontend is served by unprivileged nginx on 8080 which proxies
 | `NEXC_CLAUDE_BIN` / `RUNTIME_CLAUDE_BIN` | `claude` | Claude Code CLI for the `claude_code` provider (backend / runtime) |
 | `NEXC_RUNTIME_URL` | `http://localhost:8090` | backend → runtime |
 | `NEXC_RUNTIME_TOKEN` | — (required, ≥32 chars) | backend + runtime shared bearer secret |
+| `NEXC_DB_IMAGE` | `postgres:17-alpine` | `scripts/db.sh`: image of the dev database. `pgvector/pgvector:pg17` enables HNSW memory search; only for a new volume |
 | `NEXC_SYMPHONY_ENABLED` | `false` | backend |
 | `NEXC_SYMPHONY_URL` | `http://localhost:4000` | backend |
 | `NEXC_SYMPHONY_WORKFLOW` | `./data/symphony/WORKFLOW.md` | backend writes the managed memory-tracker workflow here |

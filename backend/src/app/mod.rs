@@ -14,7 +14,7 @@ pub use state::{AppState, http_client};
 
 use crate::config::Settings;
 use crate::domain::user::{self, Role};
-use crate::{orchestrator, repo, security};
+use crate::{memory, orchestrator, repo, security};
 
 /// Connects to the database and applies migrations.
 pub async fn connect_db(settings: &Settings) -> anyhow::Result<sqlx::PgPool> {
@@ -85,6 +85,13 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
     let db = connect_db(&settings).await?;
     let addr = SocketAddr::new(settings.host, settings.port);
     let state = AppState::new(settings, db)?;
+    if memory::vectors::ensure(&state.db).await? {
+        let filled = memory::vectors::backfill(&state.db).await?;
+        state.memories.set_vector_search(true);
+        tracing::info!(filled, "memory vector search is on (pgvector, HNSW)");
+    } else {
+        tracing::info!("memory vector search is off: the database has no pgvector extension");
+    }
     bootstrap_admin(&state).await?;
     seed_missing_workspaces(&state).await?;
     orchestrator::seed_missing_orgs(&state).await?;

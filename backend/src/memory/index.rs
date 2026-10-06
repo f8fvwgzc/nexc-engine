@@ -9,6 +9,7 @@
 //! instance are picked up without a coordination protocol.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
@@ -27,10 +28,26 @@ struct Entry {
     memories: Arc<[StoredMemory]>,
 }
 
+/// A workspace with at least this many memories is searched through the
+/// database's HNSW index (when it has one) instead of being scanned here.
+pub const ANN_THRESHOLD: usize = 5_000;
+
 /// Decoded memories per workspace.
-#[derive(Default)]
 pub struct MemoryIndex {
     workspaces: DashMap<Uuid, Entry>,
+    /// Whether the database offers vector search (see `memory::vectors`).
+    vector_search: AtomicBool,
+    ann_threshold: AtomicUsize,
+}
+
+impl Default for MemoryIndex {
+    fn default() -> Self {
+        MemoryIndex {
+            workspaces: DashMap::new(),
+            vector_search: AtomicBool::new(false),
+            ann_threshold: AtomicUsize::new(ANN_THRESHOLD),
+        }
+    }
 }
 
 impl MemoryIndex {
@@ -59,6 +76,26 @@ impl MemoryIndex {
             },
         );
         Ok(memories)
+    }
+
+    /// Records whether the database offers vector search.
+    pub fn set_vector_search(&self, available: bool) {
+        self.vector_search.store(available, Ordering::Relaxed);
+    }
+
+    /// Whether the database offers vector search.
+    pub fn vector_search(&self) -> bool {
+        self.vector_search.load(Ordering::Relaxed)
+    }
+
+    /// Changes from how many memories on a workspace is searched in the database.
+    pub fn set_ann_threshold(&self, memories: usize) {
+        self.ann_threshold.store(memories, Ordering::Relaxed);
+    }
+
+    /// Whether a workspace holding `memories` memories is searched in the database.
+    pub fn uses_database_search(&self, memories: usize) -> bool {
+        self.vector_search() && memories >= self.ann_threshold.load(Ordering::Relaxed)
     }
 
     /// Forgets what is cached for `workspace`; call after writing its memories.

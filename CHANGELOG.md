@@ -28,6 +28,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   provider at request time (Anthropic and OpenAI-compatible endpoints).
 - Members and Teams pages, and a settings page split into "Your AI account" and "Workspace
   credential".
+- Memory search uses pgvector when the database has it: an `embedding_vec vector(256)` column
+  with an HNSW index is created at startup, and workspaces with 5 000 or more memories are
+  narrowed by nearest neighbours plus full-text matches before ranking. Without the extension
+  nothing changes. `NEXC_DB_IMAGE` selects the dev database image.
 - Issues and projects: every team has a workflow whose states are data (starter: Backlog, Todo,
   In Progress, In Review, Done, Canceled), issues are numbered per team (`ENG-12`) with
   priority, assignee and project, and `POST /issues/{iid}/graph` turns an issue into a graph

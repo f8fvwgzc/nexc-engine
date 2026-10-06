@@ -10,6 +10,7 @@
 #![forbid(unsafe_code)]
 
 pub mod index;
+pub mod vectors;
 
 use std::collections::HashSet;
 
@@ -34,6 +35,9 @@ use index::MemoryIndex;
 
 const MAX_CANDIDATES_PER_NODE: usize = 8;
 const OUTPUT_CHARS_FOR_EXTRACTION: usize = 8_000;
+
+/// Nearest neighbours (and as many full-text matches) fetched before ranking.
+const ANN_CANDIDATES: i64 = 200;
 
 /// How much a memory learned in another graph counts next to the same
 /// memory learned in the graph being worked on.
@@ -170,7 +174,18 @@ pub async fn retrieve(
 ) -> anyhow::Result<Vec<Memory>> {
     let reader = reader(db, user, workspace).await?;
     let all = index.load(db, workspace).await?;
-    let candidates: Vec<&StoredMemory> = all
+    // Small workspaces are scanned exactly, in process. A large one is narrowed by the
+    // database first: nearest neighbours (HNSW) plus full-text matches.
+    let narrowed = if index.uses_database_search(all.len()) {
+        let nearest =
+            vectors::candidates(db, workspace, query, &kernel::embed(query), ANN_CANDIDATES)
+                .await?;
+        Some(nearest)
+    } else {
+        None
+    };
+    let pool: &[StoredMemory] = narrowed.as_deref().unwrap_or(&all);
+    let candidates: Vec<&StoredMemory> = pool
         .iter()
         .filter(|m| reader.may_read(m) && in_view(m, view))
         .collect();
@@ -304,6 +319,9 @@ pub async fn store(
                 let m = &mut existing[i];
                 memories::replace_content(db, m.memory.id, &c.content, &embedding, c.importance)
                     .await?;
+                if index.vector_search() {
+                    vectors::set(db, m.memory.id, &embedding).await?;
+                }
                 m.memory.content.clone_from(&c.content);
                 m.embedding = embedding;
             }
@@ -320,6 +338,9 @@ pub async fn store(
                     importance: c.importance,
                 };
                 let id = memories::insert(db, &new).await?;
+                if index.vector_search() {
+                    vectors::set(db, id, &embedding).await?;
+                }
                 let now = Utc::now();
                 existing.push(StoredMemory {
                     memory: Memory {
