@@ -1,10 +1,11 @@
-import { ChevronLeftIcon } from 'lucide-react';
+import { ArrowUpRightIcon, ChevronLeftIcon } from 'lucide-react';
 import { Suspense } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarGroupLabel,
   SidebarHeader,
@@ -21,6 +22,7 @@ import { useGlobalShortcuts } from '@/features/command/hooks/use-global-shortcut
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 
 import { DemoBanner } from './demo-banner';
+import { API_DOCS_ITEM } from './nav-items';
 import { PageSkeleton } from './page-skeleton';
 import { SETTINGS_GROUPS } from './settings-nav';
 
@@ -81,6 +83,20 @@ export default function SettingsShell() {
             </SidebarGroup>
           ))}
         </SidebarContent>
+        <SidebarFooter>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton asChild className="h-7 text-[13px]">
+                <a href={API_DOCS_ITEM.to} target="_blank" rel="noopener noreferrer">
+                  <API_DOCS_ITEM.icon />
+                  <span>{API_DOCS_ITEM.title}</span>
+                  <ArrowUpRightIcon className="ml-auto opacity-50" aria-hidden />
+                  <span className="sr-only">(opens in a new tab)</span>
+                </a>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarFooter>
       </Sidebar>
       <SidebarInset id="main" className="h-svh min-w-0 overflow-hidden">
         {/* Only a phone needs a bar: it holds the button that opens the settings sidebar. */}

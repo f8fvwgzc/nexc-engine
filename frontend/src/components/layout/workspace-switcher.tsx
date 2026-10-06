@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { CheckIcon, ChevronsUpDownIcon, PlusIcon } from 'lucide-react';
+import { CheckIcon, ChevronsUpDownIcon, PlusIcon, SettingsIcon } from 'lucide-react';
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -21,12 +21,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
-import {
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  useSidebar,
-} from '@/components/ui/sidebar';
+import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar';
 import { createWorkspace } from '@/features/workspaces/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { errorMessage } from '@/lib/api/errors';
@@ -96,7 +91,6 @@ function NewWorkspaceDialog({ open, onClose }: { open: boolean; onClose: () => v
 export function WorkspaceSwitcher() {
   const { current, all } = useCurrentWorkspace();
   const setCurrent = useWorkspaceStore((s) => s.setCurrent);
-  const { isMobile } = useSidebar();
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
 
@@ -122,7 +116,7 @@ export function WorkspaceSwitcher() {
           </DropdownMenuTrigger>
           <DropdownMenuContent
             className="w-(--radix-dropdown-menu-trigger-width) min-w-60 rounded-lg"
-            side={isMobile ? 'bottom' : 'right'}
+            side="bottom"
             align="start"
             sideOffset={4}
           >
@@ -147,6 +141,12 @@ export function WorkspaceSwitcher() {
               </DropdownMenuItem>
             ))}
             <DropdownMenuSeparator />
+            <DropdownMenuItem asChild>
+              <Link to="/app/settings">
+                <SettingsIcon />
+                Settings
+              </Link>
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => setCreating(true)}>
               <PlusIcon />
               New workspace

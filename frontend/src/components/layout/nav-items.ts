@@ -42,13 +42,6 @@ export const BUILD_ITEMS: NavItem[] = [
   { title: 'Agents', to: '/app/agents', icon: BotIcon },
 ];
 
-/** The way into the settings area, which has its own sidebar. */
-export const SETTINGS_ITEM: NavItem = {
-  title: 'Settings',
-  to: '/app/settings',
-  icon: SettingsIcon,
-};
-
 /** Every page, for the command palette. */
 export const NAV_ITEMS: NavItem[] = [
   { title: 'Inbox', to: '/app/inbox', icon: InboxIcon },

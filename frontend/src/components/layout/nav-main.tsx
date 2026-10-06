@@ -1,5 +1,4 @@
 import { useQuery } from '@tanstack/react-query';
-import { ArrowUpRightIcon } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router-dom';
 
 import {
@@ -14,7 +13,7 @@ import { inboxQuery } from '@/features/issues/api';
 import { teamsQuery } from '@/features/workspaces/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 
-import { API_DOCS_ITEM, BUILD_ITEMS, SETTINGS_ITEM, WORK_ITEMS, type NavItem } from './nav-items';
+import { BUILD_ITEMS, WORK_ITEMS, type NavItem } from './nav-items';
 
 /** Compact rows: 28px tall, 13px text. */
 const ROW = 'h-7 text-[13px]';
@@ -111,21 +110,6 @@ export function NavMain() {
       <NavSection items={WORK_ITEMS} badges={{ '/app/inbox': unread }} />
       <NavTeams />
       <NavSection label="Build" items={BUILD_ITEMS} />
-      <NavSection label="Workspace" items={[SETTINGS_ITEM]} />
-      <SidebarGroup className="py-1">
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton asChild tooltip={API_DOCS_ITEM.title} className={ROW}>
-              <a href={API_DOCS_ITEM.to} target="_blank" rel="noopener noreferrer">
-                <API_DOCS_ITEM.icon />
-                <span>{API_DOCS_ITEM.title}</span>
-                <ArrowUpRightIcon className="ml-auto opacity-50" aria-hidden />
-                <span className="sr-only">(opens in a new tab)</span>
-              </a>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarGroup>
     </>
   );
 }
