@@ -9,6 +9,7 @@ use serde_json::json;
 
 use super::super::artifacts::MAX_ARTIFACT_BYTES;
 use super::{ExecContext, ExecError, ExecOutput, NodeExecutor};
+use crate::domain::prompt::UpstreamOutput;
 use crate::realtime::events::LogLevel;
 
 /// Longest NDJSON line accepted (a base64 artifact of 20 MiB plus envelope).
@@ -73,6 +74,25 @@ enum RuntimeLine {
     Unknown,
 }
 
+/// What the agent is given to read. Document passages travel apart from
+/// memories: each is headed by its citation and the runtime gives them their
+/// own section, so they do not compete with memories for room.
+fn context(
+    goal: &str,
+    upstream: &[UpstreamOutput],
+    memories: &[String],
+    documents: &[String],
+) -> serde_json::Value {
+    json!({
+        "goal": goal,
+        "upstream": upstream.iter().map(|u| json!({
+            "node_id": u.node_id, "title": u.title, "output": u.output,
+        })).collect::<Vec<_>>(),
+        "memories": memories,
+        "documents": documents,
+    })
+}
+
 fn request_body(ctx: &ExecContext) -> serde_json::Value {
     let target = ctx.agent_target();
     let agent = ctx.agent.as_ref();
@@ -94,17 +114,7 @@ fn request_body(ctx: &ExecContext) -> serde_json::Value {
             "kind_description": ctx.node_type.as_ref().map_or("", |t| t.description.as_str()),
             "produces_artifact": ctx.node_type.as_ref().is_some_and(|t| t.produces_artifact),
         },
-        "context": {
-            "goal": ctx.goal,
-            "upstream": ctx.upstream.iter().map(|u| json!({
-                "node_id": u.node_id, "title": u.title, "output": u.output,
-            })).collect::<Vec<_>>(),
-            // The runtime lists these under what the agent already knows; a document
-            // passage keeps its citation so the agent can name its source.
-            "memories": ctx.memories.iter().cloned().chain(
-                ctx.documents.iter().map(|d| format!("From the workspace's documents {d}")),
-            ).collect::<Vec<_>>(),
-        },
+        "context": context(&ctx.goal, &ctx.upstream, &ctx.memories, &ctx.documents),
         "llm": {
             "provider": target.provider,
             "api_key": target.api_key.as_ref().map(|k| k.expose().as_str()),
@@ -276,5 +286,15 @@ mod tests {
         ));
         assert!(matches!(parsed[7], RuntimeLine::Unknown));
         assert_eq!(parse_level("warning"), LogLevel::Warn);
+    }
+
+    #[test]
+    fn document_passages_travel_apart_from_memories() {
+        let memories = ["The team writes in British English.".to_owned()];
+        let documents = ["[customs.pdf, p. 17]\nGoods under 150 EUR are exempt.".to_owned()];
+        let sent = context("Ship the handbook", &[], &memories, &documents);
+        assert_eq!(sent["memories"], json!(memories));
+        assert_eq!(sent["documents"], json!(documents));
+        assert_eq!(sent["goal"], "Ship the handbook");
     }
 }

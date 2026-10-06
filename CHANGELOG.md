@@ -158,6 +158,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `PATCH /admin/users/{uid}` takes `suspended` and `reason` next to `role`, all optional.
 - A workspace transfer copies every referenced account as an ordinary, active user: nobody
   administers, or is suspended on, another installation because they were here.
+- Nodes run by the agent runtime get the workspace's document passages in a section of their
+  own (`context.documents`, rendered as `<document source="…">`), with their own limits and a
+  citation rule, instead of mixed into the memories where they competed for the same twenty
+  places.
 - `kind` on nodes and edges is a key of the graph's ontology; edges gain `blocking`, which replaces
   the special meaning of `depends_on` in scheduling, cycle checks and analysis.
 - Node type attributes are part of the result-cache hash, so cached node results from earlier

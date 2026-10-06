@@ -648,7 +648,8 @@ Auth: `Authorization: Bearer $NEXC_RUNTIME_TOKEN` (constant-time compare). Bind 
   "context": {
     "goal": "…",
     "upstream": [{ "node_id": "…", "title": "…", "output": "…" }],
-    "memories": ["…"]
+    "memories": ["…"],
+    "documents": ["[report.pdf, p. 17]\n…"]
   },
   "llm": {
     "provider": "anthropic",

@@ -151,6 +151,7 @@ async def _run(
         goal=request.context.goal,
         upstream=[Upstream(u.title or u.node_id, u.output) for u in request.context.upstream],
         memories=request.context.memories,
+        documents=request.context.documents,
     )
     output = await root.run(prompt)
     _ensure_document(request, scope.workspace, output, events)

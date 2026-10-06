@@ -37,6 +37,8 @@ class ContextIn(_Model):
     goal: str = Field(default="", max_length=16 * 1024)
     upstream: list[UpstreamIn] = Field(default_factory=list, max_length=100)
     memories: list[str] = Field(default_factory=list, max_length=100)
+    # Passages of the workspace's documents, each headed by its citation in brackets.
+    documents: list[str] = Field(default_factory=list, max_length=100)
 
 
 class LlmIn(_Model):
