@@ -120,6 +120,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   as a digest of bounded size, the call obeys the workspace's guardrails and is booked as
   `summary` usage, and summaries travel with a workspace transfer
   (`GET`/`POST /workspaces/{wid}/timeline/summary`). The demo provider answers with the counts.
+- Search from the command palette (⌘K): a few typed characters find issues (by title or
+  identifier), projects, graphs, documents, teams and people in the open workspace, grouped by
+  kind, and picking one opens it. One request, and only what the caller may see: each kind goes
+  through the same rule as its own list (`GET /workspaces/{wid}/search`).
 - Workspace map, one thing at a time: pick a member, team, project, issue, graph, document or
   agent and see exactly what it is tied to (a member's teams, issues and graphs; an issue's
   team, project, people, sub-issues, graph, labels and cycle), then step on to any of those.

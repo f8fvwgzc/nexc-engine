@@ -21,6 +21,7 @@ pub mod plan;
 pub mod platform;
 pub mod prompt;
 pub mod run;
+pub mod search;
 pub mod settings;
 pub mod status;
 pub mod template;

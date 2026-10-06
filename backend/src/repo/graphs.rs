@@ -131,6 +131,30 @@ pub async fn list(
     .await
 }
 
+/// Graphs of a workspace that `user_id` may work on and whose name contains
+/// `q`, most recently updated first, as `(id, name, goal)`.
+pub async fn search(
+    db: impl PgExecutor<'_>,
+    user_id: Uuid,
+    workspace_id: Uuid,
+    q: &str,
+    limit: i64,
+) -> Result<Vec<(Uuid, String, String)>, sqlx::Error> {
+    sqlx::query_as(concat!(
+        "SELECT g.id, g.name, left(COALESCE(g.goal, ''), 120)
+         FROM graphs g
+         WHERE g.workspace_id = $2 AND g.name ILIKE '%' || $3 || '%' AND ",
+        graph_access!("g", "$1"),
+        " ORDER BY g.updated_at DESC, g.id LIMIT $4"
+    ))
+    .bind(user_id)
+    .bind(workspace_id)
+    .bind(q)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
 /// Ids of the graphs of a workspace that `user_id` may work on.
 pub async fn accessible_ids(
     db: impl PgExecutor<'_>,

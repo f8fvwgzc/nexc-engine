@@ -19,6 +19,7 @@ pub mod plans;
 pub mod platform;
 pub mod realtime;
 pub mod runs;
+pub mod search;
 pub mod settings;
 pub mod teams;
 pub mod templates;

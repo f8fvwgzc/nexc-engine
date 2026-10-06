@@ -105,6 +105,7 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(workspaces::guardrails, workspaces::put_guardrails))
         .routes(routes!(workspaces::assistant))
         .routes(routes!(workspaces::audit_log))
+        .routes(routes!(search::search))
         .routes(routes!(platform::workspaces))
         .routes(routes!(platform::workspace))
         .routes(routes!(platform::delete_workspace))
@@ -262,7 +263,7 @@ mod tests {
     fn spec_enum_values_match_the_wire_format() {
         use crate::domain::{
             agent, audit, cycle, graph, insight, issue, knowledge, memory, plan, platform, run,
-            settings, usage, user, workspace,
+            search, settings, usage, user, workspace,
         };
         use serde_json::Value;
 
@@ -310,10 +311,11 @@ mod tests {
                 "AgentRuntime" => check::<agent::AgentRuntime>(values),
                 "PlatformAction" => check::<platform::PlatformAction>(values),
                 "MapKind" => check::<insight::MapKind>(values),
+                "SearchKind" => check::<search::SearchKind>(values),
                 _ => continue,
             }
             checked += 1;
         }
-        assert_eq!(checked, 27, "every string enum schema is covered");
+        assert_eq!(checked, 28, "every string enum schema is covered");
     }
 }

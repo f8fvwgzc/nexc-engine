@@ -1483,7 +1483,8 @@ export interface paths {
         head?: never;
         /**
          * Changes a member's role. Only owners change owners, and a workspace
-         *     always keeps at least one owner.
+         *     always keeps at least one owner who can sign in: a suspended owner, or
+         *     one who administers the platform, does not count.
          */
         patch: operations["update_member"];
         trace?: never;
@@ -1522,6 +1523,28 @@ export interface paths {
         head?: never;
         /** Updates a project (members and above). */
         patch: operations["update_project"];
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Searches the workspace for what the caller may see: issues (by title or
+         *     identifier), projects, graphs, documents, teams and members (by name or
+         *     e-mail), in that order, with up to `limit` hits of each kind. Fewer than
+         *     two characters match nothing.
+         */
+        get: operations["search"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/workspaces/{wid}/teams": {
@@ -3203,6 +3226,21 @@ export interface components {
          * @enum {string}
          */
         RunStatus: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+        /** @description One thing that matched a search. */
+        SearchHit: {
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["SearchKind"];
+            /** @description What tells it apart: an issue's state, a team's key, an e-mail. */
+            subtitle: string;
+            /** @description An issue's identifier and title, a project's or graph's name, a person's name. */
+            title: string;
+        };
+        /**
+         * @description What a search hit is.
+         * @enum {string}
+         */
+        SearchKind: "issue" | "project" | "graph" | "document" | "team" | "member";
         /** @description `PUT /workspaces/{wid}/teams/{tid}/members/{uid}` body. */
         SetTeamMember: {
             role?: components["schemas"]["TeamRole"] | null;
@@ -8047,6 +8085,44 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    search: {
+        parameters: {
+            query: {
+                /**
+                 * @description What to look for: part of a title, a name, an e-mail, or an issue's
+                 *     identifier (`ENG-12`). At least 2 characters.
+                 */
+                q: string;
+                /** @description Most hits of each kind, 1-10 (default 5). */
+                limit?: number | null;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchHit"][];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
