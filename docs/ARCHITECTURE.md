@@ -211,6 +211,25 @@ too, so the record of what happened stays and stops identifying the person. A na
 free text (an issue's assignee history, a comment, a day summary) is not found and stays. The same routine serves a person deleting their own account and a platform
 administrator erasing one on request.
 
+## Worst cases that are tested
+
+`backend/tests/worst_case.rs` reads the routes from the OpenAPI document, so a route added later
+is covered without being listed anywhere:
+
+| Worst case | What the test does |
+|---|---|
+| Someone without a session | Every protected route is called with no token, a garbage token and a token signed with another key: 401 each time. |
+| A member of another workspace | Every `GET` that names a workspace, issue, graph, project or team is called with a victim's real ids: refused, or answered with nothing. |
+| Hostile input | Every route gets bodies of the wrong shape and type, injection strings, deep nesting, long strings and hostile query values (about 1,800 requests, the console's routes as a platform administrator): never a 5xx. |
+| Races | Forty issues filed at once get forty consecutive numbers; two owners stepping down at once leave one; a refresh token or a reset link used several times at once works once. |
+| A large workspace | With 20,000 issues and as many comments every list stays capped and answers within a budget; a 2 MiB body is refused; one account hammering the API gets 429 with `Retry-After` while others are served. |
+| A dependency that is down | Without the agent runtime, uploads are accepted, plain text is still read, and the rest of the API answers. |
+| Several servers | A session ended on one server stops working on another after its next look at the database. |
+| A reverse proxy | The visitor's address is taken from the proxy's header only when `NEXC_TRUST_PROXY` is set. |
+
+Not covered by a test: the database itself being down (`/readyz` reports it), disk full, and load
+from many machines at once.
+
 ## Security boundaries
 
 | Boundary | Control |

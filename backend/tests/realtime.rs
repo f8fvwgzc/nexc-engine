@@ -223,3 +223,55 @@ async fn websocket_collaboration(pool: PgPool) {
     assert!(suggestions["items"].is_array());
     ws.close(None).await.unwrap();
 }
+
+/// A collaboration socket that is open when its account's sessions are ended
+/// closes by itself: within the five seconds between two checks.
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_socket_closes_when_its_sessions_are_ended(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let (token, _) = app.register("ws-ended@example.com").await;
+    let gid = app.graph(&token, "").await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let router = app.router.clone();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let t = ticket(&app, &token, &gid).await;
+    let mut req = format!("ws://{addr}/api/v1/graphs/{gid}/ws?ticket={t}")
+        .into_client_request()
+        .unwrap();
+    req.headers_mut()
+        .insert("origin", "http://localhost:5173".parse().unwrap());
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    ws.send(Message::Text(json!({"type": "ping"}).to_string().into()))
+        .await
+        .unwrap();
+    assert_eq!(
+        next_json(&mut ws, "pong").await["type"],
+        "pong",
+        "the socket is open"
+    );
+
+    let ended = app
+        .request(
+            Method::POST,
+            "/api/v1/auth/sessions/end",
+            Some(&token),
+            None,
+        )
+        .await;
+    assert_eq!(ended.status, StatusCode::NO_CONTENT);
+    // Nothing is sent; the server closes it at its next check.
+    let closed = tokio::time::timeout(Duration::from_secs(12), async {
+        loop {
+            match ws.next().await {
+                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => break,
+                Some(Ok(_)) => {}
+            }
+        }
+    })
+    .await;
+    assert!(
+        closed.is_ok(),
+        "the socket was still open twelve seconds later"
+    );
+}

@@ -136,8 +136,14 @@ pub async fn upload(
     }
     // The file is on disk before the row that makes a worker look for it.
     let id = Uuid::now_v7();
-    let path = state.settings.documents_dir().join(id.to_string());
-    tokio::fs::write(&path, &body)
+    // Made at start, and again here: a folder that went missing since must not stop uploads.
+    let dir = state.settings.documents_dir();
+    let path = dir.join(id.to_string());
+    let stored = async {
+        tokio::fs::create_dir_all(&dir).await?;
+        tokio::fs::write(&path, &body).await
+    };
+    stored
         .await
         .map_err(|err| anyhow::anyhow!("cannot store the upload: {err}"))?;
     let size = i64::try_from(body.len()).unwrap_or(i64::MAX);

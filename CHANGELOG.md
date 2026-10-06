@@ -161,6 +161,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Day summaries are told with what surrounded the day, not only its events: the issues that
   were due that day and the state they are in, cycles that started or ended, and what was
   spent on AI. All of it comes from the workspace; nothing is looked up outside it.
+- A worst-case test suite that walks every documented route: no access without a valid token,
+  nothing of another workspace for an outsider, no server failure on hostile input, one winner
+  in races, capped and fast answers on a 20,000-issue workspace, and the API staying up when
+  the agent runtime is down (`backend/tests/worst_case.rs`, described in
+  `docs/ARCHITECTURE.md`).
 - Search from the command palette (⌘K): a few typed characters find issues (by title or
   identifier), projects, graphs, documents, teams and people in the open workspace, grouped by
   kind, and picking one opens it. One request, and only what the caller may see: each kind goes
@@ -206,6 +211,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Issues page starts a new issue.
 
 ### Fixed
+
+- Uploading a document failed with a 500 when the documents folder had gone missing since the
+  server started; the upload now creates it again.
 
 - The API description referenced a schema it did not define (a path parameter's type), which
   broke generating the client types; a test now checks that every reference resolves.
