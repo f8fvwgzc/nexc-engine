@@ -52,6 +52,7 @@ pub mod settings;
 pub mod teams;
 pub mod tickets;
 pub mod tokens;
+pub mod usage;
 pub mod users;
 pub mod workspaces;
 

@@ -12,6 +12,7 @@ pub mod json_stream;
 pub mod planner;
 pub mod scheduler;
 pub mod templates;
+pub mod usage;
 
 use dashmap::{DashMap, DashSet};
 use tokio::sync::Notify;

@@ -92,6 +92,7 @@ fn v1_routes() -> OpenApiRouter<AppState> {
             workspaces::remove_member
         ))
         .routes(routes!(workspaces::invites))
+        .routes(routes!(workspaces::usage))
         .routes(routes!(workspaces::delete_invite))
         .routes(routes!(teams::list, teams::create))
         .routes(routes!(teams::get, teams::update, teams::delete))
@@ -168,7 +169,7 @@ mod tests {
     /// accepts and emits; generated client types depend on it.
     #[test]
     fn spec_enum_values_match_the_wire_format() {
-        use crate::domain::{agent, graph, memory, plan, run, settings, user, workspace};
+        use crate::domain::{agent, graph, memory, plan, run, settings, usage, user, workspace};
         use serde_json::Value;
 
         fn check<T: serde::de::DeserializeOwned + serde::Serialize>(values: &[Value]) {
@@ -201,12 +202,14 @@ mod tests {
                 "LlmProviderKind" => check::<settings::LlmProviderKind>(values),
                 "KeySource" => check::<settings::KeySource>(values),
                 "ConfigScope" => check::<settings::ConfigScope>(values),
+                "UsagePurpose" => check::<usage::UsagePurpose>(values),
+                "UsageScope" => check::<usage::UsageScope>(values),
                 "AgentStatus" => check::<agent::AgentStatus>(values),
                 "AgentRuntime" => check::<agent::AgentRuntime>(values),
                 _ => continue,
             }
             checked += 1;
         }
-        assert_eq!(checked, 16, "every string enum schema is covered");
+        assert_eq!(checked, 17, "every string enum schema is covered");
     }
 }

@@ -28,7 +28,7 @@ use crate::domain::prompt::OUTPUT_MARKER;
 use crate::dsa::bm25::Bm25Index;
 use crate::kernel;
 use crate::llm::service::LlmService;
-use crate::llm::{JsonSchema, LlmRequest, LlmTarget, Message, collect};
+use crate::llm::{JsonSchema, LlmRequest, LlmTarget, Message, Usage, collect};
 use crate::repo::memories::{self, NewMemory, StoredMemory};
 use index::MemoryIndex;
 
@@ -228,14 +228,15 @@ const EXTRACTION_SYSTEM: &str = "You maintain the long-term memory of a project 
     tasks of this project: facts, decisions, user preferences and lessons learned. Skip anything \
     generic or obvious. importance is between 0 and 1. Return an empty list if nothing qualifies.";
 
-/// Asks the LLM for memory candidates from a node's output.
+/// Asks the LLM for memory candidates from a node's output. Also returns
+/// what the call spent, including when its answer could not be used.
 pub async fn extract(
     llm: &LlmService,
     target: LlmTarget,
     goal: &str,
     node: &GraphNode,
     output: &str,
-) -> anyhow::Result<Vec<Candidate>> {
+) -> anyhow::Result<(Vec<Candidate>, Usage)> {
     let excerpt: String = output.chars().take(OUTPUT_CHARS_FOR_EXTRACTION).collect();
     let prompt = format!(
         "Project goal: {goal}\nNode: {}\n\n{OUTPUT_MARKER}\n{excerpt}",
@@ -254,8 +255,11 @@ pub async fn extract(
         cacheable: true,
     };
     let done = collect(llm.stream(request), |_| {}).await?;
-    let parsed: Extraction = serde_json::from_str(done.text.trim())?;
-    Ok(parsed
+    // An unusable answer still cost tokens; report them with no candidates.
+    let Ok(parsed) = serde_json::from_str::<Extraction>(done.text.trim()) else {
+        return Ok((Vec::new(), done.usage));
+    };
+    let candidates = parsed
         .memories
         .into_iter()
         .filter_map(|mut c| {
@@ -268,7 +272,8 @@ pub async fn extract(
             (!c.content.is_empty()).then_some(c)
         })
         .take(MAX_CANDIDATES_PER_NODE)
-        .collect())
+        .collect();
+    Ok((candidates, done.usage))
 }
 
 /// Consolidates candidates into a graph's memory; returns the decisions taken.

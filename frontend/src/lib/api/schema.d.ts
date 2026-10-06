@@ -879,6 +879,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{wid}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Token usage of a workspace: totals and breakdowns by day, member, model,
+         *     purpose and paying account. Admins see everyone; other members their own.
+         */
+        get: operations["usage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/metrics": {
         parameters: {
             query?: never;
@@ -1700,6 +1720,78 @@ export interface components {
             description?: string | null;
             name?: string | null;
             private?: boolean | null;
+        };
+        /** @description Token usage of a workspace over the last `days` days. */
+        UsageReport: {
+            /** @description Whose account paid: members' own, the workspace's, or the server's. */
+            by_credential: components["schemas"]["UsageSlice_ConfigScope"][];
+            /** @description Oldest first; days without usage are absent. */
+            by_day: components["schemas"]["UsageSlice_String"][];
+            /** @description Highest cost first, then most tokens. */
+            by_member: components["schemas"]["UsageSlice_UsageMember"][];
+            by_model: components["schemas"]["UsageSlice_UsageModel"][];
+            by_purpose: components["schemas"]["UsageSlice_UsagePurpose"][];
+            /** Format: int64 */
+            days: number;
+            /** @description `workspace` for admins; other members get a report of their own usage. */
+            scope: components["schemas"]["UsageScope"];
+            totals: components["schemas"]["UsageTotals"];
+        };
+        /**
+         * @description Whether a report covers the whole workspace or only the caller.
+         * @enum {string}
+         */
+        UsageScope: "workspace" | "own";
+        /** @description Usage of one group (a day, a member, a model, ...). */
+        UsageSlice_ConfigScope: components["schemas"]["UsageTotals"] & {
+            /**
+             * @description Whose LLM configuration is in effect.
+             * @enum {string}
+             */
+            key: "user" | "workspace" | "server";
+        };
+        /** @description Usage of one group (a day, a member, a model, ...). */
+        UsageSlice_String: components["schemas"]["UsageTotals"] & {
+            key: string;
+        };
+        /** @description Usage of one group (a day, a member, a model, ...). */
+        UsageSlice_UsageMember: components["schemas"]["UsageTotals"] & {
+            /** @description A member a slice of usage belongs to. */
+            key: {
+                name: string;
+                /**
+                 * Format: uuid
+                 * @description `null` for a member whose account was deleted.
+                 */
+                user_id: string | null;
+            };
+        };
+        /** @description Usage of one group (a day, a member, a model, ...). */
+        UsageSlice_UsageModel: components["schemas"]["UsageTotals"] & {
+            /** @description A provider and model a slice of usage ran on. */
+            key: {
+                model: string;
+                provider: string;
+            };
+        };
+        /** @description Usage of one group (a day, a member, a model, ...). */
+        UsageSlice_UsagePurpose: components["schemas"]["UsageTotals"] & {
+            /**
+             * @description What an LLM call was for.
+             * @enum {string}
+             */
+            key: "plan" | "node" | "memory";
+        };
+        /** @description Sums over a set of calls. */
+        UsageTotals: {
+            /** Format: int64 */
+            calls: number;
+            /** Format: double */
+            cost_usd: number;
+            /** Format: int64 */
+            tokens_in: number;
+            /** Format: int64 */
+            tokens_out: number;
         };
         /** @description A registered user (never includes credentials). */
         User: {
@@ -4403,6 +4495,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    usage: {
+        parameters: {
+            query?: {
+                /** @description How many days back to report, 1-365 (default 30). */
+                days?: number | null;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageReport"];
                 };
             };
             404: {

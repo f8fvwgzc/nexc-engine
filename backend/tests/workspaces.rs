@@ -4,7 +4,7 @@
 mod common;
 
 use axum::http::{Method, StatusCode};
-use common::TestApp;
+use common::{TestApp, collect_until};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 
@@ -1246,5 +1246,133 @@ async fn agents_and_memory_belong_to_the_workspace(pool: PgPool) {
         contents(owner.clone(), in_ws).await,
         ["The "],
         "the index was refreshed"
+    );
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn usage_is_booked_to_the_member_and_the_paying_account(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let (owner, _) = user(&app, "owner@example.com").await;
+    let (member, member_id) = user(&app, "member@example.com").await;
+    let (outsider, _) = user(&app, "outsider@example.com").await;
+    let wid = personal_workspace(&app, &owner).await;
+    let invite = json!({"email": "member@example.com", "role": "member"});
+    call(
+        &app,
+        Method::POST,
+        &format!("/workspaces/{wid}/members"),
+        &owner,
+        Some(invite),
+    )
+    .await;
+    let usage = format!("/workspaces/{wid}/usage");
+
+    let (status, empty) = call(&app, Method::GET, &usage, &owner, None).await;
+    assert_eq!(status, StatusCode::OK, "{empty}");
+    assert_eq!(
+        (empty["totals"]["calls"].as_i64(), empty["days"].as_i64()),
+        (Some(0), Some(30))
+    );
+    assert_eq!(empty["by_day"], json!([]));
+
+    // The member runs a shared graph; the test server's key pays.
+    let (_, graph) = call(
+        &app,
+        Method::POST,
+        "/graphs",
+        &owner,
+        Some(json!({"name": "Shared", "workspace_id": wid})),
+    )
+    .await;
+    let gid = graph["id"].as_str().unwrap().to_owned();
+    app.node(&member, &gid, json!({"title": "Only step"})).await;
+    let mut events = app.events(&gid);
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &format!("/graphs/{gid}/runs"),
+        &member,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let finished = collect_until(&mut events, "run.finished").await;
+    let run = &finished.last().unwrap().1["run"];
+    assert_eq!(run["status"], "succeeded");
+    let (run_in, run_out) = (
+        run["tokens_in"].as_i64().unwrap(),
+        run["tokens_out"].as_i64().unwrap(),
+    );
+    assert!(run_in > 0 && run_out > 0);
+
+    let (status, report) = call(&app, Method::GET, &format!("{usage}?days=7"), &owner, None).await;
+    assert_eq!(status, StatusCode::OK, "{report}");
+    assert_eq!(
+        (report["scope"].as_str(), report["days"].as_i64()),
+        (Some("workspace"), Some(7))
+    );
+    let slice = |group: &str, key: &dyn Fn(&Value) -> bool| -> Value {
+        report[group]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| key(&s["key"]))
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    let node = slice("by_purpose", &|k| k == "node");
+    assert_eq!(
+        (
+            node["calls"].as_i64(),
+            node["tokens_in"].as_i64(),
+            node["tokens_out"].as_i64()
+        ),
+        (Some(1), Some(run_in), Some(run_out))
+    );
+    assert!(node["cost_usd"].as_f64().unwrap() > 0.0);
+    let by_member = slice("by_member", &|k| k["user_id"] == member_id.as_str());
+    assert_eq!(by_member["key"]["name"], "Test");
+    assert!(
+        by_member["calls"].as_i64().unwrap() >= 1,
+        "booked to who ran it, not who owns the graph"
+    );
+    assert_eq!(report["by_member"].as_array().unwrap().len(), 1);
+    assert!(
+        slice("by_credential", &|k| k == "server")["calls"]
+            .as_i64()
+            .unwrap()
+            >= 1
+    );
+    assert_eq!(report["by_day"].as_array().unwrap().len(), 1);
+    assert!(report["totals"]["tokens_in"].as_i64().unwrap() >= run_in);
+    assert!(!report["by_model"].as_array().unwrap().is_empty());
+
+    // Members see their own usage only; the owner spent nothing; strangers get nothing.
+    let (_, own) = call(&app, Method::GET, &usage, &member, None).await;
+    assert_eq!(own["scope"], "own");
+    assert!(own["totals"]["calls"].as_i64().unwrap() >= 1);
+    let invite = json!({"email": "outsider@example.com", "role": "member"});
+    call(
+        &app,
+        Method::POST,
+        &format!("/workspaces/{wid}/members"),
+        &owner,
+        Some(invite),
+    )
+    .await;
+    let (_, idle) = call(&app, Method::GET, &usage, &outsider, None).await;
+    assert_eq!(
+        (idle["scope"].as_str(), idle["totals"]["calls"].as_i64()),
+        (Some("own"), Some(0))
+    );
+    assert_eq!(
+        idle["by_member"],
+        json!([]),
+        "another member's usage is not shown"
+    );
+    let (stranger, _) = user(&app, "stranger@example.com").await;
+    assert_eq!(
+        call(&app, Method::GET, &usage, &stranger, None).await.0,
+        StatusCode::NOT_FOUND
     );
 }

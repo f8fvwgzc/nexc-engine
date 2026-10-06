@@ -28,6 +28,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   provider at request time (Anthropic and OpenAI-compatible endpoints).
 - Members and Teams pages, and a settings page split into "Your AI account" and "Workspace
   credential".
+- Usage ledger: every LLM call that spends tokens (planning, node execution, memory extraction)
+  is recorded with the member who caused it, the model and whose account paid.
+  `GET /workspaces/{wid}/usage?days=` reports totals and breakdowns by day, member, model,
+  purpose and paying account (admins see everyone, members their own), and there is a Usage page.
 - Agents belong to a workspace: every workspace gets the default organisation, members share
   and edit its agents, and nodes are assigned to agents of the graph's workspace.
 - Memory belongs to a workspace: what a graph learned is readable by everyone who can open that

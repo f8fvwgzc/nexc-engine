@@ -4,20 +4,22 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::AppError;
+use crate::domain::usage::{UsageReport, UsageScope};
 use crate::domain::user::{check_email, normalize_email};
 use crate::domain::validation::{FieldErrors, Validate, check_text};
 use crate::domain::workspace::{
     NAME_MAX, SLUG_MAX, Workspace, WorkspaceAction, WorkspaceInvite, WorkspaceMember,
     WorkspaceRole, can, can_assign_role, can_remove_member, slugify,
 };
-use crate::http::extract::{AuthUser, Path, ValidatedJson};
+use crate::http::extract::{AuthUser, Path, Query, ValidatedJson};
 use crate::http::problem::Problem;
 use crate::orchestrator;
+use crate::repo::usage::Window;
 use crate::repo::{self, OrNotFound};
 
 /// Loads a workspace the caller belongs to. A workspace they are not a
@@ -331,6 +333,57 @@ pub async fn remove_member(
     repo::workspaces::remove_member(&mut tx, wid, uid).await?;
     tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Query of `GET /workspaces/{wid}/usage`.
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+pub struct UsageQuery {
+    /// How many days back to report, 1-365 (default 30).
+    pub days: Option<i64>,
+}
+
+/// Token usage of a workspace: totals and breakdowns by day, member, model,
+/// purpose and paying account. Admins see everyone; other members their own.
+#[utoipa::path(get, path = "/workspaces/{wid}/usage", tag = "workspaces", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id"), UsageQuery),
+    responses((status = 200, body = UsageReport), (status = 404, body = Problem)))]
+pub async fn usage(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(wid): Path<Uuid>,
+    Query(query): Query<UsageQuery>,
+) -> Result<Json<UsageReport>, AppError> {
+    let workspace = member_of(&state, auth, wid).await?;
+    let everyone = workspace.role.is_admin();
+    let window = Window {
+        workspace_id: wid,
+        days: query.days.unwrap_or(30).clamp(1, 365),
+        only_user: (!everyone).then_some(auth.id),
+    };
+    let db = &state.db;
+    let (totals, by_day, by_member, by_model, by_purpose, by_credential) = tokio::try_join!(
+        repo::usage::total(db, window),
+        repo::usage::by_day(db, window),
+        repo::usage::by_member(db, window),
+        repo::usage::by_model(db, window),
+        repo::usage::by_purpose(db, window),
+        repo::usage::by_credential(db, window),
+    )?;
+    Ok(Json(UsageReport {
+        scope: if everyone {
+            UsageScope::Workspace
+        } else {
+            UsageScope::Own
+        },
+        days: window.days,
+        totals,
+        by_day,
+        by_member,
+        by_model,
+        by_purpose,
+        by_credential,
+    }))
 }
 
 /// Pending invitations (admins and owners).

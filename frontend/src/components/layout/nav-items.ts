@@ -2,6 +2,7 @@ import {
   BookOpenTextIcon,
   BotIcon,
   BrainIcon,
+  ChartNoAxesColumnIcon,
   type LucideIcon,
   NetworkIcon,
   PlayIcon,
@@ -28,6 +29,7 @@ export const NAV_ITEMS: NavItem[] = [
   { title: 'Memory', to: '/app/memory', icon: BrainIcon },
   { title: 'Teams', to: '/app/teams', icon: UsersRoundIcon },
   { title: 'Members', to: '/app/members', icon: UsersIcon },
+  { title: 'Usage', to: '/app/usage', icon: ChartNoAxesColumnIcon },
   { title: 'Settings', to: '/app/settings', icon: SettingsIcon },
 ];
 

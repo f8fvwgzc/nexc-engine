@@ -8,8 +8,9 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::analysis::dependency_graph;
+use super::credentials::Resolved;
 use super::json_stream::ArrayScanner;
-use super::{credentials, deps, editor};
+use super::{credentials, deps, editor, usage};
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::graph::{
@@ -20,8 +21,11 @@ use crate::domain::plan::{
     ContextEdge, ContextNode, PLAN_CONTEXT_MARKER, PLAN_SCHEMA_NAME, Plan, PlanContext,
     PlanProposal, PlanStatus, ProposedEdge, ProposedNode, sanitize_proposal,
 };
+use crate::domain::settings::LlmProviderKind;
+use crate::domain::usage::{UsageEvent, UsagePurpose};
 use crate::dsa::graph::Indexed;
-use crate::llm::{JsonSchema, LlmEvent, LlmRequest, LlmTarget, Message, StopReason};
+use crate::llm::pricing::cost_usd;
+use crate::llm::{JsonSchema, LlmEvent, LlmRequest, Message, StopReason, Usage};
 use crate::memory;
 use crate::realtime::events::{SseEvent, WsMessage};
 use crate::repo::{self, OrNotFound, plans};
@@ -163,7 +167,7 @@ pub async fn start(
         state
             .hub
             .publish(graph_id, SseEvent::PlanStarted { plan_id });
-        match generate(&state, owner, &graph, plan_id, &instructions, llm.target).await {
+        match generate(&state, owner, &graph, plan_id, &instructions, llm).await {
             Ok(proposal) => match plans::complete(&state.db, plan_id, &proposal).await {
                 Ok(plan) => state.hub.publish(graph_id, SseEvent::PlanReady { plan }),
                 Err(err) => {
@@ -283,8 +287,10 @@ async fn generate(
     graph: &Graph,
     plan_id: Uuid,
     instructions: &str,
-    target: LlmTarget,
+    llm: Resolved,
 ) -> Result<PlanProposal, String> {
+    let (target, credential) = (llm.target, llm.scope);
+    let (provider, model) = (target.provider, target.model.clone());
     let context = build_context(state, owner, graph, instructions).await;
     let prompt = format!(
         "Refine the graph described below.{}\nicons: {}\n\n{PLAN_CONTEXT_MARKER}\n{}",
@@ -308,7 +314,28 @@ async fn generate(
         effort: None,
         cacheable: false,
     };
-    let text = stream_nodes(state, graph.id, plan_id, request).await?;
+    let mut spent = Usage::default();
+    let streamed = stream_nodes(state, graph.id, plan_id, request, &mut spent).await;
+    // A plan that failed or was cut off still spent what it spent.
+    let cost = match provider {
+        LlmProviderKind::Demo => 0.0,
+        _ => cost_usd(&model, spent.input_tokens, spent.output_tokens),
+    };
+    let event = UsageEvent {
+        workspace_id: graph.workspace_id,
+        user_id: owner,
+        graph_id: Some(graph.id),
+        run_id: None,
+        purpose: UsagePurpose::Plan,
+        provider,
+        model,
+        credential,
+        tokens_in: spent.input_tokens as i64,
+        tokens_out: spent.output_tokens as i64,
+        cost_usd: cost,
+    };
+    usage::record(state, event).await;
+    let text = streamed?;
     let proposal: PlanProposal = serde_json::from_str(text.trim())
         .map_err(|e| format!("the model returned an invalid plan: {e}"))?;
     let existing: HashSet<Uuid> = graph.nodes.iter().map(|n| n.id).collect();
@@ -331,12 +358,14 @@ async fn generate(
 }
 
 /// Streams the completion, publishing each proposed node as soon as its
-/// JSON object is complete. Returns the full text.
+/// JSON object is complete. Returns the full text; `spent` receives the
+/// usage the provider reported, also when the stream fails afterwards.
 async fn stream_nodes(
     state: &AppState,
     graph_id: Uuid,
     plan_id: Uuid,
     request: LlmRequest,
+    spent: &mut Usage,
 ) -> Result<String, String> {
     use futures::StreamExt;
     let mut stream = state.llm.stream(request);
@@ -354,7 +383,7 @@ async fn stream_nodes(
                     }
                 }
             }
-            LlmEvent::Usage(_) => {}
+            LlmEvent::Usage(usage) => *spent = usage,
             LlmEvent::Done(StopReason::MaxTokens) => {
                 return Err("the plan was cut off (max_tokens)".into());
             }

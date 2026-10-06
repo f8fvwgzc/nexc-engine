@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 use super::analysis::dependency_graph;
 use super::executor::{self, ExecContext, ExecError, ExecOutput};
-use super::{artifacts, credentials, editor};
+use super::{artifacts, credentials, editor, usage};
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::agent::{Agent, AgentStatus};
@@ -27,7 +27,8 @@ use crate::domain::graph::{Executor, GraphEdge, GraphNode, NodeStatus};
 use crate::domain::ontology::Ontology;
 use crate::domain::prompt::UpstreamOutput;
 use crate::domain::run::{Run, RunStatus, final_status};
-use crate::domain::settings::LlmProviderKind;
+use crate::domain::settings::{ConfigScope, LlmProviderKind};
+use crate::domain::usage::{UsageEvent, UsagePurpose};
 use crate::dsa::priority::ReadyQueue;
 use crate::llm::LlmTarget;
 use crate::llm::pricing::cost_usd;
@@ -239,9 +240,37 @@ struct RunData {
     goal: String,
     force: bool,
     target: LlmTarget,
+    /// Whose configuration `target` came from; usage is booked to it.
+    credential: ConfigScope,
     workspace_id: Option<Uuid>,
     ontology: Ontology,
     edges: Vec<GraphEdge>,
+}
+
+impl RunData {
+    /// A ledger entry for a call made on behalf of this run.
+    fn usage_event(
+        &self,
+        purpose: UsagePurpose,
+        model: &str,
+        tokens_in: i64,
+        tokens_out: i64,
+        cost_usd: f64,
+    ) -> UsageEvent {
+        UsageEvent {
+            workspace_id: self.workspace_id,
+            user_id: self.owner,
+            graph_id: Some(self.graph_id),
+            run_id: Some(self.run_id),
+            purpose,
+            provider: self.target.provider,
+            model: model.to_owned(),
+            credential: self.credential,
+            tokens_in,
+            tokens_out,
+            cost_usd,
+        }
+    }
 }
 
 /// The mutable state of one run while it executes.
@@ -280,9 +309,8 @@ impl Execution {
             .into_iter()
             .filter(|n| selected.contains(&n.id))
             .collect();
-        let target = credentials::resolve(state, row.owner_id, graph.workspace_id)
-            .await?
-            .target;
+        let resolved = credentials::resolve(state, row.owner_id, graph.workspace_id).await?;
+        let (target, credential) = (resolved.target, resolved.scope);
         let data = RunData {
             run_id: row.id,
             graph_id: row.graph_id,
@@ -290,6 +318,7 @@ impl Execution {
             goal: graph.goal,
             force: row.force,
             target,
+            credential,
             workspace_id: graph.workspace_id,
             ontology: graph.ontology,
             edges,
@@ -511,6 +540,22 @@ async fn record(
     }
     repo::nodes::set_status(&mut *tx, node_id, outcome.status, outcome.output).await?;
     tx.commit().await?;
+    if !outcome.cached {
+        // Same rule as `ExecContext::agent_target`: an agent's own model applies on Anthropic.
+        let model = agent
+            .filter(|a| {
+                data.target.provider == LlmProviderKind::Anthropic && a.model.starts_with("claude-")
+            })
+            .map_or(data.target.model.as_str(), |a| a.model.as_str());
+        let event = data.usage_event(
+            UsagePurpose::Node,
+            model,
+            outcome.tokens_in,
+            outcome.tokens_out,
+            outcome.cost_usd,
+        );
+        usage::record(state, event).await;
+    }
     state
         .metrics
         .node_runs
@@ -899,9 +944,24 @@ impl NodeTask {
         );
         let (owner, graph_id) = (self.data.owner, self.data.graph_id);
         let workspace = self.data.workspace_id;
+        let data = self.data.clone();
         tokio::spawn(async move {
             let result = async {
-                let candidates = memory::extract(&state.llm, target, &goal, &node, &output).await?;
+                let model = target.model.clone();
+                let (candidates, spent) =
+                    memory::extract(&state.llm, target, &goal, &node, &output).await?;
+                let cost = match data.target.provider {
+                    LlmProviderKind::Demo => 0.0,
+                    _ => cost_usd(&model, spent.input_tokens, spent.output_tokens),
+                };
+                let event = data.usage_event(
+                    UsagePurpose::Memory,
+                    &model,
+                    spent.input_tokens as i64,
+                    spent.output_tokens as i64,
+                    cost,
+                );
+                usage::record(&state, event).await;
                 memory::store(
                     &state.memories,
                     &state.db,

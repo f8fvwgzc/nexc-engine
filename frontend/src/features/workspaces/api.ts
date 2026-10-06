@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { apiRequest, apiSend } from '@/lib/api/client';
 import { qk } from '@/lib/query-keys';
+import { usageReportSchema } from '@/schemas/usage';
 import {
   inviteResultSchema,
   teamMemberSchema,
@@ -61,6 +62,14 @@ export function removeMember(workspaceId: string, userId: string) {
 export function withdrawInvite(workspaceId: string, inviteId: string) {
   return apiSend(`/workspaces/${workspaceId}/invites/${inviteId}`, { method: 'DELETE' });
 }
+
+/** Token usage of a workspace over the last `days` days. */
+export const usageQuery = (workspaceId: string, days: number) =>
+  queryOptions({
+    queryKey: qk.workspaces.usage(workspaceId, days),
+    queryFn: ({ signal }) =>
+      apiRequest(`/workspaces/${workspaceId}/usage?days=${days}`, usageReportSchema, { signal }),
+  });
 
 export const teamsQuery = (workspaceId: string) =>
   queryOptions({
