@@ -150,7 +150,7 @@
   --chart-3: oklch(0.7 0.16 150);
   --chart-4: oklch(0.78 0.15 75);
   --chart-5: oklch(0.63 0.2 25);
-  --radius: 0.625rem;
+  --radius: 0.5rem;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.16 0 0);
   --sidebar-primary: oklch(0.27 0 0);
@@ -225,6 +225,13 @@
   }
   html {
     @apply font-sans antialiased;
+    /* A dense, quiet interface: rem-based sizes shrink together, so body text is 13px. */
+    font-size: 15px;
+    letter-spacing: -0.006em;
+  }
+  /* Thin strokes read as lighter chrome next to 13px text. */
+  .lucide {
+    stroke-width: 1.5;
   }
   body {
     @apply min-h-svh bg-background text-foreground;

@@ -6,6 +6,7 @@ import {
   PlusIcon,
   Trash2Icon,
   UsersRoundIcon,
+  WorkflowIcon,
 } from 'lucide-react';
 import { Suspense, useState } from 'react';
 
@@ -36,6 +37,7 @@ import {
   teamMembersQuery,
   teamsQuery,
 } from '@/features/workspaces/api';
+import { WorkflowDialog } from '@/features/issues/workflow-dialog';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { errorMessage } from '@/lib/api/errors';
 import { qk } from '@/lib/query-keys';
@@ -225,6 +227,7 @@ function TeamCard({ workspace, team }: { workspace: Workspace; team: Team }) {
   const me = useAuthStore((s) => s.user?.id);
   const [open, setOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [workflowOpen, setWorkflowOpen] = useState(false);
   const canManage = team.role === 'owner' || isWorkspaceAdmin(workspace.role);
   const canJoin = team.role === null && !team.private && workspace.role !== 'guest';
   const refresh = () =>
@@ -266,6 +269,10 @@ function TeamCard({ workspace, team }: { workspace: Workspace; team: Team }) {
           <UsersRoundIcon />
           {team.member_count === 1 ? '1 member' : `${team.member_count} members`}
         </Button>
+        <Button variant="ghost" size="sm" onClick={() => setWorkflowOpen(true)}>
+          <WorkflowIcon />
+          Workflow
+        </Button>
         <span className="flex-1" />
         {canJoin && (
           <Button
@@ -302,6 +309,13 @@ function TeamCard({ workspace, team }: { workspace: Workspace; team: Team }) {
         )}
       </div>
       {open && <TeamRoster workspace={workspace} team={team} canManage={canManage} />}
+      <WorkflowDialog
+        workspace={workspace}
+        team={team}
+        editable={canManage}
+        open={workflowOpen}
+        onClose={() => setWorkflowOpen(false)}
+      />
       <ConfirmDialog
         open={deleting}
         onOpenChange={setDeleting}

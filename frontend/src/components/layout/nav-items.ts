@@ -24,6 +24,29 @@ export interface NavItem {
   external?: boolean;
 }
 
+/** What the workspace is working on. */
+export const WORK_ITEMS: NavItem[] = [
+  { title: 'Issues', to: '/app/issues', icon: CircleDotIcon },
+  { title: 'Projects', to: '/app/projects', icon: FolderKanbanIcon },
+];
+
+/** Where work is planned and executed by agents. */
+export const BUILD_ITEMS: NavItem[] = [
+  { title: 'Graphs', to: '/app', icon: NetworkIcon, end: true },
+  { title: 'Runs', to: '/app/runs', icon: PlayIcon },
+  { title: 'Agents', to: '/app/agents', icon: BotIcon },
+  { title: 'Memory', to: '/app/memory', icon: BrainIcon },
+];
+
+/** How the workspace is run. */
+export const ADMIN_ITEMS: NavItem[] = [
+  { title: 'Teams', to: '/app/teams', icon: UsersRoundIcon },
+  { title: 'Members', to: '/app/members', icon: UsersIcon },
+  { title: 'Usage', to: '/app/usage', icon: ChartNoAxesColumnIcon },
+  { title: 'Settings', to: '/app/settings', icon: SettingsIcon },
+];
+
+/** Every page, for the command palette. */
 export const NAV_ITEMS: NavItem[] = [
   { title: 'Issues', to: '/app/issues', icon: CircleDotIcon },
   { title: 'Projects', to: '/app/projects', icon: FolderKanbanIcon },

@@ -66,6 +66,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   records accesses in the background.
 - The agent runtime stops the `claude` CLI when a node is cancelled or times out.
 - Canvas legend with a switch for dependency suggestions (now off by default).
+- Workflow editor: the Teams page opens a team's workflow, where team owners and workspace admins
+  add, rename, recolour, reorder and remove issue states; other members see it read-only.
+- "Your teams" in the sidebar opens a team's issues (`/app/issues?team=<id>`), and `C` on the
+  Issues page starts a new issue.
 
 ### Changed
 
@@ -75,6 +79,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   versions are not reused.
 - The logged-in shell uses an inset sidebar and a neutral colour theme; the window no longer
   scrolls on the graph page.
+- Linear-style interface pass: a denser type scale, thinner icons, a sidebar grouped into Work,
+  Your teams, Build and Workspace, and issue rows and board cards that show state and priority as
+  glyphs instead of labels.
 
 ## [0.1.0] - 2026-10-04
 

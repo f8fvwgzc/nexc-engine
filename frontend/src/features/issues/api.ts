@@ -9,6 +9,7 @@ import {
   projectSchema,
   type IssueInput,
   type ProjectStatus,
+  type StateCategory,
 } from '@/schemas/issue';
 
 export interface IssueFilter {
@@ -43,6 +44,39 @@ export const statesQuery = (workspaceId: string, teamId: string) =>
       }),
     staleTime: 5 * 60_000,
   });
+
+export interface StateInput {
+  name: string;
+  category: StateCategory;
+  color: string;
+  position?: number;
+}
+
+export function createState(workspaceId: string, teamId: string, body: StateInput) {
+  return apiRequest(`/workspaces/${workspaceId}/teams/${teamId}/states`, issueStateSchema, {
+    method: 'POST',
+    body,
+  });
+}
+
+export function updateState(
+  workspaceId: string,
+  teamId: string,
+  stateId: string,
+  body: Partial<StateInput>,
+) {
+  return apiRequest(
+    `/workspaces/${workspaceId}/teams/${teamId}/states/${stateId}`,
+    issueStateSchema,
+    { method: 'PATCH', body },
+  );
+}
+
+export function deleteState(workspaceId: string, teamId: string, stateId: string) {
+  return apiSend(`/workspaces/${workspaceId}/teams/${teamId}/states/${stateId}`, {
+    method: 'DELETE',
+  });
+}
 
 export function createIssue(workspaceId: string, teamId: string, body: IssueInput) {
   return apiRequest(`/workspaces/${workspaceId}/teams/${teamId}/issues`, issueSchema, {

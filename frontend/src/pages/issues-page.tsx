@@ -8,11 +8,12 @@ import {
   Trash2Icon,
   WorkflowIcon,
 } from 'lucide-react';
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { PersonGlyph, PriorityGlyph, StateGlyph } from '@/components/custom-ui/issue-glyphs';
 import { OptionSelect } from '@/components/custom-ui/option-select';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { PageSkeleton } from '@/components/layout/page-skeleton';
@@ -73,16 +74,6 @@ const CATEGORY_ORDER: StateCategory[] = [
 ];
 
 const PRIORITY_OPTIONS = PRIORITY_LABEL.map((label, value) => ({ value: String(value), label }));
-
-function StateDot({ color }: { color: string }) {
-  return (
-    <span
-      aria-hidden
-      className="inline-block size-2.5 shrink-0 rounded-full"
-      style={{ backgroundColor: color }}
-    />
-  );
-}
 
 function useIssueRefresh() {
   const queryClient = useQueryClient();
@@ -268,7 +259,7 @@ function IssueDialog({
                 value: s.id,
                 label: (
                   <span className="flex items-center gap-2">
-                    <StateDot color={s.color} />
+                    <StateGlyph category={s.category} color={s.color} />
                     {s.name}
                   </span>
                 ),
@@ -357,12 +348,13 @@ function IssueRow({ issue, onOpen }: { issue: Issue; onOpen: () => void }) {
       <button
         type="button"
         onClick={onOpen}
-        className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm outline-none hover:bg-muted/50 focus-visible:bg-muted/50"
+        className="flex h-9 w-full items-center gap-2.5 px-3 text-left text-[13px] transition-colors outline-none hover:bg-muted/60 focus-visible:bg-muted/60"
       >
-        <StateDot color={issue.state.color} />
-        <span className="w-20 shrink-0 font-mono text-xs text-muted-foreground">
+        <PriorityGlyph priority={issue.priority} />
+        <span className="w-16 shrink-0 font-mono text-xs text-muted-foreground">
           {issue.identifier}
         </span>
+        <StateGlyph category={issue.state.category} color={issue.state.color} />
         <span className="min-w-0 flex-1 truncate">{issue.title}</span>
         {issue.graph_id && (
           <NetworkIcon
@@ -370,16 +362,32 @@ function IssueRow({ issue, onOpen }: { issue: Issue; onOpen: () => void }) {
             aria-label="Has a graph"
           />
         )}
-        {issue.priority > 0 && (
-          <Badge variant={issue.priority === 1 ? 'destructive' : 'secondary'}>
-            {PRIORITY_LABEL[issue.priority]}
-          </Badge>
-        )}
-        <span className="hidden w-28 shrink-0 truncate text-right text-xs text-muted-foreground sm:block">
-          {issue.assignee?.name ?? 'Unassigned'}
+        <span className="hidden shrink-0 text-xs text-muted-foreground tabular-nums sm:block">
+          {formatRelative(issue.updated_at)}
         </span>
+        <PersonGlyph name={issue.assignee?.name} />
       </button>
     </li>
+  );
+}
+
+/** Rows shaped like the list, shown while it loads. */
+function IssueListSkeleton() {
+  return (
+    <div className="overflow-hidden rounded-lg border" aria-busy aria-label="Loading issues">
+      <Skeleton className="h-8 w-full rounded-none" />
+      <ul className="divide-y">
+        {Array.from({ length: 8 }, (_, i) => (
+          <li key={i} className="flex h-9 items-center gap-2.5 px-3">
+            <Skeleton className="size-3.5 rounded" />
+            <Skeleton className="h-3 w-12" />
+            <Skeleton className="size-3.5 rounded-full" />
+            <Skeleton className="h-3 flex-1" style={{ maxWidth: `${40 + ((i * 13) % 45)}%` }} />
+            <Skeleton className="ml-auto size-5 rounded-full" />
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -435,8 +443,8 @@ function IssueBoard({
               if (issue && issue.state.id !== state.id) move.mutate({ id, state_id: state.id });
             }}
           >
-            <h2 className="flex items-center gap-2 px-3 py-2 text-sm font-medium">
-              <StateDot color={state.color} />
+            <h2 className="flex items-center gap-2 px-3 py-2 text-[13px] font-medium">
+              <StateGlyph category={state.category} color={state.color} />
               {state.name}
               <span className="text-xs font-normal text-muted-foreground">{cards.length}</span>
             </h2>
@@ -458,14 +466,10 @@ function IssueBoard({
                       {issue.graph_id && (
                         <NetworkIcon className="size-3" aria-label="Has a graph" />
                       )}
-                      {issue.priority > 0 && (
-                        <span className="ml-auto font-sans">{PRIORITY_LABEL[issue.priority]}</span>
-                      )}
+                      <PersonGlyph name={issue.assignee?.name} className="ml-auto font-sans" />
                     </span>
-                    <span className="line-clamp-2">{issue.title}</span>
-                    <span className="block truncate text-xs text-muted-foreground">
-                      {issue.assignee?.name ?? 'Unassigned'}
-                    </span>
+                    <span className="line-clamp-2 text-[13px]">{issue.title}</span>
+                    <PriorityGlyph priority={issue.priority} />
                   </button>
                 </li>
               ))}
@@ -478,7 +482,10 @@ function IssueBoard({
 }
 
 function Issues({ workspace }: { workspace: Workspace }) {
-  const [teamId, setTeamId] = useState(ALL);
+  // The team is part of the address, so the sidebar's team links and reloads land on it.
+  const [params, setParams] = useSearchParams();
+  const teamId = params.get('team') ?? ALL;
+  const setTeamId = (id: string) => setParams(id === ALL ? {} : { team: id }, { replace: true });
   const [openOnly, setOpenOnly] = useState(true);
   const [q, setQ] = useState('');
   const [creating, setCreating] = useState(false);
@@ -494,6 +501,22 @@ function Issues({ workspace }: { workspace: Workspace }) {
     }),
   );
   const opened = issues?.find((i) => i.id === openId);
+
+  // `c` creates an issue, as long as the member is not typing somewhere.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const typing =
+        target?.isContentEditable === true ||
+        /^(INPUT|TEXTAREA|SELECT)$/.test(target?.tagName ?? '');
+      if (e.key === 'c' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        setCreating(true);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
   // A board shows one team's workflow, so it needs a team.
   const boardTeam = teamId === ALL ? teams[0]?.id : teamId;
   const chooseView = (next: View) => {
@@ -529,9 +552,17 @@ function Issues({ workspace }: { workspace: Workspace }) {
         title="Issues"
         description={`Work tracked in ${workspace.name}. Open an issue to plan and run it as a graph.`}
         actions={
-          <Button onClick={() => setCreating(true)} disabled={teams.length === 0}>
+          <Button
+            size="sm"
+            onClick={() => setCreating(true)}
+            disabled={teams.length === 0}
+            aria-keyshortcuts="c"
+          >
             <PlusIcon />
             New issue
+            <kbd className="ml-1 rounded border border-primary-foreground/30 px-1 font-mono text-[10px]">
+              C
+            </kbd>
           </Button>
         }
       />
@@ -579,7 +610,7 @@ function Issues({ workspace }: { workspace: Workspace }) {
         </div>
       </div>
       {isPending ? (
-        <Skeleton className="h-64 rounded-xl" />
+        <IssueListSkeleton />
       ) : teams.length === 0 ? (
         <EmptyState
           icon={CircleDotIcon}
@@ -602,11 +633,11 @@ function Issues({ workspace }: { workspace: Workspace }) {
           action={<Button onClick={() => setCreating(true)}>Create an issue</Button>}
         />
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-3 motion-safe:animate-fade-in">
           {ordered.map((group) => (
-            <section key={group[0]!.state.name} className="overflow-hidden rounded-xl border">
-              <h2 className="flex items-center gap-2 border-b bg-muted/40 px-3 py-2 text-sm font-medium">
-                <StateDot color={group[0]!.state.color} />
+            <section key={group[0]!.state.name} className="overflow-hidden rounded-lg border">
+              <h2 className="flex h-8 items-center gap-2 border-b bg-muted/40 px-3 text-[13px] font-medium">
+                <StateGlyph category={group[0]!.state.category} color={group[0]!.state.color} />
                 {group[0]!.state.name}
                 <span className="text-xs font-normal text-muted-foreground">{group.length}</span>
               </h2>
