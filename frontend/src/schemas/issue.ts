@@ -41,6 +41,8 @@ export const issueSchema = z.object({
   labels: z.array(labelSchema),
   /** The issue this one is part of, if the caller can see it. */
   parent: z.object({ id: idSchema, identifier: z.string(), title: z.string() }).nullable(),
+  /** The cycle of its team the issue is planned in. */
+  cycle: z.object({ id: idSchema, number: z.number().int(), name: z.string() }).nullable(),
   sub_issues: z.object({
     total: z.number().int().nonnegative(),
     closed: z.number().int().nonnegative(),
@@ -120,4 +122,5 @@ export interface IssueInput {
   project_id?: string | null;
   label_ids?: string[];
   parent_id?: string | null;
+  cycle_id?: string | null;
 }

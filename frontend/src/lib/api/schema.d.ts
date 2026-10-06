@@ -1130,6 +1130,45 @@ export interface paths {
         patch: operations["update"];
         trace?: never;
     };
+    "/api/v1/workspaces/{wid}/teams/{tid}/cycles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The cycles of a team, latest first, with how many of their issues are closed. */
+        get: operations["list"];
+        put?: never;
+        /**
+         * Plans a cycle (team owners and workspace admins). Cycles of a team do not
+         *     overlap; the new one gets the team's next cycle number.
+         */
+        post: operations["create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/teams/{tid}/cycles/{cid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Deletes a cycle. Its issues stay, in no cycle. */
+        delete: operations["delete"];
+        options?: never;
+        head?: never;
+        /** Renames or reschedules a cycle. */
+        patch: operations["update"];
+        trace?: never;
+    };
     "/api/v1/workspaces/{wid}/teams/{tid}/issues": {
         parameters: {
             query?: never;
@@ -1415,6 +1454,21 @@ export interface components {
              */
             workspace_id?: string | null;
         };
+        /** @description `POST /workspaces/{wid}/teams/{tid}/cycles` body. */
+        CreateCycle: {
+            /**
+             * Format: date
+             * @description Last day, included; at most 90 days after the first.
+             */
+            ends_on: string;
+            /** @description Optional; a cycle without a name is shown by its number. */
+            name?: string;
+            /**
+             * Format: date
+             * @description First day, included (`YYYY-MM-DD`).
+             */
+            starts_on: string;
+        };
         /** @description `POST /graphs/{gid}/edges` body. */
         CreateEdge: {
             /**
@@ -1451,6 +1505,11 @@ export interface components {
             agent_id?: string | null;
             /** Format: uuid */
             assignee_id?: string | null;
+            /**
+             * Format: uuid
+             * @description A cycle of the team to plan the issue in.
+             */
+            cycle_id?: string | null;
             description?: string;
             /** @description Labels of the workspace to put on the issue (at most 20). */
             label_ids?: string[];
@@ -1543,6 +1602,50 @@ export interface components {
             /** Format: double */
             y: number;
         };
+        /** @description A cycle of a team, with how far its issues are. */
+        Cycle: {
+            /** Format: int64 */
+            closed_count: number;
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: date
+             * @description Last day, included.
+             */
+            ends_on: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: int64 */
+            issue_count: number;
+            /** @description Optional; a cycle without a name is shown as "Cycle {number}". */
+            name: string;
+            /**
+             * Format: int32
+             * @description Sequential within the team.
+             */
+            number: number;
+            /**
+             * Format: date
+             * @description First day, included.
+             */
+            starts_on: string;
+            status: components["schemas"]["CycleStatus"];
+            /** Format: uuid */
+            team_id: string;
+        };
+        /** @description The cycle an issue is in, as much as the issue shows. */
+        CycleRef: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** Format: int32 */
+            number: number;
+        };
+        /**
+         * @description Where a cycle is relative to today.
+         * @enum {string}
+         */
+        CycleStatus: "upcoming" | "active" | "completed";
         /**
          * @description Who created an edge (`auto` = `[[wikilink]]` dependency detection).
          * @enum {string}
@@ -1759,6 +1862,7 @@ export interface components {
             created_at: string;
             /** Format: uuid */
             creator_id: string | null;
+            cycle: components["schemas"]["CycleRef"] | null;
             description: string;
             /**
              * Format: uuid
@@ -2332,6 +2436,14 @@ export interface components {
             system_prompt?: string | null;
             title?: string | null;
         };
+        /** @description `PATCH /workspaces/{wid}/teams/{tid}/cycles/{cid}` body: any subset. */
+        UpdateCycle: {
+            /** Format: date */
+            ends_on?: string | null;
+            name?: string | null;
+            /** Format: date */
+            starts_on?: string | null;
+        };
         /** @description `PATCH /graphs/{gid}/edges/{eid}` body. */
         UpdateEdge: {
             reason: string;
@@ -2351,6 +2463,11 @@ export interface components {
             agent_id?: string | null;
             /** Format: uuid */
             assignee_id?: string | null;
+            /**
+             * Format: uuid
+             * @description A cycle of the issue's team; `null` takes the issue out of its cycle.
+             */
+            cycle_id?: string | null;
             description?: string | null;
             /** @description Replaces the issue's labels. */
             label_ids?: string[] | null;
@@ -5158,6 +5275,8 @@ export interface operations {
                 label_id?: string | null;
                 /** @description Only the sub-issues of this issue. */
                 parent_id?: string | null;
+                /** @description Only issues planned in this cycle. */
+                cycle_id?: string | null;
                 /** @description `true` leaves out completed and canceled issues. */
                 open?: boolean | null;
                 /** @description Matches the title, or the start of the identifier (`ENG-1`). */
@@ -6056,6 +6175,203 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Team id */
+                tid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Cycle"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Team id */
+                tid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateCycle"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Cycle"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Overlaps another cycle */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Team id */
+                tid: string;
+                /** @description Cycle id */
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Team id */
+                tid: string;
+                /** @description Cycle id */
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateCycle"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Cycle"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Overlaps another cycle */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

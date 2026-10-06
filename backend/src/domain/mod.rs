@@ -8,6 +8,7 @@ pub mod agent;
 pub mod assistant;
 pub mod audit;
 pub mod context;
+pub mod cycle;
 pub mod error;
 pub mod graph;
 pub mod guardrails;

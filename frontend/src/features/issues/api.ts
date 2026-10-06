@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { apiRequest, apiSend } from '@/lib/api/client';
 import { qk } from '@/lib/query-keys';
+import { cycleSchema } from '@/schemas/cycle';
 import {
   issueEventSchema,
   issueSchema,
@@ -20,6 +21,7 @@ export interface IssueFilter {
   project_id?: string;
   label_id?: string;
   parent_id?: string;
+  cycle_id?: string;
   open?: boolean;
   q?: string;
 }
@@ -35,6 +37,7 @@ export const issuesQuery = (workspaceId: string, filter: IssueFilter = {}) =>
           project_id: filter.project_id,
           label_id: filter.label_id,
           parent_id: filter.parent_id,
+          cycle_id: filter.cycle_id,
           open: filter.open ? 'true' : undefined,
           q: filter.q,
         },
@@ -126,6 +129,34 @@ export function markInboxRead(workspaceId: string, ids?: string[]) {
   return apiRequest(`/workspaces/${workspaceId}/inbox/read`, z.array(notificationSchema), {
     method: 'POST',
     body: ids ? { ids } : {},
+  });
+}
+
+/** The cycles of a team, latest first. */
+export const cyclesQuery = (workspaceId: string, teamId: string) =>
+  queryOptions({
+    queryKey: qk.issues.cycles(workspaceId, teamId),
+    queryFn: ({ signal }) =>
+      apiRequest(`/workspaces/${workspaceId}/teams/${teamId}/cycles`, z.array(cycleSchema), {
+        signal,
+      }),
+    staleTime: 60_000,
+  });
+
+export function createCycle(
+  workspaceId: string,
+  teamId: string,
+  body: { name: string; starts_on: string; ends_on: string },
+) {
+  return apiRequest(`/workspaces/${workspaceId}/teams/${teamId}/cycles`, cycleSchema, {
+    method: 'POST',
+    body,
+  });
+}
+
+export function deleteCycle(workspaceId: string, teamId: string, cycleId: string) {
+  return apiSend(`/workspaces/${workspaceId}/teams/${teamId}/cycles/${cycleId}`, {
+    method: 'DELETE',
   });
 }
 

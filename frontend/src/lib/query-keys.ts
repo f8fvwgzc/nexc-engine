@@ -49,6 +49,8 @@ export const qk = {
       ['issues', workspaceId, 'states', teamId] as const,
     projects: (workspaceId: string) => ['issues', workspaceId, 'projects'] as const,
     events: (issueId: string) => ['issues', 'events', issueId] as const,
+    cycles: (workspaceId: string, teamId: string) =>
+      ['issues', workspaceId, 'cycles', teamId] as const,
     labels: (workspaceId: string) => ['issues', workspaceId, 'labels'] as const,
     one: (issueId: string) => ['issues', 'detail', issueId] as const,
     inbox: (workspaceId: string) => ['issues', workspaceId, 'inbox'] as const,

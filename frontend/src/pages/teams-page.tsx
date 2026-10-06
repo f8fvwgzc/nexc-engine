@@ -4,6 +4,7 @@ import {
   LogInIcon,
   LogOutIcon,
   PlusIcon,
+  RefreshCwIcon,
   Trash2Icon,
   UsersRoundIcon,
   WorkflowIcon,
@@ -37,6 +38,7 @@ import {
   teamMembersQuery,
   teamsQuery,
 } from '@/features/workspaces/api';
+import { CyclesDialog } from '@/features/issues/cycles-dialog';
 import { WorkflowDialog } from '@/features/issues/workflow-dialog';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { errorMessage } from '@/lib/api/errors';
@@ -228,6 +230,7 @@ function TeamCard({ workspace, team }: { workspace: Workspace; team: Team }) {
   const [open, setOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [workflowOpen, setWorkflowOpen] = useState(false);
+  const [cyclesOpen, setCyclesOpen] = useState(false);
   const canManage = team.role === 'owner' || isWorkspaceAdmin(workspace.role);
   const canJoin = team.role === null && !team.private && workspace.role !== 'guest';
   const refresh = () =>
@@ -273,6 +276,10 @@ function TeamCard({ workspace, team }: { workspace: Workspace; team: Team }) {
           <WorkflowIcon />
           Workflow
         </Button>
+        <Button variant="ghost" size="sm" onClick={() => setCyclesOpen(true)}>
+          <RefreshCwIcon />
+          Cycles
+        </Button>
         <span className="flex-1" />
         {canJoin && (
           <Button
@@ -315,6 +322,13 @@ function TeamCard({ workspace, team }: { workspace: Workspace; team: Team }) {
         editable={canManage}
         open={workflowOpen}
         onClose={() => setWorkflowOpen(false)}
+      />
+      <CyclesDialog
+        workspace={workspace}
+        team={team}
+        editable={canManage}
+        open={cyclesOpen}
+        onClose={() => setCyclesOpen(false)}
       />
       <ConfirmDialog
         open={deleting}

@@ -55,6 +55,17 @@ fn check_label_count(errors: &mut FieldErrors, labels: &[Uuid]) {
     }
 }
 
+/// Checks that `cycle_id` is a cycle of the team.
+async fn check_cycle(state: &AppState, team_id: Uuid, cycle_id: Uuid) -> Result<(), AppError> {
+    if repo::cycles::find(&state.db, team_id, cycle_id)
+        .await?
+        .is_none()
+    {
+        return Err(AppError::field("cycle_id", "not a cycle of this team"));
+    }
+    Ok(())
+}
+
 /// Checks that `parent_id` is an issue of the workspace the caller can see.
 async fn check_parent(
     state: &AppState,
@@ -152,6 +163,8 @@ pub struct IssueQuery {
     pub label_id: Option<Uuid>,
     /// Only the sub-issues of this issue.
     pub parent_id: Option<Uuid>,
+    /// Only issues planned in this cycle.
+    pub cycle_id: Option<Uuid>,
     /// `true` leaves out completed and canceled issues.
     pub open: Option<bool>,
     /// Matches the title, or the start of the identifier (`ENG-1`).
@@ -176,6 +189,8 @@ pub struct CreateIssue {
     pub project_id: Option<Uuid>,
     /// The issue this one is part of: any issue of the workspace the caller can see.
     pub parent_id: Option<Uuid>,
+    /// A cycle of the team to plan the issue in.
+    pub cycle_id: Option<Uuid>,
     /// Labels of the workspace to put on the issue (at most 20).
     #[serde(default)]
     pub label_ids: Vec<Uuid>,
@@ -212,6 +227,10 @@ pub struct UpdateIssue {
     #[serde(default, deserialize_with = "double_option")]
     #[schema(value_type = Option<Uuid>, nullable)]
     pub parent_id: Option<Option<Uuid>>,
+    /// A cycle of the issue's team; `null` takes the issue out of its cycle.
+    #[serde(default, deserialize_with = "double_option")]
+    #[schema(value_type = Option<Uuid>, nullable)]
+    pub cycle_id: Option<Option<Uuid>>,
     /// Replaces the issue's labels.
     pub label_ids: Option<Vec<Uuid>>,
 }
@@ -251,6 +270,7 @@ pub async fn list(
         project_id: query.project_id,
         label_id: query.label_id,
         parent_id: query.parent_id,
+        cycle_id: query.cycle_id,
         open_only: query.open.unwrap_or(false),
         q: query
             .q
@@ -289,6 +309,9 @@ pub async fn create(
     if let Some(parent) = req.parent_id {
         check_parent(&state, auth, wid, parent).await?;
     }
+    if let Some(cycle) = req.cycle_id {
+        check_cycle(&state, tid, cycle).await?;
+    }
     let new = NewIssue {
         workspace_id: wid,
         team_id: tid,
@@ -306,6 +329,9 @@ pub async fn create(
     let id = repo::issues::create(&mut tx, &new).await?;
     if req.parent_id.is_some() {
         repo::issues::set_parent(&mut *tx, id, req.parent_id).await?;
+    }
+    if req.cycle_id.is_some() {
+        repo::issues::set_cycle(&mut *tx, id, req.cycle_id).await?;
     }
     if !labels.is_empty() {
         repo::issues::set_labels(&mut tx, id, &labels).await?;
@@ -377,6 +403,9 @@ pub async fn update(
         Some(ids) => Some(known_labels(&state, issue.workspace_id, ids).await?),
         None => None,
     };
+    if let Some(Some(cycle)) = req.cycle_id {
+        check_cycle(&state, issue.team_id, cycle).await?;
+    }
     if let Some(Some(parent)) = req.parent_id {
         check_parent(&state, auth, issue.workspace_id, parent).await?;
         if repo::issues::is_within(&state.db, iid, parent).await? {
@@ -412,6 +441,9 @@ pub async fn update(
     repo::issues::save(&mut *tx, &issue).await?;
     if let Some(parent) = req.parent_id {
         repo::issues::set_parent(&mut *tx, iid, parent).await?;
+    }
+    if let Some(cycle) = req.cycle_id {
+        repo::issues::set_cycle(&mut *tx, iid, cycle).await?;
     }
     if let Some(labels) = &labels {
         repo::issues::set_labels(&mut tx, iid, labels).await?;

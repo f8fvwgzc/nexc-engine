@@ -40,6 +40,7 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   createIssue,
   createIssueGraph,
+  cyclesQuery,
   deleteIssue,
   issueQuery,
   issuesQuery,
@@ -57,6 +58,7 @@ import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { errorMessage } from '@/lib/api/errors';
 import { formatRelative } from '@/lib/format';
 import { qk } from '@/lib/query-keys';
+import { cycleLabel } from '@/schemas/cycle';
 import { PRIORITY_LABEL, type Issue, type IssueInput, type StateCategory } from '@/schemas/issue';
 import type { Team, Workspace } from '@/schemas/workspace';
 
@@ -208,6 +210,7 @@ function IssueDialog({
   const [confirming, setConfirming] = useState(false);
   const { data: states = [] } = useQuery(statesQuery(workspace.id, issue.team_id));
   const { data: projects = [] } = useQuery(projectsQuery(workspace.id));
+  const { data: cycles = [] } = useQuery(cyclesQuery(workspace.id, issue.team_id));
   // Guests cannot list the workspace's members; they keep whoever is assigned.
   const { data: members = [] } = useQuery({
     ...membersQuery(workspace.id),
@@ -319,6 +322,20 @@ function IssueDialog({
               ]}
               aria-label="Project"
             />
+            {(cycles.length > 0 || issue.cycle) && (
+              <OptionSelect
+                value={issue.cycle?.id ?? NONE}
+                onValueChange={(id) => save.mutate({ cycle_id: id === NONE ? null : id })}
+                options={[
+                  { value: NONE, label: 'No cycle' },
+                  ...cycles.map((c) => ({
+                    value: c.id,
+                    label: c.status === 'active' ? `${cycleLabel(c)} · active` : cycleLabel(c),
+                  })),
+                ]}
+                aria-label="Cycle"
+              />
+            )}
           </div>
           <LabelPicker
             workspace={workspace}
@@ -550,6 +567,7 @@ function Issues({ workspace }: { workspace: Workspace }) {
   const setTeamId = (id: string) => setParams(id === ALL ? {} : { team: id }, { replace: true });
   const [openOnly, setOpenOnly] = useState(true);
   const [labelId, setLabelId] = useState(ALL);
+  const [cycleId, setCycleId] = useState(ALL);
   const [q, setQ] = useState('');
   const [creating, setCreating] = useState(false);
   // An issue can be opened by address (`?issue=<id>`), as the inbox does.
@@ -560,10 +578,17 @@ function Issues({ workspace }: { workspace: Workspace }) {
   const { data: labels = [] } = useQuery(labelsQuery(workspace.id));
   // A label deleted elsewhere stops filtering.
   const activeLabel = labels.some((l) => l.id === labelId) ? labelId : ALL;
+  // Cycles belong to a team, so the cycle filter exists only while one team is shown.
+  const { data: teamCycles = [] } = useQuery({
+    ...cyclesQuery(workspace.id, teamId),
+    enabled: teamId !== ALL,
+  });
+  const activeCycle = teamId !== ALL && teamCycles.some((c) => c.id === cycleId) ? cycleId : ALL;
   const { data: issues, isPending } = useQuery(
     issuesQuery(workspace.id, {
       team_id: teamId === ALL ? undefined : teamId,
       label_id: activeLabel === ALL ? undefined : activeLabel,
+      cycle_id: activeCycle === ALL ? undefined : activeCycle,
       open: openOnly,
       q: debouncedQ || undefined,
     }),
@@ -659,6 +684,21 @@ function Issues({ workspace }: { workspace: Workspace }) {
           aria-label="Team"
           className="w-52"
         />
+        {teamId !== ALL && teamCycles.length > 0 && (
+          <OptionSelect
+            value={activeCycle}
+            onValueChange={setCycleId}
+            options={[
+              { value: ALL, label: 'Any cycle' },
+              ...teamCycles.map((c) => ({
+                value: c.id,
+                label: c.status === 'active' ? `${cycleLabel(c)} · active` : cycleLabel(c),
+              })),
+            ]}
+            aria-label="Cycle"
+            className="w-44"
+          />
+        )}
         {labels.length > 0 && (
           <OptionSelect
             value={activeLabel}

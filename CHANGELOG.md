@@ -80,6 +80,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   The sidebar shows the unread count, and an issue opens by address (`/app/issues?issue=<id>`).
 - Sub-issues: an issue can be part of another (`parent_id`); the parent shows its parts with how
   many are closed (`sub_issues`), parts are added from the issue, and `parent_id` filters the list.
+- Cycles: teams plan non-overlapping, numbered time boxes (`/workspaces/{wid}/teams/{tid}/cycles`)
+  from the Teams page; issues are planned in one (`cycle_id`), cycles show how many of their issues
+  are closed, and a team's issue list filters by cycle.
 - Workflow editor: the Teams page opens a team's workflow, where team owners and workspace admins
   add, rename, recolour, reorder and remove issue states; other members see it read-only.
 - "Your teams" in the sidebar opens a team's issues (`/app/issues?team=<id>`), and `C` on the

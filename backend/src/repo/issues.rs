@@ -8,6 +8,7 @@ use sqlx::{FromRow, PgConnection, PgExecutor, Row};
 use uuid::Uuid;
 
 use super::enum_col;
+use crate::domain::cycle::CycleRef;
 use crate::domain::issue::{
     Issue, IssueChange, IssueEvent, IssuePerson, IssueRef, IssueState, Label, Notification,
     NotificationIssue, NotificationKind, Project, STARTER_STATES, StateCategory, SubIssueCount,
@@ -70,6 +71,14 @@ impl FromRow<'_, PgRow> for Issue {
                 total: row.try_get("sub_total")?,
                 closed: row.try_get("sub_closed")?,
             },
+            cycle: match row.try_get::<Option<Uuid>, _>("cycle_id")? {
+                Some(id) => Some(CycleRef {
+                    id,
+                    number: row.try_get("cycle_number")?,
+                    name: row.try_get("cycle_name")?,
+                }),
+                None => None,
+            },
             assignee: assignee_id.map(|user_id| IssuePerson {
                 user_id,
                 name: assignee_name.unwrap_or_default(),
@@ -120,6 +129,7 @@ macro_rules! issue_for_user {
                               WHERE il.issue_id = i.id), '[]'::jsonb) AS labels,
                     p.id AS parent_id, pt.key AS parent_key, p.number AS parent_number,
                     p.title AS parent_title,
+                    i.cycle_id, cy.number AS cycle_number, cy.name AS cycle_name,
                     (SELECT count(*) FROM issues c WHERE c.parent_id = i.id) AS sub_total,
                     (SELECT count(*) FROM issues c JOIN issue_states cs ON cs.id = c.state_id
                      WHERE c.parent_id = i.id AND cs.category IN ('completed', 'canceled'))
@@ -129,6 +139,7 @@ macro_rules! issue_for_user {
              JOIN issue_states s ON s.id = i.state_id
              JOIN workspace_members wm ON wm.workspace_id = i.workspace_id AND wm.user_id = $1
              LEFT JOIN users au ON au.id = i.assignee_id
+             LEFT JOIN cycles cy ON cy.id = i.cycle_id
              LEFT JOIN issues p ON p.id = i.parent_id
              LEFT JOIN teams pt ON pt.id = p.team_id AND ",
             team_visible!("pt", "wm", "$1"),
@@ -280,6 +291,8 @@ pub struct IssueFilter {
     pub label_id: Option<Uuid>,
     /// Only the sub-issues of this issue.
     pub parent_id: Option<Uuid>,
+    /// Only issues planned in this cycle.
+    pub cycle_id: Option<Uuid>,
     pub limit: i64,
 }
 
@@ -301,6 +314,7 @@ pub async fn list(
          AND ($9::uuid IS NULL OR EXISTS (
               SELECT 1 FROM issue_labels fl WHERE fl.issue_id = i.id AND fl.label_id = $9))
          AND ($10::uuid IS NULL OR i.parent_id = $10)
+         AND ($11::uuid IS NULL OR i.cycle_id = $11)
          ORDER BY i.updated_at DESC, i.id LIMIT $8"
     ))
     .bind(user_id)
@@ -313,6 +327,7 @@ pub async fn list(
     .bind(f.limit)
     .bind(f.label_id)
     .bind(f.parent_id)
+    .bind(f.cycle_id)
     .fetch_all(db)
     .await
 }
@@ -413,6 +428,20 @@ pub async fn set_parent(
     sqlx::query("UPDATE issues SET parent_id = $2, updated_at = now() WHERE id = $1")
         .bind(id)
         .bind(parent_id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// Plans an issue in a cycle, or takes it out of its cycle.
+pub async fn set_cycle(
+    db: impl PgExecutor<'_>,
+    id: Uuid,
+    cycle_id: Option<Uuid>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE issues SET cycle_id = $2, updated_at = now() WHERE id = $1")
+        .bind(id)
+        .bind(cycle_id)
         .execute(db)
         .await?;
     Ok(())

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use super::cycle::CycleRef;
 use super::string_enum;
 
 /// Maximum issue and project title length.
@@ -128,6 +129,9 @@ pub struct Issue {
     #[schema(required = true)]
     pub parent: Option<IssueRef>,
     pub sub_issues: SubIssueCount,
+    /// The cycle of its team the issue is planned in.
+    #[schema(required = true)]
+    pub cycle: Option<CycleRef>,
     #[schema(required = true)]
     pub assignee: Option<IssuePerson>,
     /// The agent the issue is delegated to.

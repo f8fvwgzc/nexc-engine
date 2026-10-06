@@ -108,6 +108,8 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(issues::create_graph))
         .routes(routes!(issues::labels, issues::create_label))
         .routes(routes!(issues::update_label, issues::delete_label))
+        .routes(routes!(cycles::list, cycles::create))
+        .routes(routes!(cycles::update, cycles::delete))
         .routes(routes!(issues::events))
         .routes(routes!(issues::inbox))
         .routes(routes!(issues::mark_read))
@@ -189,7 +191,7 @@ mod tests {
     #[test]
     fn spec_enum_values_match_the_wire_format() {
         use crate::domain::{
-            agent, audit, graph, issue, memory, plan, run, settings, usage, user, workspace,
+            agent, audit, cycle, graph, issue, memory, plan, run, settings, usage, user, workspace,
         };
         use serde_json::Value;
 
@@ -228,6 +230,7 @@ mod tests {
                 "ProjectStatus" => check::<issue::ProjectStatus>(values),
                 "IssueEventKind" => check::<issue::IssueEventKind>(values),
                 "AuditAction" => check::<audit::AuditAction>(values),
+                "CycleStatus" => check::<cycle::CycleStatus>(values),
                 "NotificationKind" => check::<issue::NotificationKind>(values),
                 "UsageScope" => check::<usage::UsageScope>(values),
                 "AgentStatus" => check::<agent::AgentStatus>(values),
@@ -236,6 +239,6 @@ mod tests {
             }
             checked += 1;
         }
-        assert_eq!(checked, 22, "every string enum schema is covered");
+        assert_eq!(checked, 23, "every string enum schema is covered");
     }
 }

@@ -1297,3 +1297,161 @@ async fn issues_can_be_split_into_sub_issues(pool: PgPool) {
     assert_eq!(status, StatusCode::OK);
     assert!(a["parent"].is_null());
 }
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn teams_plan_issues_in_cycles(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let w = world(&app).await;
+    let cycles = format!("{}/teams/{}/cycles", w.ws, w.eng);
+    let today = chrono::Utc::now().date_naive();
+    let day = |offset: i64| (today + chrono::Duration::days(offset)).to_string();
+
+    // Team owners and admins plan; members read; cycles are numbered per team.
+    let now = json!({"starts_on": day(-3), "ends_on": day(10), "name": " Launch "});
+    let (status, _) = call(&app, Method::POST, &cycles, &w.member, Some(now.clone())).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, current) = call(&app, Method::POST, &cycles, &w.owner, Some(now)).await;
+    assert_eq!(status, StatusCode::CREATED, "{current}");
+    assert_eq!(
+        (
+            current["number"].as_i64(),
+            current["name"].as_str(),
+            current["status"].as_str()
+        ),
+        (Some(1), Some("Launch"), Some("active"))
+    );
+    let next = json!({"starts_on": day(11), "ends_on": day(24)});
+    let (_, next) = call(&app, Method::POST, &cycles, &w.owner, Some(next)).await;
+    assert_eq!(
+        (next["number"].as_i64(), next["status"].as_str()),
+        (Some(2), Some("upcoming"))
+    );
+
+    // Dates must make sense and not share a day with another cycle.
+    for (body, expected) in [
+        (
+            json!({"starts_on": day(10), "ends_on": day(12)}),
+            StatusCode::CONFLICT,
+        ),
+        (
+            json!({"starts_on": day(40), "ends_on": day(39)}),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+        (
+            json!({"starts_on": day(40), "ends_on": day(200)}),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+    ] {
+        let (status, problem) = call(&app, Method::POST, &cycles, &w.owner, Some(body)).await;
+        assert_eq!(status, expected, "{problem}");
+    }
+    let next_path = format!("{cycles}/{}", next["id"].as_str().unwrap());
+    let clash = json!({"starts_on": day(5)});
+    let (status, _) = call(&app, Method::PATCH, &next_path, &w.owner, Some(clash)).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let rename = json!({"name": "Polish", "ends_on": day(20)});
+    let (status, renamed) = call(&app, Method::PATCH, &next_path, &w.owner, Some(rename)).await;
+    assert_eq!(status, StatusCode::OK, "{renamed}");
+    assert_eq!(renamed["name"], "Polish");
+
+    // Issues are planned in a cycle of their own team and counted there.
+    let issues = format!("{}/teams/{}/issues", w.ws, w.eng);
+    let body = json!({"title": "Fix login", "cycle_id": current["id"]});
+    let (status, issue) = call(&app, Method::POST, &issues, &w.member, Some(body)).await;
+    assert_eq!(status, StatusCode::CREATED, "{issue}");
+    assert_eq!(
+        (
+            issue["cycle"]["number"].as_i64(),
+            issue["cycle"]["name"].as_str()
+        ),
+        (Some(1), Some("Launch"))
+    );
+    let (_, other) = call(
+        &app,
+        Method::POST,
+        &issues,
+        &w.member,
+        Some(json!({"title": "Write docs"})),
+    )
+    .await;
+    assert!(other["cycle"].is_null());
+    let secret_cycles = format!("{}/teams/{}/cycles", w.ws, w.secret);
+    let far = json!({"starts_on": day(0), "ends_on": day(6)});
+    let (_, foreign) = call(&app, Method::POST, &secret_cycles, &w.owner, Some(far)).await;
+    let path = format!("/issues/{}", other["id"].as_str().unwrap());
+    let body = json!({"cycle_id": foreign["id"]});
+    let (status, problem) = call(&app, Method::PATCH, &path, &w.owner, Some(body)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
+    let body = json!({"cycle_id": current["id"]});
+    let (_, other) = call(&app, Method::PATCH, &path, &w.member, Some(body)).await;
+    assert_eq!(other["cycle"]["number"], 1);
+
+    let (_, states) = call(
+        &app,
+        Method::GET,
+        &format!("{}/teams/{}/states", w.ws, w.eng),
+        &w.owner,
+        None,
+    )
+    .await;
+    let done = states
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "Done")
+        .unwrap()["id"]
+        .clone();
+    call(
+        &app,
+        Method::PATCH,
+        &path,
+        &w.member,
+        Some(json!({"state_id": done})),
+    )
+    .await;
+    let (_, list) = call(&app, Method::GET, &cycles, &w.member, None).await;
+    let seen: Vec<(i64, i64, i64)> = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| {
+            (
+                c["number"].as_i64().unwrap(),
+                c["issue_count"].as_i64().unwrap(),
+                c["closed_count"].as_i64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(seen, [(2, 0, 0), (1, 2, 1)], "latest first");
+    let filter = format!(
+        "{}/issues?cycle_id={}",
+        w.ws,
+        current["id"].as_str().unwrap()
+    );
+    let (_, planned) = call(&app, Method::GET, &filter, &w.member, None).await;
+    assert_eq!(planned.as_array().unwrap().len(), 2);
+
+    // Taking an issue out, and deleting a cycle, leave the issues in place.
+    let (_, other) = call(
+        &app,
+        Method::PATCH,
+        &path,
+        &w.member,
+        Some(json!({"cycle_id": null})),
+    )
+    .await;
+    assert!(other["cycle"].is_null());
+    let current_path = format!("{cycles}/{}", current["id"].as_str().unwrap());
+    let (status, _) = call(&app, Method::DELETE, &current_path, &w.member, None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = call(&app, Method::DELETE, &current_path, &w.owner, None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let first = format!("/issues/{}", issue["id"].as_str().unwrap());
+    let (status, issue) = call(&app, Method::GET, &first, &w.member, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(issue["cycle"].is_null());
+
+    // Guests outside the team do not see its cycles.
+    let (status, _) = call(&app, Method::GET, &cycles, &w.guest, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
