@@ -25,6 +25,8 @@ export const workspaceMemberSchema = z.object({
   name: z.string(),
   email: z.string(),
   role: workspaceRoleSchema,
+  /** Suspended by a platform administrator: they cannot sign in until that is lifted. */
+  suspended: z.boolean(),
   joined_at: timestampSchema,
 });
 export type WorkspaceMember = z.infer<typeof workspaceMemberSchema>;

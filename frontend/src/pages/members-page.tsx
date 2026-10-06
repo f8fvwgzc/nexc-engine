@@ -186,6 +186,15 @@ function MembersTable({ workspace }: { workspace: Workspace }) {
                   <TableCell className="font-medium">
                     {member.name}
                     {isMe && <span className="ml-2 text-xs text-muted-foreground">you</span>}
+                    {member.suspended && (
+                      <Badge
+                        variant="destructive"
+                        className="ml-2"
+                        title="Suspended by whoever administers this installation. They cannot sign in until that is lifted; it is not set in the workspace."
+                      >
+                        Suspended
+                      </Badge>
+                    )}
                   </TableCell>
                   <TableCell className="text-muted-foreground">{member.email}</TableCell>
                   <TableCell>

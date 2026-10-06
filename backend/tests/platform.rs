@@ -252,6 +252,26 @@ async fn platform_administrators_see_every_workspace_and_account(pool: PgPool) {
         ),
         (Some(2), Some(1), Some(false))
     );
+
+    // A suspension shows where the account is a member, so nobody there wonders why it is gone.
+    let suspend = json!({"suspended": true});
+    let account = format!("/admin/users/{member_id}");
+    let (status, _) = call(&app, Method::PATCH, &account, &root, Some(suspend)).await;
+    assert_eq!(status, StatusCode::OK);
+    let flags = |list: &Value| -> Vec<bool> {
+        let list = list.as_array().unwrap();
+        list.iter()
+            .map(|m| m["suspended"].as_bool().unwrap())
+            .collect()
+    };
+    let (_, roster) = call(&app, Method::GET, &members, &owner, None).await;
+    assert_eq!(flags(&roster), [false, true], "the owner sees it");
+    let (_, detail) = call(&app, Method::GET, &path, &root, None).await;
+    assert_eq!(
+        flags(&detail["members"]),
+        [false, true],
+        "the console sees it"
+    );
 }
 
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]

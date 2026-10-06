@@ -3570,6 +3570,11 @@ export interface components {
             joined_at: string;
             name: string;
             role: components["schemas"]["WorkspaceRole"];
+            /**
+             * @description Suspended by a platform administrator: the account cannot sign in
+             *     until that is lifted, which is not the workspace's to decide.
+             */
+            suspended: boolean;
             /** Format: uuid */
             user_id: string;
         };

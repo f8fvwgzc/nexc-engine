@@ -136,7 +136,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reason. Everything done from the console is kept in its Activity log (`/admin/workspaces/{wid}`,
   `/admin/workspaces/{wid}/owners`, `/admin/workspaces/{wid}/delete`, `/admin/events`).
 - Suspended accounts: sign-in answers 403 once the password was right, refresh is refused, and
-  the access token already in hand stops working at once.
+  the access token already in hand stops working at once. The Members page of every workspace
+  the account is in marks it as suspended (`WorkspaceMember.suspended`).
 - `make seed-demo` (`scripts/seed-demo.py`): a demo workspace with five accounts in different
   roles, three teams, projects, cycles, issues and comments, created through the API so that
   each account's inbox holds real notifications.

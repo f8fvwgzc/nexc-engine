@@ -172,6 +172,9 @@ pub struct WorkspaceMember {
     pub name: String,
     pub email: String,
     pub role: WorkspaceRole,
+    /// Suspended by a platform administrator: the account cannot sign in
+    /// until that is lifted, which is not the workspace's to decide.
+    pub suspended: bool,
     pub joined_at: DateTime<Utc>,
 }
 

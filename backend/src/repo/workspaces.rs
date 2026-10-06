@@ -28,6 +28,7 @@ impl FromRow<'_, PgRow> for WorkspaceMember {
             name: row.try_get("name")?,
             email: row.try_get("email")?,
             role: enum_col(row, "role")?,
+            suspended: row.try_get("suspended")?,
             joined_at: row.try_get("joined_at")?,
         })
     }
@@ -227,7 +228,8 @@ pub async fn members(
     workspace_id: Uuid,
 ) -> Result<Vec<WorkspaceMember>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT u.id AS user_id, u.name, u.email, m.role, m.created_at AS joined_at
+        "SELECT u.id AS user_id, u.name, u.email, m.role,
+                u.suspended_at IS NOT NULL AS suspended, m.created_at AS joined_at
          FROM workspace_members m JOIN users u ON u.id = m.user_id
          WHERE m.workspace_id = $1
          ORDER BY array_position(ARRAY['owner', 'admin', 'member', 'guest'], m.role), lower(u.name), u.id",

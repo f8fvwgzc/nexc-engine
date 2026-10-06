@@ -217,7 +217,7 @@ nexc init                 # write a .env with generated secrets
 nexc serve                # run migrations, then serve the API on NEXC_HOST:NEXC_PORT
 nexc migrate              # apply database migrations only
 nexc doctor               # check configuration, database and runtime connectivity
-nexc user create          # create a user (e.g. the first admin) from the terminal
+nexc user create          # create a user, or with --admin a platform administrator
 nexc config show          # print the effective configuration (secrets redacted)
 nexc openapi              # print the OpenAPI document to stdout
 ```

@@ -39,7 +39,7 @@ there are no other system dependencies.
 | `nexc serve` | API server, run dispatcher, realtime fan-out, heartbeats and housekeeping. Graceful shutdown on Ctrl-C / SIGTERM. |
 | `nexc migrate` | Applies the embedded SQL migrations and exits. `serve` also migrates on start. |
 | `nexc init [--path ../.env] [--force]` | Writes a `.env` with freshly generated `NEXC_JWT_SECRET`, `NEXC_MASTER_KEY`, `NEXC_RUNTIME_TOKEN`, `POSTGRES_PASSWORD` and a matching `NEXC_DATABASE_URL` (mode 0600). Refuses to overwrite without `--force`. |
-| `nexc user create --email E --name N [--admin]` | Creates a user (and its default agent organisation). The password comes from `NEXC_PASSWORD` or an interactive prompt. |
+| `nexc user create --email E --name N [--admin]` | Creates a user with a personal workspace and its default agent organisation. With `--admin`, a platform administrator instead: an account for the platform console, with no workspace. The password comes from `NEXC_PASSWORD` or an interactive prompt. |
 | `nexc doctor` | Checks configuration, database connectivity and server version (warns below 17), pending migrations, the agent runtime, texc-symphony and the LLM key. Exit code 1 if any check fails. |
 | `nexc config show` | Prints the effective configuration with secrets redacted and validates it. |
 | `nexc openapi` | Prints the OpenAPI document to stdout (`npm run gen:api` in the frontend uses it). |
@@ -63,7 +63,7 @@ empty values count as unset.
 | `NEXC_CORS_ORIGINS` | `http://localhost:5173` | Comma separated, explicit origins only. Also checked against the WebSocket `Origin`. |
 | `NEXC_COOKIE_SECURE` | `false` | Always on in production. |
 | `NEXC_ALLOW_SIGNUP` | `true` | |
-| `NEXC_ADMIN_EMAIL` / `NEXC_ADMIN_PASSWORD` | – | Bootstrap admin created on start when both are set. |
+| `NEXC_ADMIN_EMAIL` / `NEXC_ADMIN_PASSWORD` | – | Platform administrator created on start when both are set. It works in the platform console (`/admin/*`) only, never inside a workspace. |
 | `NEXC_ACCESS_TTL_SECS` / `NEXC_REFRESH_TTL_SECS` | `900` / `1209600` | |
 | `NEXC_LLM_PROVIDER` | `anthropic` | `anthropic`, `openai_compatible` or `demo`. |
 | `NEXC_LLM_MODEL` | `claude-opus-5` | |
@@ -74,7 +74,7 @@ empty values count as unset.
 | `NEXC_SYMPHONY_ENABLED` / `NEXC_SYMPHONY_URL` / `NEXC_SYMPHONY_WORKFLOW` | `false` / `http://localhost:4000` / `./data/symphony/WORKFLOW.md` | texc-symphony bridge. |
 | `NEXC_MAX_CONCURRENCY` / `NEXC_MAX_ATTEMPTS` / `NEXC_NODE_TIMEOUT_SECS` | `4` / `3` / `600` | Scheduler defaults. |
 | `NEXC_TRUST_PROXY` | `false` | Use the last `X-Forwarded-For` hop as client IP (only behind your own proxy). |
-| `NEXC_METRICS_TOKEN` | – | Bearer token for `GET /metrics` (admins can always read it). |
+| `NEXC_METRICS_TOKEN` | – | Bearer token for `GET /metrics` (platform administrators can always read it). |
 | `NEXC_LOG` | `info` | `tracing` filter, `RUST_LOG` syntax. |
 
 ## Source layout

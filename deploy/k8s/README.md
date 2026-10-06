@@ -50,7 +50,8 @@ Every pod runs as non-root with `readOnlyRootFilesystem`, `allowPrivilegeEscalat
   hash, so pods roll automatically).
 * `secret.env` – created by `scripts/init-env.sh --k8s`; existing values are never overwritten.
   Put `ANTHROPIC_API_KEY` here and set `NEXC_LLM_PROVIDER=anthropic` in `config.env` to leave demo
-  mode. Optionally set `NEXC_ADMIN_EMAIL` / `NEXC_ADMIN_PASSWORD` to bootstrap an admin.
+  mode. Optionally set `NEXC_ADMIN_EMAIL` / `NEXC_ADMIN_PASSWORD` to bootstrap a platform
+  administrator (an account for the platform console; it does not work inside workspaces).
 * Images – `kustomization.yaml` pins `ghcr.io/f8fvwgzc/nexc-engine-*:local` (built by the script).
   For released images: `cd deploy/k8s && kustomize edit set image ghcr.io/f8fvwgzc/nexc-engine-backend:0.1.0`
   (same for `-frontend` and `-runtime`).
