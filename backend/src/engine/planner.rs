@@ -333,6 +333,7 @@ async fn generate(
         tokens_in: spent.input_tokens as i64,
         tokens_out: spent.output_tokens as i64,
         cost_usd: cost,
+        context_chars_saved: 0,
     };
     usage::record(state, event).await;
     let text = streamed?;

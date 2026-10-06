@@ -1,5 +1,11 @@
 import { useSuspenseQuery } from '@tanstack/react-query';
-import { ArrowDownToLineIcon, ArrowUpFromLineIcon, CoinsIcon, PhoneCallIcon } from 'lucide-react';
+import {
+  ArrowDownToLineIcon,
+  ArrowUpFromLineIcon,
+  CoinsIcon,
+  PhoneCallIcon,
+  ScissorsIcon,
+} from 'lucide-react';
 import { Suspense, useState, type ReactNode } from 'react';
 
 import { OptionSelect } from '@/components/custom-ui/option-select';
@@ -20,6 +26,9 @@ import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace
 import { formatCost, formatInteger, formatTokens } from '@/lib/format';
 import type { UsageReport, UsageTotals } from '@/schemas/usage';
 import type { Workspace } from '@/schemas/workspace';
+
+/** Rule of thumb for turning the measured characters into an approximate token count. */
+const CHARS_PER_TOKEN = 4;
 
 const PERIODS = [
   { value: '7', label: 'Last 7 days' },
@@ -117,7 +126,7 @@ function Report({ workspace, days }: { workspace: Workspace; days: number }) {
           This is your own usage in {workspace.name}. Workspace admins see every member.
         </p>
       )}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <StatTile label="LLM calls" value={formatInteger(totals.calls)} icon={PhoneCallIcon} />
         <StatTile
           label="Tokens in"
@@ -134,6 +143,12 @@ function Report({ workspace, days }: { workspace: Workspace; days: number }) {
           value={formatCost(totals.cost_usd)}
           icon={CoinsIcon}
           hint="List prices; 0 for local and CLI models"
+        />
+        <StatTile
+          label="Context left out"
+          value={`≈ ${formatTokens(Math.round(totals.context_chars_saved / CHARS_PER_TOKEN))}`}
+          icon={ScissorsIcon}
+          hint="Tokens of upstream text not sent"
         />
       </div>
       <Breakdown

@@ -7,6 +7,8 @@ const totals = {
   tokens_in: z.number().int().nonnegative(),
   tokens_out: z.number().int().nonnegative(),
   cost_usd: z.number().nonnegative(),
+  /** Characters of upstream context left out of prompts as padding or irrelevant. */
+  context_chars_saved: z.number().int().nonnegative(),
 };
 export const usageTotalsSchema = z.object(totals);
 export type UsageTotals = z.infer<typeof usageTotalsSchema>;

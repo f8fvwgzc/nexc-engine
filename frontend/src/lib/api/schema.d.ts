@@ -1786,6 +1786,12 @@ export interface components {
         UsageTotals: {
             /** Format: int64 */
             calls: number;
+            /**
+             * Format: int64
+             * @description Characters of upstream context that were not sent because they were
+             *     padding or irrelevant to the task. Roughly four characters make a token.
+             */
+            context_chars_saved: number;
             /** Format: double */
             cost_usd: number;
             /** Format: int64 */

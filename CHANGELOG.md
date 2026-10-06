@@ -28,6 +28,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   provider at request time (Anthropic and OpenAI-compatible endpoints).
 - Members and Teams pages, and a settings page split into "Your AI account" and "Workspace
   credential".
+- Upstream context is fitted to the node instead of cut after a fixed length: padding is removed
+  and, when an upstream output is still too long, the passages most relevant to the node's task
+  are kept. The characters left out are recorded per call and shown on the Usage page.
+- The agent runtime turns on Anthropic prompt caching for its tool loop, so each turn reads the
+  earlier turns from cache.
 - Usage ledger: every LLM call that spends tokens (planning, node execution, memory extraction)
   is recorded with the member who caused it, the model and whose account paid.
   `GET /workspaces/{wid}/usage?days=` reports totals and breakdowns by day, member, model,

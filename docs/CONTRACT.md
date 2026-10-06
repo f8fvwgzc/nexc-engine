@@ -141,7 +141,8 @@ interface Team { id: string; workspace_id: string; name: string; key: string /* 
 interface TeamMember { user_id: string; name: string; email: string; role: TeamRole; joined_at: string }
 
 // Token usage. Every LLM call that spent tokens is recorded with who caused it and whose account paid.
-interface UsageTotals { calls: number; tokens_in: number; tokens_out: number; cost_usd: number }
+interface UsageTotals { calls: number; tokens_in: number; tokens_out: number; cost_usd: number;
+  context_chars_saved: number /* upstream characters left out of prompts */ }
 type UsageSlice<K> = { key: K } & UsageTotals;
 interface UsageReport { scope: "workspace" | "own"; days: number; totals: UsageTotals;
   by_day: UsageSlice<string /* UTC date */>[]; by_member: UsageSlice<{ user_id: string | null; name: string }>[];
@@ -239,7 +240,10 @@ Public: `GET /healthz`, `GET /readyz`, `POST /auth/register`, `POST /auth/login`
 
 Executing a graph: nodes run in dependency order (edges of blocking relations). A node's prompt
 context is its own title/content, the meaning of its type, the graph goal, the outputs of its upstream
-nodes (each with the reason of the edge that makes it an upstream) and retrieved memories. A node whose
+nodes (each with the reason of the edge that makes it an upstream) and retrieved memories. An upstream
+output longer than the budget (12 000 characters for an LLM node, 24 000 for an agent node) is not cut
+at the budget: blank padding is removed and the passages most relevant to the node are kept, with
+`[… N characters omitted …]` where text was left out. A node whose
 upstream failed is `skipped`. Unchanged nodes (same content hash + same upstream outputs) are served
 from the result cache (`cached: true`) unless `force: true`.
 

@@ -14,8 +14,8 @@ use crate::domain::usage::{
 pub async fn insert(db: impl PgExecutor<'_>, e: &UsageEvent) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO llm_usage (id, workspace_id, user_id, graph_id, run_id, purpose, provider, model,
-                                credential, tokens_in, tokens_out, cost_usd)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+                                credential, tokens_in, tokens_out, cost_usd, context_chars_saved)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
     )
     .bind(Uuid::now_v7())
     .bind(e.workspace_id)
@@ -29,6 +29,7 @@ pub async fn insert(db: impl PgExecutor<'_>, e: &UsageEvent) -> Result<(), sqlx:
     .bind(e.tokens_in.max(0))
     .bind(e.tokens_out.max(0))
     .bind(e.cost_usd)
+    .bind(e.context_chars_saved.max(0))
     .execute(db)
     .await?;
     Ok(())
@@ -51,7 +52,8 @@ macro_rules! window {
             $select,
             ", count(*) AS calls, COALESCE(sum(u.tokens_in), 0)::bigint AS tokens_in,
                COALESCE(sum(u.tokens_out), 0)::bigint AS tokens_out,
-               COALESCE(sum(u.cost_usd), 0)::float8 AS cost_usd
+               COALESCE(sum(u.cost_usd), 0)::float8 AS cost_usd,
+               COALESCE(sum(u.context_chars_saved), 0)::bigint AS context_chars_saved
              FROM llm_usage u
              WHERE u.workspace_id = $1 AND u.created_at >= now() - make_interval(days => $2::int)
                AND ($3::uuid IS NULL OR u.user_id = $3) ",

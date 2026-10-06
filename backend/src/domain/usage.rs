@@ -35,6 +35,8 @@ pub struct UsageEvent {
     pub tokens_in: i64,
     pub tokens_out: i64,
     pub cost_usd: f64,
+    /// Characters of upstream context left out of the prompt (see `domain::context`).
+    pub context_chars_saved: i64,
 }
 
 /// Sums over a set of calls.
@@ -44,6 +46,9 @@ pub struct UsageTotals {
     pub tokens_in: i64,
     pub tokens_out: i64,
     pub cost_usd: f64,
+    /// Characters of upstream context that were not sent because they were
+    /// padding or irrelevant to the task. Roughly four characters make a token.
+    pub context_chars_saved: i64,
 }
 
 /// Usage of one group (a day, a member, a model, ...).

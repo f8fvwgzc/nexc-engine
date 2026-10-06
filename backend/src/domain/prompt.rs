@@ -9,8 +9,11 @@ pub const TASK_HEADING: &str = "# Task: ";
 pub const UPSTREAM_HEADING: &str = "## Upstream results";
 /// Precedes the node output in memory-extraction prompts.
 pub const OUTPUT_MARKER: &str = "NODE_OUTPUT:";
-/// Characters of each upstream output included in a prompt.
+/// Characters of each upstream output included in the prompt of a single LLM call.
 pub const UPSTREAM_CHARS: usize = 12_000;
+/// Characters of each upstream output handed to an agent, which works over
+/// several turns and has room for more (the runtime's own limit).
+pub const AGENT_UPSTREAM_CHARS: usize = 24_000;
 
 /// One upstream result passed to a node.
 #[derive(Debug, Clone)]

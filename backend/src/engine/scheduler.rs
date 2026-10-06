@@ -23,9 +23,10 @@ use super::{artifacts, credentials, editor, usage};
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::agent::{Agent, AgentStatus};
+use crate::domain::context;
 use crate::domain::graph::{Executor, GraphEdge, GraphNode, NodeStatus};
 use crate::domain::ontology::Ontology;
-use crate::domain::prompt::UpstreamOutput;
+use crate::domain::prompt::{AGENT_UPSTREAM_CHARS, UPSTREAM_CHARS, UpstreamOutput};
 use crate::domain::run::{Run, RunStatus, final_status};
 use crate::domain::settings::{ConfigScope, LlmProviderKind};
 use crate::domain::usage::{UsageEvent, UsagePurpose};
@@ -256,6 +257,7 @@ impl RunData {
         tokens_in: i64,
         tokens_out: i64,
         cost_usd: f64,
+        context_chars_saved: i64,
     ) -> UsageEvent {
         UsageEvent {
             workspace_id: self.workspace_id,
@@ -269,6 +271,7 @@ impl RunData {
             tokens_in,
             tokens_out,
             cost_usd,
+            context_chars_saved,
         }
     }
 }
@@ -509,7 +512,7 @@ async fn skip_node(state: &AppState, data: &RunData, node_id: Uuid) {
         output: None,
         content_hash: None,
     };
-    if let Err(err) = record(state, data, node_id, &outcome, None).await {
+    if let Err(err) = record(state, data, node_id, &outcome, None, 0).await {
         tracing::error!(%node_id, error = %err, "cannot record skipped node");
     }
     publish_status(
@@ -530,6 +533,7 @@ async fn record(
     node_id: Uuid,
     outcome: &NodeOutcome<'_>,
     agent: Option<&Agent>,
+    context_chars_saved: i64,
 ) -> anyhow::Result<()> {
     let mut tx = state.db.begin().await?;
     repo::runs::finish_node(&mut tx, data.run_id, node_id, outcome).await?;
@@ -553,6 +557,7 @@ async fn record(
             outcome.tokens_in,
             outcome.tokens_out,
             outcome.cost_usd,
+            context_chars_saved,
         );
         usage::record(state, event).await;
     }
@@ -621,7 +626,7 @@ async fn run_node(
                 output: None,
                 content_hash: None,
             };
-            if let Err(e) = record(&state, &data, node_id, &outcome, None).await {
+            if let Err(e) = record(&state, &data, node_id, &outcome, None, 0).await {
                 tracing::error!(%node_id, error = %e, "cannot record node failure");
             }
             publish_status(
@@ -648,6 +653,8 @@ struct NodeTask {
     data: Arc<RunData>,
     token: CancellationToken,
     hash: String,
+    /// Characters of upstream output that were left out of the prompt.
+    context_saved: i64,
 }
 
 impl NodeTask {
@@ -676,8 +683,17 @@ impl NodeTask {
             None => Vec::new(),
         };
         let memories = recalled.into_iter().map(|m| m.content).collect();
+        // An agent works over several turns and takes more context than one LLM call.
+        let budget = match node.executor {
+            Executor::Agent => AGENT_UPSTREAM_CHARS,
+            _ => UPSTREAM_CHARS,
+        };
+        let mut context_saved = 0;
         let mut upstream_outputs = Vec::with_capacity(upstream.len());
         for (id, output) in upstream {
+            let fitted = context::fit(&output, &query, budget);
+            context_saved += fitted.saved_chars() as i64;
+            let output = fitted.text;
             let title = repo::nodes::find(&state.db, data.graph_id, id)
                 .await?
                 .map(|n| n.title)
@@ -715,6 +731,7 @@ impl NodeTask {
             data,
             token,
             hash,
+            context_saved,
         })
     }
 
@@ -750,7 +767,7 @@ impl NodeTask {
             output: Some(&hit.output),
             content_hash: Some(&self.hash),
         };
-        record(state, &self.data, node_id, &outcome, None)
+        record(state, &self.data, node_id, &outcome, None, 0)
             .await
             .ok()?;
         if let Err(err) = artifacts::copy_from_run(
@@ -916,6 +933,7 @@ impl NodeTask {
             node_id,
             &outcome,
             self.ctx.agent.as_ref(),
+            self.context_saved,
         )
         .await
         {
@@ -960,6 +978,7 @@ impl NodeTask {
                     spent.input_tokens as i64,
                     spent.output_tokens as i64,
                     cost,
+                    0,
                 );
                 usage::record(&state, event).await;
                 memory::store(

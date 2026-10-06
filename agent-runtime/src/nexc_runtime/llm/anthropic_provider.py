@@ -162,6 +162,11 @@ class AnthropicProvider:
         }
         if tools:
             kwargs["tools"] = [_tool_param(t) for t in tools]
+            # A tool loop resends its whole history every turn. Automatic prompt caching puts
+            # the breakpoint on the last block and moves it forward, so each turn reads the
+            # previous ones from cache. A single call without tools has nothing to re-read and
+            # would only pay the cache-write premium.
+            kwargs["cache_control"] = {"type": "ephemeral"}
         if supports_adaptive_thinking(self.model):
             kwargs["thinking"] = {"type": "adaptive"}
         if self.model in FALLBACK_MODELS:

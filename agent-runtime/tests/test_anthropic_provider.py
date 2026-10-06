@@ -135,6 +135,7 @@ async def test_stream_turn_with_tool_use_and_request_shape() -> None:
     assert "server-side-fallback-2026-07-01" in seen["beta"]
     assert body["tools"][0]["strict"] is True
     assert body["tools"][0]["eager_input_streaming"] is True
+    assert body["cache_control"] == {"type": "ephemeral"}, "the tool loop caches its history"
     for forbidden in ("temperature", "top_p", "budget_tokens"):
         assert forbidden not in body
     assert conversation.messages[-1]["role"] == "assistant"

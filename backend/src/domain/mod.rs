@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 pub mod agent;
+pub mod context;
 pub mod error;
 pub mod graph;
 pub mod memory;
