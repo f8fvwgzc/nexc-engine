@@ -25,7 +25,9 @@ import {
   documentsQuery,
   knowledgeSearchQuery,
   knowledgeSettingsQuery,
+  rebuildTopics,
   saveKnowledgeSettings,
+  topicsQuery,
   uploadDocument,
 } from '@/features/knowledge/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
@@ -295,12 +297,71 @@ function Documents({ workspace }: { workspace: Workspace }) {
 
 /** Asks the knowledge base a question the way a node would, and shows what comes back. */
 function TrySearch({ workspace }: { workspace: Workspace }) {
+  const queryClient = useQueryClient();
   const [q, setQ] = useState('');
+  const [topicId, setTopicId] = useState<string | null>(null);
   const query = useDebouncedValue(q.trim(), 400);
-  const { data: passages, isFetching, error } = useQuery(knowledgeSearchQuery(workspace.id, query));
+  const { data: topics = [] } = useQuery(topicsQuery(workspace.id));
+  // A topic that a rebuild replaced stops filtering.
+  const topic = topics.find((t) => t.id === topicId);
+  const {
+    data: passages,
+    isFetching,
+    error,
+  } = useQuery(knowledgeSearchQuery(workspace.id, query, topic?.id));
+  const rebuild = useMutation({
+    mutationFn: () => rebuildTopics(workspace.id),
+    meta: { successMessage: 'Finding topics again; this takes a moment' },
+    onSuccess: () => {
+      // The work runs in the background: look again shortly.
+      setTimeout(
+        () => void queryClient.invalidateQueries({ queryKey: qk.knowledge.topics(workspace.id) }),
+        3_000,
+      );
+    },
+  });
+  const topicLabel = new Map(topics.map((t) => [t.id, t.label]));
   return (
     <section aria-label="Search" className="space-y-3">
-      <h2 className="text-[13px] font-medium">Try a search</h2>
+      <div className="flex items-center gap-2">
+        <h2 className="text-[13px] font-medium">Topics</h2>
+        <span className="text-xs text-muted-foreground">
+          found by grouping similar passages; pick one to search within it
+        </span>
+        {isWorkspaceAdmin(workspace.role) && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="ml-auto h-6 px-2 text-xs"
+            disabled={rebuild.isPending}
+            onClick={() => rebuild.mutate()}
+          >
+            Find topics again
+          </Button>
+        )}
+      </div>
+      {topics.length === 0 ? (
+        <p className="text-[13px] text-muted-foreground">
+          Topics appear once the workspace has about twenty passages.
+        </p>
+      ) : (
+        <ul aria-label="Topics" className="flex flex-wrap gap-1.5">
+          {topics.map((t) => (
+            <li key={t.id}>
+              <button
+                type="button"
+                aria-pressed={t.id === topic?.id}
+                onClick={() => setTopicId(t.id === topic?.id ? null : t.id)}
+                className="inline-flex h-6 items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors outline-none hover:bg-muted/60 focus-visible:border-ring aria-pressed:border-ring aria-pressed:bg-muted"
+              >
+                {t.label}
+                <span className="text-muted-foreground tabular-nums">{t.chunk_count}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <h2 className="pt-2 text-[13px] font-medium">Try a search</h2>
       <div className="relative max-w-xl">
         <SearchIcon className="absolute top-2 left-2.5 size-4 text-muted-foreground" aria-hidden />
         <Input
@@ -331,6 +392,9 @@ function TrySearch({ workspace }: { workspace: Workspace }) {
                 {passage.page !== null && <span>p. {passage.page}</span>}
                 {passage.section_path && <span className="truncate">{passage.section_path}</span>}
                 {passage.kind === 'table' && <Badge variant="secondary">table</Badge>}
+                {passage.topic_id && topicLabel.has(passage.topic_id) && (
+                  <Badge variant="outline">{topicLabel.get(passage.topic_id)}</Badge>
+                )}
                 <span className="ml-auto tabular-nums">{Math.round(passage.score * 100)}%</span>
               </p>
               <p className="mt-1 line-clamp-4 text-[13px] break-words whitespace-pre-wrap">

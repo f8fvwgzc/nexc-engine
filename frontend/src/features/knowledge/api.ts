@@ -7,6 +7,7 @@ import {
   documentSchema,
   knowledgeSettingsSchema,
   passageSchema,
+  topicSchema,
   type KnowledgeSettingsInput,
 } from '@/schemas/knowledge';
 
@@ -47,17 +48,30 @@ export function deleteDocument(workspaceId: string, documentId: string) {
 }
 
 /** The passages that best answer `q`; nothing is asked while `q` is empty. */
-export const knowledgeSearchQuery = (workspaceId: string, q: string) =>
+export const knowledgeSearchQuery = (workspaceId: string, q: string, topicId?: string) =>
   queryOptions({
-    queryKey: qk.knowledge.search(workspaceId, q),
+    queryKey: qk.knowledge.search(workspaceId, q, topicId),
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/knowledge/search`, z.array(passageSchema), {
-        query: { q, limit: 8 },
+        query: { q, limit: 8, topic_id: topicId },
         signal,
       }),
     enabled: q.length > 0,
     staleTime: 0,
   });
+
+/** The workspace's topics, largest first. */
+export const topicsQuery = (workspaceId: string) =>
+  queryOptions({
+    queryKey: qk.knowledge.topics(workspaceId),
+    queryFn: ({ signal }) =>
+      apiRequest(`/workspaces/${workspaceId}/knowledge/topics`, z.array(topicSchema), { signal }),
+  });
+
+/** Starts finding the topics afresh; it runs in the background. */
+export function rebuildTopics(workspaceId: string) {
+  return apiSend(`/workspaces/${workspaceId}/knowledge/topics/rebuild`, { method: 'POST' });
+}
 
 export const knowledgeSettingsQuery = (workspaceId: string) =>
   queryOptions({

@@ -153,6 +153,8 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(knowledge::list))
         .routes(routes!(knowledge::get, knowledge::delete))
         .routes(routes!(knowledge::search))
+        .routes(routes!(knowledge::topics))
+        .routes(routes!(knowledge::rebuild_topics))
         .routes(routes!(knowledge::settings, knowledge::put_settings))
         .routes(routes!(memories::list))
         .routes(routes!(memories::get, memories::delete))

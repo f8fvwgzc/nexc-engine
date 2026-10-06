@@ -93,6 +93,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   otherwise) and searched by keywords and embedding similarity
   (`GET /workspaces/{wid}/knowledge/search`). Running nodes and the planner get the passages that
   bear on their task, with citations, within a per-workspace passage count and character budget.
+- Document search by meaning: with pgvector, passages get an HNSW index per embedding size and a
+  search also takes the query's nearest neighbours, so a passage is found even when it shares no
+  word with the question (a neighbour less than 0.3 similar is not an answer).
+- Topics: a workspace's passages are clustered by their embeddings and each cluster is named by
+  the words that set it apart (`GET /workspaces/{wid}/knowledge/topics`); a search can be kept to
+  one topic (`topic_id`), and admins can find the topics afresh.
+- `deploy/postgres/pgvector.Dockerfile` builds PostgreSQL 17 with pgvector; `scripts/db.sh` now
+  reads `NEXC_DB_IMAGE` and `NEXC_DB_VOLUME` from `.env`.
 - Workflow editor: the Teams page opens a team's workflow, where team owners and workspace admins
   add, rename, recolour, reorder and remove issue states; other members see it read-only.
 - "Your teams" in the sidebar opens a team's issues (`/app/issues?team=<id>`), and `C` on the

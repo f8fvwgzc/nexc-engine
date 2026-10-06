@@ -16,6 +16,7 @@ use crate::domain::AppError;
 use crate::domain::audit::AuditAction;
 use crate::domain::knowledge::{
     DOCUMENT_MAX_BYTES, DOCUMENT_NAME_MAX, DOCUMENTS_MAX, Document, KnowledgeSettings, Passage,
+    Topic,
 };
 use crate::domain::settings::key_hint;
 use crate::domain::validation::{FieldErrors, Validate};
@@ -199,6 +200,8 @@ pub async fn delete(
 #[serde(deny_unknown_fields)]
 pub struct SearchQuery {
     pub q: String,
+    /// Only passages grouped under this topic.
+    pub topic_id: Option<Uuid>,
     /// 1-20, default 8.
     pub limit: Option<usize>,
 }
@@ -217,7 +220,47 @@ pub async fn search(
     require_member(&member_of(&state, auth, wid).await?)?;
     let q: String = query.q.trim().chars().take(1_000).collect();
     let limit = query.limit.unwrap_or(8).clamp(1, 20);
-    Ok(Json(knowledge::search(&state, wid, &q, limit).await?))
+    Ok(Json(
+        knowledge::search(&state, wid, &q, query.topic_id, limit).await?,
+    ))
+}
+
+/// The topics of the workspace's documents, largest first. They are found
+/// without supervision: passages are clustered by their embeddings and each
+/// cluster is named by the words that set it apart.
+#[utoipa::path(get, path = "/workspaces/{wid}/knowledge/topics", tag = "knowledge", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id")),
+    responses((status = 200, body = [Topic]), (status = 403, body = Problem), (status = 404, body = Problem)))]
+pub async fn topics(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(wid): Path<Uuid>,
+) -> Result<Json<Vec<Topic>>, AppError> {
+    require_member(&member_of(&state, auth, wid).await?)?;
+    Ok(Json(knowledge::topics(&state, wid).await?))
+}
+
+/// Finds the workspace's topics afresh from all its passages (admins and
+/// owners). The work runs in the background; read the topics again shortly.
+#[utoipa::path(post, path = "/workspaces/{wid}/knowledge/topics/rebuild", tag = "knowledge", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id")),
+    responses((status = 202, description = "Started"), (status = 403, body = Problem), (status = 404, body = Problem)))]
+pub async fn rebuild_topics(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(wid): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    require(
+        &member_of(&state, auth, wid).await?,
+        WorkspaceAction::UpdateSettings,
+    )?;
+    tokio::spawn(async move {
+        match knowledge::rebuild_topics(&state, wid).await {
+            Ok(topics) => tracing::info!(workspace = %wid, topics, "knowledge topics rebuilt"),
+            Err(err) => tracing::warn!(workspace = %wid, error = %err, "topic rebuild failed"),
+        }
+    });
+    Ok(StatusCode::ACCEPTED)
 }
 
 /// How the workspace embeds and uses its documents.

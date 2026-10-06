@@ -22,6 +22,7 @@ pub mod run;
 pub mod settings;
 pub mod status;
 pub mod template;
+pub mod topics;
 pub mod usage;
 pub mod user;
 pub mod validation;

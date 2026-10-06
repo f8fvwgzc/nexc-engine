@@ -37,6 +37,8 @@ pub struct AppState {
     pub health: Arc<HealthCache>,
     /// Decoded memories per owner, so retrieval does not hit the database every time.
     pub memories: Arc<MemoryIndex>,
+    /// Whether the database can search document passages by vector.
+    pub passage_vectors: Arc<crate::repo::knowledge_vectors::Support>,
 }
 
 impl AppState {
@@ -76,6 +78,7 @@ impl AppState {
             symphony: Arc::new(SymphonyBridge::new(&settings)),
             health: Arc::new(HealthCache::default()),
             memories: Arc::new(MemoryIndex::default()),
+            passage_vectors: Arc::default(),
             hub,
             metrics,
             http,

@@ -31,9 +31,20 @@ export const passageSchema = z.object({
   section_path: z.string(),
   kind: z.enum(['text', 'table']),
   content: z.string(),
+  topic_id: idSchema.nullable(),
   score: z.number(),
 });
 export type Passage = z.infer<typeof passageSchema>;
+
+/** A topic of the workspace's documents, found by clustering their passages. */
+export const topicSchema = z.object({
+  id: idSchema,
+  /** The words that set the topic apart. */
+  label: z.string(),
+  terms: z.array(z.string()),
+  chunk_count: z.number().int().nonnegative(),
+});
+export type Topic = z.infer<typeof topicSchema>;
 
 /** How the workspace embeds and uses its documents. The key itself is never returned. */
 export const knowledgeSettingsSchema = z.object({

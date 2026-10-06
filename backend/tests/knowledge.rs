@@ -236,3 +236,172 @@ async fn documents_are_ingested_searched_and_cited(pool: PgPool) {
         "and so did the file"
     );
 }
+
+/// Thirty short sections on three unrelated subjects.
+fn three_subjects() -> String {
+    let subjects = [
+        (
+            "Customs",
+            "customs clearance invoices port authority tariff declaration freight",
+        ),
+        (
+            "Gardening",
+            "plants watering soil fertiliser pruning greenhouse seedlings compost",
+        ),
+        (
+            "Payroll",
+            "payroll salary payslip overtime deductions pension bonus timesheet",
+        ),
+    ];
+    let mut out = String::from("# Company handbook\n\n");
+    for (name, words) in subjects {
+        for i in 0..10 {
+            out.push_str(&format!("## {name} note {i}\n\n"));
+            // Each section is long enough to be a passage of its own.
+            out.push_str(&format!("Section {i}: {} ", words).repeat(40));
+            out.push_str("\n\n");
+        }
+    }
+    out.push_str("## Fees\n\nVAT fee tax due now.\n");
+    out
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn passages_are_found_by_vector_and_grouped_into_topics(pool: PgPool) {
+    use nexc::repo::knowledge_vectors;
+    let app = TestApp::new(pool.clone(), &[("NEXC_RUNTIME_URL", "http://127.0.0.1:9")]).await;
+    if !knowledge_vectors::ensure(&pool, &app.state.passage_vectors)
+        .await
+        .unwrap()
+    {
+        eprintln!("skipped: this PostgreSQL server has no pgvector extension");
+        return;
+    }
+    tokio::fs::create_dir_all(app.state.settings.documents_dir())
+        .await
+        .unwrap();
+    let (owner, _) = user(&app, "owner@example.com").await;
+    let (member, _) = user(&app, "member@example.com").await;
+    let (_, list) = call(&app, Method::GET, "/workspaces", &owner, None).await;
+    let wid = list[0]["id"].as_str().unwrap().to_owned();
+    let workspace: Uuid = wid.parse().unwrap();
+    let ws = format!("/workspaces/{wid}");
+    let body = json!({"email": "member@example.com", "role": "member"});
+    call(
+        &app,
+        Method::POST,
+        &format!("{ws}/members"),
+        &owner,
+        Some(body),
+    )
+    .await;
+
+    let upload = format!("/api/v1{ws}/documents?name=handbook.md");
+    let r = app
+        .send_bytes(&upload, &member, three_subjects().into())
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{:?}", r.body);
+    knowledge::work(&app.state).await.unwrap();
+    let (_, docs) = call(&app, Method::GET, &format!("{ws}/documents"), &member, None).await;
+    assert_eq!(docs[0]["status"], "ready", "{docs}");
+    assert!(docs[0]["chunk_count"].as_i64().unwrap() >= 31, "{docs}");
+
+    // Every passage has its vector form, and its size has an index.
+    let (vectors, total): (i64, i64) = sqlx::query_as(
+        "SELECT count(embedding_vec), count(*) FROM document_chunks WHERE workspace_id = $1",
+    )
+    .bind(workspace)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(vectors, total);
+    let index: Option<String> = sqlx::query_scalar(
+        "SELECT indexdef FROM pg_indexes WHERE indexname = 'document_chunks_vec_256'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert!(index.unwrap().contains("hnsw"));
+
+    // A question whose words are all too short for the keyword search is still
+    // answered: the passage is the query's nearest neighbour.
+    assert_eq!(nexc::memory::any_term_query("VAT fee tax"), "");
+    let found = knowledge::search(&app.state, workspace, "VAT fee tax", None, 3)
+        .await
+        .unwrap();
+    assert_eq!(
+        found[0].section_path, "Company handbook › Fees",
+        "{found:?}"
+    );
+    // Another workspace's question finds nothing of this one.
+    let elsewhere = knowledge::search(&app.state, Uuid::now_v7(), "VAT fee tax", None, 3)
+        .await
+        .unwrap();
+    assert!(elsewhere.is_empty());
+
+    // Topics appeared on their own once there were enough passages, each named by its subject.
+    let (status, topics) = call(
+        &app,
+        Method::GET,
+        &format!("{ws}/knowledge/topics"),
+        &member,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let topics = topics.as_array().unwrap().clone();
+    assert!(topics.len() >= 3, "{topics:?}");
+    let covered: i64 = topics
+        .iter()
+        .map(|t| t["chunk_count"].as_i64().unwrap())
+        .sum();
+    assert_eq!(covered, total, "every passage has a topic");
+    let labelled = |word: &str| {
+        topics
+            .iter()
+            .find(|t| t["terms"].as_array().unwrap().iter().any(|w| w == word))
+            .cloned()
+    };
+    let customs = labelled("customs").expect("a topic about customs");
+    let gardening = labelled("plants").or_else(|| labelled("watering"));
+    assert!(gardening.is_some(), "{topics:?}");
+    assert_ne!(Some(&customs["id"]), gardening.as_ref().map(|t| &t["id"]));
+
+    // A search can be kept to one topic.
+    let query = "clearance%20tariff%20pruning%20compost";
+    let within = format!(
+        "{ws}/knowledge/search?q={query}&limit=20&topic_id={}",
+        customs["id"].as_str().unwrap()
+    );
+    let (_, hits) = call(&app, Method::GET, &within, &member, None).await;
+    let hits = hits.as_array().unwrap();
+    assert!(!hits.is_empty());
+    assert!(
+        hits.iter().all(|p| p["topic_id"] == customs["id"]),
+        "only the customs topic: {hits:?}"
+    );
+    assert!(
+        hits.iter()
+            .all(|p| p["section_path"].as_str().unwrap().contains("Customs"))
+    );
+
+    // Rebuilding is for admins, and gives the same topics for the same passages.
+    let rebuild = format!("{ws}/knowledge/topics/rebuild");
+    let (status, _) = call(&app, Method::POST, &rebuild, &member, None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let before: Vec<String> = topics
+        .iter()
+        .map(|t| t["label"].as_str().unwrap().to_owned())
+        .collect();
+    let count = knowledge::rebuild_topics(&app.state, workspace)
+        .await
+        .unwrap();
+    assert_eq!(count, topics.len());
+    let after: Vec<String> = knowledge::topics(&app.state, workspace)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|t| t.label)
+        .collect();
+    assert_eq!(after, before);
+}

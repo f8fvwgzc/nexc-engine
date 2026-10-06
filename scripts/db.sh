@@ -6,13 +6,6 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-CONTAINER="${NEXC_DB_CONTAINER:-nexc-postgres}"
-VOLUME="${NEXC_DB_VOLUME:-nexc-pgdata-dev}"
-# NEXC_DB_IMAGE=pgvector/pgvector:pg17 gives memory search an HNSW index. Use it for a NEW
-# volume only: the stock image is Alpine (musl) and pgvector's is Debian (glibc), and text
-# indexes built under one are not valid under the other.
-IMAGE="${NEXC_DB_IMAGE:-postgres:17-alpine}"
-
 if [[ ! -f .env ]]; then
   echo "error: .env not found - run \`make init\` first" >&2
   exit 1
@@ -22,6 +15,14 @@ set -a
 . ./.env
 set +a
 : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is empty - run make init}"
+# Read after .env, so that a choice made there holds for every `make dev`.
+CONTAINER="${NEXC_DB_CONTAINER:-nexc-postgres}"
+VOLUME="${NEXC_DB_VOLUME:-nexc-pgdata-dev}"
+# NEXC_DB_IMAGE=pgvector/pgvector:pg17 gives memory and document search an HNSW index. Use it
+# with a NEW volume (NEXC_DB_VOLUME) only: the stock image is Alpine (musl) and pgvector's is
+# Debian (glibc), and text indexes built under one are not valid under the other. To move
+# existing data, dump it (pg_dump -Fc) and restore it into the new volume.
+IMAGE="${NEXC_DB_IMAGE:-postgres:17-alpine}"
 POSTGRES_USER="${POSTGRES_USER:-nexc}"
 POSTGRES_DB="${POSTGRES_DB:-nexc}"
 PORT="${NEXC_DB_PORT:-5432}"

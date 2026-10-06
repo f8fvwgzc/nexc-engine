@@ -70,8 +70,22 @@ pub struct Passage {
     pub section_path: String,
     pub kind: ChunkKind,
     pub content: String,
+    /// The topic the passage was grouped under, once topics exist.
+    #[schema(required = true)]
+    pub topic_id: Option<Uuid>,
     /// 0-1, higher is better; comparable within one search only.
     pub score: f64,
+}
+
+/// A topic of a workspace's documents, found by clustering their passages.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct Topic {
+    pub id: Uuid,
+    /// The words that set the topic apart: "customs · invoices · port".
+    pub label: String,
+    pub terms: Vec<String>,
+    /// Passages grouped under it.
+    pub chunk_count: i32,
 }
 
 impl Passage {

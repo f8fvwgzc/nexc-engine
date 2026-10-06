@@ -1044,6 +1044,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{wid}/knowledge/topics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The topics of the workspace's documents, largest first. They are found
+         *     without supervision: passages are clustered by their embeddings and each
+         *     cluster is named by the words that set it apart.
+         */
+        get: operations["topics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/knowledge/topics/rebuild": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Finds the workspace's topics afresh from all its passages (admins and
+         *     owners). The work runs in the background; read the topics again shortly.
+         */
+        post: operations["rebuild_topics"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{wid}/labels": {
         parameters: {
             query?: never;
@@ -2342,6 +2383,11 @@ export interface components {
              */
             score: number;
             section_path: string;
+            /**
+             * Format: uuid
+             * @description The topic the passage was grouped under, once topics exist.
+             */
+            topic_id: string | null;
         };
         /** @description A plan as returned by the API. */
         Plan: {
@@ -2594,6 +2640,19 @@ export interface components {
              */
             expires_in: number;
             ticket: string;
+        };
+        /** @description A topic of a workspace's documents, found by clustering their passages. */
+        Topic: {
+            /**
+             * Format: int32
+             * @description Passages grouped under it.
+             */
+            chunk_count: number;
+            /** Format: uuid */
+            id: string;
+            /** @description The words that set the topic apart: "customs · invoices · port". */
+            label: string;
+            terms: string[];
         };
         /** @description `PATCH /agents/{id}` body (any subset; `reports_to: null` detaches). */
         UpdateAgent: {
@@ -5747,6 +5806,8 @@ export interface operations {
         parameters: {
             query: {
                 q: string;
+                /** @description Only passages grouped under this topic. */
+                topic_id?: string | null;
                 /** @description 1-20, default 8. */
                 limit?: number | null;
             };
@@ -5864,6 +5925,81 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    topics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Topic"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    rebuild_topics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Started */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

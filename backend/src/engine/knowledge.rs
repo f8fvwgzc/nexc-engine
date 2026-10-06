@@ -20,12 +20,13 @@ use crate::app::AppState;
 use crate::config::Secret;
 use crate::domain::knowledge::{
     BUILTIN_EMBED_MODEL, Block, BlockKind, Chunk, Document, DocumentStatus, KnowledgeSettings,
-    Parsed, Passage, chunk,
+    Parsed, Passage, Topic, chunk,
 };
+use crate::domain::topics as cluster;
 use crate::llm::embeddings::{self, EmbedTarget};
 use crate::memory::any_term_query_without;
 use crate::repo;
-use crate::repo::knowledge::Candidate;
+use crate::repo::knowledge::{Candidate, NewTopic};
 
 /// Documents ingested at the same time by one instance.
 const CONCURRENT_DOCUMENTS: i64 = 3;
@@ -37,6 +38,9 @@ const CANDIDATES: i64 = 300;
 const COMMON_TERM_SHARE: f64 = 0.02;
 /// Reciprocal-rank-fusion constant: how much the very top ranks stand out.
 const RRF_K: f64 = 60.0;
+/// A passage found only by vector (no shared telling word) must be at least this similar
+/// to the query; the nearest neighbours of an unrelated question are not an answer.
+const MIN_SIMILARITY: f32 = 0.3;
 const PARSE_TIMEOUT: Duration = Duration::from_secs(900);
 
 /// How a workspace embeds and uses its documents, resolved: its own settings,
@@ -267,6 +271,7 @@ async fn embed_document(
         let ids: Vec<Uuid> = batch.iter().map(|c| c.id).collect();
         let bytes: Vec<Vec<u8>> = vectors.iter().map(|v| embeddings::to_bytes(v)).collect();
         repo::knowledge::set_embeddings(&state.db, &ids, &bytes, &target.model).await?;
+        repo::knowledge_vectors::set(&state.db, &state.passage_vectors, &ids, &vectors).await?;
         repo::knowledge::touch(&state.db, document.id).await?;
     }
 }
@@ -300,6 +305,11 @@ async fn ingest(state: &AppState, document: &Document) -> anyhow::Result<()> {
     }
     embed_document(state, document, &resolved.target).await?;
     repo::knowledge::set_status(&state.db, document.id, DocumentStatus::Ready, "").await?;
+    // Topics are a convenience on top of a searchable document: failing to place it is logged.
+    let model = &resolved.target.model;
+    if let Err(err) = place_in_topics(state, document.workspace_id, model).await {
+        tracing::warn!(document = %document.id, error = %err, "cannot place passages in topics");
+    }
     Ok(())
 }
 
@@ -326,24 +336,33 @@ pub async fn work(state: &AppState) -> anyhow::Result<()> {
 
 // ---------- search ----------
 
-/// Orders keyword candidates by fusing two ranks: the full-text rank they
-/// arrived in, and the rank of their similarity to the query's embedding
-/// (for those embedded with the same model). Scores are 0-1.
+/// Orders candidates by fusing two ranks: the full-text rank of those found
+/// by keywords (`keyword`, best first), and the rank of every candidate's
+/// similarity to the query's embedding (for those embedded with the same
+/// model). `nearest` are the vector index's neighbours; a passage found both
+/// ways is one candidate. Scores are 0-1.
 pub fn fuse(
-    candidates: Vec<Candidate>,
+    keyword: Vec<Candidate>,
+    nearest: Vec<Candidate>,
     query: Option<(&str, &[f32])>,
     limit: usize,
 ) -> Vec<Passage> {
-    let similarity: Vec<Option<f32>> = candidates
-        .iter()
-        .map(|c| {
-            let (model, vector) = query?;
-            if c.embedding_model.as_deref() != Some(model) {
-                return None;
-            }
-            embeddings::dot_bytes(c.embedding.as_deref()?, vector)
-        })
-        .collect();
+    let keyword_count = keyword.len();
+    let mut seen: HashSet<Uuid> = keyword.iter().map(|c| c.chunk_id).collect();
+    let similar = |c: &Candidate| -> Option<f32> {
+        let (model, vector) = query?;
+        if c.embedding_model.as_deref() != Some(model) {
+            return None;
+        }
+        embeddings::dot_bytes(c.embedding.as_deref()?, vector)
+    };
+    let mut candidates = keyword;
+    candidates.extend(
+        nearest
+            .into_iter()
+            .filter(|c| seen.insert(c.chunk_id) && similar(c).is_some_and(|s| s >= MIN_SIMILARITY)),
+    );
+    let similarity: Vec<Option<f32>> = candidates.iter().map(similar).collect();
     // Rank by similarity among those that have one.
     let mut by_similarity: Vec<usize> = (0..candidates.len())
         .filter(|i| similarity[*i].is_some())
@@ -361,9 +380,13 @@ pub fn fuse(
     let mut scored: Vec<(f64, Candidate)> = candidates
         .into_iter()
         .enumerate()
-        .map(|(keyword_rank, c)| {
-            let mut score = 1.0 / (RRF_K + 1.0 + keyword_rank as f64);
-            if let Some(rank) = semantic_rank[keyword_rank] {
+        .map(|(index, c)| {
+            let mut score = 0.0;
+            // The first `keyword_count` candidates are the keyword matches, in rank order.
+            if index < keyword_count {
+                score += 1.0 / (RRF_K + 1.0 + index as f64);
+            }
+            if let Some(rank) = semantic_rank[index] {
                 score += 1.0 / (RRF_K + 1.0 + rank as f64);
             }
             (score / best, c)
@@ -381,19 +404,24 @@ pub fn fuse(
             section_path: c.section_path,
             kind: c.kind,
             content: c.content,
+            topic_id: c.topic_id,
             score: (score * 1000.0).round() / 1000.0,
         })
         .collect()
 }
 
-/// The passages of a workspace's documents that best answer `query`.
+/// The passages of a workspace's documents that best answer `query`,
+/// optionally within one topic. Candidates come from the full-text index
+/// and, when the database has a vector index, from the query's nearest
+/// neighbours, so a passage can be found by meaning alone.
 pub async fn search(
     state: &AppState,
     workspace: Uuid,
     query: &str,
+    topic: Option<Uuid>,
     limit: usize,
 ) -> anyhow::Result<Vec<Passage>> {
-    if limit == 0 {
+    if limit == 0 || query.trim().is_empty() {
         return Ok(Vec::new());
     }
     let common: HashSet<String> = repo::knowledge::common_terms(&state.db, COMMON_TERM_SHARE)
@@ -402,18 +430,18 @@ pub async fn search(
         .into_iter()
         .collect();
     let tsquery = any_term_query_without(query, &common);
-    let candidates =
-        repo::knowledge::keyword_candidates(&state.db, workspace, &tsquery, CANDIDATES).await?;
-    if candidates.is_empty() {
-        return Ok(Vec::new());
-    }
+    let keyword =
+        repo::knowledge::keyword_candidates(&state.db, workspace, &tsquery, topic, CANDIDATES)
+            .await?;
     let resolved = settings(state, workspace).await?;
-    // The query is embedded only when some candidate can be compared with it. A failing
-    // embeddings endpoint degrades the search to keywords; it does not fail it.
-    let comparable = candidates
+    let model = resolved.target.model.as_str();
+    // The query is embedded when something can be compared with it: the vector index, or a
+    // keyword match embedded with the same model. A failing embeddings endpoint degrades
+    // the search to keywords; it does not fail it.
+    let comparable = keyword
         .iter()
-        .any(|c| c.embedding_model.as_deref() == Some(resolved.target.model.as_str()));
-    let vector = if comparable {
+        .any(|c| c.embedding_model.as_deref() == Some(model));
+    let vector = if comparable || state.passage_vectors.available() {
         match embeddings::embed(&state.http, &resolved.target, &[query.to_owned()]).await {
             Ok(mut vectors) => vectors.pop(),
             Err(err) => {
@@ -424,10 +452,170 @@ pub async fn search(
     } else {
         None
     };
-    let query_vector = vector
-        .as_deref()
-        .map(|v| (resolved.target.model.as_str(), v));
-    Ok(fuse(candidates, query_vector, limit))
+    let nearest = match &vector {
+        Some(v) => {
+            let found = repo::knowledge_vectors::nearest(
+                &state.db,
+                &state.passage_vectors,
+                workspace,
+                model,
+                v,
+                CANDIDATES,
+            )
+            .await;
+            match found {
+                Ok(found) => found
+                    .into_iter()
+                    .filter(|c| topic.is_none() || c.topic_id == topic)
+                    .collect(),
+                Err(err) => {
+                    tracing::warn!(error = %err, "vector search failed; using keyword matches");
+                    Vec::new()
+                }
+            }
+        }
+        None => Vec::new(),
+    };
+    let query_vector = vector.as_deref().map(|v| (model, v));
+    Ok(fuse(keyword, nearest, query_vector, limit))
+}
+
+// ---------- topics ----------
+
+/// Passages the topic model is fitted on; the rest are assigned to the nearest topic.
+const TOPIC_SAMPLE: i64 = 10_000;
+/// Passages assigned per statement.
+const ASSIGN_BATCH: i64 = 2_000;
+/// A workspace gets its first topics once it has this many embedded passages.
+const TOPICS_FROM: usize = 20;
+
+fn floats(bytes: &[u8]) -> Vec<f32> {
+    bytes
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|b| f32::from_le_bytes(*b))
+        .collect()
+}
+
+/// The topics of a workspace as members see them.
+pub async fn topics(state: &AppState, workspace: Uuid) -> anyhow::Result<Vec<Topic>> {
+    Ok(repo::knowledge::topics(&state.db, workspace)
+        .await?
+        .into_iter()
+        .map(|t| Topic {
+            id: t.id,
+            label: t.label,
+            terms: t.terms,
+            chunk_count: t.chunk_count,
+        })
+        .collect())
+}
+
+/// Gives every passage embedded with `model` the topic whose centre is
+/// nearest, walking the workspace in batches.
+async fn assign_all(
+    state: &AppState,
+    workspace: Uuid,
+    model: &str,
+    centres: &[(Uuid, Vec<f32>)],
+) -> anyhow::Result<()> {
+    let Some(dims) = centres.first().map(|(_, c)| c.len()) else {
+        return Ok(());
+    };
+    let vectors: Vec<Vec<f32>> = centres.iter().map(|(_, c)| c.clone()).collect();
+    let mut after = None;
+    loop {
+        let batch =
+            repo::knowledge::embedded_after(&state.db, workspace, model, after, ASSIGN_BATCH)
+                .await?;
+        let Some(last) = batch.last().map(|(id, _)| *id) else {
+            break;
+        };
+        after = Some(last);
+        let mut chunk_ids = Vec::with_capacity(batch.len());
+        let mut topic_ids = Vec::with_capacity(batch.len());
+        for (id, bytes) in &batch {
+            let v = floats(bytes);
+            if v.len() == dims {
+                chunk_ids.push(*id);
+                topic_ids.push(centres[cluster::nearest(&vectors, &v)].0);
+            }
+        }
+        repo::knowledge::assign_topics(&state.db, &chunk_ids, &topic_ids).await?;
+    }
+    repo::knowledge::recount_topics(&state.db, workspace).await?;
+    Ok(())
+}
+
+/// Finds the topics of a workspace afresh: clusters a sample of its passage
+/// embeddings, names each cluster by the words that set it apart, and
+/// assigns every passage to its nearest topic. Returns how many topics there are.
+pub async fn rebuild_topics(state: &AppState, workspace: Uuid) -> anyhow::Result<usize> {
+    let resolved = settings(state, workspace).await?;
+    let model = resolved.target.model.clone();
+    let sample =
+        repo::knowledge::sample_embedded(&state.db, workspace, &model, TOPIC_SAMPLE).await?;
+    let dims = sample.first().map_or(0, |c| c.embedding.len() / 4);
+    let sample: Vec<_> = sample
+        .into_iter()
+        .filter(|c| dims > 0 && c.embedding.len() == dims * 4)
+        .collect();
+    if sample.is_empty() {
+        let mut tx = state.db.begin().await?;
+        repo::knowledge::replace_topics(&mut tx, workspace, &model, &[]).await?;
+        tx.commit().await?;
+        return Ok(0);
+    }
+    // Clustering is CPU work; it must not hold up the async runtime.
+    let fitted = tokio::task::spawn_blocking(move || {
+        let vectors: Vec<Vec<f32>> = sample.iter().map(|c| floats(&c.embedding)).collect();
+        let k = cluster::topic_count(vectors.len());
+        let (centres, assignment) = cluster::cluster(&vectors, k);
+        let texts: Vec<&str> = sample.iter().map(|c| c.content.as_str()).collect();
+        let terms = cluster::distinctive_terms(&texts, &assignment, centres.len());
+        cluster::merge_same_label(centres, terms)
+    })
+    .await?;
+    let (centres, terms) = fitted;
+    let new: Vec<NewTopic> = centres
+        .iter()
+        .zip(&terms)
+        .map(|(centre, terms)| NewTopic {
+            id: Uuid::now_v7(),
+            label: cluster::label(terms),
+            terms: terms.clone(),
+            centroid: embeddings::to_bytes(centre),
+        })
+        .collect();
+    let mut tx = state.db.begin().await?;
+    repo::knowledge::replace_topics(&mut tx, workspace, &model, &new).await?;
+    tx.commit().await?;
+    let centres: Vec<(Uuid, Vec<f32>)> = new.iter().map(|t| t.id).zip(centres).collect();
+    assign_all(state, workspace, &model, &centres).await?;
+    Ok(new.len())
+}
+
+/// After a document is embedded: the workspace's first topics are found once
+/// it has enough passages; afterwards new passages join the nearest topic.
+async fn place_in_topics(state: &AppState, workspace: Uuid, model: &str) -> anyhow::Result<()> {
+    let existing = repo::knowledge::topics(&state.db, workspace).await?;
+    let usable: Vec<(Uuid, Vec<f32>)> = existing
+        .iter()
+        .filter(|t| t.embedding_model == model)
+        .map(|t| (t.id, floats(&t.centroid)))
+        .collect();
+    if usable.is_empty() {
+        let embedded =
+            repo::knowledge::sample_embedded(&state.db, workspace, model, TOPICS_FROM as i64)
+                .await?
+                .len();
+        if embedded >= TOPICS_FROM {
+            rebuild_topics(state, workspace).await?;
+        }
+        return Ok(());
+    }
+    assign_all(state, workspace, model, &usable).await
 }
 
 /// What documents are used for, which a workspace can turn off separately.
@@ -456,7 +644,7 @@ pub async fn context(state: &AppState, workspace: Uuid, query: &str, purpose: Us
     if !enabled || resolved.passages == 0 {
         return Vec::new();
     }
-    let passages = match search(state, workspace, query, resolved.passages).await {
+    let passages = match search(state, workspace, query, None, resolved.passages).await {
         Ok(passages) => passages,
         Err(err) => {
             tracing::warn!(error = %err, "document search failed; no documents used");
@@ -497,6 +685,7 @@ mod tests {
             content: content.into(),
             embedding: vector.map(embeddings::to_bytes),
             embedding_model: Some(model.into()),
+            topic_id: None,
         }
     }
 
@@ -528,7 +717,7 @@ mod tests {
             candidate("b", Some(&[0.6, 0.8]), "m"),
             candidate("c", Some(&[1.0, 0.0]), "m"),
         ];
-        let ranked = fuse(candidates, Some(("m", &[1.0, 0.0])), 3);
+        let ranked = fuse(candidates, Vec::new(), Some(("m", &[1.0, 0.0])), 3);
         let order: Vec<&str> = ranked.iter().map(|p| p.content.as_str()).collect();
         // a: keyword 1st + semantic 3rd; c: keyword 3rd + semantic 1st; b: 2nd + 2nd.
         assert_eq!(order.len(), 3);
@@ -541,12 +730,44 @@ mod tests {
     }
 
     #[test]
+    fn a_passage_found_only_by_meaning_is_still_a_candidate() {
+        let shared = candidate("found both ways", Some(&[0.8, 0.6]), "m");
+        let again = Candidate {
+            chunk_id: shared.chunk_id,
+            ..candidate("found both ways", Some(&[0.8, 0.6]), "m")
+        };
+        let keyword = vec![shared, candidate("keyword only", Some(&[0.0, 1.0]), "m")];
+        let nearest = vec![candidate("meaning only", Some(&[1.0, 0.0]), "m"), again];
+        let ranked = fuse(keyword, nearest, Some(("m", &[1.0, 0.0])), 5);
+        let order: Vec<&str> = ranked.iter().map(|p| p.content.as_str()).collect();
+        assert_eq!(
+            order.len(),
+            3,
+            "the shared passage is one candidate: {order:?}"
+        );
+        assert_eq!(order[0], "found both ways", "two ranks beat one");
+        assert!(order.contains(&"meaning only"));
+    }
+
+    #[test]
+    fn a_distant_neighbour_is_not_an_answer() {
+        // The index always has a nearest passage; an unrelated one is left out.
+        let nearest = vec![
+            candidate("related", Some(&[0.8, 0.6]), "m"),
+            candidate("unrelated", Some(&[0.1, 0.995]), "m"),
+        ];
+        let ranked = fuse(Vec::new(), nearest, Some(("m", &[1.0, 0.0])), 5);
+        let order: Vec<&str> = ranked.iter().map(|p| p.content.as_str()).collect();
+        assert_eq!(order, ["related"]);
+    }
+
+    #[test]
     fn vectors_of_another_model_are_not_compared() {
         let candidates = vec![
             candidate("old model", Some(&[1.0, 0.0]), "old"),
             candidate("current model", Some(&[0.9, 0.1]), "m"),
         ];
-        let ranked = fuse(candidates, Some(("m", &[1.0, 0.0])), 2);
+        let ranked = fuse(candidates, Vec::new(), Some(("m", &[1.0, 0.0])), 2);
         // The second has both ranks, the first only its keyword rank.
         assert_eq!(ranked[0].content, "current model");
         // Without a query vector the keyword order stands.
@@ -554,7 +775,7 @@ mod tests {
             candidate("first", None, "m"),
             candidate("second", None, "m"),
         ];
-        let ranked = fuse(candidates, None, 1);
+        let ranked = fuse(candidates, Vec::new(), None, 1);
         assert_eq!(ranked.len(), 1);
         assert_eq!(ranked[0].content, "first");
     }

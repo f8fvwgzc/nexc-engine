@@ -92,6 +92,12 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
     } else {
         tracing::info!("memory vector search is off: the database has no pgvector extension");
     }
+    if repo::knowledge_vectors::ensure(&state.db, &state.passage_vectors).await? {
+        let filled = repo::knowledge_vectors::backfill(&state.db, &state.passage_vectors).await?;
+        tracing::info!(filled, "document vector search is on (pgvector, HNSW)");
+    } else {
+        tracing::info!("document vector search is off: the database has no pgvector extension");
+    }
     bootstrap_admin(&state).await?;
     seed_missing_workspaces(&state).await?;
     orchestrator::seed_missing_orgs(&state).await?;

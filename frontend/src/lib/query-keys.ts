@@ -62,7 +62,9 @@ export const qk = {
     all: ['knowledge'] as const,
     documents: (workspaceId: string, filter: object) =>
       ['knowledge', workspaceId, 'documents', filter] as const,
-    search: (workspaceId: string, q: string) => ['knowledge', workspaceId, 'search', q] as const,
+    search: (workspaceId: string, q: string, topicId?: string) =>
+      ['knowledge', workspaceId, 'search', q, topicId ?? null] as const,
+    topics: (workspaceId: string) => ['knowledge', workspaceId, 'topics'] as const,
     settings: (workspaceId: string) => ['knowledge', workspaceId, 'settings'] as const,
   },
   templates: ['templates'] as const,

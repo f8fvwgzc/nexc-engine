@@ -284,6 +284,7 @@ pub struct Candidate {
     pub content: String,
     pub embedding: Option<Vec<u8>>,
     pub embedding_model: Option<String>,
+    pub topic_id: Option<Uuid>,
 }
 
 impl FromRow<'_, PgRow> for Candidate {
@@ -298,6 +299,7 @@ impl FromRow<'_, PgRow> for Candidate {
             content: row.try_get("content")?,
             embedding: row.try_get("embedding")?,
             embedding_model: row.try_get("embedding_model")?,
+            topic_id: row.try_get("topic_id")?,
         })
     }
 }
@@ -309,19 +311,22 @@ pub async fn keyword_candidates(
     db: impl PgExecutor<'_>,
     workspace_id: Uuid,
     tsquery: &str,
+    topic_id: Option<Uuid>,
     limit: i64,
 ) -> Result<Vec<Candidate>, sqlx::Error> {
     sqlx::query_as(
         "SELECT c.id, c.document_id, d.name AS document_name, c.page, c.section_path, c.kind,
-                c.content, c.embedding, c.embedding_model
+                c.content, c.embedding, c.embedding_model, c.topic_id
          FROM document_chunks c JOIN documents d ON d.id = c.document_id
          WHERE c.workspace_id = $1 AND d.status = 'ready' AND $2 <> ''
            AND c.content_tsv @@ to_tsquery('simple', $2)
+           AND ($4::uuid IS NULL OR c.topic_id = $4)
          ORDER BY ts_rank(c.content_tsv, to_tsquery('simple', $2)) DESC, c.id LIMIT $3",
     )
     .bind(workspace_id)
     .bind(tsquery)
     .bind(limit)
+    .bind(topic_id)
     .fetch_all(db)
     .await
 }
@@ -445,4 +450,154 @@ pub async fn requeue_for_model(
     .execute(db)
     .await?;
     Ok(result.rows_affected())
+}
+
+// ---------- topics ----------
+
+/// A stored topic with its centre.
+#[derive(Debug, Clone, FromRow)]
+pub struct StoredTopic {
+    pub id: Uuid,
+    pub label: String,
+    pub terms: Vec<String>,
+    pub centroid: Vec<u8>,
+    pub embedding_model: String,
+    pub chunk_count: i32,
+}
+
+/// The topics of a workspace, largest first.
+pub async fn topics(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+) -> Result<Vec<StoredTopic>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT id, label, terms, centroid, embedding_model, chunk_count
+         FROM knowledge_topics WHERE workspace_id = $1 ORDER BY chunk_count DESC, label",
+    )
+    .bind(workspace_id)
+    .fetch_all(db)
+    .await
+}
+
+/// A passage as the topic model reads it.
+#[derive(Debug, FromRow)]
+pub struct EmbeddedChunk {
+    pub id: Uuid,
+    pub content: String,
+    pub embedding: Vec<u8>,
+}
+
+/// Up to `limit` passages of a workspace embedded with `model`, picked
+/// evenly across the corpus (by id, which is random within a millisecond)
+/// rather than the newest, so a sample represents the whole.
+pub async fn sample_embedded(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    model: &str,
+    limit: i64,
+) -> Result<Vec<EmbeddedChunk>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT id, content, embedding FROM document_chunks
+         WHERE workspace_id = $1 AND embedding_model = $2 AND embedding IS NOT NULL
+         ORDER BY md5(id::text) LIMIT $3",
+    )
+    .bind(workspace_id)
+    .bind(model)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
+/// The next passages (after `after`, by id) embedded with `model`, with
+/// their vectors, for assigning every passage to its nearest topic.
+pub async fn embedded_after(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    model: &str,
+    after: Option<Uuid>,
+    limit: i64,
+) -> Result<Vec<(Uuid, Vec<u8>)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT id, embedding FROM document_chunks
+         WHERE workspace_id = $1 AND embedding_model = $2 AND embedding IS NOT NULL
+           AND ($3::uuid IS NULL OR id > $3)
+         ORDER BY id LIMIT $4",
+    )
+    .bind(workspace_id)
+    .bind(model)
+    .bind(after)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
+/// A topic to store.
+#[derive(Debug)]
+pub struct NewTopic {
+    pub id: Uuid,
+    pub label: String,
+    pub terms: Vec<String>,
+    pub centroid: Vec<u8>,
+}
+
+/// Replaces the topics of a workspace. Passages lose their old topic (the
+/// foreign key clears it) and are assigned again by the caller.
+pub async fn replace_topics(
+    db: &mut PgConnection,
+    workspace_id: Uuid,
+    model: &str,
+    topics: &[NewTopic],
+) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM knowledge_topics WHERE workspace_id = $1")
+        .bind(workspace_id)
+        .execute(&mut *db)
+        .await?;
+    for topic in topics {
+        sqlx::query(
+            "INSERT INTO knowledge_topics (id, workspace_id, label, terms, centroid, embedding_model)
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(topic.id)
+        .bind(workspace_id)
+        .bind(&topic.label)
+        .bind(&topic.terms)
+        .bind(&topic.centroid)
+        .bind(model)
+        .execute(&mut *db)
+        .await?;
+    }
+    Ok(())
+}
+
+/// Gives a batch of passages their topics.
+pub async fn assign_topics(
+    db: impl PgExecutor<'_>,
+    chunk_ids: &[Uuid],
+    topic_ids: &[Uuid],
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE document_chunks c SET topic_id = u.topic
+         FROM UNNEST($1::uuid[], $2::uuid[]) AS u(id, topic) WHERE c.id = u.id",
+    )
+    .bind(chunk_ids)
+    .bind(topic_ids)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Sets each topic's passage count from the passages that carry it.
+pub async fn recount_topics(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE knowledge_topics t SET chunk_count =
+            (SELECT count(*) FROM document_chunks c WHERE c.topic_id = t.id)
+         WHERE t.workspace_id = $1",
+    )
+    .bind(workspace_id)
+    .execute(db)
+    .await?;
+    Ok(())
 }
