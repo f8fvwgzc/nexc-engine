@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  CalendarIcon,
   ChevronRightIcon,
   CircleDotIcon,
   KanbanIcon,
@@ -49,6 +50,7 @@ import {
   statesQuery,
   updateIssue,
 } from '@/features/issues/api';
+import { dueLabel, localToday } from '@/features/issues/due';
 import { IssueTimeline } from '@/features/issues/issue-timeline';
 import { LabelPicker } from '@/features/issues/label-picker';
 import { SubIssues } from '@/features/issues/sub-issues';
@@ -430,6 +432,18 @@ function IssueDialog({
                 className="w-full"
               />
             </Property>
+            <Property label="Due date">
+              <Input
+                type="date"
+                aria-label="Due date"
+                value={issue.due_date ?? ''}
+                className="h-8 w-full text-[13px]"
+                onChange={(e) => {
+                  const next = e.target.value || null;
+                  if (next !== issue.due_date) save.mutate({ due_date: next });
+                }}
+              />
+            </Property>
             {(cycles.length > 0 || issue.cycle) && (
               <Property label="Cycle">
                 <OptionSelect
@@ -530,12 +544,29 @@ function IssueRow({ issue, onOpen }: { issue: Issue; onOpen: () => void }) {
             aria-label="Has a graph"
           />
         )}
+        {issue.due_date && <DueChip issue={issue} />}
         <span className="hidden shrink-0 text-xs text-muted-foreground tabular-nums sm:block">
           {formatRelative(issue.updated_at)}
         </span>
         <PersonGlyph name={issue.assignee?.name} />
       </button>
     </li>
+  );
+}
+
+/** When an issue is due; red once that day has passed and the work is still open. */
+function DueChip({ issue }: { issue: Issue }) {
+  if (!issue.due_date) return null;
+  const open = !['completed', 'canceled'].includes(issue.state.category);
+  const { text, late } = dueLabel(issue.due_date, localToday(), open);
+  return (
+    <span
+      title={`Due ${issue.due_date}`}
+      className={`flex shrink-0 items-center gap-1 text-xs tabular-nums ${late ? 'font-medium text-destructive' : 'text-muted-foreground'}`}
+    >
+      <CalendarIcon aria-hidden className="size-3" />
+      {text}
+    </span>
   );
 }
 
@@ -639,6 +670,7 @@ function IssueBoard({
                     <span className="line-clamp-2 text-[13px]">{issue.title}</span>
                     <span className="flex flex-wrap items-center gap-1">
                       <PriorityGlyph priority={issue.priority} />
+                      {issue.due_date && <DueChip issue={issue} />}
                       {issue.sub_issues.total > 0 && (
                         <span
                           className="rounded-full border px-1.5 text-xs text-muted-foreground tabular-nums"
@@ -664,9 +696,18 @@ function IssueBoard({
 
 /**
  * The issues of a workspace as a list grouped by state or as a team's board, with filters. Given
- * a `project` it shows only that project's issues and files new ones in it.
+ * a `project` it shows only that project's issues and files new ones in it; given a `person` it
+ * shows only what is assigned to, or was filed by, that member, under the caller's own heading.
  */
-export function IssueExplorer({ workspace, project }: { workspace: Workspace; project?: Project }) {
+export function IssueExplorer({
+  workspace,
+  project,
+  person,
+}: {
+  workspace: Workspace;
+  project?: Project;
+  person?: { assignee_id?: string; creator_id?: string };
+}) {
   // The team is part of the address, so the sidebar's team links and reloads land on it.
   const [params, setParams] = useSearchParams();
   const teamId = params.get('team') ?? ALL;
@@ -696,6 +737,8 @@ export function IssueExplorer({ workspace, project }: { workspace: Workspace; pr
       project_id: project?.id,
       label_id: activeLabel === ALL ? undefined : activeLabel,
       cycle_id: activeCycle === ALL ? undefined : activeCycle,
+      assignee_id: person?.assignee_id,
+      creator_id: person?.creator_id,
       open: openOnly,
       q: debouncedQ || undefined,
     }),
@@ -778,12 +821,12 @@ export function IssueExplorer({ workspace, project }: { workspace: Workspace; pr
   return (
     <div
       className={
-        project
+        project || person
           ? 'w-full space-y-4'
           : `mx-auto w-full space-y-5 p-4 sm:p-6 ${view === 'board' ? 'max-w-none' : 'max-w-5xl'}`
       }
     >
-      {!project && (
+      {!project && !person && (
         <PageHeader
           title="Issues"
           description={`Work tracked in ${workspace.name}. Open an issue to plan and run it as a graph.`}
@@ -851,7 +894,7 @@ export function IssueExplorer({ workspace, project }: { workspace: Workspace; pr
           <Switch checked={openOnly} onCheckedChange={setOpenOnly} />
           Open only
         </label>
-        {project && newIssueButton}
+        {(project || person) && newIssueButton}
         <div role="group" aria-label="View" className="flex rounded-md border p-0.5">
           <Button
             variant={view === 'list' ? 'secondary' : 'ghost'}

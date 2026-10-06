@@ -87,6 +87,7 @@ impl FromRow<'_, PgRow> for Issue {
             project_id: row.try_get("project_id")?,
             graph_id: row.try_get("graph_id")?,
             creator_id: row.try_get("creator_id")?,
+            due_date: row.try_get("due_date")?,
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,
             completed_at: row.try_get("completed_at")?,
@@ -118,7 +119,7 @@ macro_rules! issue_for_user {
         concat!(
             "SELECT i.id, i.workspace_id, i.team_id, t.key AS team_key, i.number, i.title,
                     i.description, i.priority, i.assignee_id, au.name AS assignee_name, i.agent_id,
-                    i.project_id, i.graph_id, i.creator_id, i.created_at, i.updated_at,
+                    i.project_id, i.graph_id, i.creator_id, i.due_date, i.created_at, i.updated_at,
                     i.completed_at, s.id AS state_id, s.name AS state_name,
                     s.category AS state_category, s.color AS state_color,
                     s.position AS state_position,
@@ -293,6 +294,8 @@ pub struct IssueFilter {
     pub parent_id: Option<Uuid>,
     /// Only issues planned in this cycle.
     pub cycle_id: Option<Uuid>,
+    /// Only issues this person filed.
+    pub creator_id: Option<Uuid>,
     pub limit: i64,
 }
 
@@ -315,6 +318,7 @@ pub async fn list(
               SELECT 1 FROM issue_labels fl WHERE fl.issue_id = i.id AND fl.label_id = $9))
          AND ($10::uuid IS NULL OR i.parent_id = $10)
          AND ($11::uuid IS NULL OR i.cycle_id = $11)
+         AND ($12::uuid IS NULL OR i.creator_id = $12)
          ORDER BY i.updated_at DESC, i.id LIMIT $8"
     ))
     .bind(user_id)
@@ -328,6 +332,7 @@ pub async fn list(
     .bind(f.label_id)
     .bind(f.parent_id)
     .bind(f.cycle_id)
+    .bind(f.creator_id)
     .fetch_all(db)
     .await
 }
@@ -442,6 +447,20 @@ pub async fn set_cycle(
     sqlx::query("UPDATE issues SET cycle_id = $2, updated_at = now() WHERE id = $1")
         .bind(id)
         .bind(cycle_id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// Sets the day an issue is due, or removes it.
+pub async fn set_due(
+    db: impl PgExecutor<'_>,
+    id: Uuid,
+    due_date: Option<chrono::NaiveDate>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE issues SET due_date = $2, updated_at = now() WHERE id = $1")
+        .bind(id)
+        .bind(due_date)
         .execute(db)
         .await?;
     Ok(())

@@ -53,13 +53,22 @@ export const issueSchema = z.object({
   /** The graph that plans and executes the issue, if one was created. */
   graph_id: idSchema.nullable(),
   creator_id: idSchema.nullable(),
+  /** The calendar day the issue is due (`YYYY-MM-DD`). */
+  due_date: z.string().nullable(),
   created_at: timestampSchema,
   updated_at: timestampSchema,
   completed_at: timestampSchema.nullable(),
 });
 export type Issue = z.infer<typeof issueSchema>;
 
-export const issueEventKindSchema = z.enum(['comment', 'state', 'priority', 'assignee', 'title']);
+export const issueEventKindSchema = z.enum([
+  'comment',
+  'state',
+  'priority',
+  'assignee',
+  'title',
+  'due',
+]);
 
 /** One entry of an issue's timeline: a comment, or a change to the issue. */
 export const issueEventSchema = z.object({
@@ -123,4 +132,6 @@ export interface IssueInput {
   label_ids?: string[];
   parent_id?: string | null;
   cycle_id?: string | null;
+  /** `YYYY-MM-DD`; `null` removes it. */
+  due_date?: string | null;
 }

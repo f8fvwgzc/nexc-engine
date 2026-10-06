@@ -81,6 +81,10 @@ export const routes: RouteObject[] = [
               { path: 'memory', element: <Navigate to="/app/settings/memory" replace /> },
               { path: 'inbox', ...page(routeModules.inbox, crumbs({ label: 'Inbox' })) },
               { path: 'issues', ...page(routeModules.issues, crumbs({ label: 'Issues' })) },
+              {
+                path: 'my-issues',
+                ...page(routeModules.myIssues, crumbs({ label: 'My issues' })),
+              },
               { path: 'projects', ...page(routeModules.projects, crumbs({ label: 'Projects' })) },
               {
                 path: 'projects/:projectId',

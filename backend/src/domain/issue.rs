@@ -144,6 +144,9 @@ pub struct Issue {
     pub graph_id: Option<Uuid>,
     #[schema(required = true)]
     pub creator_id: Option<Uuid>,
+    /// The day the issue is due, if it has one.
+    #[schema(required = true)]
+    pub due_date: Option<NaiveDate>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     #[schema(required = true)]
@@ -177,6 +180,8 @@ string_enum!(
         Priority => "priority",
         Assignee => "assignee",
         Title => "title",
+        /// The due date was set, moved or removed.
+        Due => "due",
     }
 );
 
@@ -244,6 +249,14 @@ pub fn changes(before: &Issue, after: &Issue) -> Vec<IssueChange> {
             kind: IssueEventKind::Assignee,
             from: name(before),
             to: name(after),
+        });
+    }
+    if before.due_date != after.due_date {
+        let day = |i: &Issue| i.due_date.map(|d| d.to_string());
+        out.push(IssueChange {
+            kind: IssueEventKind::Due,
+            from: day(before),
+            to: day(after),
         });
     }
     out

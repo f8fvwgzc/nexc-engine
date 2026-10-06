@@ -26,6 +26,9 @@ function changeText(event: IssueEvent): string {
       return `assigned this to ${to}`;
     case 'title':
       return `renamed this to “${to ?? ''}”`;
+    case 'due':
+      if (!to) return 'removed the due date';
+      return from ? `moved the due date from ${from} to ${to}` : `set the due date to ${to}`;
     case 'comment':
       return 'commented';
   }

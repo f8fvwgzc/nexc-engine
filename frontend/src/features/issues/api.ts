@@ -22,6 +22,10 @@ export interface IssueFilter {
   label_id?: string;
   parent_id?: string;
   cycle_id?: string;
+  /** Only issues assigned to this person. */
+  assignee_id?: string;
+  /** Only issues this person filed. */
+  creator_id?: string;
   open?: boolean;
   q?: string;
 }
@@ -38,6 +42,8 @@ export const issuesQuery = (workspaceId: string, filter: IssueFilter = {}) =>
           label_id: filter.label_id,
           parent_id: filter.parent_id,
           cycle_id: filter.cycle_id,
+          assignee_id: filter.assignee_id,
+          creator_id: filter.creator_id,
           open: filter.open ? 'true' : undefined,
           q: filter.q,
         },

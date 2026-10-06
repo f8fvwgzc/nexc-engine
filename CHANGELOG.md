@@ -146,6 +146,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   themselves. Entries are kept 180 days, are part of the copy of your data, and go with the
   account; at most ten failed sign-ins an hour are written, so guessing at an account cannot
   fill its log (`GET /auth/activity`).
+- My issues: a page in the sidebar with what is assigned to you and what you filed, across
+  every team of the workspace you can see, with the same list, board and filters as the Issues
+  page (`GET /workspaces/{wid}/issues?assignee_id=` and the new `creator_id=`).
+- Due dates on issues: set when filing or in the issue's properties, shown in lists and on
+  board cards ("Due today", "Due tomorrow", the day, or how many days late while the issue is
+  open), and recorded in the issue's timeline when set, moved or removed (`due_date` on
+  `Issue`, `due` timeline entries). The demo seed gives four issues due dates.
 - Search from the command palette (⌘K): a few typed characters find issues (by title or
   identifier), projects, graphs, documents, teams and people in the open workspace, grouped by
   kind, and picking one opens it. One request, and only what the caller may see: each kind goes

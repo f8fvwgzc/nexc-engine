@@ -165,6 +165,8 @@ pub struct IssueQuery {
     pub parent_id: Option<Uuid>,
     /// Only issues planned in this cycle.
     pub cycle_id: Option<Uuid>,
+    /// Only issues this person filed.
+    pub creator_id: Option<Uuid>,
     /// `true` leaves out completed and canceled issues.
     pub open: Option<bool>,
     /// Matches the title, or the start of the identifier (`ENG-1`).
@@ -191,6 +193,8 @@ pub struct CreateIssue {
     pub parent_id: Option<Uuid>,
     /// A cycle of the team to plan the issue in.
     pub cycle_id: Option<Uuid>,
+    /// The day the issue is due (`YYYY-MM-DD`).
+    pub due_date: Option<chrono::NaiveDate>,
     /// Labels of the workspace to put on the issue (at most 20).
     #[serde(default)]
     pub label_ids: Vec<Uuid>,
@@ -205,8 +209,8 @@ impl Validate for CreateIssue {
     }
 }
 
-/// `PATCH /issues/{iid}` body: any subset. `assignee_id`, `agent_id` and
-/// `project_id` accept `null` to clear them.
+/// `PATCH /issues/{iid}` body: any subset. `assignee_id`, `agent_id`,
+/// `project_id` and `due_date` accept `null` to clear them.
 #[derive(Debug, Default, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateIssue {
@@ -231,6 +235,10 @@ pub struct UpdateIssue {
     #[serde(default, deserialize_with = "double_option")]
     #[schema(value_type = Option<Uuid>, nullable)]
     pub cycle_id: Option<Option<Uuid>>,
+    /// The day the issue is due (`YYYY-MM-DD`); `null` removes it.
+    #[serde(default, deserialize_with = "double_option")]
+    #[schema(value_type = Option<String>, format = Date, nullable)]
+    pub due_date: Option<Option<chrono::NaiveDate>>,
     /// Replaces the issue's labels.
     pub label_ids: Option<Vec<Uuid>>,
 }
@@ -271,6 +279,7 @@ pub async fn list(
         label_id: query.label_id,
         parent_id: query.parent_id,
         cycle_id: query.cycle_id,
+        creator_id: query.creator_id,
         open_only: query.open.unwrap_or(false),
         q: query
             .q
@@ -332,6 +341,9 @@ pub async fn create(
     }
     if req.cycle_id.is_some() {
         repo::issues::set_cycle(&mut *tx, id, req.cycle_id).await?;
+    }
+    if req.due_date.is_some() {
+        repo::issues::set_due(&mut *tx, id, req.due_date).await?;
     }
     if !labels.is_empty() {
         repo::issues::set_labels(&mut tx, id, &labels).await?;
@@ -444,6 +456,9 @@ pub async fn update(
     }
     if let Some(cycle) = req.cycle_id {
         repo::issues::set_cycle(&mut *tx, iid, cycle).await?;
+    }
+    if let Some(due) = req.due_date {
+        repo::issues::set_due(&mut *tx, iid, due).await?;
     }
     if let Some(labels) = &labels {
         repo::issues::set_labels(&mut tx, iid, labels).await?;

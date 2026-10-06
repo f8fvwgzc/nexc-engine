@@ -1455,3 +1455,106 @@ async fn teams_plan_issues_in_cycles(pool: PgPool) {
     let (status, _) = call(&app, Method::GET, &cycles, &w.guest, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn issues_carry_a_due_date_and_are_listed_by_person(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let w = world(&app).await;
+    let issues = format!("{}/teams/{}/issues", w.ws, w.eng);
+    let list = format!("{}/issues", w.ws);
+    let (_, owner) = call(&app, Method::GET, "/auth/me", &w.owner, None).await;
+    let owner_id = owner["id"].as_str().unwrap().to_owned();
+
+    // Filed with a due date, by the owner, for the member.
+    let body =
+        json!({"title": "Ship billing", "due_date": "2026-11-02", "assignee_id": w.member_id});
+    let (status, dated) = call(&app, Method::POST, &issues, &w.owner, Some(body)).await;
+    assert_eq!(status, StatusCode::CREATED, "{dated}");
+    assert_eq!(dated["due_date"], "2026-11-02");
+    let id = dated["id"].as_str().unwrap().to_owned();
+    let (_, plain) = call(
+        &app,
+        Method::POST,
+        &issues,
+        &w.member,
+        Some(json!({"title": "No date"})),
+    )
+    .await;
+    assert!(plain["due_date"].is_null());
+    let bad = json!({"title": "x", "due_date": "next week"});
+    let (status, _) = call(&app, Method::POST, &issues, &w.owner, Some(bad)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // Moved, left alone by an unrelated edit, then removed; the timeline says each change.
+    let issue = format!("/issues/{id}");
+    let moved = json!({"due_date": "2026-11-09"});
+    let (status, after) = call(&app, Method::PATCH, &issue, &w.member, Some(moved)).await;
+    assert_eq!(
+        (status, after["due_date"].as_str()),
+        (StatusCode::OK, Some("2026-11-09"))
+    );
+    let (_, after) = call(
+        &app,
+        Method::PATCH,
+        &issue,
+        &w.member,
+        Some(json!({"priority": 2})),
+    )
+    .await;
+    assert_eq!(
+        after["due_date"], "2026-11-09",
+        "an edit of something else keeps it"
+    );
+    let (_, after) = call(
+        &app,
+        Method::PATCH,
+        &issue,
+        &w.member,
+        Some(json!({"due_date": null})),
+    )
+    .await;
+    assert!(after["due_date"].is_null());
+    let (_, events) = call(
+        &app,
+        Method::GET,
+        &format!("{issue}/events"),
+        &w.member,
+        None,
+    )
+    .await;
+    let due: Vec<(Option<&str>, Option<&str>)> = events
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["kind"] == "due")
+        .map(|e| (e["from"].as_str(), e["to"].as_str()))
+        .collect();
+    assert_eq!(
+        due,
+        [
+            (Some("2026-11-02"), Some("2026-11-09")),
+            (Some("2026-11-09"), None)
+        ]
+    );
+
+    // Listed by who it is assigned to and by who filed it.
+    let titles = |list: &Value| -> Vec<String> {
+        let mut titles: Vec<String> = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["title"].as_str().unwrap().to_owned())
+            .collect();
+        titles.sort();
+        titles
+    };
+    let mine = format!("{list}?assignee_id={}", w.member_id);
+    let (_, assigned) = call(&app, Method::GET, &mine, &w.member, None).await;
+    assert_eq!(titles(&assigned), ["Ship billing"]);
+    let filed = format!("{list}?creator_id={}", w.member_id);
+    let (_, created) = call(&app, Method::GET, &filed, &w.member, None).await;
+    assert_eq!(titles(&created), ["No date"]);
+    let filed = format!("{list}?creator_id={owner_id}");
+    let (_, created) = call(&app, Method::GET, &filed, &w.member, None).await;
+    assert_eq!(titles(&created), ["Ship billing"]);
+}

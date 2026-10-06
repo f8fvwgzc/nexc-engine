@@ -2317,6 +2317,11 @@ export interface components {
              */
             cycle_id?: string | null;
             description?: string;
+            /**
+             * Format: date
+             * @description The day the issue is due (`YYYY-MM-DD`).
+             */
+            due_date?: string | null;
             /** @description Labels of the workspace to put on the issue (at most 20). */
             label_ids?: string[];
             /**
@@ -2792,6 +2797,11 @@ export interface components {
             cycle: components["schemas"]["CycleRef"] | null;
             description: string;
             /**
+             * Format: date
+             * @description The day the issue is due, if it has one.
+             */
+            due_date: string | null;
+            /**
              * Format: uuid
              * @description The graph that plans and executes the issue, if one was created.
              */
@@ -2848,7 +2858,7 @@ export interface components {
          * @description What an entry of an issue's timeline records.
          * @enum {string}
          */
-        IssueEventKind: "comment" | "state" | "priority" | "assignee" | "title";
+        IssueEventKind: "comment" | "state" | "priority" | "assignee" | "title" | "due";
         /** @description Someone an issue refers to. */
         IssuePerson: {
             name: string;
@@ -3739,8 +3749,8 @@ export interface components {
             name?: string | null;
         };
         /**
-         * @description `PATCH /issues/{iid}` body: any subset. `assignee_id`, `agent_id` and
-         *     `project_id` accept `null` to clear them.
+         * @description `PATCH /issues/{iid}` body: any subset. `assignee_id`, `agent_id`,
+         *     `project_id` and `due_date` accept `null` to clear them.
          */
         UpdateIssue: {
             /** Format: uuid */
@@ -3753,6 +3763,11 @@ export interface components {
              */
             cycle_id?: string | null;
             description?: string | null;
+            /**
+             * Format: date
+             * @description The day the issue is due (`YYYY-MM-DD`); `null` removes it.
+             */
+            due_date?: string | null;
             /** @description Replaces the issue's labels. */
             label_ids?: string[] | null;
             /**
@@ -7739,6 +7754,8 @@ export interface operations {
                 parent_id?: string | null;
                 /** @description Only issues planned in this cycle. */
                 cycle_id?: string | null;
+                /** @description Only issues this person filed. */
+                creator_id?: string | null;
                 /** @description `true` leaves out completed and canceled issues. */
                 open?: boolean | null;
                 /** @description Matches the title, or the start of the identifier (`ENG-1`). */

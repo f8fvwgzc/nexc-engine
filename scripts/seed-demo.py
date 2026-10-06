@@ -153,7 +153,7 @@ def build(ws: str, token: dict, user_id: dict) -> None:
 
     arm = project["Arm controller v2"]
     controller = issue(eng, "owner", "Ship the new trajectory planner", priority=2, assignee_id=user_id["dev"],
-                       project_id=arm, cycle_id=sprint, label_ids=[label["Feature"]],
+                       project_id=arm, cycle_id=sprint, label_ids=[label["Feature"]], due_date=day(5),
                        description="Replace the trapezoid profiles with jerk-limited S-curves.")
     for title, who in [("Port the kinematics solver", "dev"), ("Bench test on axis 3", "admin"), ("Tune the feed-forward gains", "dev")]:
         issue(eng, "dev", title, parent_id=controller, assignee_id=user_id[who], project_id=arm, cycle_id=sprint)
@@ -163,7 +163,7 @@ def build(ws: str, token: dict, user_id: dict) -> None:
     comment(controller, "owner", "Good. Keep the old profile behind a flag until the pilot.")
 
     estop = issue(eng, "admin", "Emergency stop latency above 12 ms", priority=1, assignee_id=user_id["dev"],
-                  label_ids=[label["Bug"]], cycle_id=sprint, project_id=project["Factory pilot"])
+                  label_ids=[label["Bug"]], cycle_id=sprint, project_id=project["Factory pilot"], due_date=day(-1))
     comment(estop, "dev", "Reproduced: the watchdog shares an interrupt with the encoder.")
     change(estop, "dev", state_id=eng_state["In Review"])
     firmware = issue(eng, "dev", "Signed firmware updates", priority=3, assignee_id=user_id["admin"], label_ids=[label["Feature"]])
@@ -173,7 +173,7 @@ def build(ws: str, token: dict, user_id: dict) -> None:
 
     portal = project["Customer portal"]
     dashboard = issue(des, "owner", "Order status dashboard", priority=2, assignee_id=user_id["design"], project_id=portal,
-                      description="One screen: what was ordered, where it is, what is next.")
+                      due_date=day(0), description="One screen: what was ordered, where it is, what is next.")
     comment(dashboard, "design", "First wireframes are in the shared folder.")
     comment(dashboard, "guest", "From the customer side: we mostly check delivery dates.")
     change(dashboard, "design", state_id=des_state["In Progress"])
@@ -182,10 +182,11 @@ def build(ws: str, token: dict, user_id: dict) -> None:
     comment(onboarding, "guest", "Drafted eight steps; step 5 needs a safety sign-off.")
     issue(des, "design", "Icon set for joint states", priority=4)
 
-    budget = issue(lead, "owner", "Approve the pilot budget", priority=1, assignee_id=user_id["admin"], project_id=project["Factory pilot"])
+    budget = issue(lead, "owner", "Approve the pilot budget", priority=1, assignee_id=user_id["admin"], project_id=project["Factory pilot"],
+                   due_date=day(1))
     comment(budget, "admin", "Numbers are in; travel is the open item.")
     issue(lead, "admin", "Hire a second controls engineer", priority=2, assignee_id=user_id["owner"])
-    print(f"Created {WORKSPACE}: 3 teams, 3 projects, 2 cycles, 3 labels, 14 issues with comments.")
+    print(f"Created {WORKSPACE}: 3 teams, 3 projects, 2 cycles, 3 labels, 14 issues with comments and due dates.")
 
 
 def report(ws: str, token: dict) -> None:

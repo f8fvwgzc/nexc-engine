@@ -4,6 +4,7 @@ import {
   BrainIcon,
   ChartNoAxesColumnIcon,
   CircleDotIcon,
+  CircleUserIcon,
   FolderKanbanIcon,
   InboxIcon,
   type LucideIcon,
@@ -31,6 +32,7 @@ export interface NavItem {
 /** What the workspace is working on. */
 export const WORK_ITEMS: NavItem[] = [
   { title: 'Inbox', to: '/app/inbox', icon: InboxIcon },
+  { title: 'My issues', to: '/app/my-issues', icon: CircleUserIcon },
   { title: 'Issues', to: '/app/issues', icon: CircleDotIcon },
   { title: 'Projects', to: '/app/projects', icon: FolderKanbanIcon },
 ];
@@ -45,6 +47,7 @@ export const BUILD_ITEMS: NavItem[] = [
 /** Every page, for the command palette. */
 export const NAV_ITEMS: NavItem[] = [
   { title: 'Inbox', to: '/app/inbox', icon: InboxIcon },
+  { title: 'My issues', to: '/app/my-issues', icon: CircleUserIcon },
   { title: 'Issues', to: '/app/issues', icon: CircleDotIcon },
   { title: 'Projects', to: '/app/projects', icon: FolderKanbanIcon },
   { title: 'Graphs', to: '/app', icon: NetworkIcon, end: true },

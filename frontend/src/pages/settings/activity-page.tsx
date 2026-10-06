@@ -38,6 +38,7 @@ const VERB: Record<string, string> = {
   issue_assignee: 'reassigned',
   issue_priority: 'reprioritised',
   issue_title: 'renamed',
+  issue_due: 'rescheduled',
   graph_created: 'created the graph',
   run_succeeded: 'ran',
   run_failed: 'ran (failed)',
