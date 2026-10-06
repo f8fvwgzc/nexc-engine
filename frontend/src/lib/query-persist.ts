@@ -51,7 +51,7 @@ function forget(): void {
 
 /**
  * Keeps a copy of the list queries in this browser so pages paint from it on the next visit and
- * refresh in the background (restored data is stale by its own timestamp). The copy belongs to
+ * refresh in the background (restored lists are marked stale). The copy belongs to
  * one account: it is restored only for the user who wrote it and removed when they sign out.
  */
 export function startQueryPersistence(client: QueryClient): () => void {
@@ -68,6 +68,9 @@ export function startQueryPersistence(client: QueryClient): () => void {
     }
     try {
       hydrate(client, snapshot.state);
+      // The copy may predate the last change made before the page was left, however recent its
+      // timestamp, so it is only ever a first paint: every restored list is fetched again.
+      void client.invalidateQueries({ predicate: (query) => persistable(query.queryKey) });
     } catch {
       forget();
     }
@@ -94,6 +97,7 @@ export function startQueryPersistence(client: QueryClient): () => void {
     if (status === 'anonymous') {
       restoredFor = null;
       clearTimeout(timer);
+      timer = undefined;
       forget();
     }
   };
@@ -103,11 +107,23 @@ export function startQueryPersistence(client: QueryClient): () => void {
   const stopCache = client.getQueryCache().subscribe((event) => {
     const queryKey: QueryKey = event.query.queryKey as QueryKey;
     if (event.type !== 'updated' || !persistable(queryKey)) return;
-    clearTimeout(timer);
-    timer = setTimeout(save, SAVE_DELAY_MS);
+    // One save per burst of updates; a steady stream must not keep postponing it.
+    timer ??= setTimeout(() => {
+      timer = undefined;
+      save();
+    }, SAVE_DELAY_MS);
   });
+  // Leaving the page inside the delay would lose the last change.
+  const flush = () => {
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    timer = undefined;
+    save();
+  };
+  window.addEventListener('pagehide', flush);
   return () => {
     clearTimeout(timer);
+    window.removeEventListener('pagehide', flush);
     stopAuth();
     stopCache();
   };

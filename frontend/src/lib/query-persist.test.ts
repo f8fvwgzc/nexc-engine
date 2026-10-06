@@ -41,6 +41,24 @@ describe('query persistence', () => {
     stopSecond();
   });
 
+  it('saves a change made just before the page is left, and refetches what it restores', () => {
+    const first = new QueryClient();
+    const stop = startQueryPersistence(first);
+    first.setQueryData(['workspaces', 'w', 'teams'], [{ id: 'new-team' }]);
+    // The page goes away inside the save delay.
+    window.dispatchEvent(new Event('pagehide'));
+    stop();
+    expect(localStorage.getItem(KEY) ?? '').toContain('new-team');
+
+    // However recent the copy is, it only paints first: the restored list is stale.
+    const second = new QueryClient({ defaultOptions: { queries: { staleTime: 60_000 } } });
+    const stopSecond = startQueryPersistence(second);
+    const restored = second.getQueryState(['workspaces', 'w', 'teams']);
+    expect(restored?.data).toEqual([{ id: 'new-team' }]);
+    expect(restored?.isInvalidated).toBe(true);
+    stopSecond();
+  });
+
   it('does not restore another account’s copy', () => {
     localStorage.setItem(
       KEY,
