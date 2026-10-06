@@ -72,6 +72,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Labels: a workspace's labels (`/workspaces/{wid}/labels`) go on issues (`label_ids`, returned as
   `labels`), show as chips in the list and on the board, are picked or created from the issue, and
   filter the list (`label_id`).
+- Audit log: changes to a workspace's members, invitations, teams, credential, guardrails and
+  labels are recorded with who made them (`GET /workspaces/{wid}/audit`, admins and owners) and
+  listed on a new Audit log page.
 - Workflow editor: the Teams page opens a team's workflow, where team owners and workspace admins
   add, rename, recolour, reorder and remove issue states; other members see it read-only.
 - "Your teams" in the sidebar opens a team's issues (`/app/issues?team=<id>`), and `C` on the

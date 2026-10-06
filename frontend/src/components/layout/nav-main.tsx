@@ -82,12 +82,17 @@ function NavTeams() {
 }
 
 export function NavMain() {
+  const { current } = useCurrentWorkspace();
+  const admin = current?.role === 'owner' || current?.role === 'admin';
   return (
     <>
       <NavSection items={WORK_ITEMS} />
       <NavTeams />
       <NavSection label="Build" items={BUILD_ITEMS} />
-      <NavSection label="Workspace" items={ADMIN_ITEMS} />
+      <NavSection
+        label="Workspace"
+        items={ADMIN_ITEMS.filter((item) => admin || !item.adminOnly)}
+      />
       <SidebarGroup className="py-1">
         <SidebarMenu>
           <SidebarMenuItem>

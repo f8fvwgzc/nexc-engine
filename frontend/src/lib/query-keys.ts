@@ -51,6 +51,8 @@ export const qk = {
     events: (issueId: string) => ['issues', 'events', issueId] as const,
     labels: (workspaceId: string) => ['issues', workspaceId, 'labels'] as const,
   },
+  /** Kept out of the `workspaces` root, which is copied to browser storage. */
+  audit: (workspaceId: string) => ['audit', workspaceId] as const,
   templates: ['templates'] as const,
   agents: {
     all: ['agents'] as const,

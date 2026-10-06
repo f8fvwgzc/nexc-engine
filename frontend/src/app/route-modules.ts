@@ -15,6 +15,7 @@ export const routeModules = {
   members: () => import('@/pages/members-page'),
   teams: () => import('@/pages/teams-page'),
   usage: () => import('@/pages/usage-page'),
+  audit: () => import('@/pages/audit-page'),
   settings: () => import('@/pages/settings-page'),
   notFound: () => import('@/pages/not-found-page'),
 };

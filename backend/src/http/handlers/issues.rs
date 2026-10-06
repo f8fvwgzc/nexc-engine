@@ -9,9 +9,10 @@ use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use super::teams::visible_team;
-use super::workspaces::member_of;
+use super::workspaces::{audit, member_of};
 use crate::app::AppState;
 use crate::domain::AppError;
+use crate::domain::audit::AuditAction;
 use crate::domain::issue::{
     COMMENT_MAX_BYTES, DESCRIPTION_MAX_BYTES, ISSUE_LABELS_MAX, Issue, IssueEvent, IssuePerson,
     IssueState, LABEL_NAME_MAX, LABELS_MAX, Label, PRIORITY_MAX, Project, ProjectStatus,
@@ -22,6 +23,7 @@ use crate::domain::workspace::TeamAccess;
 use crate::engine::editor;
 use crate::http::extract::{AuthUser, Path, Query, ValidatedJson};
 use crate::http::problem::Problem;
+use crate::repo::audit::Subject;
 use crate::repo::issues::{IssueFilter, NewIssue};
 use crate::repo::{self, OrNotFound};
 
@@ -530,6 +532,8 @@ pub async fn delete_label(
         .await
         .or_not_found("label")?;
     repo::issues::delete_label(&state.db, label.id).await?;
+    let subject = Subject::Text(&label.name);
+    audit(&state, wid, auth.id, AuditAction::LabelDeleted, subject, "").await;
     Ok(StatusCode::NO_CONTENT)
 }
 

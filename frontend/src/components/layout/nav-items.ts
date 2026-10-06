@@ -8,6 +8,7 @@ import {
   type LucideIcon,
   NetworkIcon,
   PlayIcon,
+  ScrollTextIcon,
   SettingsIcon,
   UsersIcon,
   UsersRoundIcon,
@@ -22,6 +23,8 @@ export interface NavItem {
   /** Match only the exact path (the dashboard is the /app index). */
   end?: boolean;
   external?: boolean;
+  /** Shown only to workspace owners and admins. */
+  adminOnly?: boolean;
 }
 
 /** What the workspace is working on. */
@@ -43,6 +46,7 @@ export const ADMIN_ITEMS: NavItem[] = [
   { title: 'Teams', to: '/app/teams', icon: UsersRoundIcon },
   { title: 'Members', to: '/app/members', icon: UsersIcon },
   { title: 'Usage', to: '/app/usage', icon: ChartNoAxesColumnIcon },
+  { title: 'Audit log', to: '/app/audit', icon: ScrollTextIcon, adminOnly: true },
   { title: 'Settings', to: '/app/settings', icon: SettingsIcon },
 ];
 
@@ -57,6 +61,7 @@ export const NAV_ITEMS: NavItem[] = [
   { title: 'Teams', to: '/app/teams', icon: UsersRoundIcon },
   { title: 'Members', to: '/app/members', icon: UsersIcon },
   { title: 'Usage', to: '/app/usage', icon: ChartNoAxesColumnIcon },
+  { title: 'Audit log', to: '/app/audit', icon: ScrollTextIcon, adminOnly: true },
   { title: 'Settings', to: '/app/settings', icon: SettingsIcon },
 ];
 

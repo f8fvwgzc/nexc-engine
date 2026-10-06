@@ -824,6 +824,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{wid}/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The audit log of a workspace, newest first (admins and owners): changes
+         *     to members, invitations, teams, credentials, guardrails and labels.
+         */
+        get: operations["audit_log"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{wid}/guardrails": {
         parameters: {
             query?: never;
@@ -1279,6 +1299,29 @@ export interface components {
             content: string;
             /** @description `user` or `assistant`. */
             role: components["schemas"]["AssistantRole"];
+        };
+        /**
+         * @description What an audit entry records.
+         * @enum {string}
+         */
+        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted";
+        /** @description One entry of a workspace's audit log. */
+        AuditEntry: {
+            action: components["schemas"]["AuditAction"];
+            /**
+             * Format: uuid
+             * @description `null` once the account is gone; `actor_name` stays.
+             */
+            actor_id: string | null;
+            actor_name: string;
+            /** Format: date-time */
+            created_at: string;
+            /** @description What changed, in words. */
+            detail: string;
+            /** Format: uuid */
+            id: string;
+            /** @description What the action was about: a person, a team, a label. */
+            subject: string;
         };
         /**
          * @description Returned by register / login / refresh. The refresh token travels only in
@@ -4731,6 +4774,49 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    audit_log: {
+        parameters: {
+            query?: {
+                /** @description Only entries older than this (the `created_at` of the last one seen). */
+                before?: string | null;
+                /** @description 1-200, default 100. */
+                limit?: number | null;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditEntry"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

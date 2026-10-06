@@ -79,6 +79,7 @@ export const routes: RouteObject[] = [
               { path: 'teams', ...page(routeModules.teams, crumbs({ label: 'Teams' })) },
               { path: 'members', ...page(routeModules.members, crumbs({ label: 'Members' })) },
               { path: 'usage', ...page(routeModules.usage, crumbs({ label: 'Usage' })) },
+              { path: 'audit', ...page(routeModules.audit, crumbs({ label: 'Audit log' })) },
               {
                 path: 'settings',
                 ...page(routeModules.settings, crumbs({ label: 'Settings' })),

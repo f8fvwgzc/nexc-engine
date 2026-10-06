@@ -10,7 +10,9 @@ use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
-use super::workspaces::{member_of, require};
+use super::workspaces::{audit, member_of, require};
+use crate::domain::audit::AuditAction;
+use crate::repo::audit::Subject;
 
 use crate::app::AppState;
 use crate::domain::AppError;
@@ -260,6 +262,18 @@ pub async fn put_workspace_llm(
         key,
     )
     .await?;
+    // The provider and model are noted; the key never is.
+    let detail = format!("{} · {}", req.provider, req.model.trim());
+    let subject = Subject::Text("Workspace credential");
+    audit(
+        &state,
+        wid,
+        auth.id,
+        AuditAction::CredentialSet,
+        subject,
+        &detail,
+    )
+    .await;
     credentials::workspace_settings(&state, wid)
         .await?
         .map(Json)
@@ -281,6 +295,16 @@ pub async fn delete_workspace_llm(
         WorkspaceAction::UpdateSettings,
     )?;
     repo::settings::delete_for_workspace(&state.db, wid).await?;
+    let subject = Subject::Text("Workspace credential");
+    audit(
+        &state,
+        wid,
+        auth.id,
+        AuditAction::CredentialRemoved,
+        subject,
+        "",
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 

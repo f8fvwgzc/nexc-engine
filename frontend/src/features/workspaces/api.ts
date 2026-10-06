@@ -2,6 +2,7 @@ import { queryOptions } from '@tanstack/react-query';
 import { z } from 'zod';
 
 import { apiRequest, apiSend } from '@/lib/api/client';
+import { auditEntrySchema } from '@/schemas/audit';
 import { qk } from '@/lib/query-keys';
 import { assistantReplySchema, type AssistantTurn } from '@/schemas/assistant';
 import { usageReportSchema } from '@/schemas/usage';
@@ -73,6 +74,16 @@ export const usageQuery = (workspaceId: string, days: number) =>
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/usage?days=${days}`, usageReportSchema, { signal }),
   });
+
+export const AUDIT_PAGE_SIZE = 50;
+
+/** One page of a workspace's audit log, newest first, older than `before`. */
+export function auditPage(workspaceId: string, before: string | undefined, signal?: AbortSignal) {
+  return apiRequest(`/workspaces/${workspaceId}/audit`, z.array(auditEntrySchema), {
+    query: { limit: String(AUDIT_PAGE_SIZE), before },
+    signal,
+  });
+}
 
 export const guardrailsQuery = (workspaceId: string) =>
   queryOptions({

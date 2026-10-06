@@ -6,6 +6,7 @@
 
 pub mod agent;
 pub mod assistant;
+pub mod audit;
 pub mod context;
 pub mod error;
 pub mod graph;

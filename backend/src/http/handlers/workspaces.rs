@@ -10,6 +10,7 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::assistant::{AssistantReply, AssistantTurn, MESSAGE_MAX};
+use crate::domain::audit::{AuditAction, AuditEntry};
 use crate::domain::guardrails::Guardrails;
 use crate::domain::usage::{UsageReport, UsageScope};
 use crate::domain::user::{check_email, normalize_email};
@@ -22,6 +23,7 @@ use crate::engine;
 use crate::http::extract::{AuthUser, Path, Query, ValidatedJson};
 use crate::http::problem::Problem;
 use crate::orchestrator;
+use crate::repo::audit::Subject;
 use crate::repo::usage::Window;
 use crate::repo::{self, OrNotFound};
 
@@ -31,6 +33,23 @@ pub async fn member_of(state: &AppState, auth: AuthUser, wid: Uuid) -> Result<Wo
     repo::workspaces::find_for(&state.db, auth.id, wid)
         .await
         .or_not_found("workspace")
+}
+
+/// Notes a change in the workspace's audit log. The change has already
+/// happened, so a failure to note it is logged, not returned.
+pub async fn audit(
+    state: &AppState,
+    workspace_id: Uuid,
+    actor_id: Uuid,
+    action: AuditAction,
+    subject: Subject<'_>,
+    detail: &str,
+) {
+    if let Err(err) =
+        repo::audit::record(&state.db, workspace_id, actor_id, action, subject, detail).await
+    {
+        tracing::error!(%workspace_id, %action, error = %err, "audit entry was not written");
+    }
 }
 
 /// 403 unless `workspace.role` may perform `action`.
@@ -168,11 +187,22 @@ pub async fn update(
     Path(wid): Path<Uuid>,
     ValidatedJson(req): ValidatedJson<WorkspaceInput>,
 ) -> Result<Json<Workspace>, AppError> {
-    require(
-        &member_of(&state, auth, wid).await?,
-        WorkspaceAction::UpdateSettings,
-    )?;
+    let workspace = member_of(&state, auth, wid).await?;
+    require(&workspace, WorkspaceAction::UpdateSettings)?;
     repo::workspaces::rename(&state.db, wid, req.name.trim()).await?;
+    if workspace.name != req.name.trim() {
+        let detail = format!("{} -> {}", workspace.name, req.name.trim());
+        let subject = Subject::Text(req.name.trim());
+        audit(
+            &state,
+            wid,
+            auth.id,
+            AuditAction::WorkspaceRenamed,
+            subject,
+            &detail,
+        )
+        .await;
+    }
     Ok(Json(member_of(&state, auth, wid).await?))
 }
 
@@ -248,6 +278,17 @@ pub async fn invite(
                 .await?
                 .into_iter()
                 .find(|m| m.user_id == user_id);
+            let detail = format!("as {role}");
+            let subject = Subject::User(user_id);
+            audit(
+                &state,
+                wid,
+                auth.id,
+                AuditAction::MemberAdded,
+                subject,
+                &detail,
+            )
+            .await;
             InviteResult {
                 member,
                 invite: None,
@@ -262,6 +303,17 @@ pub async fn invite(
             }
             let invite =
                 repo::workspaces::upsert_invite(&state.db, wid, &email, role, auth.id).await?;
+            let detail = format!("as {role}");
+            let subject = Subject::Text(&email);
+            audit(
+                &state,
+                wid,
+                auth.id,
+                AuditAction::MemberInvited,
+                subject,
+                &detail,
+            )
+            .await;
             InviteResult {
                 member: None,
                 invite: Some(invite),
@@ -303,6 +355,19 @@ pub async fn update_member(
     }
     repo::workspaces::set_role(&mut *tx, wid, uid, req.role).await?;
     tx.commit().await?;
+    if current != req.role {
+        let detail = format!("{current} -> {}", req.role);
+        let subject = Subject::User(uid);
+        audit(
+            &state,
+            wid,
+            auth.id,
+            AuditAction::MemberRoleChanged,
+            subject,
+            &detail,
+        )
+        .await;
+    }
     Ok(Json(repo::workspaces::members(&state.db, wid).await?))
 }
 
@@ -335,6 +400,17 @@ pub async fn remove_member(
     }
     repo::workspaces::remove_member(&mut tx, wid, uid).await?;
     tx.commit().await?;
+    let detail = if uid == auth.id { "left" } else { "removed" };
+    let subject = Subject::User(uid);
+    audit(
+        &state,
+        wid,
+        auth.id,
+        AuditAction::MemberRemoved,
+        subject,
+        detail,
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -431,6 +507,16 @@ pub async fn put_guardrails(
         WorkspaceAction::UpdateSettings,
     )?;
     repo::workspaces::set_guardrails(&state.db, wid, auth.id, &req).await?;
+    let subject = Subject::Text("Guardrails");
+    audit(
+        &state,
+        wid,
+        auth.id,
+        AuditAction::GuardrailsChanged,
+        subject,
+        "",
+    )
+    .await;
     Ok(Json(req))
 }
 
@@ -515,8 +601,49 @@ pub async fn delete_invite(
         WorkspaceAction::ManageMembers,
     )?;
     if repo::workspaces::delete_invite(&state.db, wid, iid).await? {
+        let subject = Subject::Text("Invitation");
+        audit(
+            &state,
+            wid,
+            auth.id,
+            AuditAction::InviteWithdrawn,
+            subject,
+            "",
+        )
+        .await;
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(AppError::NotFound("invite"))
     }
+}
+
+/// Query of `GET /workspaces/{wid}/audit`.
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+pub struct AuditQuery {
+    /// Only entries older than this (the `created_at` of the last one seen).
+    pub before: Option<chrono::DateTime<chrono::Utc>>,
+    /// 1-200, default 100.
+    pub limit: Option<i64>,
+}
+
+/// The audit log of a workspace, newest first (admins and owners): changes
+/// to members, invitations, teams, credentials, guardrails and labels.
+#[utoipa::path(get, path = "/workspaces/{wid}/audit", tag = "workspaces", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id"), AuditQuery),
+    responses((status = 200, body = [AuditEntry]), (status = 403, body = Problem), (status = 404, body = Problem)))]
+pub async fn audit_log(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(wid): Path<Uuid>,
+    Query(query): Query<AuditQuery>,
+) -> Result<Json<Vec<AuditEntry>>, AppError> {
+    require(
+        &member_of(&state, auth, wid).await?,
+        WorkspaceAction::UpdateSettings,
+    )?;
+    let limit = query.limit.unwrap_or(100).clamp(1, 200);
+    Ok(Json(
+        repo::audit::list(&state.db, wid, query.before, limit).await?,
+    ))
 }

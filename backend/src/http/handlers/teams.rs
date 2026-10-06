@@ -7,9 +7,10 @@ use serde::Deserialize;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use super::workspaces::{member_of, require};
+use super::workspaces::{audit, member_of, require};
 use crate::app::AppState;
 use crate::domain::AppError;
+use crate::domain::audit::AuditAction;
 use crate::domain::validation::{FieldErrors, Validate, check_max_len, check_text};
 use crate::domain::workspace::{
     DESCRIPTION_MAX, NAME_MAX, Team, TeamAccess, TeamMember, TeamRole, Workspace, WorkspaceAction,
@@ -17,6 +18,7 @@ use crate::domain::workspace::{
 };
 use crate::http::extract::{AuthUser, Path, ValidatedJson};
 use crate::http::problem::Problem;
+use crate::repo::audit::Subject;
 use crate::repo::{self, OrNotFound};
 
 fn access(workspace: &Workspace, team: &Team) -> TeamAccess {
@@ -172,6 +174,17 @@ pub async fn create(
     let team = repo::teams::find(&state.db, auth.id, wid, id)
         .await
         .or_not_found("team")?;
+    let detail = if team.private { "private" } else { "" };
+    let subject = Subject::Text(&team.name);
+    audit(
+        &state,
+        wid,
+        auth.id,
+        AuditAction::TeamCreated,
+        subject,
+        detail,
+    )
+    .await;
     Ok((StatusCode::CREATED, Json(team)))
 }
 
@@ -207,7 +220,10 @@ pub async fn update(
         req.private,
     )
     .await?;
-    Ok(Json(visible_team(&state, auth, wid, tid).await?.0))
+    let team = visible_team(&state, auth, wid, tid).await?.0;
+    let subject = Subject::Text(&team.name);
+    audit(&state, wid, auth.id, AuditAction::TeamUpdated, subject, "").await;
+    Ok(Json(team))
 }
 
 /// Deletes a team (team owners and workspace admins).
@@ -220,7 +236,8 @@ pub async fn delete(
     auth: AuthUser,
     Path((wid, tid)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, AppError> {
-    require_manage(visible_team(&state, auth, wid, tid).await?.1)?;
+    let (team, access) = visible_team(&state, auth, wid, tid).await?;
+    require_manage(access)?;
     let graphs = repo::graphs::count_in_team(&state.db, tid).await?;
     if graphs > 0 {
         return Err(AppError::Conflict(format!(
@@ -228,6 +245,8 @@ pub async fn delete(
         )));
     }
     repo::teams::delete(&state.db, tid).await?;
+    let subject = Subject::Text(&team.name);
+    audit(&state, wid, auth.id, AuditAction::TeamDeleted, subject, "").await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -259,7 +278,7 @@ pub async fn set_member(
     Path((wid, tid, uid)): Path<(Uuid, Uuid, Uuid)>,
     ValidatedJson(req): ValidatedJson<SetTeamMember>,
 ) -> Result<Json<Vec<TeamMember>>, AppError> {
-    let (_, access) = visible_team(&state, auth, wid, tid).await?;
+    let (team, access) = visible_team(&state, auth, wid, tid).await?;
     let role = req.role.unwrap_or(TeamRole::Member);
     let joining = uid == auth.id && role == TeamRole::Member && access.can_join();
     if !joining {
@@ -275,6 +294,17 @@ pub async fn set_member(
         ));
     }
     repo::teams::upsert_member(&state.db, tid, uid, role).await?;
+    let detail = format!("{role} of {}", team.name);
+    let subject = Subject::User(uid);
+    audit(
+        &state,
+        wid,
+        auth.id,
+        AuditAction::TeamMemberSet,
+        subject,
+        &detail,
+    )
+    .await;
     Ok(Json(repo::teams::members(&state.db, tid).await?))
 }
 
@@ -288,11 +318,22 @@ pub async fn remove_member(
     auth: AuthUser,
     Path((wid, tid, uid)): Path<(Uuid, Uuid, Uuid)>,
 ) -> Result<StatusCode, AppError> {
-    let (_, access) = visible_team(&state, auth, wid, tid).await?;
+    let (team, access) = visible_team(&state, auth, wid, tid).await?;
     if uid != auth.id {
         require_manage(access)?;
     }
     if repo::teams::remove_member(&state.db, tid, uid).await? {
+        let detail = format!("from {}", team.name);
+        let subject = Subject::User(uid);
+        audit(
+            &state,
+            wid,
+            auth.id,
+            AuditAction::TeamMemberRemoved,
+            subject,
+            &detail,
+        )
+        .await;
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(AppError::NotFound("member"))

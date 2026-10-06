@@ -1561,3 +1561,139 @@ async fn guardrails_stop_work_before_it_spends(pool: PgPool) {
         StatusCode::ACCEPTED
     );
 }
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn the_audit_log_records_who_changed_the_workspace(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let (owner, _) = user(&app, "owner@example.com").await;
+    let (member, member_id) = user(&app, "member@example.com").await;
+    let wid = personal_workspace(&app, &owner).await;
+    let ws = format!("/workspaces/{wid}");
+
+    // A new workspace has an empty log.
+    let (status, log) = call(&app, Method::GET, &format!("{ws}/audit"), &owner, None).await;
+    assert_eq!((status, log.as_array().unwrap().len()), (StatusCode::OK, 0));
+
+    let invite = json!({"email": "member@example.com", "role": "member"});
+    call(
+        &app,
+        Method::POST,
+        &format!("{ws}/members"),
+        &owner,
+        Some(invite),
+    )
+    .await;
+    let later = json!({"email": "later@example.com", "role": "guest"});
+    call(
+        &app,
+        Method::POST,
+        &format!("{ws}/members"),
+        &owner,
+        Some(later),
+    )
+    .await;
+    let (_, team) = call(
+        &app,
+        Method::POST,
+        &format!("{ws}/teams"),
+        &member,
+        Some(json!({"name": "Engineering", "key": "ENG"})),
+    )
+    .await;
+    let promote = json!({"role": "admin"});
+    let one = format!("{ws}/members/{member_id}");
+    call(&app, Method::PATCH, &one, &owner, Some(promote.clone())).await;
+    // Setting the same role again is not a change.
+    call(&app, Method::PATCH, &one, &owner, Some(promote)).await;
+    let guardrails = json!({"monthly_token_budget": 1000});
+    let (status, body) = call(
+        &app,
+        Method::PUT,
+        &format!("{ws}/guardrails"),
+        &owner,
+        Some(guardrails),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let team_path = format!("{ws}/teams/{}", team["id"].as_str().unwrap());
+    let (status, _) = call(&app, Method::DELETE, &team_path, &owner, None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    // A refused change leaves no entry.
+    let (status, _) = call(&app, Method::DELETE, &team_path, &owner, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (status, log) = call(&app, Method::GET, &format!("{ws}/audit"), &owner, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let seen: Vec<(&str, &str, &str, &str)> = log
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .map(|e| {
+            (
+                e["action"].as_str().unwrap(),
+                e["actor_name"].as_str().unwrap(),
+                e["subject"].as_str().unwrap(),
+                e["detail"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    let (owner_name, member_name) = (seen[0].1, seen[2].1);
+    assert!(!owner_name.is_empty() && !member_name.is_empty());
+    let created = log
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["action"] == "team_created");
+    assert_eq!(created.unwrap()["actor_id"], member_id.as_str());
+    let member_subject = format!("{member_name} <member@example.com>");
+    assert_eq!(
+        seen,
+        vec![
+            (
+                "member_added",
+                owner_name,
+                member_subject.as_str(),
+                "as member"
+            ),
+            (
+                "member_invited",
+                owner_name,
+                "later@example.com",
+                "as guest"
+            ),
+            ("team_created", member_name, "Engineering", ""),
+            (
+                "member_role_changed",
+                owner_name,
+                member_subject.as_str(),
+                "member -> admin"
+            ),
+            ("guardrails_changed", owner_name, "Guardrails", ""),
+            ("team_deleted", owner_name, "Engineering", ""),
+        ]
+    );
+
+    // Paging: entries older than the newest one.
+    let newest = log[0]["created_at"].as_str().unwrap();
+    let page = format!("{ws}/audit?limit=2&before={}", newest.replace('+', "%2B"));
+    let (_, older) = call(&app, Method::GET, &page, &owner, None).await;
+    let actions: Vec<&str> = older
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["action"].as_str().unwrap())
+        .collect();
+    assert_eq!(actions, ["guardrails_changed", "member_role_changed"]);
+
+    // Admins read it; plain members and outsiders do not.
+    let (status, _) = call(&app, Method::GET, &format!("{ws}/audit"), &member, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let demote = json!({"role": "member"});
+    call(&app, Method::PATCH, &one, &owner, Some(demote)).await;
+    let (status, _) = call(&app, Method::GET, &format!("{ws}/audit"), &member, None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (outsider, _) = user(&app, "outsider@example.com").await;
+    let (status, _) = call(&app, Method::GET, &format!("{ws}/audit"), &outsider, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
