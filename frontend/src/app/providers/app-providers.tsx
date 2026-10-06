@@ -17,7 +17,14 @@ export function AppProviders({ children }: { children: ReactNode }) {
           <AuthBootstrap>
             <TooltipProvider delayDuration={250}>
               {children}
-              <Toaster richColors closeButton position="bottom-right" />
+              {/* Toasts sit above the assistant button, which owns the bottom-right corner. */}
+              <Toaster
+                richColors
+                closeButton
+                position="bottom-right"
+                offset={{ bottom: 76 }}
+                mobileOffset={{ bottom: 76 }}
+              />
             </TooltipProvider>
           </AuthBootstrap>
         </QueryClientProvider>

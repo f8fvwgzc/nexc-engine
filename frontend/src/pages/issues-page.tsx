@@ -1,5 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CircleDotIcon, NetworkIcon, PlusIcon, Trash2Icon, WorkflowIcon } from 'lucide-react';
+import {
+  CircleDotIcon,
+  KanbanIcon,
+  ListIcon,
+  NetworkIcon,
+  PlusIcon,
+  Trash2Icon,
+  WorkflowIcon,
+} from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -40,6 +48,17 @@ import { formatRelative } from '@/lib/format';
 import { qk } from '@/lib/query-keys';
 import { PRIORITY_LABEL, type Issue, type IssueInput, type StateCategory } from '@/schemas/issue';
 import type { Team, Workspace } from '@/schemas/workspace';
+
+const VIEW_KEY = 'nexc.issues.view';
+type View = 'list' | 'board';
+
+function rememberedView(): View {
+  try {
+    return localStorage.getItem(VIEW_KEY) === 'board' ? 'board' : 'list';
+  } catch {
+    return 'list';
+  }
+}
 
 const ALL = '__all__';
 const NONE = '__none__';
@@ -364,12 +383,107 @@ function IssueRow({ issue, onOpen }: { issue: Issue; onOpen: () => void }) {
   );
 }
 
+/**
+ * One column per state of the team's workflow. Dragging a card to another column moves the issue
+ * to that state; opening a card offers the same change without a pointer.
+ */
+function IssueBoard({
+  workspace,
+  teamId,
+  issues,
+  hideClosed,
+  onOpen,
+}: {
+  workspace: Workspace;
+  teamId: string;
+  issues: Issue[];
+  hideClosed: boolean;
+  onOpen: (id: string) => void;
+}) {
+  const refresh = useIssueRefresh();
+  const { data: states = [] } = useQuery(statesQuery(workspace.id, teamId));
+  const [over, setOver] = useState<string | null>(null);
+  const move = useMutation({
+    mutationFn: ({ id, state_id }: { id: string; state_id: string }) =>
+      updateIssue(id, { state_id }),
+    onSettled: refresh,
+  });
+  const columns = states.filter(
+    (s) => !hideClosed || (s.category !== 'completed' && s.category !== 'canceled'),
+  );
+  return (
+    <div className="flex gap-3 overflow-x-auto pb-2">
+      {columns.map((state) => {
+        const cards = issues.filter((i) => i.state.id === state.id);
+        return (
+          <section
+            key={state.id}
+            aria-label={state.name}
+            data-over={over === state.id}
+            className="flex w-72 shrink-0 flex-col rounded-xl border bg-muted/30 transition-colors data-[over=true]:border-ring data-[over=true]:bg-muted/60"
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+              setOver(state.id);
+            }}
+            onDragLeave={() => setOver((current) => (current === state.id ? null : current))}
+            onDrop={(e) => {
+              e.preventDefault();
+              setOver(null);
+              const id = e.dataTransfer.getData('text/plain');
+              const issue = issues.find((i) => i.id === id);
+              if (issue && issue.state.id !== state.id) move.mutate({ id, state_id: state.id });
+            }}
+          >
+            <h2 className="flex items-center gap-2 px-3 py-2 text-sm font-medium">
+              <StateDot color={state.color} />
+              {state.name}
+              <span className="text-xs font-normal text-muted-foreground">{cards.length}</span>
+            </h2>
+            <ul className="flex min-h-16 flex-1 flex-col gap-2 px-2 pb-2">
+              {cards.map((issue) => (
+                <li key={issue.id}>
+                  <button
+                    type="button"
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData('text/plain', issue.id);
+                      e.dataTransfer.effectAllowed = 'move';
+                    }}
+                    onClick={() => onOpen(issue.id)}
+                    className="w-full cursor-grab space-y-1.5 rounded-lg border bg-background p-2.5 text-left text-sm shadow-xs outline-none hover:border-ring/60 focus-visible:border-ring active:cursor-grabbing motion-safe:animate-fade-in"
+                  >
+                    <span className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
+                      {issue.identifier}
+                      {issue.graph_id && (
+                        <NetworkIcon className="size-3" aria-label="Has a graph" />
+                      )}
+                      {issue.priority > 0 && (
+                        <span className="ml-auto font-sans">{PRIORITY_LABEL[issue.priority]}</span>
+                      )}
+                    </span>
+                    <span className="line-clamp-2">{issue.title}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {issue.assignee?.name ?? 'Unassigned'}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
 function Issues({ workspace }: { workspace: Workspace }) {
   const [teamId, setTeamId] = useState(ALL);
   const [openOnly, setOpenOnly] = useState(true);
   const [q, setQ] = useState('');
   const [creating, setCreating] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
+  const [view, setView] = useState<View>(rememberedView);
   const debouncedQ = useDebouncedValue(q.trim(), 300);
   const { data: teams = [] } = useQuery(teamsQuery(workspace.id));
   const { data: issues, isPending } = useQuery(
@@ -380,6 +494,17 @@ function Issues({ workspace }: { workspace: Workspace }) {
     }),
   );
   const opened = issues?.find((i) => i.id === openId);
+  // A board shows one team's workflow, so it needs a team.
+  const boardTeam = teamId === ALL ? teams[0]?.id : teamId;
+  const chooseView = (next: View) => {
+    setView(next);
+    if (next === 'board' && teamId === ALL && teams[0]) setTeamId(teams[0].id);
+    try {
+      localStorage.setItem(VIEW_KEY, next);
+    } catch {
+      // The choice lasts for this visit only.
+    }
+  };
 
   // One group per state name, ordered by what the state means and then by the workflow.
   const groups = new Map<string, Issue[]>();
@@ -397,7 +522,9 @@ function Issues({ workspace }: { workspace: Workspace }) {
   });
 
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-5 p-4 sm:p-6">
+    <div
+      className={`mx-auto w-full space-y-5 p-4 sm:p-6 ${view === 'board' ? 'max-w-none' : 'max-w-5xl'}`}
+    >
       <PageHeader
         title="Issues"
         description={`Work tracked in ${workspace.name}. Open an issue to plan and run it as a graph.`}
@@ -430,6 +557,26 @@ function Issues({ workspace }: { workspace: Workspace }) {
           <Switch checked={openOnly} onCheckedChange={setOpenOnly} />
           Open only
         </label>
+        <div role="group" aria-label="View" className="flex rounded-md border p-0.5">
+          <Button
+            variant={view === 'list' ? 'secondary' : 'ghost'}
+            size="icon-sm"
+            aria-label="List view"
+            aria-pressed={view === 'list'}
+            onClick={() => chooseView('list')}
+          >
+            <ListIcon />
+          </Button>
+          <Button
+            variant={view === 'board' ? 'secondary' : 'ghost'}
+            size="icon-sm"
+            aria-label="Board view"
+            aria-pressed={view === 'board'}
+            onClick={() => chooseView('board')}
+          >
+            <KanbanIcon />
+          </Button>
+        </div>
       </div>
       {isPending ? (
         <Skeleton className="h-64 rounded-xl" />
@@ -438,6 +585,14 @@ function Issues({ workspace }: { workspace: Workspace }) {
           icon={CircleDotIcon}
           title="Create a team first"
           description="Issues belong to a team. Add one under Teams, then come back."
+        />
+      ) : view === 'board' && boardTeam ? (
+        <IssueBoard
+          workspace={workspace}
+          teamId={boardTeam}
+          issues={(issues ?? []).filter((i) => i.team_id === boardTeam)}
+          hideClosed={openOnly}
+          onOpen={setOpenId}
         />
       ) : ordered.length === 0 ? (
         <EmptyState

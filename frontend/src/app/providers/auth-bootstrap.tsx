@@ -3,6 +3,7 @@ import { useEffect, type ReactNode } from 'react';
 
 import { refreshSession } from '@/lib/api/session';
 import { useAuthStore } from '@/stores/auth-store';
+import { startQueryPersistence } from '@/lib/query-persist';
 
 /** Refresh one minute before the access token expires. */
 const REFRESH_LEAD_MS = 60_000;
@@ -35,6 +36,9 @@ export function AuthBootstrap({ children }: { children: ReactNode }) {
       }),
     [queryClient],
   );
+
+  // Lists are kept in this browser between visits, per account (see query-persist).
+  useEffect(() => startQueryPersistence(queryClient), [queryClient]);
 
   return children;
 }

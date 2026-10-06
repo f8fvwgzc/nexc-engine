@@ -33,7 +33,11 @@ function AssistantPanel({ current }: { current: Workspace }) {
   const endRef = useRef<HTMLDivElement>(null);
   const workspaceId = current.id;
 
-  useEffect(() => endRef.current?.scrollIntoView({ block: 'end' }), [turns, open]);
+  useEffect(() => {
+    // Braces matter: newer browsers return a promise from scrollIntoView, and an effect may
+    // only return a clean-up function.
+    endRef.current?.scrollIntoView({ block: 'end' });
+  }, [turns, open]);
 
   const ask = useMutation({
     mutationFn: (message: string) =>

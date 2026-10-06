@@ -28,6 +28,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   provider at request time (Anthropic and OpenAI-compatible endpoints).
 - Members and Teams pages, and a settings page split into "Your AI account" and "Workspace
   credential".
+- Issue board: one column per state of a team's workflow, drag a card to change its state; the
+  list/board choice is remembered.
+- List queries are kept in the browser between visits, per account, and removed on sign-out, so
+  pages paint immediately and refresh in the background.
+- Toasts no longer cover the assistant button.
 - Guardrails per workspace: monthly token budgets (workspace-wide and per member), an allow-list
   of providers, a switch for agent code execution, and removal of API keys, tokens and private
   keys from the context sent to models (on by default). Checked before plans, runs and assistant
