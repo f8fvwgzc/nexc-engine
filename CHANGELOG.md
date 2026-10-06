@@ -165,6 +165,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Settings are grouped by what they are about (Account, the workspace's people, AI, Insight,
   Data); what concerns the whole installation moved to the platform console. The assistant opens
   from a notch on the right edge of the screen instead of a round button in the corner.
+- Without a remembered choice the app opens the workspace with the most members, so someone
+  invited to a team's workspace lands there and not in their own empty personal one.
 - Linear-style interface pass: a denser type scale, thinner icons, a sidebar grouped into Work,
   Your teams, Build and Workspace, and issue rows and board cards that show state and priority as
   glyphs instead of labels.
