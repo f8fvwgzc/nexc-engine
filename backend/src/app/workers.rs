@@ -16,6 +16,8 @@ const HOUSEKEEPING_EVERY: Duration = Duration::from_secs(60);
 const SESSIONS_EVERY: Duration = Duration::from_secs(10);
 /// How often waiting documents are looked for; a round lasts as long as its documents take.
 const INGEST_EVERY: Duration = Duration::from_secs(2);
+/// How often due issues are looked for, to remind their assignees.
+const DUE_EVERY: Duration = Duration::from_secs(900);
 /// How often workspaces' memory forgetting policies are applied.
 const FORGET_EVERY: Duration = Duration::from_secs(3600);
 
@@ -46,6 +48,15 @@ pub fn spawn(state: &AppState, shutdown: CancellationToken) {
         shutdown.clone(),
         state.clone(),
         |s| async move { knowledge::work(&s).await },
+    ));
+    tokio::spawn(every(
+        DUE_EVERY,
+        shutdown.clone(),
+        state.clone(),
+        |s| async move {
+            repo::issues::remind_due(&s.db).await?;
+            Ok(())
+        },
     ));
     tokio::spawn(every(
         FORGET_EVERY,

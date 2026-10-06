@@ -121,6 +121,7 @@ function NewIssueDialog({
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState('0');
   const [projectId, setProjectId] = useState(defaultProject ?? NONE);
+  const [dueDate, setDueDate] = useState('');
   const { data: projects = [] } = useQuery(projectsQuery(workspace.id));
   const create = useMutation({
     mutationFn: () =>
@@ -129,6 +130,7 @@ function NewIssueDialog({
         description,
         priority: Number(priority),
         project_id: projectId === NONE ? undefined : projectId,
+        due_date: dueDate || undefined,
       }),
     meta: { errorToast: false, successMessage: 'Issue created' },
     onSuccess: () => {
@@ -136,6 +138,7 @@ function NewIssueDialog({
       setTitle('');
       setDescription('');
       setPriority('0');
+      setDueDate('');
       onClose();
     },
   });
@@ -193,6 +196,17 @@ function NewIssueDialog({
             aria-label="Description"
             onChange={(e) => setDescription(e.target.value)}
           />
+          <label className="flex items-center gap-2 text-[13px] text-muted-foreground">
+            Due
+            <Input
+              type="date"
+              value={dueDate}
+              aria-label="Due date"
+              className="h-8 w-40 text-[13px] text-foreground"
+              onChange={(e) => setDueDate(e.target.value)}
+            />
+            <span className="text-xs">optional</span>
+          </label>
           {create.error && (
             <p role="alert" className="text-sm text-destructive">
               {errorMessage(create.error)}

@@ -105,7 +105,7 @@ async fn a_day_is_summarised_on_request_and_kept(pool: PgPool) {
     assert_eq!(booked["calls"].as_i64(), Some(1));
 
     // More happens: the kept summary says so, and writing it again catches up.
-    let issue = json!({"title": "Reset password"});
+    let issue = json!({"title": "Reset password", "due_date": today});
     call(&app, Method::POST, &issues, &member, Some(issue)).await;
     let (_, stale) = call(&app, Method::GET, &summary, &owner, None).await;
     assert_eq!(
@@ -118,6 +118,12 @@ async fn a_day_is_summarised_on_request_and_kept(pool: PgPool) {
         (Some(false), Some(4))
     );
     assert_eq!(calls(), 2);
+    // What surrounded the day reached the model too: a deadline, and the day's spending.
+    let around = again["highlights"][1].as_str().unwrap();
+    assert!(
+        around.starts_with("Around: Due this day: ENG-2 Reset password ("),
+        "{around}"
+    );
 
     // A day on which nothing happened is not sent to a model.
     let quiet = format!("{summary}?day=2001-01-01");

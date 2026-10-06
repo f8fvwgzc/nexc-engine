@@ -205,9 +205,10 @@ removing the row would delete work that belongs to a team. `engine::account::era
 empties the account instead: it removes the workspaces the account is alone in, its memberships,
 personal settings, notifications, sessions and personal memories, clears its assignments, and
 replaces its name and address (`users.deleted_at` marks the row). What it made in shared
-workspaces keeps pointing at that row and reads as "Deleted account". Audit logs keep names as
-they were written at the time; that is the record of what happened, and it goes when the
-workspace does. The same routine serves a person deleting their own account and a platform
+workspaces keeps pointing at that row and reads as "Deleted account". Audit logs and the
+platform's activity log keep every entry; the copies of the name and address in them are replaced
+too, so the record of what happened stays and stops identifying the person. A name written into
+free text (an issue's assignee history, a comment, a day summary) is not found and stays. The same routine serves a person deleting their own account and a platform
 administrator erasing one on request.
 
 ## Security boundaries

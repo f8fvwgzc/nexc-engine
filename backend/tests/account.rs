@@ -376,6 +376,9 @@ async fn a_person_gets_a_copy_of_their_data_and_deletes_their_account(pool: PgPo
         .unwrap();
     assert_eq!(said["actor"], "Deleted account");
     let (_, audit) = call(&app, Method::GET, &format!("{ws}/audit"), &owner, None).await;
+    // The log keeps every entry and stops saying who the account was.
+    assert!(audit.as_array().unwrap().len() >= 4, "{audit}");
+    assert!(!audit.to_string().contains("leaver@example.com"), "{audit}");
     let gone = &audit[0];
     assert_eq!(
         (

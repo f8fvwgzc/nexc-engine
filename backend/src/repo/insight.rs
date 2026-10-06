@@ -119,6 +119,62 @@ pub async fn count(
     .await
 }
 
+/// What surrounded a day (UTC) in a workspace without being an event of it,
+/// one line each: the issues due that day with the state they are in now,
+/// the cycles that started or ended, and what was spent on AI. Empty when
+/// there is nothing of the kind.
+pub async fn day_context(
+    db: &sqlx::PgPool,
+    workspace_id: Uuid,
+    day: NaiveDate,
+) -> Result<Vec<String>, sqlx::Error> {
+    let mut lines = Vec::new();
+    let due: Option<String> = sqlx::query_scalar(
+        "SELECT string_agg(x.line, '; ') FROM (
+             SELECT t.key || '-' || i.number || ' ' || left(i.title, 60) || ' (' || s.name || ')'
+                        AS line
+             FROM issues i JOIN teams t ON t.id = i.team_id
+             JOIN issue_states s ON s.id = i.state_id
+             WHERE i.workspace_id = $1 AND i.due_date = $2
+             ORDER BY t.key, i.number LIMIT 20) x",
+    )
+    .bind(workspace_id)
+    .bind(day)
+    .fetch_one(db)
+    .await?;
+    lines.extend(due.map(|due| format!("Due this day: {due}")));
+    let cycles: Option<String> = sqlx::query_scalar(
+        "SELECT string_agg(x.line, '; ') FROM (
+             SELECT COALESCE(NULLIF(c.name, ''), 'Cycle ' || c.number) || ' of ' || t.name
+                        || CASE WHEN c.starts_on = $2 THEN ' started' ELSE ' ended' END AS line
+             FROM cycles c JOIN teams t ON t.id = c.team_id
+             WHERE t.workspace_id = $1 AND (c.starts_on = $2 OR c.ends_on = $2)
+             ORDER BY t.name, c.number LIMIT 20) x",
+    )
+    .bind(workspace_id)
+    .bind(day)
+    .fetch_one(db)
+    .await?;
+    lines.extend(cycles.map(|cycles| format!("Cycles: {cycles}")));
+    let (calls, tokens_in, tokens_out, cost): (i64, i64, i64, f64) = sqlx::query_as(
+        "SELECT count(*), COALESCE(sum(tokens_in), 0)::bigint, COALESCE(sum(tokens_out), 0)::bigint,
+                COALESCE(sum(cost_usd), 0)::float8
+         FROM llm_usage
+         WHERE workspace_id = $1 AND created_at >= $2::date
+           AND created_at < $2::date + interval '1 day'",
+    )
+    .bind(workspace_id)
+    .bind(day)
+    .fetch_one(db)
+    .await?;
+    if calls > 0 {
+        lines.push(format!(
+            "AI usage: {calls} calls, {tokens_in} tokens in, {tokens_out} out, ${cost:.2}"
+        ));
+    }
+    Ok(lines)
+}
+
 impl FromRow<'_, PgRow> for DaySummary {
     fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
         Ok(DaySummary {

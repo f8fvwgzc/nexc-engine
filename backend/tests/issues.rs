@@ -1558,3 +1558,90 @@ async fn issues_carry_a_due_date_and_are_listed_by_person(pool: PgPool) {
     let (_, created) = call(&app, Method::GET, &filed, &w.member, None).await;
     assert_eq!(titles(&created), ["Ship billing"]);
 }
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn an_assignee_is_reminded_once_when_an_issue_is_due(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), &[]).await;
+    let w = world(&app).await;
+    let issues = format!("{}/teams/{}/issues", w.ws, w.eng);
+    let day = |offset: i64| {
+        (chrono::Utc::now().date_naive() + chrono::Duration::days(offset)).to_string()
+    };
+    let file = |title: &'static str, due: String, assignee: Option<&str>| {
+        let (app, issues, owner) = (&app, &issues, &w.owner);
+        let body = json!({"title": title, "due_date": due, "assignee_id": assignee});
+        async move {
+            let (status, issue) = call(app, Method::POST, issues, owner, Some(body)).await;
+            assert_eq!(status, StatusCode::CREATED, "{issue}");
+            issue["id"].as_str().unwrap().to_owned()
+        }
+    };
+    let late = file("Late", day(-1), Some(&w.member_id)).await;
+    file("Not yet", day(3), Some(&w.member_id)).await;
+    file("Nobody's", day(-1), None).await;
+    let inbox = format!("{}/inbox", w.ws);
+    let due = |list: &Value| -> Vec<String> {
+        let list = list.as_array().unwrap();
+        let due = list.iter().filter(|n| n["kind"] == "due");
+        due.map(|n| n["issue"]["title"].as_str().unwrap().to_owned())
+            .collect()
+    };
+
+    // Only the issue that is due and has someone to tell; and only once.
+    assert_eq!(nexc::repo::issues::remind_due(&pool).await.unwrap(), 1);
+    assert_eq!(nexc::repo::issues::remind_due(&pool).await.unwrap(), 0);
+    let (_, list) = call(&app, Method::GET, &inbox, &w.member, None).await;
+    assert_eq!(due(&list), ["Late"]);
+    let reminder = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["kind"] == "due")
+        .unwrap();
+    assert!(reminder["actor"].is_null(), "nobody did it");
+
+    // A moved date is reminded of when it arrives; a closed issue is not.
+    let issue = format!("/issues/{late}");
+    call(
+        &app,
+        Method::PATCH,
+        &issue,
+        &w.owner,
+        Some(json!({"due_date": day(2)})),
+    )
+    .await;
+    assert_eq!(nexc::repo::issues::remind_due(&pool).await.unwrap(), 0);
+    call(
+        &app,
+        Method::PATCH,
+        &issue,
+        &w.owner,
+        Some(json!({"due_date": day(0)})),
+    )
+    .await;
+    assert_eq!(nexc::repo::issues::remind_due(&pool).await.unwrap(), 1);
+    let (_, states) = call(
+        &app,
+        Method::GET,
+        &format!("{}/teams/{}/states", w.ws, w.eng),
+        &w.owner,
+        None,
+    )
+    .await;
+    let done = states
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["category"] == "completed")
+        .unwrap()["id"]
+        .clone();
+    call(
+        &app,
+        Method::PATCH,
+        &issue,
+        &w.owner,
+        Some(json!({"state_id": done, "due_date": day(-3)})),
+    )
+    .await;
+    assert_eq!(nexc::repo::issues::remind_due(&pool).await.unwrap(), 0);
+}

@@ -130,6 +130,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   lost with it: workspaces the account is alone in are removed, it leaves the others, and what
   it made there stays under "Deleted account". Its name, address, password, sessions, AI
   account, notifications and personal memories are gone, and the address can register again.
+  Audit logs and the platform's activity log keep their entries, with the name and address
+  replaced by "Deleted account", so they still say what happened without saying who.
   The only owner of a shared workspace has to hand it over first. Platform administrators can
   erase an account on request from the console (`POST /admin/users/{uid}/erase`); the activity
   log keeps the account's id, not its name.
@@ -153,6 +155,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   board cards ("Due today", "Due tomorrow", the day, or how many days late while the issue is
   open), and recorded in the issue's timeline when set, moved or removed (`due_date` on
   `Issue`, `due` timeline entries). The demo seed gives four issues due dates.
+- Due reminders: when an open issue's due date arrives its assignee gets one entry in their
+  inbox ("Your issue is due"); a moved date is reminded of again when it arrives. The New issue
+  dialog takes a due date.
+- Day summaries are told with what surrounded the day, not only its events: the issues that
+  were due that day and the state they are in, cycles that started or ended, and what was
+  spent on AI. All of it comes from the workspace; nothing is looked up outside it.
 - Search from the command palette (⌘K): a few typed characters find issues (by title or
   identifier), projects, graphs, documents, teams and people in the open workspace, grouped by
   kind, and picking one opens it. One request, and only what the caller may see: each kind goes

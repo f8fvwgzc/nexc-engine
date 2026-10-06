@@ -195,12 +195,18 @@ fn counted(counts: BTreeMap<&str, usize>) -> String {
 }
 
 /// A day's entries as a model reads them: how much happened and by whom,
-/// then the entries oldest first, one per line. `entries` are newest first,
+/// what surrounded the day without being an event (`around`: deadlines,
+/// cycle boundaries, spending), then the entries oldest first, one per line. `entries` are newest first,
 /// as the timeline returns them, and `total` is how many the day has, which
 /// may be more. A day with more than [`DIGEST_LINES`] entries keeps its
 /// beginning and its end and says how many lie between, so the prompt stays
 /// the same size however busy the day was.
-pub fn day_digest(day: NaiveDate, total: i64, entries: &[TimelineEntry]) -> String {
+pub fn day_digest(
+    day: NaiveDate,
+    total: i64,
+    entries: &[TimelineEntry],
+    around: &[String],
+) -> String {
     let mut kinds = BTreeMap::new();
     let mut people = BTreeMap::new();
     for entry in entries {
@@ -230,11 +236,18 @@ pub fn day_digest(day: NaiveDate, total: i64, entries: &[TimelineEntry]) -> Stri
     };
     let oldest_first: Vec<&TimelineEntry> = entries.iter().rev().collect();
     let mut out = format!(
-        "Day: {day} (UTC)\nEntries: {total}\nBy kind: {}\nBy person: {}\n\n\
-         ## Entries, oldest first (time · who · what · subject · detail)\n",
+        "Day: {day} (UTC)\nEntries: {total}\nBy kind: {}\nBy person: {}\n",
         counted(kinds),
         counted(people)
     );
+    if !around.is_empty() {
+        out.push_str("\n## Around the day (not events: deadlines, cycles and spending)\n");
+        for line in around {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out.push_str("\n## Entries, oldest first (time · who · what · subject · detail)\n");
     let shown = oldest_first.len();
     let left_out = usize::try_from(total)
         .unwrap_or(shown)
@@ -293,7 +306,7 @@ mod tests {
             entry(20, Some("Bob"), "issue_state", "ENG-2 Fix login"),
             entry(10, Some("Bob"), "issue_created", "ENG-2 Fix login"),
         ];
-        let digest = day_digest(day, 3, &entries);
+        let digest = day_digest(day, 3, &entries, &[]);
         assert!(digest.starts_with("Day: 2026-10-06 (UTC)\nEntries: 3\n"));
         assert!(digest.contains("By kind: issue_created 1, issue_state 1, run_failed 1\n"));
         assert!(digest.contains("By person: Bob 2, the system 1\n"));
@@ -306,7 +319,14 @@ mod tests {
             "09:10 · Bob · issue_created · ENG-2 Fix login · todo -> in progress"
         );
         assert!(lines[3].starts_with("09:30 · the system · run_failed · Launch graph"));
-        assert!(!digest.contains("not listed"));
+        assert!(!digest.contains("not listed") && !digest.contains("Around the day"));
+        let around = ["Due this day: ENG-2 Fix login (Todo)".to_owned()];
+        let digest = day_digest(day, 3, &entries, &around);
+        let at = |needle: &str| digest.find(needle).unwrap();
+        assert!(
+            at("## Around the day") < at("Due this day: ENG-2")
+                && at("ENG-2 Fix login (Todo)") < at("## Entries")
+        );
     }
 
     #[test]
@@ -324,7 +344,7 @@ mod tests {
             })
             .collect();
         // The day has more entries than the timeline returned.
-        let digest = day_digest(day, entries.len() as i64 + 40, &entries);
+        let digest = day_digest(day, entries.len() as i64 + 40, &entries, &[]);
         let listed = digest
             .lines()
             .filter(|l| l.contains("· issue_comment ·"))

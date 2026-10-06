@@ -172,7 +172,9 @@ pub async fn export(state: &AppState, user: Uuid) -> Result<AccountExport, AppEr
 ///   leads are cleared, and those workspaces' audit logs say that an
 ///   account was deleted;
 /// * its personal memories, AI account, notifications and sessions go;
-/// * its name and address are replaced, so the address can register again.
+/// * its name and address are replaced, so the address can register again,
+///   also where audit logs and the platform's activity log had copied them:
+///   the entries stay, attributed to "Deleted account".
 ///
 /// 409 while it is the only owner of a workspace other people work in: that
 /// workspace needs another owner, or to be deleted, first.
@@ -243,6 +245,21 @@ pub async fn erase(state: &AppState, user: Uuid) -> Result<(), AppError> {
     .bind(DELETED_NAME)
     .fetch_one(&mut *tx)
     .await?;
+    // The logs keep what happened and when, and that one account did it; they stop saying who.
+    let named = format!("{} <{}>", account.name, account.email);
+    for statement in [
+        "UPDATE audit_log SET actor_name = $2 WHERE actor_id = $1",
+        "UPDATE audit_log SET subject = $2 WHERE subject = $3",
+        "UPDATE platform_events SET actor_name = $2 WHERE actor_id = $1",
+        "UPDATE platform_events SET subject = 'account ' || $1::text WHERE subject = $3",
+    ] {
+        sqlx::query(statement)
+            .bind(user)
+            .bind(DELETED_NAME)
+            .bind(&named)
+            .execute(&mut *tx)
+            .await?;
+    }
     tx.commit().await?;
 
     state.sessions.raise(user, epoch);

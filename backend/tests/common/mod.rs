@@ -143,9 +143,15 @@ impl LlmProvider for FakeLlm {
                     .lines()
                     .filter(|l| l.contains("run_failed"))
                     .collect();
+                let around = prompt
+                    .lines()
+                    .skip_while(|l| !l.starts_with("## Around the day"))
+                    .nth(1)
+                    .map(|l| format!("Around: {l}"))
+                    .unwrap_or_default();
                 let text = json!({
                     "headline": format!("{} things happened on {}.", field("Entries:"), field("Day:")),
-                    "highlights": [format!("By kind: {}", field("By kind:")), "  "],
+                    "highlights": [format!("By kind: {}", field("By kind:")), around, "  "],
                     "attention": attention,
                 });
                 return Self::events(text.to_string(), usage);

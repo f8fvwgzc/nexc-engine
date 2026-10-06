@@ -268,6 +268,8 @@ string_enum!(
         Assigned => "assigned",
         Comment => "comment",
         State => "state",
+        /// The issue's due date has arrived (nobody did it: there is no actor).
+        Due => "due",
     }
 );
 

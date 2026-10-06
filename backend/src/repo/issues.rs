@@ -831,6 +831,26 @@ pub async fn notify(
     Ok(())
 }
 
+/// Puts a reminder in the assignee's inbox for every open issue whose due
+/// date has arrived and was not reminded of yet; returns how many. One
+/// statement, so two servers running it at once cannot remind twice.
+pub async fn remind_due(db: impl PgExecutor<'_>) -> Result<u64, sqlx::Error> {
+    let done = sqlx::query(
+        "WITH due AS (
+             UPDATE issues i SET due_notified_on = i.due_date
+             FROM issue_states s
+             WHERE s.id = i.state_id AND s.category NOT IN ('completed', 'canceled')
+               AND i.assignee_id IS NOT NULL AND i.due_date <= current_date
+               AND i.due_notified_on IS DISTINCT FROM i.due_date
+             RETURNING i.id, i.workspace_id, i.assignee_id)
+         INSERT INTO notifications (id, user_id, workspace_id, issue_id, actor_id, kind)
+         SELECT gen_random_uuid(), assignee_id, workspace_id, id, NULL, 'due' FROM due",
+    )
+    .execute(db)
+    .await?;
+    Ok(done.rows_affected())
+}
+
 /// A member's inbox in a workspace, newest first: only issues they can still see.
 pub async fn inbox(
     db: impl PgExecutor<'_>,

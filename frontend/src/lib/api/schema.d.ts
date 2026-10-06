@@ -3215,7 +3215,7 @@ export interface components {
          * @description Why an issue is in someone's inbox.
          * @enum {string}
          */
-        NotificationKind: "assigned" | "comment" | "state";
+        NotificationKind: "assigned" | "comment" | "state" | "due";
         /** @description The node types and relation types of one graph. */
         Ontology: {
             node_types: components["schemas"]["NodeType"][];

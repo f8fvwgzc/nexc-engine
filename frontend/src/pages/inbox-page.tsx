@@ -22,6 +22,8 @@ const VERB: Record<Notification['kind'], string> = {
   assigned: 'assigned you',
   comment: 'commented on',
   state: 'moved',
+  // Nobody did this one: the day arrived.
+  due: 'is due:',
 };
 
 function List({ workspace }: { workspace: Workspace }) {
@@ -53,7 +55,7 @@ function List({ workspace }: { workspace: Workspace }) {
       <EmptyState
         icon={InboxIcon}
         title="Nothing for you yet"
-        description="You hear here when an issue is assigned to you, and when someone comments on or moves an issue you created or are assigned."
+        description="You hear here when an issue is assigned to you, when someone comments on or moves an issue you created or are assigned, and when an issue of yours is due."
       />
     );
   }
@@ -88,11 +90,13 @@ function List({ workspace }: { workspace: Workspace }) {
                 aria-label={n.read_at === null ? 'Unread' : undefined}
                 className={`size-1.5 shrink-0 rounded-full ${n.read_at === null ? 'bg-primary' : 'bg-transparent'}`}
               />
-              <PersonGlyph name={n.actor?.name} />
+              <PersonGlyph name={n.kind === 'due' ? 'Reminder' : n.actor?.name} />
               <span
                 className={`min-w-0 flex-1 truncate ${n.read_at === null ? '' : 'text-muted-foreground'}`}
               >
-                <span className="font-medium">{n.actor?.name ?? 'Someone who left'}</span>{' '}
+                <span className="font-medium">
+                  {n.kind === 'due' ? 'Your issue' : (n.actor?.name ?? 'Someone who left')}
+                </span>{' '}
                 {VERB[n.kind]} <span className="font-mono text-xs">{n.issue.identifier}</span>{' '}
                 {n.issue.title}
               </span>
