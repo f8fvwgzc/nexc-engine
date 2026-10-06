@@ -99,6 +99,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   versions are not reused.
 - The logged-in shell uses an inset sidebar and a neutral colour theme; the window no longer
   scrolls on the graph page.
+- Settings are their own screen with their own sidebar (`/app/settings/…`): Profile and
+  Preferences for the account; Members, Teams, AI accounts, Guardrails, Usage and Audit log for
+  the workspace. The old addresses (`/app/teams`, `/app/members`, `/app/usage`, `/app/audit`)
+  redirect there, and the app sidebar keeps a single Settings link.
+- The app sidebar uses the default layout and stays open on desktop; it no longer collapses to
+  icons.
 - Linear-style interface pass: a denser type scale, thinner icons, a sidebar grouped into Work,
   Your teams, Build and Workspace, and issue rows and board cards that show state and priority as
   glyphs instead of labels.

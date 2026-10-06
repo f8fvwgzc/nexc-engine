@@ -18,6 +18,10 @@ export const routeModules = {
   teams: () => import('@/pages/teams-page'),
   usage: () => import('@/pages/usage-page'),
   audit: () => import('@/pages/audit-page'),
-  settings: () => import('@/pages/settings-page'),
+  settingsShell: () => import('@/components/layout/settings-shell'),
+  settingsProfile: () => import('@/pages/settings/profile-page'),
+  settingsPreferences: () => import('@/pages/settings/preferences-page'),
+  settingsAi: () => import('@/pages/settings/ai-page'),
+  settingsGuardrails: () => import('@/pages/settings/guardrails-page'),
   notFound: () => import('@/pages/not-found-page'),
 };

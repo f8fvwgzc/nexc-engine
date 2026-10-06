@@ -43,14 +43,12 @@ export const BUILD_ITEMS: NavItem[] = [
   { title: 'Memory', to: '/app/memory', icon: BrainIcon },
 ];
 
-/** How the workspace is run. */
-export const ADMIN_ITEMS: NavItem[] = [
-  { title: 'Teams', to: '/app/teams', icon: UsersRoundIcon },
-  { title: 'Members', to: '/app/members', icon: UsersIcon },
-  { title: 'Usage', to: '/app/usage', icon: ChartNoAxesColumnIcon },
-  { title: 'Audit log', to: '/app/audit', icon: ScrollTextIcon, adminOnly: true },
-  { title: 'Settings', to: '/app/settings', icon: SettingsIcon },
-];
+/** The way into the settings area, which has its own sidebar. */
+export const SETTINGS_ITEM: NavItem = {
+  title: 'Settings',
+  to: '/app/settings',
+  icon: SettingsIcon,
+};
 
 /** Every page, for the command palette. */
 export const NAV_ITEMS: NavItem[] = [
@@ -61,10 +59,10 @@ export const NAV_ITEMS: NavItem[] = [
   { title: 'Runs', to: '/app/runs', icon: PlayIcon },
   { title: 'Agents', to: '/app/agents', icon: BotIcon },
   { title: 'Memory', to: '/app/memory', icon: BrainIcon },
-  { title: 'Teams', to: '/app/teams', icon: UsersRoundIcon },
-  { title: 'Members', to: '/app/members', icon: UsersIcon },
-  { title: 'Usage', to: '/app/usage', icon: ChartNoAxesColumnIcon },
-  { title: 'Audit log', to: '/app/audit', icon: ScrollTextIcon, adminOnly: true },
+  { title: 'Teams', to: '/app/settings/teams', icon: UsersRoundIcon },
+  { title: 'Members', to: '/app/settings/members', icon: UsersIcon },
+  { title: 'Usage', to: '/app/settings/usage', icon: ChartNoAxesColumnIcon },
+  { title: 'Audit log', to: '/app/settings/audit', icon: ScrollTextIcon, adminOnly: true },
   { title: 'Settings', to: '/app/settings', icon: SettingsIcon },
 ];
 

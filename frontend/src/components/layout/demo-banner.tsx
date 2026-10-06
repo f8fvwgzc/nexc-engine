@@ -24,7 +24,7 @@ export function DemoBanner() {
       <p className="flex-1 text-pretty">
         <span className="font-medium">Demo mode</span> — outputs are simulated.{' '}
         <Link
-          to="/app/settings"
+          to="/app/settings/ai"
           className="font-medium text-brand underline-offset-4 hover:underline"
         >
           Add an API key in Settings

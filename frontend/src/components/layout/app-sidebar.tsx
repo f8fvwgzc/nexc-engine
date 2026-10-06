@@ -7,7 +7,7 @@ import { NavMain } from './nav-main';
 import { NavUser } from './nav-user';
 import { WorkspaceSwitcher } from './workspace-switcher';
 
-/** Collapsible icon sidebar; the page renders as an inset card beside it. */
+/** The app's sidebar: workspace switcher, navigation, recent graphs and the account menu. */
 export function AppSidebar(props: ComponentProps<typeof Sidebar>) {
   return (
     <Sidebar {...props}>

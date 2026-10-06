@@ -92,7 +92,7 @@ export function NavUser() {
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
               <DropdownMenuItem asChild>
-                <Link to="/app/settings#profile">
+                <Link to="/app/settings/profile">
                   <UserIcon />
                   Profile
                 </Link>

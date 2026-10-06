@@ -14,7 +14,7 @@ import { inboxQuery } from '@/features/issues/api';
 import { teamsQuery } from '@/features/workspaces/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 
-import { ADMIN_ITEMS, API_DOCS_ITEM, BUILD_ITEMS, WORK_ITEMS, type NavItem } from './nav-items';
+import { API_DOCS_ITEM, BUILD_ITEMS, SETTINGS_ITEM, WORK_ITEMS, type NavItem } from './nav-items';
 
 /** Compact rows: 28px tall, 13px text. */
 const ROW = 'h-7 text-[13px]';
@@ -105,18 +105,13 @@ function NavTeams() {
 }
 
 export function NavMain() {
-  const { current } = useCurrentWorkspace();
-  const admin = current?.role === 'owner' || current?.role === 'admin';
   const unread = useUnread();
   return (
     <>
       <NavSection items={WORK_ITEMS} badges={{ '/app/inbox': unread }} />
       <NavTeams />
       <NavSection label="Build" items={BUILD_ITEMS} />
-      <NavSection
-        label="Workspace"
-        items={ADMIN_ITEMS.filter((item) => admin || !item.adminOnly)}
-      />
+      <NavSection label="Workspace" items={[SETTINGS_ITEM]} />
       <SidebarGroup className="py-1">
         <SidebarMenu>
           <SidebarMenuItem>
