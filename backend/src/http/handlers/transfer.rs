@@ -1,8 +1,10 @@
 //! Transferring a workspace's data to a PostgreSQL its owner names.
 
 use axum::Json;
+use axum::body::Body;
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{HeaderValue, StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json as Jsonb;
@@ -181,4 +183,104 @@ pub async fn start(
     let id = started.id;
     tokio::spawn(async move { transfer::run(&state, id, wid, url).await });
     Ok((StatusCode::ACCEPTED, Json(started)))
+}
+
+/// The largest set of files offered as one download. A workspace with more
+/// is moved by copying the server's data folder itself.
+const FILES_MAX_BYTES: i64 = 1024 * 1024 * 1024;
+
+/// The files of a workspace that are kept on disk rather than in the
+/// database, as one zip archive (owners only): the uploaded originals of its
+/// documents under `documents/<document id>` and the artifacts of its runs
+/// under `artifacts/<run id>/<node id>/<path>`. That is the layout of the
+/// server's data folder: unpacked into the data folder of the server that
+/// received the workspace's rows, the files are where it expects them.
+#[utoipa::path(get, path = "/workspaces/{wid}/files.zip", tag = "workspaces", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id")),
+    responses((status = 200, description = "Zip archive", content_type = "application/zip", body = Vec<u8>),
+        (status = 403, body = Problem), (status = 404, body = Problem),
+        (status = 413, description = "More than 1 GiB of files", body = Problem)))]
+pub async fn files(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(wid): Path<Uuid>,
+) -> Result<Response, AppError> {
+    require(
+        &member_of(&state, auth, wid).await?,
+        WorkspaceAction::Delete,
+    )?;
+    let documents: Vec<(Uuid, i64)> =
+        sqlx::query_as("SELECT id, size_bytes FROM documents WHERE workspace_id = $1 ORDER BY id")
+            .bind(wid)
+            .fetch_all(&state.db)
+            .await?;
+    let artifacts: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT a.storage_path, a.size FROM artifacts a
+         JOIN runs r ON r.id = a.run_id JOIN graphs g ON g.id = r.graph_id
+         WHERE g.workspace_id = $1 ORDER BY a.storage_path",
+    )
+    .bind(wid)
+    .fetch_all(&state.db)
+    .await?;
+    let total: i64 =
+        documents.iter().map(|d| d.1).sum::<i64>() + artifacts.iter().map(|a| a.1).sum::<i64>();
+    if total > FILES_MAX_BYTES {
+        return Err(AppError::PayloadTooLarge);
+    }
+    // (name in the archive, file on disk)
+    let mut entries = Vec::with_capacity(documents.len() + artifacts.len());
+    for (id, _) in &documents {
+        let on_disk = state.settings.documents_dir().join(id.to_string());
+        entries.push((format!("documents/{id}"), on_disk));
+    }
+    for (storage_path, _) in &artifacts {
+        // A stored path that would leave the artifacts folder is skipped, not followed.
+        if let Ok(on_disk) = crate::engine::artifacts::resolve(&state, storage_path) {
+            entries.push((format!("artifacts/{storage_path}"), on_disk));
+        }
+    }
+    // Written to a file, not to memory, and stored without compression: PDFs and Office
+    // files are compressed already, and the archive must be ready within the request timeout.
+    let scratch = state.settings.data_dir.join("tmp");
+    tokio::fs::create_dir_all(&scratch)
+        .await
+        .map_err(anyhow::Error::from)?;
+    let archive = scratch.join(format!("{}.zip", Uuid::now_v7()));
+    let target = archive.clone();
+    tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        use zip::write::SimpleFileOptions;
+        let mut writer = zip::ZipWriter::new(std::fs::File::create(&target)?);
+        let options = SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored)
+            .large_file(true);
+        for (name, on_disk) in entries {
+            // A file that is gone from disk is left out; its record was transferred anyway.
+            let Ok(mut file) = std::fs::File::open(&on_disk) else {
+                continue;
+            };
+            writer.start_file(name, options)?;
+            std::io::copy(&mut file, &mut writer)?;
+        }
+        writer.finish()?;
+        Ok(())
+    })
+    .await
+    .map_err(anyhow::Error::from)??;
+    let file = tokio::fs::File::open(&archive)
+        .await
+        .map_err(anyhow::Error::from)?;
+    // The open handle keeps the bytes readable; the name can go now.
+    let _ = tokio::fs::remove_file(&archive).await;
+    let headers = [
+        (
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/zip"),
+        ),
+        (
+            header::CONTENT_DISPOSITION,
+            HeaderValue::from_static("attachment; filename=\"workspace-files.zip\""),
+        ),
+    ];
+    let body = Body::from_stream(tokio_util::io::ReaderStream::new(file));
+    Ok((headers, body).into_response())
 }

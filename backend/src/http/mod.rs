@@ -105,6 +105,7 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(infrastructure::status))
         .routes(routes!(infrastructure::check))
         .routes(routes!(transfer::list, transfer::start))
+        .routes(routes!(transfer::files))
         .routes(routes!(insight::timeline))
         .routes(routes!(insight::days))
         .routes(routes!(insight::map))

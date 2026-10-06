@@ -37,11 +37,15 @@ the owner names, and then offers to remove it from this server.
 2. The server applies its migrations there and copies the workspace's rows table by table,
    parents before children, in one transaction on the target (`engine/transfer.rs`): the copy
    is there completely or not at all. Per-table counts are kept in `workspace_transfers`.
-3. After checking the copy, the owner removes the workspace here. Removal deletes every row of
+3. Files kept on disk are a separate download on the same page (`GET /workspaces/{wid}/files.zip`,
+   up to 1 GiB): uploaded originals under `documents/<document id>` and run artifacts under
+   `artifacts/<run id>/<node id>/<path>`, the layout of the data folder (`NEXC_DATA_DIR`), so the
+   archive is unpacked into the data folder of the server that received the rows.
+4. After checking the copy, the owner removes the workspace here. Removal deletes every row of
    the workspace, the uploaded files of its documents and the artifact files of its runs.
 
 Not copied, on purpose: password hashes (accounts are created on the target with a hash nothing
-matches), stored API keys (sealed with this server's master key), sessions, and files on disk.
+matches), stored API keys (sealed with this server's master key), and sessions.
 In production a target that resolves to a loopback, private or link-local address is refused, so
 a workspace owner cannot make the server connect into its own network.
 

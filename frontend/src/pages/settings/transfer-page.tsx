@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { apiRequest, apiSend } from '@/lib/api/client';
+import { saveDownload } from '@/lib/api/download';
 import { errorMessage } from '@/lib/api/errors';
 import { formatInteger, formatRelative } from '@/lib/format';
 import { qk } from '@/lib/query-keys';
@@ -108,6 +109,10 @@ function TransferForm({ workspace }: { workspace: Workspace }) {
     },
   });
   const copied = transfers.some((t) => t.status === 'done');
+  const files = useMutation({
+    mutationFn: () => saveDownload(`/workspaces/${workspace.id}/files.zip`, 'workspace-files.zip'),
+    meta: { errorToast: false },
+  });
   const navigate = useNavigate();
   const [removing, setRemoving] = useState(false);
   const remove = useMutation({
@@ -132,7 +137,7 @@ function TransferForm({ workspace }: { workspace: Workspace }) {
           </p>
           <p>
             Not copied: password hashes (members sign up again or reset on your server), stored API
-            keys (enter them again), and files on disk (uploaded originals, run artifacts). The
+            keys (enter them again), and files on disk, which are a separate download below. The
             connection string is used once and not kept. Nothing changes here.
           </p>
         </div>
@@ -159,6 +164,29 @@ function TransferForm({ workspace }: { workspace: Workspace }) {
         {start.error && (
           <p role="alert" className="text-sm text-destructive">
             {errorMessage(start.error)}
+          </p>
+        )}
+      </section>
+      <section className="space-y-2 rounded-lg border p-4 text-[13px] text-muted-foreground">
+        <h2 className="font-medium text-foreground">Files that are not in the database</h2>
+        <p>
+          Uploaded originals and run artifacts are kept on disk. Download them as one archive and
+          unpack it into the data folder of the server that received the copy: the layout is the
+          same (<span className="font-mono text-xs">documents/</span>,{' '}
+          <span className="font-mono text-xs">artifacts/</span>). Up to 1 GB; more than that is
+          moved by copying the data folder itself.
+        </p>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={files.isPending}
+          onClick={() => files.mutate()}
+        >
+          {files.isPending ? 'Preparing…' : 'Download files'}
+        </Button>
+        {files.error && (
+          <p role="alert" className="text-sm text-destructive">
+            {errorMessage(files.error)}
           </p>
         )}
       </section>

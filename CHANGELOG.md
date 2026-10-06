@@ -123,6 +123,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Deleting a workspace now also deletes the uploaded files of its documents.
 - Deleting a graph or a workspace removes the artifact files of its runs from disk, not only
   their rows.
+- A workspace's files on disk (uploaded originals, run artifacts) download as one archive in the
+  layout of the data folder (`GET /workspaces/{wid}/files.zip`), completing a data transfer.
 - Workflow editor: the Teams page opens a team's workflow, where team owners and workspace admins
   add, rename, recolour, reorder and remove issue states; other members see it read-only.
 - "Your teams" in the sidebar opens a team's issues (`/app/issues?team=<id>`), and `C` on the
