@@ -77,6 +77,13 @@ export const routes: RouteObject[] = [
               { path: 'inbox', ...page(routeModules.inbox, crumbs({ label: 'Inbox' })) },
               { path: 'issues', ...page(routeModules.issues, crumbs({ label: 'Issues' })) },
               { path: 'projects', ...page(routeModules.projects, crumbs({ label: 'Projects' })) },
+              {
+                path: 'projects/:projectId',
+                ...page(
+                  routeModules.project,
+                  crumbs({ label: 'Projects', to: '/app/projects' }, { label: 'Project' }),
+                ),
+              },
               { path: 'teams', ...page(routeModules.teams, crumbs({ label: 'Teams' })) },
               { path: 'members', ...page(routeModules.members, crumbs({ label: 'Members' })) },
               { path: 'usage', ...page(routeModules.usage, crumbs({ label: 'Usage' })) },

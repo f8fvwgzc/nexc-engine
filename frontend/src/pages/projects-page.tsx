@@ -1,102 +1,30 @@
-import { useMutation, useQueryClient, useSuspenseQuery } from '@tanstack/react-query';
-import { FolderKanbanIcon, PlusIcon, Trash2Icon } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from '@tanstack/react-query';
+import { FolderKanbanIcon, PlusIcon } from 'lucide-react';
 import { Suspense, useState } from 'react';
+import { Link } from 'react-router-dom';
 
-import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
 import { EmptyState } from '@/components/custom-ui/empty-state';
-import { OptionSelect } from '@/components/custom-ui/option-select';
+import { PersonGlyph } from '@/components/custom-ui/issue-glyphs';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { PageSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
-import { createProject, deleteProject, projectsQuery, updateProject } from '@/features/issues/api';
+import { createProject, projectsQuery } from '@/features/issues/api';
+import { projectProgress, projectStatusLabel } from '@/features/issues/project-status';
+import { membersQuery } from '@/features/workspaces/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { qk } from '@/lib/query-keys';
-import type { Project, ProjectStatus } from '@/schemas/issue';
-import { isWorkspaceAdmin, type Workspace } from '@/schemas/workspace';
-
-const STATUS_OPTIONS: { value: ProjectStatus; label: string }[] = [
-  { value: 'planned', label: 'Planned' },
-  { value: 'started', label: 'In progress' },
-  { value: 'paused', label: 'Paused' },
-  { value: 'completed', label: 'Completed' },
-  { value: 'canceled', label: 'Canceled' },
-];
-
-function ProjectCard({ workspace, project }: { workspace: Workspace; project: Project }) {
-  const queryClient = useQueryClient();
-  const [deleting, setDeleting] = useState(false);
-  const refresh = () => queryClient.invalidateQueries({ queryKey: qk.issues.all });
-  const canEdit = workspace.role !== 'guest';
-  const setStatus = useMutation({
-    mutationFn: (status: ProjectStatus) => updateProject(workspace.id, project.id, { status }),
-    onSuccess: refresh,
-  });
-  const remove = useMutation({
-    mutationFn: () => deleteProject(workspace.id, project.id),
-    meta: { successMessage: 'Project deleted' },
-    onSuccess: refresh,
-  });
-  const done =
-    project.issue_count > 0 ? Math.round((project.closed_count / project.issue_count) * 100) : 0;
-  return (
-    <li className="space-y-3 rounded-xl border p-4">
-      <div className="flex items-center gap-2">
-        <h2 className="min-w-0 flex-1 truncate font-medium">{project.name}</h2>
-        {canEdit ? (
-          <OptionSelect
-            value={project.status}
-            onValueChange={(status) => setStatus.mutate(status)}
-            options={STATUS_OPTIONS}
-            aria-label={`Status of ${project.name}`}
-            className="w-36"
-          />
-        ) : (
-          <span className="text-sm text-muted-foreground">
-            {STATUS_OPTIONS.find((o) => o.value === project.status)?.label}
-          </span>
-        )}
-        {isWorkspaceAdmin(workspace.role) && (
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="text-destructive"
-            aria-label={`Delete ${project.name}`}
-            onClick={() => setDeleting(true)}
-          >
-            <Trash2Icon />
-          </Button>
-        )}
-      </div>
-      {project.description && (
-        <p className="text-sm text-muted-foreground">{project.description}</p>
-      )}
-      <div className="space-y-1">
-        <Progress value={done} aria-label={`${done}% of issues closed`} className="h-1.5" />
-        <p className="text-xs text-muted-foreground">
-          {project.issue_count === 0
-            ? 'No issues yet'
-            : `${project.closed_count} of ${project.issue_count} issues closed`}
-          {project.target_date ? ` · target ${project.target_date}` : ''}
-        </p>
-      </div>
-      <ConfirmDialog
-        open={deleting}
-        onOpenChange={setDeleting}
-        title={`Delete ${project.name}?`}
-        description="The project is removed. Its issues stay, without a project."
-        confirmLabel="Delete project"
-        destructive
-        onConfirm={() => remove.mutate()}
-      />
-    </li>
-  );
-}
+import type { Workspace } from '@/schemas/workspace';
 
 function ProjectList({ workspace }: { workspace: Workspace }) {
   const { data: projects } = useSuspenseQuery(projectsQuery(workspace.id));
+  // Guests cannot list members; a lead then shows without a name.
+  const { data: members = [] } = useQuery({
+    ...membersQuery(workspace.id),
+    enabled: workspace.role !== 'guest',
+  });
   if (projects.length === 0) {
     return (
       <EmptyState
@@ -107,11 +35,52 @@ function ProjectList({ workspace }: { workspace: Workspace }) {
     );
   }
   return (
-    <ul className="grid gap-3 md:grid-cols-2">
-      {projects.map((project) => (
-        <ProjectCard key={project.id} workspace={workspace} project={project} />
-      ))}
-    </ul>
+    <div className="overflow-hidden rounded-lg border">
+      <div className="hidden h-8 items-center gap-3 border-b bg-muted/40 px-3 text-xs text-muted-foreground sm:flex">
+        <span className="flex-1">Name</span>
+        <span className="w-24">Status</span>
+        <span className="w-8">Lead</span>
+        <span className="w-24">Target</span>
+        <span className="w-40">Progress</span>
+      </div>
+      <ul className="divide-y">
+        {projects.map((project) => {
+          const done = projectProgress(project);
+          return (
+            <li key={project.id}>
+              <Link
+                to={`/app/projects/${project.id}`}
+                className="flex min-h-10 flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-[13px] transition-colors outline-none hover:bg-muted/60 focus-visible:bg-muted/60"
+              >
+                <span className="flex min-w-0 flex-1 basis-48 items-center gap-2">
+                  <FolderKanbanIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                  <span className="truncate font-medium">{project.name}</span>
+                </span>
+                <span className="w-24 text-muted-foreground">
+                  {projectStatusLabel(project.status)}
+                </span>
+                <span className="w-8">
+                  <PersonGlyph name={members.find((m) => m.user_id === project.lead_id)?.name} />
+                </span>
+                <span className="w-24 text-muted-foreground tabular-nums">
+                  {project.target_date ?? '—'}
+                </span>
+                <span className="flex w-40 items-center gap-2">
+                  <Progress
+                    value={done}
+                    aria-label={`${done}% of issues closed`}
+                    className="h-1.5 flex-1"
+                  />
+                  <span className="w-12 text-right text-xs text-muted-foreground tabular-nums">
+                    {project.closed_count}/{project.issue_count}
+                  </span>
+                </span>
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 
@@ -127,10 +96,10 @@ function Projects({ workspace }: { workspace: Workspace }) {
     },
   });
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-6 p-4 sm:p-6">
+    <div className="mx-auto w-full max-w-5xl space-y-5 p-4 sm:p-6">
       <PageHeader
         title="Projects"
-        description={`Outcomes ${workspace.name} is working towards, with the issues that get them there.`}
+        description={`Outcomes ${workspace.name} is working towards. Open one to see its issues.`}
       />
       {workspace.role !== 'guest' && (
         <form
@@ -146,9 +115,9 @@ function Projects({ workspace }: { workspace: Workspace }) {
             placeholder="New project name"
             aria-label="New project name"
             onChange={(e) => setName(e.target.value)}
-            className="max-w-sm"
+            className="h-8 max-w-sm text-[13px]"
           />
-          <Button type="submit" disabled={!name.trim() || create.isPending}>
+          <Button type="submit" size="sm" disabled={!name.trim() || create.isPending}>
             <PlusIcon />
             Add project
           </Button>

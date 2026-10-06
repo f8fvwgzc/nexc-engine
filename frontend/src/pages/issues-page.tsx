@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  ChevronRightIcon,
   CircleDotIcon,
   KanbanIcon,
   ListIcon,
@@ -8,7 +9,7 @@ import {
   Trash2Icon,
   WorkflowIcon,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
@@ -23,7 +24,6 @@ import { OptionSelect } from '@/components/custom-ui/option-select';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { PageSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -59,7 +59,13 @@ import { errorMessage } from '@/lib/api/errors';
 import { formatRelative } from '@/lib/format';
 import { qk } from '@/lib/query-keys';
 import { cycleLabel } from '@/schemas/cycle';
-import { PRIORITY_LABEL, type Issue, type IssueInput, type StateCategory } from '@/schemas/issue';
+import {
+  PRIORITY_LABEL,
+  type Issue,
+  type IssueInput,
+  type Project,
+  type StateCategory,
+} from '@/schemas/issue';
 import type { Team, Workspace } from '@/schemas/workspace';
 
 const VIEW_KEY = 'nexc.issues.view';
@@ -96,12 +102,14 @@ function NewIssueDialog({
   workspace,
   teams,
   defaultTeam,
+  defaultProject,
   open,
   onClose,
 }: {
   workspace: Workspace;
   teams: Team[];
   defaultTeam: string | undefined;
+  defaultProject: string | undefined;
   open: boolean;
   onClose: () => void;
 }) {
@@ -110,12 +118,15 @@ function NewIssueDialog({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState('0');
+  const [projectId, setProjectId] = useState(defaultProject ?? NONE);
+  const { data: projects = [] } = useQuery(projectsQuery(workspace.id));
   const create = useMutation({
     mutationFn: () =>
       createIssue(workspace.id, teamId, {
         title: title.trim(),
         description,
         priority: Number(priority),
+        project_id: projectId === NONE ? undefined : projectId,
       }),
     meta: { errorToast: false, successMessage: 'Issue created' },
     onSuccess: () => {
@@ -142,7 +153,7 @@ function NewIssueDialog({
               It gets the team’s next number and starts in the team’s first open state.
             </DialogDescription>
           </DialogHeader>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             <OptionSelect
               value={teamId}
               onValueChange={setTeamId}
@@ -154,6 +165,15 @@ function NewIssueDialog({
               onValueChange={setPriority}
               options={PRIORITY_OPTIONS}
               aria-label="Priority"
+            />
+            <OptionSelect
+              value={projectId}
+              onValueChange={setProjectId}
+              options={[
+                { value: NONE, label: 'No project' },
+                ...projects.map((p) => ({ value: p.id, label: p.name })),
+              ]}
+              aria-label="Project"
             />
           </div>
           <Input
@@ -236,151 +256,215 @@ function IssueDialog({
       onClose();
     },
   });
-  const textDirty = title.trim() !== issue.title || description !== issue.description;
+  const { data: teams = [] } = useQuery(teamsQuery(workspace.id));
+  const team = teams.find((t) => t.id === issue.team_id);
+  // Text saves when the field is left, like every other property saves when it is picked.
+  const commitText = () => {
+    const next = title.trim();
+    if (!next) {
+      setTitle(issue.title);
+      return;
+    }
+    if (next !== issue.title || description !== issue.description) {
+      save.mutate({ title: next, description });
+    }
+  };
 
   return (
     <Dialog open onOpenChange={(next) => !next && onClose()}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Badge variant="outline" className="font-mono">
-              {issue.identifier}
-            </Badge>
-            <span className="truncate">{issue.title}</span>
-          </DialogTitle>
-          <DialogDescription>
+      <DialogContent className="flex h-[85vh] max-h-[90vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl">
+        <DialogHeader className="flex-row items-center gap-2 border-b py-2 pr-12 pl-4">
+          <DialogTitle className="flex min-w-0 flex-1 items-center gap-1.5 text-[13px] font-normal text-muted-foreground">
+            <span className="truncate">{team?.name ?? 'Team'}</span>
+            <ChevronRightIcon className="size-3.5 shrink-0" aria-hidden />
             {issue.parent && (
               <>
-                Part of{' '}
                 <button
                   type="button"
-                  className="font-medium text-foreground underline-offset-2 hover:underline"
+                  className="truncate underline-offset-2 hover:text-foreground hover:underline"
                   onClick={() => onOpen(issue.parent!.id)}
                 >
                   {issue.parent.identifier} {issue.parent.title}
                 </button>
-                {' · '}
+                <ChevronRightIcon className="size-3.5 shrink-0" aria-hidden />
               </>
             )}
-            Updated {formatRelative(issue.updated_at)}
-            {issue.completed_at ? ` · closed ${formatRelative(issue.completed_at)}` : ''}
+            <span className="shrink-0 font-mono text-xs text-foreground">{issue.identifier}</span>
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            {issue.title}, updated {formatRelative(issue.updated_at)}
           </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-3">
-          <Input
-            value={title}
-            maxLength={200}
-            aria-label="Title"
-            onChange={(e) => setTitle(e.target.value)}
-          />
-          <Textarea
-            value={description}
-            rows={6}
-            aria-label="Description"
-            placeholder="Describe the work. This is the goal of the issue’s graph."
-            onChange={(e) => setDescription(e.target.value)}
-          />
-          <div className="grid gap-2 sm:grid-cols-2">
-            <OptionSelect
-              value={issue.state.id}
-              onValueChange={(state_id) => save.mutate({ state_id })}
-              options={states.map((s) => ({
-                value: s.id,
-                label: (
-                  <span className="flex items-center gap-2">
-                    <StateGlyph category={s.category} color={s.color} />
-                    {s.name}
-                  </span>
-                ),
-              }))}
-              aria-label="State"
-            />
-            <OptionSelect
-              value={String(issue.priority)}
-              onValueChange={(p) => save.mutate({ priority: Number(p) })}
-              options={PRIORITY_OPTIONS}
-              aria-label="Priority"
-            />
-            <OptionSelect
-              value={issue.assignee?.user_id ?? NONE}
-              onValueChange={(id) => save.mutate({ assignee_id: id === NONE ? null : id })}
-              options={[
-                { value: NONE, label: 'Unassigned' },
-                ...(issue.assignee && !members.some((m) => m.user_id === issue.assignee?.user_id)
-                  ? [{ value: issue.assignee.user_id, label: issue.assignee.name }]
-                  : []),
-                ...members.map((m) => ({ value: m.user_id, label: m.name })),
-              ]}
-              aria-label="Assignee"
-            />
-            <OptionSelect
-              value={issue.project_id ?? NONE}
-              onValueChange={(id) => save.mutate({ project_id: id === NONE ? null : id })}
-              options={[
-                { value: NONE, label: 'No project' },
-                ...projects.map((p) => ({ value: p.id, label: p.name })),
-              ]}
-              aria-label="Project"
-            />
-            {(cycles.length > 0 || issue.cycle) && (
-              <OptionSelect
-                value={issue.cycle?.id ?? NONE}
-                onValueChange={(id) => save.mutate({ cycle_id: id === NONE ? null : id })}
-                options={[
-                  { value: NONE, label: 'No cycle' },
-                  ...cycles.map((c) => ({
-                    value: c.id,
-                    label: c.status === 'active' ? `${cycleLabel(c)} · active` : cycleLabel(c),
-                  })),
-                ]}
-                aria-label="Cycle"
-              />
-            )}
-          </div>
-          <LabelPicker
-            workspace={workspace}
-            selected={issue.labels}
-            onChange={(label_ids) => save.mutate({ label_ids })}
-          />
-          {(save.error ?? plan.error) && (
-            <p role="alert" className="text-sm text-destructive">
-              {errorMessage(save.error ?? plan.error)}
-            </p>
-          )}
-        </div>
-        <DialogFooter className="sm:justify-between">
-          <Button variant="ghost" className="text-destructive" onClick={() => setConfirming(true)}>
-            <Trash2Icon />
-            Delete
-          </Button>
-          <div className="flex flex-wrap gap-2">
-            {issue.graph_id ? (
-              <Button
-                variant="outline"
-                onClick={() => void navigate(`/app/graphs/${issue.graph_id}`)}
-              >
-                <NetworkIcon />
-                Open graph
-              </Button>
-            ) : (
-              <Button variant="outline" disabled={plan.isPending} onClick={() => plan.mutate()}>
-                <WorkflowIcon />
-                Plan as graph
-              </Button>
-            )}
+          {issue.graph_id ? (
             <Button
-              disabled={!textDirty || !title.trim() || save.isPending}
-              onClick={() => save.mutate({ title: title.trim(), description })}
+              variant="outline"
+              size="sm"
+              onClick={() => void navigate(`/app/graphs/${issue.graph_id}`)}
             >
-              Save
+              <NetworkIcon />
+              Open graph
             </Button>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={plan.isPending}
+              onClick={() => plan.mutate()}
+            >
+              <WorkflowIcon />
+              Plan as graph
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="text-muted-foreground hover:text-destructive"
+            aria-label={`Delete ${issue.identifier}`}
+            onClick={() => setConfirming(true)}
+          >
+            <Trash2Icon />
+          </Button>
+        </DialogHeader>
+        <div className="grid min-h-0 flex-1 overflow-y-auto md:grid-cols-[minmax(0,1fr)_15rem] md:overflow-hidden">
+          <div className="min-w-0 space-y-4 p-5 md:overflow-y-auto">
+            <input
+              value={title}
+              maxLength={200}
+              aria-label="Title"
+              placeholder="Issue title"
+              className="w-full bg-transparent text-lg font-semibold tracking-tight outline-none placeholder:text-muted-foreground"
+              onChange={(e) => setTitle(e.target.value)}
+              onBlur={commitText}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') e.currentTarget.blur();
+              }}
+            />
+            <Textarea
+              value={description}
+              rows={5}
+              aria-label="Description"
+              placeholder="Add a description. It becomes the goal when the issue is planned as a graph."
+              className="resize-none border-0 bg-transparent px-0 shadow-none focus-visible:ring-0 dark:bg-transparent"
+              onChange={(e) => setDescription(e.target.value)}
+              onBlur={commitText}
+            />
+            {(save.error ?? plan.error) && (
+              <p role="alert" className="text-sm text-destructive">
+                {errorMessage(save.error ?? plan.error)}
+              </p>
+            )}
+            <SubIssues workspace={workspace} issue={issue} onOpen={onOpen} />
+            <IssueTimeline
+              issue={issue}
+              canModerate={workspace.role === 'owner' || workspace.role === 'admin'}
+            />
           </div>
-        </DialogFooter>
-        <SubIssues workspace={workspace} issue={issue} onOpen={onOpen} />
-        <IssueTimeline
-          issue={issue}
-          canModerate={workspace.role === 'owner' || workspace.role === 'admin'}
-        />
+          <aside
+            aria-label="Properties"
+            className="space-y-3 border-t bg-muted/20 p-4 md:overflow-y-auto md:border-t-0 md:border-l"
+          >
+            <Property label="Status">
+              <OptionSelect
+                value={issue.state.id}
+                onValueChange={(state_id) => save.mutate({ state_id })}
+                options={states.map((s) => ({
+                  value: s.id,
+                  label: (
+                    <span className="flex items-center gap-2">
+                      <StateGlyph category={s.category} color={s.color} />
+                      {s.name}
+                    </span>
+                  ),
+                }))}
+                aria-label="State"
+                className="w-full"
+              />
+            </Property>
+            <Property label="Priority">
+              <OptionSelect
+                value={String(issue.priority)}
+                onValueChange={(p) => save.mutate({ priority: Number(p) })}
+                options={PRIORITY_LABEL.map((label, value) => ({
+                  value: String(value),
+                  label: (
+                    <span className="flex items-center gap-2">
+                      <PriorityGlyph priority={value} />
+                      {label}
+                    </span>
+                  ),
+                }))}
+                aria-label="Priority"
+                className="w-full"
+              />
+            </Property>
+            <Property label="Assignee">
+              <OptionSelect
+                value={issue.assignee?.user_id ?? NONE}
+                onValueChange={(id) => save.mutate({ assignee_id: id === NONE ? null : id })}
+                options={[
+                  { value: NONE, label: 'Unassigned' },
+                  ...(issue.assignee && !members.some((m) => m.user_id === issue.assignee?.user_id)
+                    ? [{ value: issue.assignee.user_id, label: issue.assignee.name }]
+                    : []),
+                  ...members.map((m) => ({ value: m.user_id, label: m.name })),
+                ]}
+                aria-label="Assignee"
+                className="w-full"
+              />
+            </Property>
+            <Property label="Labels">
+              <LabelPicker
+                workspace={workspace}
+                selected={issue.labels}
+                onChange={(label_ids) => save.mutate({ label_ids })}
+              />
+            </Property>
+            <Property label="Project">
+              <OptionSelect
+                value={issue.project_id ?? NONE}
+                onValueChange={(id) => save.mutate({ project_id: id === NONE ? null : id })}
+                options={[
+                  { value: NONE, label: 'No project' },
+                  ...projects.map((p) => ({ value: p.id, label: p.name })),
+                ]}
+                aria-label="Project"
+                className="w-full"
+              />
+            </Property>
+            {(cycles.length > 0 || issue.cycle) && (
+              <Property label="Cycle">
+                <OptionSelect
+                  value={issue.cycle?.id ?? NONE}
+                  onValueChange={(id) => save.mutate({ cycle_id: id === NONE ? null : id })}
+                  options={[
+                    { value: NONE, label: 'No cycle' },
+                    ...cycles.map((c) => ({
+                      value: c.id,
+                      label: c.status === 'active' ? `${cycleLabel(c)} · active` : cycleLabel(c),
+                    })),
+                  ]}
+                  aria-label="Cycle"
+                  className="w-full"
+                />
+              </Property>
+            )}
+            <dl className="space-y-1 border-t pt-3 text-xs text-muted-foreground">
+              <div className="flex justify-between gap-2">
+                <dt>Created</dt>
+                <dd>{formatRelative(issue.created_at)}</dd>
+              </div>
+              <div className="flex justify-between gap-2">
+                <dt>Updated</dt>
+                <dd>{formatRelative(issue.updated_at)}</dd>
+              </div>
+              {issue.completed_at && (
+                <div className="flex justify-between gap-2">
+                  <dt>Closed</dt>
+                  <dd>{formatRelative(issue.completed_at)}</dd>
+                </div>
+              )}
+            </dl>
+          </aside>
+        </div>
         <ConfirmDialog
           open={confirming}
           onOpenChange={setConfirming}
@@ -392,6 +476,16 @@ function IssueDialog({
         />
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** One property of an issue in the side panel: a small label over its control. */
+function Property({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="space-y-1">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      {children}
+    </div>
   );
 }
 
@@ -408,7 +502,15 @@ function IssueRow({ issue, onOpen }: { issue: Issue; onOpen: () => void }) {
           {issue.identifier}
         </span>
         <StateGlyph category={issue.state.category} color={issue.state.color} />
-        <span className="min-w-0 flex-1 truncate">{issue.title}</span>
+        <span className="min-w-0 flex-1 truncate">
+          {issue.title}
+          {issue.parent && (
+            <span className="ml-2 text-xs text-muted-foreground">
+              <ChevronRightIcon className="mr-0.5 inline size-3" aria-hidden />
+              {issue.parent.title}
+            </span>
+          )}
+        </span>
         {issue.sub_issues.total > 0 && (
           <span
             className="shrink-0 rounded-full border px-1.5 text-xs text-muted-foreground tabular-nums"
@@ -560,7 +662,11 @@ function IssueBoard({
   );
 }
 
-function Issues({ workspace }: { workspace: Workspace }) {
+/**
+ * The issues of a workspace as a list grouped by state or as a team's board, with filters. Given
+ * a `project` it shows only that project's issues and files new ones in it.
+ */
+export function IssueExplorer({ workspace, project }: { workspace: Workspace; project?: Project }) {
   // The team is part of the address, so the sidebar's team links and reloads land on it.
   const [params, setParams] = useSearchParams();
   const teamId = params.get('team') ?? ALL;
@@ -587,6 +693,7 @@ function Issues({ workspace }: { workspace: Workspace }) {
   const { data: issues, isPending } = useQuery(
     issuesQuery(workspace.id, {
       team_id: teamId === ALL ? undefined : teamId,
+      project_id: project?.id,
       label_id: activeLabel === ALL ? undefined : activeLabel,
       cycle_id: activeCycle === ALL ? undefined : activeCycle,
       open: openOnly,
@@ -651,28 +758,36 @@ function Issues({ workspace }: { workspace: Workspace }) {
     );
   });
 
+  const newIssueButton = (
+    <Button
+      size="sm"
+      onClick={() => setCreating(true)}
+      disabled={teams.length === 0}
+      aria-keyshortcuts="c"
+    >
+      <PlusIcon />
+      New issue
+      <kbd className="ml-1 rounded border border-primary-foreground/30 px-1 font-mono text-[10px]">
+        C
+      </kbd>
+    </Button>
+  );
+
   return (
     <div
-      className={`mx-auto w-full space-y-5 p-4 sm:p-6 ${view === 'board' ? 'max-w-none' : 'max-w-5xl'}`}
+      className={
+        project
+          ? 'w-full space-y-4'
+          : `mx-auto w-full space-y-5 p-4 sm:p-6 ${view === 'board' ? 'max-w-none' : 'max-w-5xl'}`
+      }
     >
-      <PageHeader
-        title="Issues"
-        description={`Work tracked in ${workspace.name}. Open an issue to plan and run it as a graph.`}
-        actions={
-          <Button
-            size="sm"
-            onClick={() => setCreating(true)}
-            disabled={teams.length === 0}
-            aria-keyshortcuts="c"
-          >
-            <PlusIcon />
-            New issue
-            <kbd className="ml-1 rounded border border-primary-foreground/30 px-1 font-mono text-[10px]">
-              C
-            </kbd>
-          </Button>
-        }
-      />
+      {!project && (
+        <PageHeader
+          title="Issues"
+          description={`Work tracked in ${workspace.name}. Open an issue to plan and run it as a graph.`}
+          actions={newIssueButton}
+        />
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <OptionSelect
           value={teamId}
@@ -734,6 +849,7 @@ function Issues({ workspace }: { workspace: Workspace }) {
           <Switch checked={openOnly} onCheckedChange={setOpenOnly} />
           Open only
         </label>
+        {project && newIssueButton}
         <div role="group" aria-label="View" className="flex rounded-md border p-0.5">
           <Button
             variant={view === 'list' ? 'secondary' : 'ghost'}
@@ -801,6 +917,7 @@ function Issues({ workspace }: { workspace: Workspace }) {
         workspace={workspace}
         teams={teams}
         defaultTeam={teamId === ALL ? undefined : teamId}
+        defaultProject={project?.id}
         open={creating}
         onClose={() => setCreating(false)}
       />
@@ -822,7 +939,7 @@ export default function IssuesPage() {
   return (
     <>
       <Seo title="Issues" noIndex />
-      {current ? <Issues key={current.id} workspace={current} /> : <PageSkeleton />}
+      {current ? <IssueExplorer key={current.id} workspace={current} /> : <PageSkeleton />}
     </>
   );
 }

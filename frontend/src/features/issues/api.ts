@@ -220,7 +220,13 @@ export function createProject(
 export function updateProject(
   workspaceId: string,
   projectId: string,
-  body: { status?: ProjectStatus; name?: string },
+  body: {
+    status?: ProjectStatus;
+    name?: string;
+    description?: string;
+    lead_id?: string | null;
+    target_date?: string | null;
+  },
 ) {
   return apiRequest(`/workspaces/${workspaceId}/projects/${projectId}`, projectSchema, {
     method: 'PATCH',

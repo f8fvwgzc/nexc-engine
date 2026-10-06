@@ -83,6 +83,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Cycles: teams plan non-overlapping, numbered time boxes (`/workspaces/{wid}/teams/{tid}/cycles`)
   from the Teams page; issues are planned in one (`cycle_id`), cycles show how many of their issues
   are closed, and a team's issue list filters by cycle.
+- Project page (`/app/projects/<id>`): a project's name, summary, status, lead, target date and
+  progress, all saved as they are changed, over the project's own issues as a list or board. New
+  issues can be filed straight into a project.
 - Workflow editor: the Teams page opens a team's workflow, where team owners and workspace admins
   add, rename, recolour, reorder and remove issue states; other members see it read-only.
 - "Your teams" in the sidebar opens a team's issues (`/app/issues?team=<id>`), and `C` on the
@@ -99,6 +102,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Linear-style interface pass: a denser type scale, thinner icons, a sidebar grouped into Work,
   Your teams, Build and Workspace, and issue rows and board cards that show state and priority as
   glyphs instead of labels.
+- The issue opens as a two-column view: title, description, sub-issues and activity on the left,
+  status, priority, assignee, labels, project and cycle on the right. Title and description save
+  when the field is left; the Save button is gone. Projects are listed as rows with status, lead,
+  target date and progress.
 
 ## [0.1.0] - 2026-10-04
 
