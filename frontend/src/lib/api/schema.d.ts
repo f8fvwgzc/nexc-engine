@@ -274,6 +274,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The caller's security activity, newest first: sign-ins and failed
+         *     sign-ins with the address they came from, password changes and resets,
+         *     reset links created for the account, and what a platform administrator
+         *     did to it. Entries are kept for 180 days.
+         */
+        get: operations["activity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/login": {
         parameters: {
             query?: never;
@@ -2014,6 +2036,26 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description One entry of an account's security activity. */
+        AccountEvent: {
+            /** Format: date-time */
+            created_at: string;
+            /** @description What else there is to say: who did it, what changed. */
+            detail: string;
+            /** Format: uuid */
+            id: string;
+            /**
+             * @description The address the request came from; `null` for what an administrator
+             *     did and when the address is not known.
+             */
+            ip: string | null;
+            kind: components["schemas"]["AccountEventKind"];
+        };
+        /**
+         * @description What an entry of an account's security activity records.
+         * @enum {string}
+         */
+        AccountEventKind: "registered" | "signed_in" | "sign_in_failed" | "password_changed" | "password_reset" | "reset_link_issued" | "sessions_ended" | "suspended" | "reactivated" | "role_changed";
         /** @description A copy of what the installation holds about one account. */
         AccountExport: {
             account: components["schemas"]["User"];
@@ -2022,7 +2064,7 @@ export interface components {
             /**
              * @description `workspaces`, `teams`, `issues_created`, `issues_assigned`,
              *     `comments`, `graphs`, `documents`, `memories`, `ai_account`, `usage`,
-             *     `notifications`: each a list of plain objects.
+             *     `security_activity`, `notifications`: each a list of plain objects.
              */
             sections: Record<string, never>;
             /** @description Sections that hold more than [`EXPORT_SECTION_MAX`] rows and were cut there. */
@@ -4702,6 +4744,36 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    activity: {
+        parameters: {
+            query?: {
+                /** @description 1-100, default 30. */
+                limit?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountEvent"][];
+                };
+            };
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

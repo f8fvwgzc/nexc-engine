@@ -1,5 +1,6 @@
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { Seo } from '@/components/seo/seo';
+import { ActivityCard } from '@/features/account/components/activity-card';
 import { DataCard } from '@/features/account/components/data-card';
 import { PasswordCard } from '@/features/account/components/password-card';
 import { SessionsCard } from '@/features/account/components/sessions-card';
@@ -15,11 +16,12 @@ export default function ProfileSettingsPage() {
       <Seo title="Profile" noIndex />
       <PageHeader
         title="Profile"
-        description="Your account: your name, your password, where you are signed in, and your data."
+        description="Your account: your name, your password, where you are signed in, what happened to your access, and your data."
       />
       <ProfileCard />
       <PasswordCard />
       <SessionsCard />
+      <ActivityCard />
       <DataCard />
     </div>
   );

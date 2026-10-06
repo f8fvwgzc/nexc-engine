@@ -610,3 +610,172 @@ async fn a_forgotten_password_is_recovered_with_a_one_time_link(pool: PgPool) {
     let guess = reset("not-a-token", NEW_PASSWORD).await;
     assert_eq!(guess, StatusCode::TOO_MANY_REQUESTS);
 }
+
+/// The kinds and details of an account's security activity, newest first.
+async fn activity(app: &TestApp, token: &str) -> Vec<(String, String)> {
+    let (status, list) = call(app, Method::GET, "/auth/activity", token, None).await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    list.as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            (
+                e["kind"].as_str().unwrap().to_owned(),
+                e["detail"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect()
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_person_sees_what_happened_to_their_access(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), &[]).await;
+    let hash = nexc::security::password::hash_password(PASSWORD).unwrap();
+    nexc::http::handlers::auth::create_user(
+        &app.state,
+        "root@example.com",
+        "Root",
+        Role::Admin,
+        &hash,
+    )
+    .await
+    .unwrap();
+    let root = login(&app, "root@example.com", PASSWORD).await.body["access_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (first, _) = app.register("ada@example.com").await;
+    let (other, _) = app.register("other@example.com").await;
+    let ada = id_of(&app, &first).await;
+    let entry = |kind: &str, detail: &str| (kind.to_owned(), detail.to_owned());
+
+    // Their own doing: registering, a wrong password, signing in, changing the password.
+    assert_eq!(
+        login(&app, "ada@example.com", "not the password")
+            .await
+            .status,
+        StatusCode::UNAUTHORIZED
+    );
+    let second = login(&app, "ada@example.com", PASSWORD).await.body["access_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let change = json!({"current_password": PASSWORD, "new_password": NEW_PASSWORD});
+    let changed = app
+        .request(
+            Method::POST,
+            "/api/v1/auth/password",
+            Some(&second),
+            Some(change),
+        )
+        .await;
+    assert_eq!(changed.status, StatusCode::OK);
+    let token = changed.body["access_token"].as_str().unwrap().to_owned();
+    assert_eq!(
+        activity(&app, &token).await,
+        [
+            entry("password_changed", ""),
+            entry("signed_in", ""),
+            entry("sign_in_failed", ""),
+            entry("registered", ""),
+        ]
+    );
+    // Nobody else's activity is theirs to read, and a wrong address tells nothing.
+    assert_eq!(activity(&app, &other).await, [entry("registered", "")]);
+    assert_eq!(
+        login(&app, "nobody@example.com", PASSWORD).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+
+    // What the platform does to the account shows there too: a reset link, a suspension.
+    let account = format!("/admin/users/{ada}");
+    let (_, issued) = call(
+        &app,
+        Method::POST,
+        &format!("{account}/password-reset"),
+        &root,
+        None,
+    )
+    .await;
+    let link = issued["token"].as_str().unwrap().to_owned();
+    assert_eq!(
+        activity(&app, &token).await[0],
+        entry("reset_link_issued", "by a platform administrator")
+    );
+    let suspend = json!({"suspended": true, "reason": "An internal note"});
+    call(&app, Method::PATCH, &account, &root, Some(suspend)).await;
+    assert_eq!(
+        login(&app, "ada@example.com", NEW_PASSWORD).await.status,
+        StatusCode::FORBIDDEN
+    );
+    call(
+        &app,
+        Method::PATCH,
+        &account,
+        &root,
+        Some(json!({"suspended": false})),
+    )
+    .await;
+    let reset = json!({"token": link, "new_password": "yet another passphrase"});
+    let done = app
+        .request(
+            Method::POST,
+            "/api/v1/auth/password/reset",
+            None,
+            Some(reset),
+        )
+        .await;
+    assert_eq!(done.status, StatusCode::NO_CONTENT);
+    let back = login(&app, "ada@example.com", "yet another passphrase").await;
+    let token = back.body["access_token"].as_str().unwrap().to_owned();
+    let seen = activity(&app, &token).await;
+    assert_eq!(
+        seen[..6],
+        [
+            entry("signed_in", ""),
+            entry("password_reset", "with a reset link"),
+            entry("reactivated", "by a platform administrator"),
+            entry("sign_in_failed", "the account is suspended"),
+            entry("suspended", "by a platform administrator"),
+            entry("reset_link_issued", "by a platform administrator"),
+        ]
+    );
+    assert!(
+        !seen
+            .iter()
+            .any(|(_, detail)| detail.contains("internal note")),
+        "the platform's reason is not shown to the holder"
+    );
+
+    // It is part of the copy of their data, capped when read, and gone after 180 days.
+    let export = app
+        .request(Method::GET, "/api/v1/auth/me/export", Some(&token), None)
+        .await;
+    let kept = export.body["sections"]["security_activity"]
+        .as_array()
+        .unwrap()
+        .len();
+    assert_eq!(kept, seen.len());
+    let (status, page) = call(&app, Method::GET, "/auth/activity?limit=2", &token, None).await;
+    assert_eq!(
+        (status, page.as_array().unwrap().len()),
+        (StatusCode::OK, 2)
+    );
+    sqlx::query("UPDATE account_events SET created_at = now() - interval '181 days' WHERE kind = 'registered'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(nexc::repo::account_events::purge(&pool).await.unwrap(), 2);
+    assert!(
+        !activity(&app, &token)
+            .await
+            .contains(&entry("registered", ""))
+    );
+
+    // Signing out everywhere is noted, for the next time they look.
+    let (status, _) = call(&app, Method::POST, "/auth/sessions/end", &token, None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let back = login(&app, "ada@example.com", "yet another passphrase").await;
+    let token = back.body["access_token"].as_str().unwrap().to_owned();
+    assert_eq!(activity(&app, &token).await[1], entry("sessions_ended", ""));
+}

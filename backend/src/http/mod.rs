@@ -81,6 +81,7 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(account::change_password))
         .routes(routes!(account::reset_password))
         .routes(routes!(account::sessions))
+        .routes(routes!(account::activity))
         .routes(routes!(account::end_all_sessions))
         .routes(routes!(account::export))
         .routes(routes!(account::delete_me))
@@ -270,8 +271,8 @@ mod tests {
     #[test]
     fn spec_enum_values_match_the_wire_format() {
         use crate::domain::{
-            agent, audit, cycle, graph, insight, issue, knowledge, memory, plan, platform, run,
-            search, settings, usage, user, workspace,
+            account, agent, audit, cycle, graph, insight, issue, knowledge, memory, plan, platform,
+            run, search, settings, usage, user, workspace,
         };
         use serde_json::Value;
 
@@ -320,10 +321,11 @@ mod tests {
                 "PlatformAction" => check::<platform::PlatformAction>(values),
                 "MapKind" => check::<insight::MapKind>(values),
                 "SearchKind" => check::<search::SearchKind>(values),
+                "AccountEventKind" => check::<account::AccountEventKind>(values),
                 _ => continue,
             }
             checked += 1;
         }
-        assert_eq!(checked, 28, "every string enum schema is covered");
+        assert_eq!(checked, 29, "every string enum schema is covered");
     }
 }

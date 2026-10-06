@@ -17,6 +17,7 @@ use uuid::Uuid;
 use super::{artifacts, workspaces};
 use crate::app::AppState;
 use crate::domain::AppError;
+use crate::domain::account::AccountEventKind;
 use crate::domain::audit::AuditAction;
 use crate::domain::user::User;
 use crate::repo::audit::Subject;
@@ -27,6 +28,20 @@ pub const EXPORT_SECTION_MAX: usize = 5_000;
 /// What a deleted account is called wherever its work is still shown.
 pub const DELETED_NAME: &str = "Deleted account";
 
+/// Notes something in an account's security activity. A failure is logged,
+/// not returned: what it describes has already happened.
+pub async fn note(
+    state: &AppState,
+    user: Uuid,
+    kind: AccountEventKind,
+    ip: Option<std::net::IpAddr>,
+    detail: &str,
+) {
+    if let Err(err) = repo::account_events::record(&state.db, user, kind, ip, detail).await {
+        tracing::error!(user_id = %user, %kind, error = %err, "account event was not written");
+    }
+}
+
 /// A copy of what the installation holds about one account.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct AccountExport {
@@ -34,7 +49,7 @@ pub struct AccountExport {
     pub account: User,
     /// `workspaces`, `teams`, `issues_created`, `issues_assigned`,
     /// `comments`, `graphs`, `documents`, `memories`, `ai_account`, `usage`,
-    /// `notifications`: each a list of plain objects.
+    /// `security_activity`, `notifications`: each a list of plain objects.
     #[schema(value_type = Object)]
     pub sections: Map<String, Value>,
     /// Sections that hold more than [`EXPORT_SECTION_MAX`] rows and were cut there.
@@ -103,6 +118,11 @@ const SECTIONS: &[(&str, &str)] = &[
         "SELECT to_char(date_trunc('month', u.created_at), 'YYYY-MM') AS month, u.purpose,
                 count(*) AS calls, sum(u.tokens_in) AS tokens_in, sum(u.tokens_out) AS tokens_out
          FROM llm_usage u WHERE u.user_id = $1 GROUP BY 1, 2 ORDER BY 1, 2",
+    ),
+    (
+        "security_activity",
+        "SELECT e.kind, e.ip, e.detail, e.created_at FROM account_events e
+         WHERE e.user_id = $1 ORDER BY e.created_at",
     ),
     (
         "notifications",
@@ -200,6 +220,7 @@ pub async fn erase(state: &AppState, user: Uuid) -> Result<(), AppError> {
         "DELETE FROM refresh_tokens WHERE user_id = $1",
         "DELETE FROM realtime_tickets WHERE user_id = $1",
         "DELETE FROM password_resets WHERE user_id = $1",
+        "DELETE FROM account_events WHERE user_id = $1",
         "DELETE FROM memories WHERE owner_id = $1 AND scope = 'user'",
         "DELETE FROM graphs WHERE owner_id = $1 AND workspace_id IS NULL",
     ] {

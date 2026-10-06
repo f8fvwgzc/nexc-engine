@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { apiRequest, apiSend } from '@/lib/api/client';
 import { saveDownload } from '@/lib/api/download';
 import { authResponseSchema, userSchema } from '@/schemas/auth';
+import { idSchema, timestampSchema } from '@/schemas/common';
 
 /** Changes the signed-in person's display name. */
 export function updateProfile(name: string) {
@@ -24,6 +25,34 @@ export const sessionsQuery = () =>
     queryKey: ['account', 'sessions'] as const,
     queryFn: ({ signal }) =>
       apiRequest('/auth/sessions', z.object({ active: z.number().int() }), { signal }),
+  });
+
+export const accountEventSchema = z.object({
+  id: idSchema,
+  kind: z.enum([
+    'registered',
+    'signed_in',
+    'sign_in_failed',
+    'password_changed',
+    'password_reset',
+    'reset_link_issued',
+    'sessions_ended',
+    'suspended',
+    'reactivated',
+    'role_changed',
+  ]),
+  ip: z.string().nullable(),
+  detail: z.string(),
+  created_at: timestampSchema,
+});
+export type AccountEvent = z.infer<typeof accountEventSchema>;
+
+/** What happened to the signed-in person's access lately, newest first. */
+export const activityQuery = () =>
+  queryOptions({
+    queryKey: ['account', 'activity'] as const,
+    queryFn: ({ signal }) =>
+      apiRequest('/auth/activity', z.array(accountEventSchema), { query: { limit: 30 }, signal }),
   });
 
 /** Signs out everywhere, this device included. */

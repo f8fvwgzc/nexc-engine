@@ -139,6 +139,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   one, and using it ends every session of the account. The token is in the link's fragment,
   which browsers do not send to servers (`POST /admin/users/{uid}/password-reset`,
   `POST /auth/password/reset`, page `/reset-password`).
+- Security activity on the Profile page: sign-ins and failed sign-ins with the address they
+  came from, password changes and resets, signing out everywhere, and what a platform
+  administrator did to the account (a reset link created for it, a suspension, a role change;
+  never the administrator's private reason). It is how a person notices what they did not do
+  themselves. Entries are kept 180 days, are part of the copy of your data, and go with the
+  account (`GET /auth/activity`).
 - Search from the command palette (⌘K): a few typed characters find issues (by title or
   identifier), projects, graphs, documents, teams and people in the open workspace, grouped by
   kind, and picking one opens it. One request, and only what the caller may see: each kind goes

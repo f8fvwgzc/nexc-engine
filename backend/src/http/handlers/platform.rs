@@ -16,6 +16,7 @@ use uuid::Uuid;
 use super::workspaces::{audit, ensure_personal};
 use crate::app::AppState;
 use crate::domain::AppError;
+use crate::domain::account::AccountEventKind;
 use crate::domain::audit::AuditAction;
 use crate::domain::platform::{
     PlatformAction, PlatformEvent, PlatformUser, PlatformWorkspace, PlatformWorkspaceDetail,
@@ -68,6 +69,18 @@ async fn log(
     if let Err(err) = repo::platform::record(&state.db, admin.id, action, subject, detail).await {
         tracing::error!(actor = %admin.id, %action, error = %err, "platform event was not written");
     }
+}
+
+/// Tells an account's holder, in their security activity, what the
+/// platform did to the account.
+async fn note(state: &AppState, user: Uuid, kind: AccountEventKind, detail: &str) {
+    let by = "by a platform administrator";
+    let detail = if detail.is_empty() {
+        by.to_owned()
+    } else {
+        format!("{detail}, {by}")
+    };
+    crate::engine::account::note(state, user, kind, None, &detail).await;
 }
 
 fn named(user: &PlatformUser) -> String {
@@ -342,6 +355,7 @@ pub async fn update_user(
                 &change,
             )
             .await;
+            note(&state, uid, AccountEventKind::RoleChanged, &change).await;
         }
     }
     match req.suspended {
@@ -358,6 +372,8 @@ pub async fn update_user(
                     reason,
                 )
                 .await;
+                // The reason is the platform's own note: the holder is told that, not why.
+                note(&state, uid, AccountEventKind::Suspended, "").await;
             }
         }
         Some(false) if repo::platform::reactivate(&state.db, uid).await? => {
@@ -369,6 +385,7 @@ pub async fn update_user(
                 "",
             )
             .await;
+            note(&state, uid, AccountEventKind::Reactivated, "").await;
         }
         _ => {}
     }
@@ -425,6 +442,7 @@ pub async fn issue_password_reset(
         "",
     )
     .await;
+    note(&state, uid, AccountEventKind::ResetLinkIssued, "").await;
     Ok(Json(IssuedReset {
         token,
         expires_in: user::RESET_TTL_SECS,

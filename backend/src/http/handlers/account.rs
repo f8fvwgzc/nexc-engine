@@ -8,16 +8,17 @@ use axum::extract::State;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use super::auth::{cookie, session_config, with_session};
 use crate::app::AppState;
 use crate::domain::AppError;
+use crate::domain::account::{ACTIVITY_PAGE_MAX, AccountEvent, AccountEventKind};
 use crate::domain::user::{self, AuthResponse, Role, User};
 use crate::domain::validation::{FieldErrors, Validate};
 use crate::engine::account::{self, AccountExport};
-use crate::http::extract::{Caller, ClientIp, ValidatedJson};
+use crate::http::extract::{Caller, ClientIp, Query, ValidatedJson};
 use crate::http::middleware::rate_limit::AuthRateLimit;
 use crate::http::problem::Problem;
 use crate::repo::{self, OrNotFound};
@@ -127,6 +128,14 @@ pub async fn change_password(
         .map_err(anyhow::Error::from)??;
     repo::users::set_password(&state.db, auth.id, &hash).await?;
     end_sessions(&state, auth).await?;
+    account::note(
+        &state,
+        auth.id,
+        AccountEventKind::PasswordChanged,
+        Some(ip),
+        "",
+    )
+    .await;
     let account = repo::users::find(&state.db, auth.id)
         .await
         .or_not_found("user")?;
@@ -201,6 +210,8 @@ pub async fn reset_password(
         .map_err(anyhow::Error::from)??;
     repo::users::set_password(&state.db, account, &hash).await?;
     end_sessions_of(&state, account).await?;
+    let kind = AccountEventKind::PasswordReset;
+    account::note(&state, account, kind, Some(ip), "with a reset link").await;
     tracing::info!(user_id = %account, "password set with a reset link");
     Ok(StatusCode::NO_CONTENT)
 }
@@ -224,6 +235,31 @@ pub async fn sessions(
     }))
 }
 
+/// Query of `GET /auth/activity`.
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+pub struct ActivityQuery {
+    /// 1-100, default 30.
+    pub limit: Option<i64>,
+}
+
+/// The caller's security activity, newest first: sign-ins and failed
+/// sign-ins with the address they came from, password changes and resets,
+/// reset links created for the account, and what a platform administrator
+/// did to it. Entries are kept for 180 days.
+#[utoipa::path(get, path = "/auth/activity", tag = "auth", security(("bearer" = [])), params(ActivityQuery),
+    responses((status = 200, body = [AccountEvent]), (status = 401, body = Problem)))]
+pub async fn activity(
+    State(state): State<AppState>,
+    auth: Caller,
+    Query(query): Query<ActivityQuery>,
+) -> Result<Json<Vec<AccountEvent>>, AppError> {
+    let limit = query.limit.unwrap_or(30).clamp(1, ACTIVITY_PAGE_MAX);
+    Ok(Json(
+        repo::account_events::list(&state.db, auth.id, limit).await?,
+    ))
+}
+
 fn signed_out(state: &AppState) -> Response {
     (
         StatusCode::NO_CONTENT,
@@ -238,8 +274,17 @@ fn signed_out(state: &AppState) -> Response {
 pub async fn end_all_sessions(
     State(state): State<AppState>,
     auth: Caller,
+    ClientIp(ip): ClientIp,
 ) -> Result<Response, AppError> {
     end_sessions(&state, auth).await?;
+    account::note(
+        &state,
+        auth.id,
+        AccountEventKind::SessionsEnded,
+        Some(ip),
+        "",
+    )
+    .await;
     Ok(signed_out(&state))
 }
 

@@ -9,8 +9,10 @@ use utoipa::ToSchema;
 
 use crate::app::AppState;
 use crate::domain::AppError;
+use crate::domain::account::AccountEventKind;
 use crate::domain::user::{self, AuthResponse, Role, User};
 use crate::domain::validation::{FieldErrors, Validate};
+use crate::engine::account;
 use crate::http::extract::{Caller, ClientIp, ValidatedJson};
 use crate::http::middleware::rate_limit::AuthRateLimit;
 use crate::http::problem::Problem;
@@ -126,6 +128,7 @@ fn require_csrf_header(headers: &HeaderMap) -> Result<(), AppError> {
 pub async fn register(
     _limit: AuthRateLimit,
     State(state): State<AppState>,
+    ClientIp(ip): ClientIp,
     ValidatedJson(req): ValidatedJson<RegisterRequest>,
 ) -> Result<Response, AppError> {
     if !state.settings.allow_signup {
@@ -142,6 +145,7 @@ pub async fn register(
         .await
         .map_err(anyhow::Error::from)??;
     let user = create_user(&state, &email, req.name.trim(), Role::User, &hash).await?;
+    account::note(&state, user.id, AccountEventKind::Registered, Some(ip), "").await;
     let session = session::start(&state.db, session_config(&state), user).await?;
     Ok(with_session(&state, StatusCode::CREATED, session))
 }
@@ -196,10 +200,36 @@ pub async fn login(
 ) -> Result<Response, AppError> {
     state.limiters.check_login_allowed(ip)?;
     let email = user::normalize_email(&req.email);
-    match session::login(&state.db, session_config(&state), &email, &req.password).await {
-        Ok(session) => Ok(with_session(&state, StatusCode::OK, session)),
+    let outcome = session::login(&state.db, session_config(&state), &email, &req.password).await;
+    // The account's holder sees where they signed in from, and when someone failed to.
+    let failed = |detail: &'static str| {
+        let (state, email) = (&state, &email);
+        async move {
+            if let Ok(Some(user)) = repo::workspaces::user_id_by_email(&state.db, email).await {
+                account::note(
+                    state,
+                    user,
+                    AccountEventKind::SignInFailed,
+                    Some(ip),
+                    detail,
+                )
+                .await;
+            }
+        }
+    };
+    match outcome {
+        Ok(session) => {
+            let user = session.response.user.id;
+            account::note(&state, user, AccountEventKind::SignedIn, Some(ip), "").await;
+            Ok(with_session(&state, StatusCode::OK, session))
+        }
         Err(err @ AppError::Unauthorized(_)) => {
             state.limiters.record_login_failure(ip);
+            failed("").await;
+            Err(err)
+        }
+        Err(err @ AppError::Forbidden(_)) => {
+            failed("the account is suspended").await;
             Err(err)
         }
         Err(err) => Err(err),
