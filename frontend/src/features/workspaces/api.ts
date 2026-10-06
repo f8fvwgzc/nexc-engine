@@ -3,14 +3,17 @@ import { z } from 'zod';
 
 import { apiRequest, apiSend } from '@/lib/api/client';
 import { qk } from '@/lib/query-keys';
+import { assistantReplySchema, type AssistantTurn } from '@/schemas/assistant';
 import { usageReportSchema } from '@/schemas/usage';
 import {
+  guardrailsSchema,
   inviteResultSchema,
   teamMemberSchema,
   teamSchema,
   workspaceInviteSchema,
   workspaceMemberSchema,
   workspaceSchema,
+  type Guardrails,
   type TeamRole,
   type WorkspaceRole,
 } from '@/schemas/workspace';
@@ -70,6 +73,28 @@ export const usageQuery = (workspaceId: string, days: number) =>
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/usage?days=${days}`, usageReportSchema, { signal }),
   });
+
+export const guardrailsQuery = (workspaceId: string) =>
+  queryOptions({
+    queryKey: qk.workspaces.guardrails(workspaceId),
+    queryFn: ({ signal }) =>
+      apiRequest(`/workspaces/${workspaceId}/guardrails`, guardrailsSchema, { signal }),
+  });
+
+export function saveGuardrails(workspaceId: string, body: Guardrails) {
+  return apiRequest(`/workspaces/${workspaceId}/guardrails`, guardrailsSchema, {
+    method: 'PUT',
+    body,
+  });
+}
+
+/** Asks the workspace assistant; it may file issues on the caller's behalf. */
+export function askAssistant(workspaceId: string, message: string, history: AssistantTurn[]) {
+  return apiRequest(`/workspaces/${workspaceId}/assistant`, assistantReplySchema, {
+    method: 'POST',
+    body: { message, history },
+  });
+}
 
 export const teamsQuery = (workspaceId: string) =>
   queryOptions({

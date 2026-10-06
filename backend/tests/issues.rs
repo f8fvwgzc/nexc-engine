@@ -667,3 +667,115 @@ async fn an_issue_can_be_planned_and_run_as_a_graph(pool: PgPool) {
     .await;
     assert_eq!(issue["graph_id"], Value::Null);
 }
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn the_assistant_files_issues_with_the_callers_rights(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let w = world(&app).await;
+    let ask = format!("{}/assistant", w.ws);
+
+    // A plain question files nothing.
+    let (status, answer) = call(
+        &app,
+        Method::POST,
+        &ask,
+        &w.member,
+        Some(json!({"message": "What is open?"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(
+        (
+            answer["reply"].as_str(),
+            answer["created"].as_array().map(Vec::len)
+        ),
+        (Some("Here you go."), Some(0))
+    );
+
+    // Asked to, it files with a team the member can file with and reports what it could not place.
+    let body = json!({"message": "Please file an issue for the login bug",
+        "history": [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]});
+    let (status, answer) = call(&app, Method::POST, &ask, &w.member, Some(body.clone())).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let created = answer["created"].as_array().unwrap();
+    assert_eq!(created.len(), 1);
+    assert_eq!(
+        (
+            created[0]["identifier"].as_str(),
+            created[0]["priority"].as_i64()
+        ),
+        (Some("ENG-1"), Some(2))
+    );
+    assert_eq!(
+        created[0]["creator_id"],
+        w.member_id.as_str(),
+        "filed as the member"
+    );
+    assert_eq!(answer["skipped"], json!(["NOPE: Nowhere"]));
+
+    // A guest in no team has nowhere to file: the same request creates nothing.
+    let (_, answer) = call(&app, Method::POST, &ask, &w.guest, Some(body)).await;
+    assert_eq!(answer["created"], json!([]));
+    assert_eq!(answer["skipped"].as_array().unwrap().len(), 2);
+
+    // Its calls are on the ledger, it obeys guardrails, and strangers cannot reach it.
+    let (_, report) = call(
+        &app,
+        Method::GET,
+        &format!("{}/usage", w.ws),
+        &w.owner,
+        None,
+    )
+    .await;
+    let assistant = report["by_purpose"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["key"] == "assistant")
+        .unwrap();
+    assert_eq!(assistant["calls"], 3);
+    call(
+        &app,
+        Method::PUT,
+        &format!("{}/guardrails", w.ws),
+        &w.owner,
+        Some(json!({"monthly_token_budget": 1})),
+    )
+    .await;
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &ask,
+            &w.member,
+            Some(json!({"message": "hi"}))
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &ask,
+            &w.outsider,
+            Some(json!({"message": "hi"}))
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &ask,
+            &w.owner,
+            Some(json!({"message": " "}))
+        )
+        .await
+        .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+}

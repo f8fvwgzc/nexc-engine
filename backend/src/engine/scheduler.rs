@@ -19,12 +19,13 @@ use uuid::Uuid;
 
 use super::analysis::dependency_graph;
 use super::executor::{self, ExecContext, ExecError, ExecOutput};
-use super::{artifacts, credentials, editor, usage};
+use super::{artifacts, credentials, editor, guardrails, usage};
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::agent::{Agent, AgentStatus};
 use crate::domain::context;
 use crate::domain::graph::{Executor, GraphEdge, GraphNode, NodeStatus};
+use crate::domain::guardrails::Guardrails;
 use crate::domain::ontology::Ontology;
 use crate::domain::prompt::{AGENT_UPSTREAM_CHARS, UPSTREAM_CHARS, UpstreamOutput};
 use crate::domain::run::{Run, RunStatus, final_status};
@@ -83,7 +84,8 @@ pub async fn create_run(
         }
     };
     if selected.iter().any(|n| n.executor != Executor::Symphony) {
-        credentials::require(state, owner, graph.workspace_id).await?;
+        let llm = credentials::require(state, owner, graph.workspace_id).await?;
+        guardrails::admit(state, graph.workspace_id, owner, llm.target.provider).await?;
     }
     let concurrency = opts
         .max_concurrency
@@ -243,6 +245,8 @@ struct RunData {
     target: LlmTarget,
     /// Whose configuration `target` came from; usage is booked to it.
     credential: ConfigScope,
+    /// The workspace's policy, as it stood when the run started.
+    policy: Guardrails,
     workspace_id: Option<Uuid>,
     ontology: Ontology,
     edges: Vec<GraphEdge>,
@@ -322,6 +326,7 @@ impl Execution {
             force: row.force,
             target,
             credential,
+            policy: guardrails::load(state, graph.workspace_id).await?,
             workspace_id: graph.workspace_id,
             ontology: graph.ontology,
             edges,
@@ -682,7 +687,10 @@ impl NodeTask {
             .unwrap_or_default(),
             None => Vec::new(),
         };
-        let memories = recalled.into_iter().map(|m| m.content).collect();
+        let memories = recalled
+            .into_iter()
+            .map(|m| data.policy.scrub(m.content))
+            .collect();
         // An agent works over several turns and takes more context than one LLM call.
         let budget = match node.executor {
             Executor::Agent => AGENT_UPSTREAM_CHARS,
@@ -693,7 +701,7 @@ impl NodeTask {
         for (id, output) in upstream {
             let fitted = context::fit(&output, &query, budget);
             context_saved += fitted.saved_chars() as i64;
-            let output = fitted.text;
+            let output = data.policy.scrub(fitted.text);
             let title = repo::nodes::find(&state.db, data.graph_id, id)
                 .await?
                 .map(|n| n.title)
@@ -719,6 +727,7 @@ impl NodeTask {
             graph_id: data.graph_id,
             goal: data.goal.clone(),
             node_type: data.ontology.node_type(&node.kind).cloned(),
+            code_exec_allowed: data.policy.allow_code_exec,
             node,
             upstream: upstream_outputs,
             memories,

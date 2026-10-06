@@ -5,9 +5,11 @@
 #![forbid(unsafe_code)]
 
 pub mod agent;
+pub mod assistant;
 pub mod context;
 pub mod error;
 pub mod graph;
+pub mod guardrails;
 pub mod issue;
 pub mod memory;
 pub mod ontology;

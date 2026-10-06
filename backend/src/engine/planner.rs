@@ -10,7 +10,7 @@ use uuid::Uuid;
 use super::analysis::dependency_graph;
 use super::credentials::Resolved;
 use super::json_stream::ArrayScanner;
-use super::{credentials, deps, editor, usage};
+use super::{credentials, deps, editor, guardrails, usage};
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::graph::{
@@ -161,6 +161,7 @@ pub async fn start(
 ) -> Result<Plan, AppError> {
     let graph = editor::load_graph(state, owner, graph_id).await?;
     let llm = credentials::require(state, owner, graph.workspace_id).await?;
+    guardrails::admit(state, graph.workspace_id, owner, llm.target.provider).await?;
     let plan = plans::create(&state.db, graph_id, owner, &instructions).await?;
     let (state, plan_id) = (state.clone(), plan.id);
     tokio::spawn(async move {

@@ -748,6 +748,48 @@ export interface paths {
         patch: operations["update"];
         trace?: never;
     };
+    "/api/v1/workspaces/{wid}/assistant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Asks the workspace assistant. It answers from the workspace's memory and
+         *     open issues, as far as the caller can see them, and files issues when asked
+         *     to, with the caller's rights.
+         */
+        post: operations["assistant"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/guardrails": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The guardrails of a workspace (the permissive defaults when it set none). */
+        get: operations["guardrails"];
+        /**
+         * Sets the guardrails of a workspace (admins and owners): monthly token
+         *     budgets, allowed providers, code execution and secret redaction.
+         */
+        put: operations["put_guardrails"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{wid}/invites": {
         parameters: {
             query?: never;
@@ -1120,6 +1162,33 @@ export interface components {
             /** Format: int64 */
             size: number;
         };
+        /** @description What the member gets back. */
+        AssistantReply: {
+            /** @description Issues the assistant filed while answering. */
+            created: components["schemas"]["Issue"][];
+            /** @description How many memories of the workspace it was given. */
+            memories_used: number;
+            reply: string;
+            /** @description Drafts it could not file (unknown team, or no right to file there), as text. */
+            skipped: string[];
+        };
+        /** @description `POST /workspaces/{wid}/assistant` body. */
+        AssistantRequest: {
+            /** @description Earlier turns of this conversation, oldest first (the last 20 are used). */
+            history?: components["schemas"]["AssistantTurn"][];
+            message: string;
+        };
+        /**
+         * @description Who said a turn.
+         * @enum {string}
+         */
+        AssistantRole: "user" | "assistant";
+        /** @description An earlier turn of the conversation. */
+        AssistantTurn: {
+            content: string;
+            /** @description `user` or `assistant`. */
+            role: components["schemas"]["AssistantRole"];
+        };
         /**
          * @description Returned by register / login / refresh. The refresh token travels only in
          *     the `nexc_refresh` HttpOnly cookie.
@@ -1444,6 +1513,30 @@ export interface components {
             /** Format: int64 */
             node_count: number;
             tags: string[];
+        };
+        /** @description A workspace's policy. The defaults allow everything and scrub secrets. */
+        Guardrails: {
+            /** @description Whether agents may execute code where a node's type asks for it. */
+            allow_code_exec: boolean;
+            /** @description Providers work may run on; empty allows all of them. */
+            allowed_providers: components["schemas"]["LlmProviderKind"][];
+            /**
+             * Format: int64
+             * @description The same limit for each member.
+             */
+            member_monthly_token_budget: number | null;
+            /**
+             * Format: int64
+             * @description Tokens (in + out) the workspace may spend per calendar month (UTC);
+             *     `null` for no limit. New plans, runs and assistant calls are refused
+             *     once it is reached; work already running finishes.
+             */
+            monthly_token_budget: number | null;
+            /**
+             * @description Whether API keys, tokens and private keys are removed from the context
+             *     (upstream outputs, memories) a node sends to a model.
+             */
+            redact_secrets: boolean;
         };
         /** @description Health probe response. */
         Health: {
@@ -2112,7 +2205,7 @@ export interface components {
              * @description What an LLM call was for.
              * @enum {string}
              */
-            key: "plan" | "node" | "memory";
+            key: "plan" | "node" | "memory" | "assistant";
         };
         /** @description Sums over a set of calls. */
         UsageTotals: {
@@ -4266,6 +4359,137 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    assistant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssistantRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantReply"];
+                };
+            };
+            /** @description Refused by the workspace's guardrails */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    guardrails: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Guardrails"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    put_guardrails: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Guardrails"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Guardrails"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

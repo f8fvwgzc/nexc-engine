@@ -9,6 +9,7 @@ use async_stream::stream;
 use serde_json::json;
 
 use super::{LlmEvent, LlmProvider, LlmRequest, LlmStream, StopReason, Usage, estimate_tokens};
+use crate::domain::assistant::{ASSISTANT_SCHEMA_NAME, TEAMS_MARKER, USER_MESSAGE_MARKER};
 use crate::domain::graph::Executor;
 use crate::domain::memory::MEMORY_SCHEMA_NAME;
 use crate::domain::ontology::Ontology;
@@ -45,6 +46,7 @@ impl LlmProvider for DemoProvider {
         let (text, chunk_chars) = match req.json_schema.as_ref().map(|s| s.name) {
             Some(PLAN_SCHEMA_NAME) => (plan_json(&prompt), 48),
             Some(MEMORY_SCHEMA_NAME) => (memories_json(&prompt), 64),
+            Some(ASSISTANT_SCHEMA_NAME) => (assistant_json(&prompt), 48),
             _ => (text_output(&prompt), 18),
         };
         let input_tokens = estimate_tokens(&req.system) + estimate_tokens(&prompt);
@@ -100,6 +102,43 @@ fn text_output(prompt: &str) -> String {
 }
 
 /// Extracts up to two bullet-like facts. Demo boilerplate is never remembered.
+/// The offline assistant: it cannot reason, so it says what it was given and
+/// files an issue only for a message of the form `create issue: <title>`.
+fn assistant_json(prompt: &str) -> String {
+    let message = prompt
+        .split_once(USER_MESSAGE_MARKER)
+        .map_or(prompt, |(_, m)| m)
+        .trim();
+    let team = prompt
+        .lines()
+        .find_map(|l| l.strip_prefix(TEAMS_MARKER))
+        .and_then(|teams| teams.split_whitespace().next())
+        .unwrap_or_default();
+    let title = message
+        .to_lowercase()
+        .strip_prefix("create issue:")
+        .map(|_| message["create issue:".len()..].trim().to_owned())
+        .filter(|t| !t.is_empty() && !team.is_empty());
+    let memories = prompt.matches("\n- ").count();
+    let reply = match &title {
+        Some(title) => format!("{DEMO_LABEL} Filed \"{title}\" with {team}."),
+        None => format!(
+            "{DEMO_LABEL} The demo provider cannot answer questions. It was given {memories} \
+             line(s) of workspace context. Write `create issue: <title>` to file an issue, or \
+             configure a real model in Settings."
+        ),
+    };
+    let issues: Vec<serde_json::Value> = title
+        .iter()
+        .map(|title| {
+            serde_json::json!({
+                "team_key": team, "title": title, "description": "", "priority": 0
+            })
+        })
+        .collect();
+    serde_json::json!({ "reply": reply, "issues": issues }).to_string()
+}
+
 fn memories_json(prompt: &str) -> String {
     let output = prompt
         .split_once(OUTPUT_MARKER)

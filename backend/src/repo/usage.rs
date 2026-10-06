@@ -35,6 +35,26 @@ pub async fn insert(db: impl PgExecutor<'_>, e: &UsageEvent) -> Result<(), sqlx:
     Ok(())
 }
 
+/// Tokens (in + out) spent in a workspace since the start of the current UTC
+/// month: `(by everyone, by user_id)`.
+pub async fn tokens_this_month(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    user_id: Uuid,
+) -> Result<(i64, i64), sqlx::Error> {
+    sqlx::query_as(
+        "SELECT COALESCE(sum(tokens_in + tokens_out), 0)::bigint,
+                COALESCE(sum(tokens_in + tokens_out) FILTER (WHERE user_id = $2), 0)::bigint
+         FROM llm_usage
+         WHERE workspace_id = $1
+           AND created_at >= date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'",
+    )
+    .bind(workspace_id)
+    .bind(user_id)
+    .fetch_one(db)
+    .await
+}
+
 /// Which rows a report covers: a workspace over the last `days` days,
 /// optionally only one member's calls.
 #[derive(Debug, Clone, Copy)]

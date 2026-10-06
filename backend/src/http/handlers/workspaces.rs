@@ -9,6 +9,8 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::AppError;
+use crate::domain::assistant::{AssistantReply, AssistantTurn, MESSAGE_MAX};
+use crate::domain::guardrails::Guardrails;
 use crate::domain::usage::{UsageReport, UsageScope};
 use crate::domain::user::{check_email, normalize_email};
 use crate::domain::validation::{FieldErrors, Validate, check_text};
@@ -16,6 +18,7 @@ use crate::domain::workspace::{
     NAME_MAX, SLUG_MAX, Workspace, WorkspaceAction, WorkspaceInvite, WorkspaceMember,
     WorkspaceRole, can, can_assign_role, can_remove_member, slugify,
 };
+use crate::engine;
 use crate::http::extract::{AuthUser, Path, Query, ValidatedJson};
 use crate::http::problem::Problem;
 use crate::orchestrator;
@@ -333,6 +336,102 @@ pub async fn remove_member(
     repo::workspaces::remove_member(&mut tx, wid, uid).await?;
     tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /workspaces/{wid}/assistant` body.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AssistantRequest {
+    pub message: String,
+    /// Earlier turns of this conversation, oldest first (the last 20 are used).
+    #[serde(default)]
+    pub history: Vec<AssistantTurn>,
+}
+
+impl Validate for AssistantRequest {
+    fn validate(&self, errors: &mut FieldErrors) {
+        check_text(errors, "message", &self.message, MESSAGE_MAX);
+        if self
+            .history
+            .iter()
+            .any(|t| t.content.len() > 4 * MESSAGE_MAX)
+        {
+            errors.add("history", "a turn is too long");
+        }
+    }
+}
+
+/// Asks the workspace assistant. It answers from the workspace's memory and
+/// open issues, as far as the caller can see them, and files issues when asked
+/// to, with the caller's rights.
+#[utoipa::path(post, path = "/workspaces/{wid}/assistant", tag = "workspaces", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id")), request_body = AssistantRequest,
+    responses((status = 200, body = AssistantReply), (status = 403, description = "Refused by the workspace's guardrails", body = Problem),
+        (status = 404, body = Problem), (status = 422, body = Problem)))]
+pub async fn assistant(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(wid): Path<Uuid>,
+    ValidatedJson(req): ValidatedJson<AssistantRequest>,
+) -> Result<Json<AssistantReply>, AppError> {
+    let workspace = member_of(&state, auth, wid).await?;
+    Ok(Json(
+        engine::assistant::reply(&state, auth.id, &workspace, req.history, req.message.trim())
+            .await?,
+    ))
+}
+
+impl Validate for Guardrails {
+    fn validate(&self, errors: &mut FieldErrors) {
+        for (field, budget) in [
+            ("monthly_token_budget", self.monthly_token_budget),
+            (
+                "member_monthly_token_budget",
+                self.member_monthly_token_budget,
+            ),
+        ] {
+            if budget.is_some_and(|b| b < 0) {
+                errors.add(field, "must not be negative");
+            }
+        }
+    }
+}
+
+/// The guardrails of a workspace (the permissive defaults when it set none).
+#[utoipa::path(get, path = "/workspaces/{wid}/guardrails", tag = "workspaces", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id")),
+    responses((status = 200, body = Guardrails), (status = 404, body = Problem)))]
+pub async fn guardrails(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(wid): Path<Uuid>,
+) -> Result<Json<Guardrails>, AppError> {
+    member_of(&state, auth, wid).await?;
+    Ok(Json(
+        repo::workspaces::guardrails(&state.db, wid)
+            .await?
+            .unwrap_or_default(),
+    ))
+}
+
+/// Sets the guardrails of a workspace (admins and owners): monthly token
+/// budgets, allowed providers, code execution and secret redaction.
+#[utoipa::path(put, path = "/workspaces/{wid}/guardrails", tag = "workspaces", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id")), request_body = Guardrails,
+    responses((status = 200, body = Guardrails), (status = 403, body = Problem), (status = 404, body = Problem),
+        (status = 422, body = Problem)))]
+pub async fn put_guardrails(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(wid): Path<Uuid>,
+    ValidatedJson(req): ValidatedJson<Guardrails>,
+) -> Result<Json<Guardrails>, AppError> {
+    require(
+        &member_of(&state, auth, wid).await?,
+        WorkspaceAction::UpdateSettings,
+    )?;
+    repo::workspaces::set_guardrails(&state.db, wid, auth.id, &req).await?;
+    Ok(Json(req))
 }
 
 /// Query of `GET /workspaces/{wid}/usage`.

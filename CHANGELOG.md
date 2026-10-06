@@ -28,6 +28,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   provider at request time (Anthropic and OpenAI-compatible endpoints).
 - Members and Teams pages, and a settings page split into "Your AI account" and "Workspace
   credential".
+- Guardrails per workspace: monthly token budgets (workspace-wide and per member), an allow-list
+  of providers, a switch for agent code execution, and removal of API keys, tokens and private
+  keys from the context sent to models (on by default). Checked before plans, runs and assistant
+  replies; a card in Settings edits them.
+- Workspace assistant: a chat in the corner of every page that answers from the workspace's
+  memory and open issues and files issues when asked, with the member's rights.
 - Memory search uses pgvector when the database has it: an `embedding_vec vector(256)` column
   with an HNSW index is created at startup, and workspaces with 5 000 or more memories are
   narrowed by nearest neighbours plus full-text matches before ranking. Without the extension

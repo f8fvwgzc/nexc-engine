@@ -28,6 +28,8 @@ pub struct ExecContext {
     pub node: GraphNode,
     /// The node's type in the graph's ontology (absent if the type was removed).
     pub node_type: Option<NodeType>,
+    /// Whether the workspace's guardrails let agents execute code at all.
+    pub code_exec_allowed: bool,
     pub upstream: Vec<UpstreamOutput>,
     pub memories: Vec<String>,
     pub agent: Option<Agent>,

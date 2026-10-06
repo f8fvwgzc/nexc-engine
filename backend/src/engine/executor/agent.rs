@@ -110,7 +110,8 @@ fn request_body(ctx: &ExecContext) -> serde_json::Value {
         "limits": {
             "max_turns": MAX_TURNS,
             "timeout_s": settings.node_timeout.as_secs(),
-            "allow_code_exec": ctx.node_type.as_ref().is_some_and(|t| t.allow_code_exec),
+            "allow_code_exec": ctx.code_exec_allowed
+                && ctx.node_type.as_ref().is_some_and(|t| t.allow_code_exec),
         },
     })
 }

@@ -5,6 +5,7 @@ use sqlx::{FromRow, PgExecutor, Row};
 use uuid::Uuid;
 
 use super::enum_col;
+use crate::domain::guardrails::Guardrails;
 use crate::domain::workspace::{Workspace, WorkspaceInvite, WorkspaceMember, WorkspaceRole};
 
 impl FromRow<'_, PgRow> for Workspace {
@@ -318,6 +319,39 @@ pub async fn accept_invites(
         .execute(&mut *db)
         .await?;
     Ok(done.rows_affected())
+}
+
+/// The guardrails a workspace has set, if any.
+pub async fn guardrails(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+) -> Result<Option<Guardrails>, sqlx::Error> {
+    let stored: Option<sqlx::types::Json<Guardrails>> =
+        sqlx::query_scalar("SELECT config FROM workspace_guardrails WHERE workspace_id = $1")
+            .bind(workspace_id)
+            .fetch_optional(db)
+            .await?;
+    Ok(stored.map(|json| json.0))
+}
+
+/// Sets the guardrails of a workspace.
+pub async fn set_guardrails(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    updated_by: Uuid,
+    guardrails: &Guardrails,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO workspace_guardrails (workspace_id, config, updated_by) VALUES ($1, $2, $3)
+         ON CONFLICT (workspace_id) DO UPDATE SET
+            config = EXCLUDED.config, updated_by = EXCLUDED.updated_by, updated_at = now()",
+    )
+    .bind(workspace_id)
+    .bind(sqlx::types::Json(guardrails))
+    .bind(updated_by)
+    .execute(db)
+    .await?;
+    Ok(())
 }
 
 /// The workspace a user works in when they name none: the first one they

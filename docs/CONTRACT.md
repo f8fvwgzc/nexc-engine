@@ -157,6 +157,12 @@ interface Project { id: string; workspace_id: string; name: string; description:
   lead_id: string | null; target_date: string | null; issue_count: number; closed_count: number /* of the
   issues the caller can see */; created_at: string }
 
+// Guardrails: checked before a plan, a run or an assistant reply starts (403 with the reason).
+interface Guardrails { monthly_token_budget: number | null /* tokens per UTC month, workspace-wide */;
+  member_monthly_token_budget: number | null; allowed_providers: LlmProvider[] /* empty: all */;
+  allow_code_exec: boolean; redact_secrets: boolean /* scrub keys/tokens from context sent to models */ }
+interface AssistantReply { reply: string; created: Issue[]; skipped: string[]; memories_used: number }
+
 // Token usage. Every LLM call that spent tokens is recorded with who caused it and whose account paid.
 interface UsageTotals { calls: number; tokens_in: number; tokens_out: number; cost_usd: number;
   context_chars_saved: number /* upstream characters left out of prompts */ }
@@ -164,7 +170,7 @@ type UsageSlice<K> = { key: K } & UsageTotals;
 interface UsageReport { scope: "workspace" | "own"; days: number; totals: UsageTotals;
   by_day: UsageSlice<string /* UTC date */>[]; by_member: UsageSlice<{ user_id: string | null; name: string }>[];
   by_model: UsageSlice<{ provider: string; model: string }>[];
-  by_purpose: UsageSlice<"plan" | "node" | "memory">[];
+  by_purpose: UsageSlice<"plan" | "node" | "memory" | "assistant">[];
   by_credential: UsageSlice<"user" | "workspace" | "server">[] /* whose account paid */ }
 
 interface GraphTemplate { id: string; name: string; description: string; category: string;
@@ -228,6 +234,8 @@ Public: `GET /healthz`, `GET /readyz`, `POST /auth/register`, `POST /auth/login`
 | PATCH/DELETE `/workspaces/{wid}/teams/{tid}/states/{sid}` | PATCH any subset | `IssueState` / 204; 409 while issues are in the state or it is the last one |
 | GET/POST `/workspaces/{wid}/projects` | POST `{name, description?, target_date?}` (member+) | `Project[]` / 201 `Project` |
 | PATCH/DELETE `/workspaces/{wid}/projects/{pid}` | PATCH `{name?, description?, status?, lead_id?, target_date?}` (member+) | `Project` / 204 (admin+; issues stay) |
+| GET/PUT `/workspaces/{wid}/guardrails` | PUT `Guardrails` (admin+; omitted fields take their defaults) | `Guardrails` |
+| POST `/workspaces/{wid}/assistant` | `{message, history?: {role: "user" \| "assistant", content}[]}` | `AssistantReply`: answers from the memory and open issues the caller can see; files issues, with the caller's rights, when asked |
 | GET `/workspaces/{wid}/usage?days=` | — (`days` 1–365, default 30) | `UsageReport`: admins get the whole workspace, other members only their own calls |
 | GET `/workspaces/{wid}/invites`, DELETE `/workspaces/{wid}/invites/{iid}` | — | `WorkspaceInvite[]` / 204 (admin+) |
 | GET/POST `/workspaces/{wid}/teams` | POST `{name, key?, description?, private?}` (member+) | `Team[]` visible to the caller / 201 `Team`; 409 if the key is taken |

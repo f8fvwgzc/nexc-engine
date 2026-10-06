@@ -94,6 +94,8 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         ))
         .routes(routes!(workspaces::invites))
         .routes(routes!(workspaces::usage))
+        .routes(routes!(workspaces::guardrails, workspaces::put_guardrails))
+        .routes(routes!(workspaces::assistant))
         .routes(routes!(workspaces::delete_invite))
         .routes(routes!(teams::list, teams::create))
         .routes(routes!(teams::get, teams::update, teams::delete))

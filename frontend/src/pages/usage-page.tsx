@@ -41,6 +41,7 @@ const PURPOSE_LABEL: Record<UsageReport['by_purpose'][number]['key'], string> = 
   plan: 'Planning',
   node: 'Running nodes',
   memory: 'Extracting memories',
+  assistant: 'Assistant',
 };
 const CREDENTIAL_LABEL: Record<UsageReport['by_credential'][number]['key'], string> = {
   user: 'Members’ own accounts',

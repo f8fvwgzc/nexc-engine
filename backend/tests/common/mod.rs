@@ -129,6 +129,19 @@ impl LlmProvider for FakeLlm {
                 let text = json!({"memories": [{"kind": "fact", "content": "Reports use APA style.", "importance": 0.7}]});
                 return Self::events(text.to_string(), usage);
             }
+            Some(nexc::domain::assistant::ASSISTANT_SCHEMA_NAME) => {
+                // Files two issues when asked to: one with a real team, one with a made-up key.
+                let issues = if prompt.contains("file an issue") {
+                    json!([
+                        {"team_key": "eng", "title": "From the assistant", "description": "Done when fixed.", "priority": 2},
+                        {"team_key": "NOPE", "title": "Nowhere", "description": "", "priority": 0}
+                    ])
+                } else {
+                    json!([])
+                };
+                let text = json!({"reply": "Here you go.", "issues": issues});
+                return Self::events(text.to_string(), usage);
+            }
             _ => {}
         }
         let (title, upstream) = parse_node_prompt(&prompt).unwrap_or_default();

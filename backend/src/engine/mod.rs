@@ -4,10 +4,12 @@
 
 pub mod analysis;
 pub mod artifacts;
+pub mod assistant;
 pub mod credentials;
 pub mod deps;
 pub mod editor;
 pub mod executor;
+pub mod guardrails;
 pub mod json_stream;
 pub mod planner;
 pub mod scheduler;

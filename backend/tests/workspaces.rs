@@ -1376,3 +1376,188 @@ async fn usage_is_booked_to_the_member_and_the_paying_account(pool: PgPool) {
         StatusCode::NOT_FOUND
     );
 }
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn guardrails_stop_work_before_it_spends(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let (owner, _) = user(&app, "owner@example.com").await;
+    let (member, _) = user(&app, "member@example.com").await;
+    let wid = personal_workspace(&app, &owner).await;
+    let invite = json!({"email": "member@example.com", "role": "member"});
+    call(
+        &app,
+        Method::POST,
+        &format!("/workspaces/{wid}/members"),
+        &owner,
+        Some(invite),
+    )
+    .await;
+    let rails = format!("/workspaces/{wid}/guardrails");
+
+    // Defaults allow everything; only admins change the policy, and it is validated.
+    let (_, defaults) = call(&app, Method::GET, &rails, &member, None).await;
+    assert_eq!(
+        defaults,
+        json!({"monthly_token_budget": null, "member_monthly_token_budget": null,
+        "allowed_providers": [], "allow_code_exec": true, "redact_secrets": true})
+    );
+    assert_eq!(
+        call(&app, Method::PUT, &rails, &member, Some(defaults.clone()))
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    for bad in [
+        json!({"monthly_token_budget": -1}),
+        json!({"allowed_providers": ["nope"]}),
+        json!({"typo": true}),
+    ] {
+        assert_eq!(
+            call(&app, Method::PUT, &rails, &owner, Some(bad)).await.0,
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+    }
+    let (status, saved) = call(
+        &app,
+        Method::PUT,
+        &rails,
+        &owner,
+        Some(json!({"member_monthly_token_budget": 50})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(
+        (
+            saved["member_monthly_token_budget"].as_i64(),
+            saved["redact_secrets"].as_bool()
+        ),
+        (Some(50), Some(true))
+    );
+
+    // The member's first run fits the budget and spends it; the next one is refused, as is planning.
+    let (_, graph) = call(
+        &app,
+        Method::POST,
+        "/graphs",
+        &owner,
+        Some(json!({"name": "Shared", "goal": "g", "workspace_id": wid})),
+    )
+    .await;
+    let gid = graph["id"].as_str().unwrap().to_owned();
+    app.node(&member, &gid, json!({"title": "Only step"})).await;
+    let runs = format!("/graphs/{gid}/runs");
+    let mut events = app.events(&gid);
+    assert_eq!(
+        call(&app, Method::POST, &runs, &member, Some(json!({})))
+            .await
+            .0,
+        StatusCode::ACCEPTED
+    );
+    collect_until(&mut events, "run.finished").await;
+    let (status, refused) = call(
+        &app,
+        Method::POST,
+        &runs,
+        &member,
+        Some(json!({"force": true})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    assert!(
+        refused["detail"]
+            .as_str()
+            .unwrap()
+            .contains("your monthly budget of 50 tokens"),
+        "{refused}"
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &format!("/graphs/{gid}/plan"),
+            &member,
+            Some(json!({}))
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    // The budget is per member: the owner has spent nothing.
+    let mut events = app.events(&gid);
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &runs,
+            &owner,
+            Some(json!({"force": true}))
+        )
+        .await
+        .0,
+        StatusCode::ACCEPTED
+    );
+    collect_until(&mut events, "run.finished").await;
+
+    // A workspace budget covers everyone; a provider allow-list refuses the rest.
+    call(
+        &app,
+        Method::PUT,
+        &rails,
+        &owner,
+        Some(json!({"monthly_token_budget": 10})),
+    )
+    .await;
+    let (status, refused) = call(
+        &app,
+        Method::POST,
+        &runs,
+        &owner,
+        Some(json!({"force": true})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(
+        refused["detail"]
+            .as_str()
+            .unwrap()
+            .contains("workspace has used its monthly budget")
+    );
+    call(
+        &app,
+        Method::PUT,
+        &rails,
+        &owner,
+        Some(json!({"allowed_providers": ["demo"]})),
+    )
+    .await;
+    let (status, refused) = call(
+        &app,
+        Method::POST,
+        &runs,
+        &owner,
+        Some(json!({"force": true})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(
+        refused["detail"]
+            .as_str()
+            .unwrap()
+            .contains("only allows the providers demo"),
+        "{refused}"
+    );
+    // Lifting the policy lets work through again.
+    call(&app, Method::PUT, &rails, &owner, Some(json!({}))).await;
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &runs,
+            &owner,
+            Some(json!({"force": true}))
+        )
+        .await
+        .0,
+        StatusCode::ACCEPTED
+    );
+}

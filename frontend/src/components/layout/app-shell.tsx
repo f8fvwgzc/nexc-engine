@@ -8,6 +8,7 @@ import { useGlobalShortcuts } from '@/features/command/hooks/use-global-shortcut
 
 import { AppHeader } from './app-header';
 import { AppSidebar } from './app-sidebar';
+import { AssistantDot } from './assistant-dot';
 import { DemoBanner } from './demo-banner';
 import { PageSkeleton } from './page-skeleton';
 
@@ -40,6 +41,7 @@ export default function AppShell() {
           </Suspense>
         </div>
       </SidebarInset>
+      <AssistantDot />
       <DemoBanner />
       <CommandPalette />
       <ShortcutsDialog />

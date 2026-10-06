@@ -69,3 +69,15 @@ export type TeamMember = z.infer<typeof teamMemberSchema>;
 
 /** Mirrors `domain::workspace` on the server, which stays the authority. */
 export const isWorkspaceAdmin = (role: WorkspaceRole) => role === 'owner' || role === 'admin';
+
+/** The policy a workspace puts on its use of LLMs. */
+export const guardrailsSchema = z.object({
+  /** Tokens per calendar month for the whole workspace; null for no limit. */
+  monthly_token_budget: z.number().int().nonnegative().nullable(),
+  member_monthly_token_budget: z.number().int().nonnegative().nullable(),
+  /** Providers work may run on; empty allows all. */
+  allowed_providers: z.array(z.enum(['anthropic', 'openai_compatible', 'claude_code', 'demo'])),
+  allow_code_exec: z.boolean(),
+  redact_secrets: z.boolean(),
+});
+export type Guardrails = z.infer<typeof guardrailsSchema>;

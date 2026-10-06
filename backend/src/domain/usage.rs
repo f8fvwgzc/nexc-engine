@@ -17,6 +17,8 @@ string_enum!(
         Node => "node",
         /// Extracting memories from a node's output.
         Memory => "memory",
+        /// A reply of the workspace assistant.
+        Assistant => "assistant",
     }
 );
 
