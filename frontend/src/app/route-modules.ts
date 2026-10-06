@@ -3,6 +3,7 @@ export const routeModules = {
   landing: () => import('@/pages/landing-page'),
   login: () => import('@/pages/login-page'),
   register: () => import('@/pages/register-page'),
+  resetPassword: () => import('@/pages/reset-password-page'),
   appShell: () => import('@/components/layout/app-shell'),
   dashboard: () => import('@/pages/dashboard-page'),
   graph: () => import('@/pages/graph-page'),

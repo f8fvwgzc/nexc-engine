@@ -499,3 +499,114 @@ async fn the_platform_erases_an_account_on_request(pool: PgPool) {
         "their solo workspace went with them"
     );
 }
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_forgotten_password_is_recovered_with_a_one_time_link(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), &[]).await;
+    let hash = nexc::security::password::hash_password(PASSWORD).unwrap();
+    nexc::http::handlers::auth::create_user(
+        &app.state,
+        "root@example.com",
+        "Root",
+        Role::Admin,
+        &hash,
+    )
+    .await
+    .unwrap();
+    let root = login(&app, "root@example.com", PASSWORD).await.body["access_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (signed_in, cookie) = app.register("forgetful@example.com").await;
+    let account = id_of(&app, &signed_in).await;
+    let issue = format!("/admin/users/{account}/password-reset");
+    let reset = |token: &str, password: &str| {
+        let app = &app;
+        let body = json!({"token": token, "new_password": password});
+        async move {
+            app.request(
+                Method::POST,
+                "/api/v1/auth/password/reset",
+                None,
+                Some(body),
+            )
+            .await
+            .status
+        }
+    };
+
+    // Only the platform issues a link; it is shown once and logged without its token.
+    let (status, _) = call(&app, Method::POST, &issue, &signed_in, None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, issued) = call(&app, Method::POST, &issue, &root, None).await;
+    assert_eq!(status, StatusCode::OK, "{issued}");
+    assert_eq!(issued["expires_in"].as_i64(), Some(3600));
+    let first = issued["token"].as_str().unwrap().to_owned();
+    let stored: Vec<String> = sqlx::query_scalar("SELECT token_hash FROM password_resets")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_ne!(stored[0], first, "only a digest is kept");
+    let (_, events) = call(&app, Method::GET, "/admin/events", &root, None).await;
+    assert_eq!(events[0]["action"], "password_reset_issued");
+    assert_eq!(events[0]["subject"], "Test <forgetful@example.com>");
+    assert!(!events.to_string().contains(&first));
+
+    // A newer link cancels the older one; a weak password does not use the link up.
+    let (_, issued) = call(&app, Method::POST, &issue, &root, None).await;
+    let second = issued["token"].as_str().unwrap().to_owned();
+    assert_eq!(reset(&first, NEW_PASSWORD).await, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        reset(&second, "short").await,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+
+    // Used: the new password is the way in, every earlier session is over, and the link is spent.
+    assert_eq!(reset(&second, NEW_PASSWORD).await, StatusCode::NO_CONTENT);
+    let (status, _) = call(&app, Method::GET, "/auth/me", &signed_in, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(refresh(&app, &cookie).await, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        login(&app, "forgetful@example.com", NEW_PASSWORD)
+            .await
+            .status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        reset(&second, "another good passphrase").await,
+        StatusCode::UNAUTHORIZED
+    );
+
+    // An expired link does nothing, and neither does one of a deleted account.
+    let (_, issued) = call(&app, Method::POST, &issue, &root, None).await;
+    let late = issued["token"].as_str().unwrap().to_owned();
+    sqlx::query(
+        "UPDATE password_resets SET expires_at = now() - interval '1 minute' WHERE used_at IS NULL",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        reset(&late, "another good passphrase").await,
+        StatusCode::UNAUTHORIZED
+    );
+    let (_, issued) = call(&app, Method::POST, &issue, &root, None).await;
+    let orphan = issued["token"].as_str().unwrap().to_owned();
+    let erase = format!("/admin/users/{account}/erase");
+    let confirm = json!({"confirm": "forgetful@example.com"});
+    let (status, _) = call(&app, Method::POST, &erase, &root, Some(confirm)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        reset(&orphan, "another good passphrase").await,
+        StatusCode::UNAUTHORIZED
+    );
+    let (status, _) = call(&app, Method::POST, &issue, &root, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "nothing to issue a link for");
+
+    // Guessing tokens is limited like guessing passwords: the sixth miss in a minute waits.
+    let guess = reset("not-a-token", NEW_PASSWORD).await;
+    assert_eq!(guess, StatusCode::UNAUTHORIZED);
+    let guess = reset("not-a-token", NEW_PASSWORD).await;
+    assert_eq!(guess, StatusCode::TOO_MANY_REQUESTS);
+}

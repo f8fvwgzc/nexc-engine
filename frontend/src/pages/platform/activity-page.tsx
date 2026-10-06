@@ -21,6 +21,7 @@ const VERB: Record<PlatformAction, string> = {
   owner_assigned: 'assigned an owner to',
   workspace_deleted: 'deleted the workspace',
   account_erased: 'erased',
+  password_reset_issued: 'issued a password reset link for',
 };
 
 function Entry({ event }: { event: PlatformEvent }) {

@@ -44,6 +44,8 @@ pub const PASSWORD_MAX: usize = 128;
 pub const EMAIL_MAX: usize = 254;
 /// Maximum display name length.
 pub const NAME_MAX: usize = 100;
+/// How long a password reset link works.
+pub const RESET_TTL_SECS: u64 = 60 * 60;
 /// Failed logins after which the account is temporarily locked.
 pub const LOCKOUT_THRESHOLD: i32 = 5;
 

@@ -49,6 +49,11 @@ export const routes: RouteObject[] = [
         ],
       },
       {
+        // A reset link opens whoever is signed in on this browser, or nobody.
+        element: <PublicLayout />,
+        children: [{ path: 'reset-password', ...page(routeModules.resetPassword) }],
+      },
+      {
         path: 'app',
         element: <PrivateRoute />,
         children: [

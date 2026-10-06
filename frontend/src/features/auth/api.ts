@@ -18,6 +18,15 @@ export function register(body: RegisterInput) {
   return apiRequest('/auth/register', authResponseSchema, { method: 'POST', body, auth: false });
 }
 
+/** Sets a new password with the token of a reset link; no sign-in is needed. */
+export function resetPassword(token: string, newPassword: string) {
+  return apiSend('/auth/password/reset', {
+    method: 'POST',
+    body: { token, new_password: newPassword },
+    auth: false,
+  });
+}
+
 export function logout() {
   return apiSend('/auth/logout', { method: 'POST', headers: CSRF_HEADERS });
 }

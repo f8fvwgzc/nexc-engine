@@ -122,6 +122,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/users/{uid}/password-reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Issues a one-time password reset link for an account whose holder cannot
+         *     sign in. It works once and for an hour, and replaces any earlier link of
+         *     the account that still worked. The administrator hands it over; the
+         *     installation sends no e-mail.
+         */
+        post: operations["issue_password_reset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/workspaces": {
         parameters: {
             query?: never;
@@ -363,6 +385,28 @@ export interface paths {
          *     refresh cookie.
          */
         post: operations["change_password"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/password/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sets a new password with a reset link (no sign-in needed). The link
+         *     works once and for an hour. Every session of the account ends; the
+         *     person then signs in with the new password. A password that does not
+         *     meet the rules does not use the link up.
+         */
+        post: operations["reset_password"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2792,6 +2836,19 @@ export interface components {
             /** Format: uuid */
             team_id: string;
         };
+        /** @description A password reset link's token, shown once. */
+        IssuedReset: {
+            /**
+             * Format: int64
+             * @description Seconds until it stops working.
+             */
+            expires_in: number;
+            /**
+             * @description What the account's holder sets a new password with
+             *     (`POST /auth/password/reset`). It is not stored and cannot be shown again.
+             */
+            token: string;
+        };
         /**
          * @description Where the effective API key comes from.
          * @enum {string}
@@ -3174,7 +3231,7 @@ export interface components {
          * @description What a platform administrator did.
          * @enum {string}
          */
-        PlatformAction: "role_changed" | "account_suspended" | "account_reactivated" | "owner_assigned" | "workspace_deleted" | "account_erased";
+        PlatformAction: "role_changed" | "account_suspended" | "account_reactivated" | "owner_assigned" | "workspace_deleted" | "account_erased" | "password_reset_issued";
         /** @description One entry of the platform's activity log. */
         PlatformEvent: {
             action: components["schemas"]["PlatformAction"];
@@ -3346,6 +3403,13 @@ export interface components {
             /** @description Stable identifier stored on edges (`[a-z][a-z0-9_]*`). */
             key: string;
             label: string;
+        };
+        /** @description `POST /auth/password/reset` body. */
+        ResetPassword: {
+            /** @description 12–128 characters. */
+            new_password: string;
+            /** @description The token of a reset link, as a platform administrator issued it. */
+            token: string;
         };
         /**
          * @description Authorization role of a user.
@@ -4217,6 +4281,44 @@ export interface operations {
             };
         };
     };
+    issue_password_reset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description User id */
+                uid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssuedReset"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     workspaces: {
         parameters: {
             query?: {
@@ -4871,6 +4973,55 @@ export interface operations {
                 };
             };
             /** @description Too many wrong passwords */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    reset_password: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResetPassword"];
+            };
+        };
+        responses: {
+            /** @description Password set */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The link is unknown, used or expired */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The new password does not meet the rules */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Rate limited */
             429: {
                 headers: {
                     [name: string]: unknown;

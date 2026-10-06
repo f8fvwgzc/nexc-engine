@@ -133,6 +133,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   The only owner of a shared workspace has to hand it over first. Platform administrators can
   erase an account on request from the console (`POST /admin/users/{uid}/erase`); the activity
   log keeps the account's id, not its name.
+- Password recovery without e-mail: a platform administrator creates a reset link for an
+  account from the console (Accounts → Password reset link…) and hands it over. The link works
+  once and for an hour, only a digest of its token is stored, a newer link cancels the older
+  one, and using it ends every session of the account. The token is in the link's fragment,
+  which browsers do not send to servers (`POST /admin/users/{uid}/password-reset`,
+  `POST /auth/password/reset`, page `/reset-password`).
 - Search from the command palette (⌘K): a few typed characters find issues (by title or
   identifier), projects, graphs, documents, teams and people in the open workspace, grouped by
   kind, and picking one opens it. One request, and only what the caller may see: each kind goes

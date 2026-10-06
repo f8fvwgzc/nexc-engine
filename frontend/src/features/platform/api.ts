@@ -64,6 +64,7 @@ export const platformActionSchema = z.enum([
   'owner_assigned',
   'workspace_deleted',
   'account_erased',
+  'password_reset_issued',
 ]);
 export type PlatformAction = z.infer<typeof platformActionSchema>;
 
@@ -130,6 +131,18 @@ export function updatePlatformUser(userId: string, change: PlatformUserChange) {
     method: 'PATCH',
     body: change,
   });
+}
+
+/**
+ * Issues a one-time password reset link for an account. The token comes back once and is not
+ * kept anywhere readable; issuing another cancels it.
+ */
+export function issuePasswordReset(userId: string) {
+  return apiRequest(
+    `/admin/users/${userId}/password-reset`,
+    z.object({ token: z.string().min(1), expires_in: z.number().int().positive() }),
+    { method: 'POST' },
+  );
 }
 
 /**

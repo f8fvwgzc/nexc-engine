@@ -9,6 +9,7 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+use uuid::Uuid;
 
 use super::auth::{cookie, session_config, with_session};
 use crate::app::AppState;
@@ -20,7 +21,7 @@ use crate::http::extract::{Caller, ClientIp, ValidatedJson};
 use crate::http::middleware::rate_limit::AuthRateLimit;
 use crate::http::problem::Problem;
 use crate::repo::{self, OrNotFound};
-use crate::security::{password, session};
+use crate::security::{password, random, session};
 
 /// `PATCH /auth/me` body.
 #[derive(Debug, Deserialize, ToSchema)]
@@ -133,13 +134,75 @@ pub async fn change_password(
     Ok(with_session(&state, StatusCode::OK, session))
 }
 
-/// Ends every session of the caller: access tokens stop at once, refresh
+/// Ends every session of an account: access tokens stop at once, refresh
 /// tokens are revoked.
-async fn end_sessions(state: &AppState, auth: Caller) -> Result<(), AppError> {
-    let epoch = repo::users::end_sessions(&state.db, auth.id).await?;
-    repo::tokens::revoke_user(&state.db, auth.id).await?;
-    state.sessions.raise(auth.id, epoch);
+async fn end_sessions_of(state: &AppState, user: Uuid) -> Result<(), AppError> {
+    let epoch = repo::users::end_sessions(&state.db, user).await?;
+    repo::tokens::revoke_user(&state.db, user).await?;
+    state.sessions.raise(user, epoch);
     Ok(())
+}
+
+async fn end_sessions(state: &AppState, auth: Caller) -> Result<(), AppError> {
+    end_sessions_of(state, auth.id).await
+}
+
+/// `POST /auth/password/reset` body.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ResetPassword {
+    /// The token of a reset link, as a platform administrator issued it.
+    pub token: String,
+    /// 12–128 characters.
+    pub new_password: String,
+}
+
+impl Validate for ResetPassword {
+    fn validate(&self, errors: &mut FieldErrors) {
+        if self.token.is_empty() || self.token.len() > 128 {
+            errors.add("token", "invalid link");
+        }
+        let mut new = FieldErrors::default();
+        user::check_password(&mut new, &self.new_password);
+        for message in new.as_map().get("password").into_iter().flatten() {
+            errors.add("new_password", message.clone());
+        }
+    }
+}
+
+/// Sets a new password with a reset link (no sign-in needed). The link
+/// works once and for an hour. Every session of the account ends; the
+/// person then signs in with the new password. A password that does not
+/// meet the rules does not use the link up.
+#[utoipa::path(post, path = "/auth/password/reset", tag = "auth", request_body = ResetPassword,
+    responses(
+        (status = 204, description = "Password set"),
+        (status = 401, description = "The link is unknown, used or expired", body = Problem),
+        (status = 422, description = "The new password does not meet the rules", body = Problem),
+        (status = 429, description = "Rate limited", body = Problem),
+    ))]
+pub async fn reset_password(
+    _limit: AuthRateLimit,
+    State(state): State<AppState>,
+    ClientIp(ip): ClientIp,
+    ValidatedJson(req): ValidatedJson<ResetPassword>,
+) -> Result<StatusCode, AppError> {
+    state.limiters.check_login_allowed(ip)?;
+    let digest = random::token_digest(&req.token);
+    let Some(account) = repo::resets::redeem(&state.db, &digest).await? else {
+        state.limiters.record_login_failure(ip);
+        return Err(AppError::Unauthorized(
+            "this link does not work any more; ask for a new one",
+        ));
+    };
+    let new = req.new_password.clone();
+    let hash = tokio::task::spawn_blocking(move || password::hash_password(&new))
+        .await
+        .map_err(anyhow::Error::from)??;
+    repo::users::set_password(&state.db, account, &hash).await?;
+    end_sessions_of(&state, account).await?;
+    tracing::info!(user_id = %account, "password set with a reset link");
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// The caller's sessions.

@@ -9,7 +9,7 @@
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
@@ -377,6 +377,58 @@ pub async fn update_user(
             .await
             .or_not_found("user")?,
     ))
+}
+
+/// A password reset link's token, shown once.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct IssuedReset {
+    /// What the account's holder sets a new password with
+    /// (`POST /auth/password/reset`). It is not stored and cannot be shown again.
+    pub token: String,
+    /// Seconds until it stops working.
+    pub expires_in: u64,
+}
+
+/// Issues a one-time password reset link for an account whose holder cannot
+/// sign in. It works once and for an hour, and replaces any earlier link of
+/// the account that still worked. The administrator hands it over; the
+/// installation sends no e-mail.
+#[utoipa::path(post, path = "/admin/users/{uid}/password-reset", tag = "admin", security(("bearer" = [])),
+    params(("uid" = Uuid, Path, description = "User id")),
+    responses((status = 200, body = IssuedReset), (status = 403, body = Problem), (status = 404, body = Problem)))]
+pub async fn issue_password_reset(
+    State(state): State<AppState>,
+    admin: PlatformAdmin,
+    Path(uid): Path<Uuid>,
+) -> Result<Json<IssuedReset>, AppError> {
+    let account = repo::platform::user(&state.db, uid)
+        .await
+        .or_not_found("user")?;
+    let token = crate::security::random::random_token();
+    let expires_at = chrono::Utc::now()
+        + chrono::Duration::seconds(i64::try_from(user::RESET_TTL_SECS).unwrap_or(3600));
+    let mut tx = state.db.begin().await?;
+    repo::resets::issue(
+        &mut tx,
+        uid,
+        admin.id,
+        &crate::security::random::token_digest(&token),
+        expires_at,
+    )
+    .await?;
+    tx.commit().await?;
+    log(
+        &state,
+        admin,
+        PlatformAction::PasswordResetIssued,
+        &named(&account),
+        "",
+    )
+    .await;
+    Ok(Json(IssuedReset {
+        token,
+        expires_in: user::RESET_TTL_SECS,
+    }))
 }
 
 /// `POST /admin/users/{uid}/erase` body.

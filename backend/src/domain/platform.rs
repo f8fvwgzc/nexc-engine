@@ -25,6 +25,7 @@ string_enum!(
         OwnerAssigned => "owner_assigned",
         WorkspaceDeleted => "workspace_deleted",
         AccountErased => "account_erased",
+        PasswordResetIssued => "password_reset_issued",
     }
 );
 

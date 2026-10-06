@@ -22,6 +22,9 @@ export default function LoginPage() {
             >
               Create an account
             </Link>
+            <span className="mt-2 block text-xs">
+              Forgot your password? Ask whoever administers this installation for a reset link.
+            </span>
           </>
         }
       >

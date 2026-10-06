@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { MoreHorizontalIcon } from 'lucide-react';
 import { useState } from 'react';
 
+import { CopyButton } from '@/components/custom-ui/copy-button';
 import { PersonGlyph } from '@/components/custom-ui/issue-glyphs';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { Seo } from '@/components/seo/seo';
@@ -28,6 +29,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import {
   eraseAccount,
+  issuePasswordReset,
   platformUsersQuery,
   updatePlatformUser,
   type PlatformUser,
@@ -110,6 +112,71 @@ function SuspendDialog({
   );
 }
 
+/**
+ * Issues a one-time password reset link for someone who cannot sign in, and shows it once. The
+ * installation sends no e-mail: the administrator hands the link over.
+ */
+function ResetLinkDialog({ user, onClose }: { user: PlatformUser | null; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const issue = useMutation({
+    mutationFn: (target: PlatformUser) => issuePasswordReset(target.id),
+    meta: { errorToast: false },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['platform', 'events'] }),
+  });
+  const close = () => {
+    issue.reset();
+    onClose();
+  };
+  // The token is after `#`: a browser does not send that part to a server.
+  const link = issue.data ? `${window.location.origin}/reset-password#${issue.data.token}` : null;
+  return (
+    <Dialog open={user !== null} onOpenChange={(open) => !open && close()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Password reset link for {user?.name}</DialogTitle>
+          <DialogDescription>
+            For when {user?.email} cannot sign in. The link works once and for one hour, and anyone
+            who has it can set the account&apos;s password: hand it over through a channel you
+            trust. Creating a new link cancels the one before.
+          </DialogDescription>
+        </DialogHeader>
+        {link ? (
+          <div className="space-y-2">
+            <div className="flex items-center gap-1">
+              <Input
+                readOnly
+                value={link}
+                aria-label="Reset link"
+                className="font-mono text-xs"
+                onFocus={(e) => e.target.select()}
+              />
+              <CopyButton value={link} label="Copy reset link" />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              It is shown this once and is not kept anywhere it can be read again.
+            </p>
+          </div>
+        ) : null}
+        {issue.error ? (
+          <p role="alert" className="text-xs text-destructive">
+            {errorMessage(issue.error)}
+          </p>
+        ) : null}
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={close}>
+            {link ? 'Done' : 'Cancel'}
+          </Button>
+          {!link && (
+            <Button disabled={issue.isPending} onClick={() => user && issue.mutate(user)}>
+              Create link
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /** Erases an account on its holder's request, once its address is typed out. */
 function EraseDialog({ user, onClose }: { user: PlatformUser | null; onClose: () => void }) {
   const queryClient = useQueryClient();
@@ -186,6 +253,7 @@ export default function PlatformUsersPage() {
   const { data, isPending, error } = useQuery(platformUsersQuery(page));
   const [suspending, setSuspending] = useState<PlatformUser | null>(null);
   const [erasing, setErasing] = useState<PlatformUser | null>(null);
+  const [resetting, setResetting] = useState<PlatformUser | null>(null);
   const change = useMutation({
     mutationFn: ({ user, change }: { user: PlatformUser; change: PlatformUserChange }) =>
       updatePlatformUser(user.id, change),
@@ -274,6 +342,9 @@ export default function PlatformUsersPage() {
                   >
                     {u.role === 'admin' ? 'Remove platform admin' : 'Make platform admin'}
                   </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => setResetting(u)}>
+                    Password reset link…
+                  </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   {u.suspended ? (
                     <DropdownMenuItem
@@ -304,6 +375,7 @@ export default function PlatformUsersPage() {
         </ul>
       )}
       {controls(data?.length ?? 0)}
+      <ResetLinkDialog user={resetting} onClose={() => setResetting(null)} />
       <EraseDialog user={erasing} onClose={() => setErasing(null)} />
       <SuspendDialog
         user={suspending}

@@ -86,6 +86,7 @@ where
 async fn housekeeping(state: &AppState) -> anyhow::Result<()> {
     repo::tickets::purge_expired(&state.db).await?;
     repo::tokens::purge_expired(&state.db).await?;
+    repo::resets::purge_expired(&state.db).await?;
     repo::outbox::purge(&state.db).await?;
     repo::plans::fail_stale(&state.db).await?;
     state.hub.prune();
