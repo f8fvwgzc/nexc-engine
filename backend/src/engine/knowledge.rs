@@ -95,6 +95,11 @@ fn server_target(state: &AppState) -> EmbedTarget {
     }
 }
 
+/// The embedding model workspaces use unless they name their own.
+pub fn server_embedding_model(state: &AppState) -> String {
+    server_target(state).model
+}
+
 /// Resolves the knowledge settings of a workspace.
 pub async fn settings(state: &AppState, workspace: Uuid) -> anyhow::Result<Resolved> {
     let stored = repo::knowledge::settings(&state.db, workspace).await?;

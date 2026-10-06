@@ -12,6 +12,7 @@ pub mod cycle;
 pub mod error;
 pub mod graph;
 pub mod guardrails;
+pub mod insight;
 pub mod issue;
 pub mod knowledge;
 pub mod memory;

@@ -1716,3 +1716,136 @@ async fn the_audit_log_records_who_changed_the_workspace(pool: PgPool) {
     let (status, _) = call(&app, Method::GET, &format!("{ws}/audit"), &outsider, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn owners_see_what_happened_and_how_things_relate(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let (owner, _) = user(&app, "owner@example.com").await;
+    let (member, _) = user(&app, "member@example.com").await;
+    let wid = personal_workspace(&app, &owner).await;
+    let ws = format!("/workspaces/{wid}");
+    let invite = json!({"email": "member@example.com", "role": "member"});
+    call(
+        &app,
+        Method::POST,
+        &format!("{ws}/members"),
+        &owner,
+        Some(invite),
+    )
+    .await;
+    let (_, team) = call(
+        &app,
+        Method::POST,
+        &format!("{ws}/teams"),
+        &owner,
+        Some(json!({"name": "Engineering", "key": "ENG"})),
+    )
+    .await;
+    let issues = format!("{ws}/teams/{}/issues", team["id"].as_str().unwrap());
+    let (_, parent) = call(
+        &app,
+        Method::POST,
+        &issues,
+        &member,
+        Some(json!({"title": "Ship login"})),
+    )
+    .await;
+    let part = json!({"title": "Form", "parent_id": parent["id"]});
+    call(&app, Method::POST, &issues, &member, Some(part)).await;
+    let comments = format!("/issues/{}/comments", parent["id"].as_str().unwrap());
+    call(
+        &app,
+        Method::POST,
+        &comments,
+        &owner,
+        Some(json!({"body": "Looks good"})),
+    )
+    .await;
+
+    // Today's timeline, newest first, across the audit log and the issues.
+    let (status, timeline) = call(&app, Method::GET, &format!("{ws}/timeline"), &owner, None).await;
+    assert_eq!(status, StatusCode::OK, "{timeline}");
+    let kinds: Vec<&str> = timeline
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "issue_comment",
+            "issue_created",
+            "issue_created",
+            "team_created",
+            "member_added"
+        ]
+    );
+    assert_eq!(timeline[0]["title"], "ENG-1 Ship login");
+    assert_eq!(timeline[0]["detail"], "Looks good");
+    assert_eq!(timeline[0]["entity_id"], parent["id"]);
+    assert!(timeline[1]["actor"].is_string());
+    // Another day is empty; the last days show today's count.
+    let (_, old) = call(
+        &app,
+        Method::GET,
+        &format!("{ws}/timeline?day=2020-01-01"),
+        &owner,
+        None,
+    )
+    .await;
+    assert_eq!(old.as_array().unwrap().len(), 0);
+    let (_, days) = call(
+        &app,
+        Method::GET,
+        &format!("{ws}/timeline/days?days=7"),
+        &owner,
+        None,
+    )
+    .await;
+    assert_eq!(days.as_array().unwrap().len(), 1, "{days}");
+    assert_eq!(days[0]["events"], 5);
+
+    // The map counts the kinds of things and the ties between them.
+    let (status, map) = call(&app, Method::GET, &format!("{ws}/map"), &owner, None).await;
+    assert_eq!(status, StatusCode::OK, "{map}");
+    let count = |list: &str, pick: &dyn Fn(&Value) -> bool| -> i64 {
+        map[list]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| pick(e))
+            .unwrap()["count"]
+            .as_i64()
+            .unwrap()
+    };
+    assert_eq!(count("entities", &|e| e["key"] == "member"), 2);
+    assert_eq!(count("entities", &|e| e["key"] == "issue"), 2);
+    assert_eq!(
+        count("relations", &|r| r["from"] == "issue" && r["to"] == "issue"),
+        1,
+        "one sub-issue"
+    );
+    assert_eq!(
+        count("relations", &|r| r["from"] == "member" && r["to"] == "team"),
+        1
+    );
+
+    // All of it is for admins and owners; the server's infrastructure for its administrators.
+    for path in ["timeline", "timeline/days", "map"] {
+        let (status, _) = call(&app, Method::GET, &format!("{ws}/{path}"), &member, None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{path}");
+    }
+    let (status, _) = call(&app, Method::GET, "/admin/infrastructure", &owner, None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let check = json!({"url": "postgres://nobody@127.0.0.1:9/none"});
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        "/admin/infrastructure/check",
+        &owner,
+        Some(check),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}

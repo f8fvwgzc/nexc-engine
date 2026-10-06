@@ -4,6 +4,44 @@
  */
 
 export interface paths {
+    "/api/v1/admin/infrastructure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The infrastructure this server runs on (server administrators only). */
+        get: operations["status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/infrastructure/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Checks that a PostgreSQL or Redis server can be reached from this server
+         *     with the given URL (server administrators only). Nothing is changed and
+         *     the URL is not kept.
+         */
+        post: operations["check"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agents": {
         parameters: {
             query?: never;
@@ -1185,6 +1223,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{wid}/map": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The relationship map of the workspace: its kinds of things (members,
+         *     teams, projects, issues, graphs, documents, memories, …) and the ties
+         *     between them, with today's counts.
+         */
+        get: operations["map"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{wid}/members": {
         parameters: {
             query?: never;
@@ -1431,6 +1490,47 @@ export interface paths {
         patch: operations["update_state"];
         trace?: never;
     };
+    "/api/v1/workspaces/{wid}/timeline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What happened in the workspace on one day (UTC), newest first, across
+         *     members, teams, issues, graphs, runs, documents and memory. Admins and
+         *     owners only: it shows every team's work.
+         */
+        get: operations["timeline"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/timeline/days": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * How much happened on each of the last days (UTC), latest first; days on
+         *     which nothing happened are left out. Admins and owners only.
+         */
+        get: operations["days"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{wid}/usage": {
         parameters: {
             query?: never;
@@ -1596,6 +1696,14 @@ export interface components {
             llm: components["schemas"]["BackendHealth"];
             symphony: components["schemas"]["BackendHealth"];
         };
+        /** @description `POST /admin/infrastructure/check` body. */
+        CheckConnection: {
+            /**
+             * @description `postgres://user:password@host:5432/db` or `redis://[:password@]host:6379`.
+             *     Used for this check only: it is neither stored nor logged.
+             */
+            url: string;
+        };
         /**
          * @description What a passage was made from.
          * @enum {string}
@@ -1611,6 +1719,20 @@ export interface components {
          * @enum {string}
          */
         ConfigScope: "user" | "workspace" | "server";
+        /** @description What a connection check found. */
+        ConnectionCheck: {
+            /** @description The server's version, or why it could not be reached. */
+            detail: string;
+            /**
+             * Format: int64
+             * @description PostgreSQL: how many of this build's migrations are applied there;
+             *     `0` for an empty database, which the server sets up when it starts on it.
+             */
+            migrations_applied: number | null;
+            /** @description PostgreSQL: whether pgvector can be enabled there. */
+            pgvector_available: boolean | null;
+            reachable: boolean;
+        };
         /** @description `POST /agents` body. */
         CreateAgent: {
             /** Format: int64 */
@@ -1821,6 +1943,23 @@ export interface components {
          * @enum {string}
          */
         CycleStatus: "upcoming" | "active" | "completed";
+        /** @description The database the server is connected to. */
+        DatabaseStatus: {
+            /** @description Where it is, without credentials. */
+            location: string;
+            /** Format: int64 */
+            migrations_applied: number;
+            /**
+             * Format: int64
+             * @description Migrations this build knows; more than applied means a restart is due.
+             */
+            migrations_known: number;
+            /** @description The pgvector version, when the extension is enabled. */
+            pgvector: string | null;
+            /** Format: int64 */
+            size_bytes: number;
+            version: string;
+        };
         /** @description An uploaded document. */
         Document: {
             /**
@@ -2058,6 +2197,21 @@ export interface components {
             status: string;
             version: string;
         };
+        /** @description What the server runs on. */
+        Infrastructure: {
+            cache: string;
+            database: components["schemas"]["DatabaseStatus"];
+            /** @description The server's embedding model (`builtin-hash-256` when none is configured). */
+            embedding_model: string;
+            /**
+             * @description Where background work is queued and what caches there are: all in
+             *     PostgreSQL and in process, with no other service to run.
+             */
+            queue: string;
+            runtime_reachable: boolean;
+            /** @description Where the agent runtime is expected, and whether it answers. */
+            runtime_url: string;
+        };
         /** @description `POST /workspaces/{wid}/members` body. */
         InviteMember: {
             email: string;
@@ -2245,6 +2399,29 @@ export interface components {
         LoginRequest: {
             email: string;
             password: string;
+        };
+        /** @description One kind of thing a workspace holds, and how many of it. */
+        MapEntity: {
+            /** Format: int64 */
+            count: number;
+            /**
+             * @description `member`, `team`, `project`, `issue`, `graph`, `run`, `agent`,
+             *     `document`, `passage`, `memory`, `label`, `cycle`.
+             */
+            key: string;
+            label: string;
+        };
+        /** @description How two kinds of things are tied together in this workspace. */
+        MapRelation: {
+            /**
+             * Format: int64
+             * @description How many such ties exist right now.
+             */
+            count: number;
+            from: string;
+            /** @description The relation, read from `from` to `to`: "belongs to", "plans", … */
+            label: string;
+            to: string;
         };
         /** @description `POST /workspaces/{wid}/inbox/read` body. */
         MarkRead: {
@@ -2717,6 +2894,42 @@ export interface components {
             expires_in: number;
             ticket: string;
         };
+        /** @description How much happened on one day. */
+        TimelineDay: {
+            /**
+             * Format: date
+             * @description The day (UTC).
+             */
+            day: string;
+            /** Format: int64 */
+            events: number;
+        };
+        /** @description One thing that happened in a workspace. */
+        TimelineEntry: {
+            /** @description Who did it, by name; `null` for what the system did or whose account is gone. */
+            actor: string | null;
+            /** Format: date-time */
+            at: string;
+            /** @description What changed, in words. */
+            detail: string;
+            /**
+             * Format: uuid
+             * @description The id of that thing, when it can be opened.
+             */
+            entity_id: string | null;
+            /** @description What it happened to: `workspace`, `issue`, `graph`, `document`. */
+            entity_type: string;
+            /**
+             * @description What happened: an audit action (`member_added`, `team_created`, …),
+             *     `issue_created`, `issue_state`, `issue_comment`, `issue_assignee`,
+             *     `issue_priority`, `issue_title`, `graph_created`, `run_succeeded`,
+             *     `run_failed` (and the other run statuses), `document_added`,
+             *     `memories_learned`.
+             */
+            kind: string;
+            /** @description Its name as it was shown: an issue's identifier and title, a graph's name. */
+            title: string;
+        };
         /** @description A topic of a workspace's documents, found by clustering their passages. */
         Topic: {
             /**
@@ -3001,6 +3214,14 @@ export interface components {
             id: string;
             role: components["schemas"]["WorkspaceRole"];
         };
+        /**
+         * @description The relationship map of a workspace: its kinds of things and the ties
+         *     between them, with today's numbers.
+         */
+        WorkspaceMap: {
+            entities: components["schemas"]["MapEntity"][];
+            relations: components["schemas"]["MapRelation"][];
+        };
         /** @description A member of a workspace. */
         WorkspaceMember: {
             email: string;
@@ -3067,6 +3288,72 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Infrastructure"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    check: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckConnection"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionCheck"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     list: {
         parameters: {
             query?: {
@@ -6459,6 +6746,44 @@ export interface operations {
             };
         };
     };
+    map: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceMap"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     members: {
         parameters: {
             query?: never;
@@ -7591,6 +7916,88 @@ export interface operations {
             };
             /** @description Name taken */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    timeline: {
+        parameters: {
+            query?: {
+                /** @description The day to show (UTC, `YYYY-MM-DD`); today when left out. */
+                day?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TimelineEntry"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    days: {
+        parameters: {
+            query?: {
+                /** @description How many days back to look, 1-366 (default 30). */
+                days?: number | null;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TimelineDay"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

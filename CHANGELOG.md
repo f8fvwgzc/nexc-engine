@@ -110,6 +110,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   for that long are removed, then the least important and least recalled beyond the limit.
 - Embedding calls are booked in the usage ledger under the purpose `embedding` (tokens; the price
   of embedding models is not known to the server, so their cost is recorded as zero).
+- Activity: what happened in a workspace on a day, across the audit log, issues, graphs, runs,
+  documents and memory (`GET /workspaces/{wid}/timeline`, `…/timeline/days`), with a 30-day strip
+  of busy days. Workspace map: the kinds of things in a workspace and the ties between them, with
+  counts (`GET /workspaces/{wid}/map`). Both for admins and owners.
+- Infrastructure page for server administrators: database, pgvector, migrations, agent runtime,
+  embedding model, and a check that another PostgreSQL or Redis is reachable
+  (`/admin/infrastructure`). `docs/INFRASTRUCTURE.md` explains what can be changed and how.
 - Workflow editor: the Teams page opens a team's workflow, where team owners and workspace admins
   add, rename, recolour, reorder and remove issue states; other members see it read-only.
 - "Your teams" in the sidebar opens a team's issues (`/app/issues?team=<id>`), and `C` on the

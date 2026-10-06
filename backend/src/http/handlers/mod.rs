@@ -8,6 +8,8 @@ pub mod cycles;
 pub mod edges;
 pub mod graphs;
 pub mod health;
+pub mod infrastructure;
+pub mod insight;
 pub mod issues;
 pub mod knowledge;
 pub mod memories;

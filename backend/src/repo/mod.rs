@@ -66,6 +66,7 @@ pub mod audit;
 pub mod cycles;
 pub mod edges;
 pub mod graphs;
+pub mod insight;
 pub mod issues;
 pub mod knowledge;
 pub mod knowledge_vectors;

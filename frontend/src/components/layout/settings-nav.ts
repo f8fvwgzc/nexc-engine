@@ -1,5 +1,8 @@
 import {
   BookOpenIcon,
+  CalendarDaysIcon,
+  ServerIcon,
+  WaypointsIcon,
   BrainIcon,
   ChartNoAxesColumnIcon,
   KeyRoundIcon,
@@ -42,11 +45,27 @@ export const SETTINGS_GROUPS: { label: string; items: SettingsItem[] }[] = [
       { title: 'Knowledge', to: `${SETTINGS_ROOT}/knowledge`, icon: BookOpenIcon },
       { title: 'Usage', to: `${SETTINGS_ROOT}/usage`, icon: ChartNoAxesColumnIcon },
       {
+        title: 'Activity',
+        to: `${SETTINGS_ROOT}/activity`,
+        icon: CalendarDaysIcon,
+        adminOnly: true,
+      },
+      {
+        title: 'Workspace map',
+        to: `${SETTINGS_ROOT}/map`,
+        icon: WaypointsIcon,
+        adminOnly: true,
+      },
+      {
         title: 'Audit log',
         to: `${SETTINGS_ROOT}/audit`,
         icon: ScrollTextIcon,
         adminOnly: true,
       },
     ],
+  },
+  {
+    label: 'Server',
+    items: [{ title: 'Infrastructure', to: `${SETTINGS_ROOT}/infrastructure`, icon: ServerIcon }],
   },
 ];

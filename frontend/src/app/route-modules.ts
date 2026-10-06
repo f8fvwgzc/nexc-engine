@@ -24,5 +24,8 @@ export const routeModules = {
   settingsAi: () => import('@/pages/settings/ai-page'),
   settingsGuardrails: () => import('@/pages/settings/guardrails-page'),
   settingsKnowledge: () => import('@/pages/settings/knowledge-page'),
+  settingsActivity: () => import('@/pages/settings/activity-page'),
+  settingsMap: () => import('@/pages/settings/map-page'),
+  settingsInfrastructure: () => import('@/pages/settings/infrastructure-page'),
   notFound: () => import('@/pages/not-found-page'),
 };
