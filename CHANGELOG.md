@@ -110,6 +110,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   list). An opened issue is likewise read again on its own instead of shown from the list.
 - A run reads the outputs and titles of a node's upstream nodes in one query each instead of one
   per upstream node.
+- Memory no longer stops at a workspace's 20,000 most recent memories. A workspace with 5,000 or
+  more is searched in the database (full-text matches of the query's rarest words, the most
+  recent memories, and nearest neighbours when pgvector is present) and ranked from a few hundred
+  candidates; the memory list and single memories are always read from the database. Only small
+  workspaces are held in process.
 - Linear-style interface pass: a denser type scale, thinner icons, a sidebar grouped into Work,
   Your teams, Build and Workspace, and issue rows and board cards that show state and priority as
   glyphs instead of labels.

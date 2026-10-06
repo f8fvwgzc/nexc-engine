@@ -31,7 +31,7 @@ use crate::kernel;
 use crate::llm::service::LlmService;
 use crate::llm::{JsonSchema, LlmRequest, LlmTarget, Message, Usage, collect};
 use crate::repo::memories::{self, NewMemory, StoredMemory};
-use index::MemoryIndex;
+use index::{MemoryIndex, Snapshot};
 
 const MAX_CANDIDATES_PER_NODE: usize = 8;
 const OUTPUT_CHARS_FOR_EXTRACTION: usize = 8_000;
@@ -141,39 +141,111 @@ async fn reader(db: &PgPool, user: Uuid, workspace: Uuid) -> Result<Reader, sqlx
     })
 }
 
-/// The memories of `workspace` that `user` may read, newest first, from the index.
+/// Most distinct terms of a query that are searched for in the database.
+const MAX_QUERY_TERMS: usize = 16;
+/// Full-text matches and recent memories fetched before ranking a large workspace.
+const TEXT_CANDIDATES: i64 = 200;
+const RECENT_CANDIDATES: i64 = 50;
+/// A graph's memories read for consolidation; past this, matches are looked up per candidate.
+const CONSOLIDATION_WINDOW: usize = 1_000;
+
+/// The terms of `text` as a PostgreSQL `tsquery` that matches any of them:
+/// its longest distinct words, which are the rarest and so the cheapest and
+/// most telling to look up. Empty when the text has no word worth searching.
+pub fn any_term_query(text: &str) -> String {
+    any_term_query_without(text, &HashSet::new())
+}
+
+/// [`any_term_query`] leaving out the words in `common`: a word that most
+/// memories contain matches most of the table and distinguishes nothing.
+pub fn any_term_query_without(text: &str, common: &HashSet<String>) -> String {
+    let mut terms: Vec<String> = text
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.chars().count() >= 4)
+        .map(str::to_lowercase)
+        .filter(|w| !common.contains(w))
+        .collect();
+    terms.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    terms.dedup();
+    terms.truncate(MAX_QUERY_TERMS);
+    terms.join(" | ")
+}
+
+/// One page of the memories of a workspace that `user` may read, newest
+/// first. Read from the database, so it reaches every memory however many
+/// the workspace has.
 pub async fn visible(
-    index: &MemoryIndex,
     db: &PgPool,
     user: Uuid,
     workspace: Uuid,
     view: View,
     limit: usize,
+    offset: usize,
 ) -> anyhow::Result<Vec<Memory>> {
     let reader = reader(db, user, workspace).await?;
-    let all = index.load(db, workspace).await?;
-    Ok(all
-        .iter()
-        .filter(|m| reader.may_read(m) && in_view(m, view))
-        .take(limit)
-        .map(|m| m.memory.clone())
-        .collect())
+    let graphs: Vec<Uuid> = reader.graphs.iter().copied().collect();
+    let only = match view {
+        View::Only(graph) => Some(graph),
+        View::All | View::Prefer(_) => None,
+    };
+    let page = memories::page_readable(
+        db,
+        workspace,
+        &graphs,
+        user,
+        only,
+        i64::try_from(limit).unwrap_or(i64::MAX),
+        i64::try_from(offset).unwrap_or(i64::MAX),
+    )
+    .await?;
+    Ok(page.into_iter().map(|m| m.memory).collect())
 }
 
 /// One memory of a workspace, if `user` may read it.
 pub async fn find(
-    index: &MemoryIndex,
     db: &PgPool,
     user: Uuid,
     workspace: Uuid,
     id: Uuid,
 ) -> anyhow::Result<Option<Memory>> {
     let reader = reader(db, user, workspace).await?;
-    let all = index.load(db, workspace).await?;
-    Ok(all
-        .iter()
-        .find(|m| m.memory.id == id && reader.may_read(m))
-        .map(|m| m.memory.clone()))
+    Ok(memories::find_stored(db, id)
+        .await?
+        .filter(|m| reader.may_read(m))
+        .map(|m| m.memory))
+}
+
+/// The candidates a large workspace is ranked from: full-text matches of the
+/// query's terms and the most recent memories, both already limited to what
+/// the reader may see, plus the nearest neighbours when the database has a
+/// vector index. A few hundred rows whatever the size of the workspace.
+async fn database_candidates(
+    index: &MemoryIndex,
+    db: &PgPool,
+    reader: &Reader,
+    workspace: Uuid,
+    query: &str,
+) -> anyhow::Result<Vec<StoredMemory>> {
+    let graphs: Vec<Uuid> = reader.graphs.iter().copied().collect();
+    let common = index.common_terms(db).await;
+    let mut found = memories::text_candidates(
+        db,
+        workspace,
+        &graphs,
+        reader.user,
+        &any_term_query_without(query, &common),
+        TEXT_CANDIDATES,
+        RECENT_CANDIDATES,
+    )
+    .await?;
+    if index.vector_search() {
+        let mut seen: HashSet<Uuid> = found.iter().map(|m| m.memory.id).collect();
+        let nearest =
+            vectors::candidates(db, workspace, query, &kernel::embed(query), ANN_CANDIDATES)
+                .await?;
+        found.extend(nearest.into_iter().filter(|m| seen.insert(m.memory.id)));
+    }
+    Ok(found)
 }
 
 /// Hybrid retrieval over the memory of a workspace, limited to what `user`
@@ -189,18 +261,20 @@ pub async fn retrieve(
     limit: usize,
 ) -> anyhow::Result<Vec<Memory>> {
     let reader = reader(db, user, workspace).await?;
-    let all = index.load(db, workspace).await?;
-    // Small workspaces are scanned exactly, in process. A large one is narrowed by the
-    // database first: nearest neighbours (HNSW) plus full-text matches.
-    let narrowed = if index.uses_database_search(all.len()) {
-        let nearest =
-            vectors::candidates(db, workspace, query, &kernel::embed(query), ANN_CANDIDATES)
-                .await?;
-        Some(nearest)
-    } else {
-        None
+    // A small workspace is scanned exactly, in process. A large one is narrowed by the
+    // database first, so neither memory nor time grows with what the workspace has learned.
+    let narrowed;
+    let small;
+    let pool: &[StoredMemory] = match index.snapshot(db, workspace).await? {
+        Snapshot::Small(all) => {
+            small = all;
+            &small
+        }
+        Snapshot::Large(_) => {
+            narrowed = database_candidates(index, db, &reader, workspace, query).await?;
+            &narrowed
+        }
     };
-    let pool: &[StoredMemory] = narrowed.as_deref().unwrap_or(&all);
     let candidates: Vec<&StoredMemory> = pool
         .iter()
         .filter(|m| reader.may_read(m) && in_view(m, view))
@@ -319,8 +393,21 @@ pub async fn store(
     // Everyone who runs the graph adds to the same memory.
     let mut existing = memories::of_graph(db, graph_id).await?;
     let mut decisions = Vec::with_capacity(candidates.len());
+    // A graph that has learned more than one read holds is not compared in full: the
+    // memories that share words with the candidate are fetched for it instead.
+    let partial = existing.len() >= CONSOLIDATION_WINDOW;
     for c in candidates {
         let embedding = kernel::embed(&c.content);
+        if partial {
+            let known: HashSet<Uuid> = existing.iter().map(|m| m.memory.id).collect();
+            let similar =
+                memories::graph_text_matches(db, graph_id, &any_term_query(&c.content), 20).await?;
+            existing.extend(
+                similar
+                    .into_iter()
+                    .filter(|m| !known.contains(&m.memory.id)),
+            );
+        }
         let best = existing
             .iter()
             .enumerate()

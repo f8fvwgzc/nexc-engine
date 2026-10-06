@@ -85,14 +85,16 @@ pub async fn list(
     let (index, db) = (&state.memories, &state.db);
     let memories = match q {
         Some(q) => {
-            memory::retrieve(index, db, auth.id, workspace, view, &q, offset + limit).await?
+            // A search is ranked as a whole, so its pages are cut from the ranking.
+            let ranked =
+                memory::retrieve(index, db, auth.id, workspace, view, &q, offset + limit).await?;
+            ranked.into_iter().skip(offset).collect()
         }
-        None => memory::visible(index, db, auth.id, workspace, view, offset + limit).await?,
+        None => memory::visible(db, auth.id, workspace, view, limit, offset).await?,
     };
     let chars = query.preview.map(|c| c.clamp(20, 2000) as usize);
     let page = memories
         .into_iter()
-        .skip(offset)
         .map(|mut m| {
             if let Some(chars) = chars {
                 m.content = preview(&m.content, chars);
@@ -117,7 +119,7 @@ pub async fn get(
         .await
         .or_not_found("memory")?;
     let workspace = workspace.ok_or(AppError::NotFound("memory"))?;
-    memory::find(&state.memories, &state.db, auth.id, workspace, id)
+    memory::find(&state.db, auth.id, workspace, id)
         .await?
         .map(Json)
         .ok_or(AppError::NotFound("memory"))

@@ -116,6 +116,133 @@ pub async fn all_for(
     .await
 }
 
+/// The words that occur in more than `share` of all memories, from the
+/// statistics PostgreSQL keeps for the full-text column (refreshed by
+/// autovacuum's ANALYZE). Searching for such a word matches a large part of
+/// the table and says little; empty until the table has been analysed.
+pub async fn common_terms(db: impl PgExecutor<'_>, share: f64) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT u.elem
+         FROM pg_stats s,
+              unnest(s.most_common_elems::text::text[], s.most_common_elem_freqs) AS u(elem, freq)
+         WHERE s.schemaname = current_schema() AND s.tablename = 'memories'
+           AND s.attname = 'content_tsv' AND u.elem IS NOT NULL AND u.freq > $1",
+    )
+    .bind(share)
+    .fetch_all(db)
+    .await
+}
+
+/// How many memories a workspace has.
+pub async fn count_for(db: impl PgExecutor<'_>, workspace_id: Uuid) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar("SELECT count(*) FROM memories WHERE workspace_id = $1")
+        .bind(workspace_id)
+        .fetch_one(db)
+        .await
+}
+
+/// Who may read which memories of a workspace, as SQL: the memories of the
+/// graphs in `$2` and the user-scope memories of `$3`.
+macro_rules! readable {
+    () => {
+        "workspace_id = $1 AND (graph_id = ANY($2) OR (graph_id IS NULL AND owner_id = $3))"
+    };
+}
+
+/// One page of the memories a reader may see, newest first, read from the
+/// database: `only_graph` narrows to one graph plus the reader's own notes.
+pub async fn page_readable(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    graphs: &[Uuid],
+    reader: Uuid,
+    only_graph: Option<Uuid>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<StoredMemory>, sqlx::Error> {
+    sqlx::query_as(concat!(
+        "SELECT * FROM memories WHERE ",
+        readable!(),
+        " AND ($4::uuid IS NULL OR graph_id = $4 OR scope = 'user')
+         ORDER BY updated_at DESC, id LIMIT $5 OFFSET $6"
+    ))
+    .bind(workspace_id)
+    .bind(graphs)
+    .bind(reader)
+    .bind(only_graph)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(db)
+    .await
+}
+
+/// One memory by id, whoever may read it.
+pub async fn find_stored(
+    db: impl PgExecutor<'_>,
+    id: Uuid,
+) -> Result<Option<StoredMemory>, sqlx::Error> {
+    sqlx::query_as("SELECT * FROM memories WHERE id = $1")
+        .bind(id)
+        .fetch_optional(db)
+        .await
+}
+
+/// The readable memories that match any term of `tsquery` (terms joined by
+/// `|`), best full-text rank first, together with the most recently updated
+/// ones: the candidates a large workspace is ranked from. Uses the GIN index
+/// on `content_tsv` and the `(workspace_id, updated_at)` index.
+pub async fn text_candidates(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    graphs: &[Uuid],
+    reader: Uuid,
+    tsquery: &str,
+    matches: i64,
+    recent: i64,
+) -> Result<Vec<StoredMemory>, sqlx::Error> {
+    sqlx::query_as(concat!(
+        "SELECT * FROM memories WHERE id IN (
+            (SELECT id FROM memories WHERE ",
+        readable!(),
+        " AND $4 <> '' AND content_tsv @@ to_tsquery('simple', $4)
+             ORDER BY ts_rank(content_tsv, to_tsquery('simple', $4)) DESC, updated_at DESC
+             LIMIT $5)
+            UNION
+            (SELECT id FROM memories WHERE ",
+        readable!(),
+        " ORDER BY updated_at DESC LIMIT $6))"
+    ))
+    .bind(workspace_id)
+    .bind(graphs)
+    .bind(reader)
+    .bind(tsquery)
+    .bind(matches)
+    .bind(recent)
+    .fetch_all(db)
+    .await
+}
+
+/// The memories of a graph that match any term of `tsquery`, for consolidating
+/// into a graph that has learned more than fits in one read.
+pub async fn graph_text_matches(
+    db: impl PgExecutor<'_>,
+    graph_id: Uuid,
+    tsquery: &str,
+    limit: i64,
+) -> Result<Vec<StoredMemory>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT * FROM memories
+         WHERE scope = 'graph' AND graph_id = $1 AND $2 <> ''
+           AND content_tsv @@ to_tsquery('simple', $2)
+         ORDER BY ts_rank(content_tsv, to_tsquery('simple', $2)) DESC LIMIT $3",
+    )
+    .bind(graph_id)
+    .bind(tsquery)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
 /// What a graph has learned so far, whoever ran it (for consolidation).
 pub async fn of_graph(
     db: impl PgExecutor<'_>,
