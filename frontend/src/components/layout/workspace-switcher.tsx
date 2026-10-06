@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { CheckIcon, ChevronsUpDownIcon, PlusIcon, SettingsIcon, ShieldIcon } from 'lucide-react';
+import { CheckIcon, ChevronsUpDownIcon, PlusIcon, SettingsIcon } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
@@ -26,7 +26,6 @@ import { createWorkspace } from '@/features/workspaces/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { errorMessage } from '@/lib/api/errors';
 import { qk } from '@/lib/query-keys';
-import { useAuthStore } from '@/stores/auth-store';
 import { useWorkspaceStore } from '@/stores/workspace-store';
 
 import { BrandMark } from './brand-mark';
@@ -93,7 +92,6 @@ export function WorkspaceSwitcher() {
   const { current, all } = useCurrentWorkspace();
   const setCurrent = useWorkspaceStore((s) => s.setCurrent);
   const navigate = useNavigate();
-  const platformAdmin = useAuthStore((s) => s.user?.role === 'admin');
   const [creating, setCreating] = useState(false);
 
   return (
@@ -149,14 +147,6 @@ export function WorkspaceSwitcher() {
                 Settings
               </Link>
             </DropdownMenuItem>
-            {platformAdmin && (
-              <DropdownMenuItem asChild>
-                <Link to="/app/platform">
-                  <ShieldIcon />
-                  Platform console
-                </Link>
-              </DropdownMenuItem>
-            )}
             <DropdownMenuItem onSelect={() => setCreating(true)}>
               <PlusIcon />
               New workspace

@@ -91,12 +91,15 @@ export function NavUser() {
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              <DropdownMenuItem asChild>
-                <Link to="/app/settings/profile">
-                  <UserIcon />
-                  Profile
-                </Link>
-              </DropdownMenuItem>
+              {/* The profile page is part of a workspace's settings; the platform console has none. */}
+              {user.role !== 'admin' && (
+                <DropdownMenuItem asChild>
+                  <Link to="/app/settings/profile">
+                    <UserIcon />
+                    Profile
+                  </Link>
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger>
                   <PaletteIcon />

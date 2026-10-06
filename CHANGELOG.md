@@ -125,9 +125,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   their rows.
 - A workspace's files on disk (uploaded originals, run artifacts) download as one archive in the
   layout of the data folder (`GET /workspaces/{wid}/files.zip`), completing a data transfer.
-- Platform console (`/app/platform`, platform administrators only): every workspace with its owner
-  and size, every account with its platform role (which another administrator can change), and
-  the infrastructure page, in a layout of its own (`/admin/workspaces`, `/admin/users`).
+- Platform console (`/app/platform`): what a platform administrator works in, and all such an
+  account sees. It has the app's layout with its own menu (Workspaces, Accounts, Infrastructure):
+  every workspace with its owner and size, every account with its platform role (which another
+  administrator can change). The workspace app and its settings send a platform administrator
+  there; everyone else is sent back to their workspace (`/admin/workspaces`, `/admin/users`).
 - `make seed-demo` (`scripts/seed-demo.py`): a demo workspace with five accounts in different
   roles, three teams, projects, cycles, issues and comments, created through the API so that
   each account's inbox holds real notifications.

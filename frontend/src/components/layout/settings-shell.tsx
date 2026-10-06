@@ -1,6 +1,6 @@
-import { ArrowUpRightIcon, ChevronLeftIcon, ShieldIcon } from 'lucide-react';
+import { ArrowUpRightIcon, ChevronLeftIcon } from 'lucide-react';
 import { Suspense } from 'react';
-import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
+import { Link, Navigate, NavLink, Outlet, useLocation } from 'react-router-dom';
 
 import {
   Sidebar,
@@ -37,6 +37,8 @@ export default function SettingsShell() {
   const { current } = useCurrentWorkspace();
   const admin = current?.role === 'owner' || current?.role === 'admin';
   const platformAdmin = useAuthStore((s) => s.user?.role === 'admin');
+  // Workspace settings are not for platform administrators: their place is the console.
+  if (platformAdmin) return <Navigate to="/app/platform" replace />;
   return (
     <SidebarProvider open>
       <a
@@ -87,16 +89,6 @@ export default function SettingsShell() {
         </SidebarContent>
         <SidebarFooter>
           <SidebarMenu>
-            {platformAdmin && (
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild className="h-7 text-[13px]">
-                  <Link to="/app/platform">
-                    <ShieldIcon />
-                    <span>Platform console</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            )}
             <SidebarMenuItem>
               <SidebarMenuButton asChild className="h-7 text-[13px]">
                 <a href={API_DOCS_ITEM.to} target="_blank" rel="noopener noreferrer">

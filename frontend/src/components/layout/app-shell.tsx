@@ -1,10 +1,12 @@
 import { Suspense } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Navigate, Outlet } from 'react-router-dom';
 
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import { CommandPalette } from '@/features/command/components/command-palette';
 import { ShortcutsDialog } from '@/features/command/components/shortcuts-dialog';
 import { useGlobalShortcuts } from '@/features/command/hooks/use-global-shortcuts';
+
+import { useAuthStore } from '@/stores/auth-store';
 
 import { AppHeader } from './app-header';
 import { AppSidebar } from './app-sidebar';
@@ -15,6 +17,9 @@ import { PageSkeleton } from './page-skeleton';
 /** Logged-in shell: sidebar + header + routed content, palette and global shortcuts. */
 export default function AppShell() {
   useGlobalShortcuts();
+  // A platform administrator works in the platform console, not in a workspace.
+  const platformAdmin = useAuthStore((s) => s.user?.role === 'admin');
+  if (platformAdmin) return <Navigate to="/app/platform" replace />;
   return (
     // The sidebar stays open on desktop: there is nothing to collapse it. On a phone it is a drawer.
     <SidebarProvider open>
