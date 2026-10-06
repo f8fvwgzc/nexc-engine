@@ -38,7 +38,7 @@ the owner names, and then offers to remove it from this server.
    parents before children, in one transaction on the target (`engine/transfer.rs`): the copy
    is there completely or not at all. Per-table counts are kept in `workspace_transfers`.
 3. After checking the copy, the owner removes the workspace here. Removal deletes every row of
-   the workspace and the uploaded files of its documents.
+   the workspace, the uploaded files of its documents and the artifact files of its runs.
 
 Not copied, on purpose: password hashes (accounts are created on the target with a hash nothing
 matches), stored API keys (sealed with this server's master key), sessions, and files on disk.
@@ -52,7 +52,7 @@ to migrate.
 
 It gives a workspace **portability** (a complete copy in the standard schema) and **erasure from
 the live database**. It is not, by itself, compliance. Outside what it reaches: this server's
-database backups and logs, run artifacts on disk, and whatever was sent to LLM and embedding
+database backups and logs, and whatever was sent to LLM and embedding
 providers while the workspace ran here. Encryption in transit to the target is the connection
 string's `sslmode`; encryption at rest is the target's. Agreements such as a BAA are between the
 organisations, not something the software provides.

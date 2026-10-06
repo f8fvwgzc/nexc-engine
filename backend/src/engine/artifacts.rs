@@ -69,6 +69,21 @@ fn storage_rel(run_id: Uuid, node_id: Uuid, path: &str) -> String {
     format!("{run_id}/{node_id}/{path}")
 }
 
+/// Removes the stored files of runs (each run has its own directory). Called
+/// after the runs' rows are gone: a file that cannot be removed is logged,
+/// not an error, because nothing can be rolled back any more.
+pub async fn remove_runs(state: &AppState, run_ids: &[Uuid]) {
+    let root = state.settings.artifacts_dir();
+    for run_id in run_ids {
+        let dir = root.join(run_id.to_string());
+        match tokio::fs::remove_dir_all(&dir).await {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => tracing::warn!(%run_id, error = %err, "cannot remove a run's artifacts"),
+        }
+    }
+}
+
 /// Absolute location of a stored artifact, verified to be inside the
 /// artifacts directory.
 pub fn resolve(state: &AppState, storage_path: &str) -> Result<PathBuf, AppError> {

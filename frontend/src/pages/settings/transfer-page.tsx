@@ -179,7 +179,8 @@ function TransferForm({ workspace }: { workspace: Workspace }) {
             ? 'A copy succeeded. Check it on your side before removing anything here.'
             : 'Copy the workspace first and check the copy; removal is offered after a copy succeeded.'}{' '}
           Removing deletes every row of {workspace.name} from this database and cannot be undone.
-          Backups and logs of this server, and files on its disk, are outside what it reaches.
+          Uploaded files and run artifacts are deleted too; backups and logs of this server are
+          outside what it reaches.
         </p>
         <Button
           variant="destructive"

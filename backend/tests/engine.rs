@@ -211,6 +211,23 @@ async fn run_executes_the_dag_in_order(pool: PgPool) {
         .await;
     assert_eq!(runs.body.as_array().unwrap().len(), 3);
     assert_eq!(runs.body[0]["id"], run["id"], "newest first");
+
+    // Deleting the graph removes its runs' files from disk, not only their rows.
+    let stored = app.state.settings.artifacts_dir().join(&rid);
+    assert!(
+        stored.exists(),
+        "the artifact is on disk while the graph lives"
+    );
+    let deleted = app
+        .request(
+            Method::DELETE,
+            &format!("/api/v1/graphs/{gid}"),
+            Some(&token),
+            None,
+        )
+        .await;
+    assert_eq!(deleted.status, StatusCode::NO_CONTENT);
+    assert!(!stored.exists(), "and gone with it");
 }
 
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]

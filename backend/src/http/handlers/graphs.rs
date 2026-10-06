@@ -206,7 +206,13 @@ pub async fn delete(
     auth: AuthUser,
     Path(gid): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
+    // Its runs' artifact files are on disk, outside what the database cascades to.
+    let runs: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM runs WHERE graph_id = $1")
+        .bind(gid)
+        .fetch_all(&state.db)
+        .await?;
     if repo::graphs::delete(&state.db, auth.id, gid).await? {
+        crate::engine::artifacts::remove_runs(&state, &runs).await;
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(AppError::NotFound("graph"))
