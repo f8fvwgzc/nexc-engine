@@ -14,6 +14,8 @@ const HEARTBEAT_EVERY: Duration = Duration::from_secs(10);
 const HOUSEKEEPING_EVERY: Duration = Duration::from_secs(60);
 /// How often waiting documents are looked for; a round lasts as long as its documents take.
 const INGEST_EVERY: Duration = Duration::from_secs(2);
+/// How often workspaces' memory forgetting policies are applied.
+const FORGET_EVERY: Duration = Duration::from_secs(3600);
 
 /// Starts every background worker; they stop when `shutdown` is cancelled.
 pub fn spawn(state: &AppState, shutdown: CancellationToken) {
@@ -33,6 +35,15 @@ pub fn spawn(state: &AppState, shutdown: CancellationToken) {
         shutdown.clone(),
         state.clone(),
         |s| async move { knowledge::work(&s).await },
+    ));
+    tokio::spawn(every(
+        FORGET_EVERY,
+        shutdown.clone(),
+        state.clone(),
+        |s| async move {
+            crate::memory::forget(&s.memories, &s.db).await?;
+            Ok(())
+        },
     ));
     tokio::spawn(every(
         HOUSEKEEPING_EVERY,

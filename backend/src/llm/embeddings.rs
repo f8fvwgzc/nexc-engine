@@ -12,6 +12,7 @@ use serde_json::json;
 
 use crate::config::Secret;
 use crate::domain::knowledge::BUILTIN_EMBED_MODEL;
+use crate::domain::settings::ConfigScope;
 use crate::kernel;
 
 /// Inputs sent per request.
@@ -27,6 +28,8 @@ pub struct EmbedTarget {
     pub model: String,
     pub dims: Option<u32>,
     pub api_key: Option<Secret<String>>,
+    /// Whose configuration named the endpoint (for the usage ledger).
+    pub credential: ConfigScope,
 }
 
 impl EmbedTarget {
@@ -36,6 +39,7 @@ impl EmbedTarget {
             model: BUILTIN_EMBED_MODEL.to_owned(),
             dims: None,
             api_key: None,
+            credential: ConfigScope::Server,
         }
     }
 
@@ -48,6 +52,24 @@ impl EmbedTarget {
 #[derive(Deserialize)]
 struct Response {
     data: Vec<Item>,
+    #[serde(default)]
+    usage: Option<ResponseUsage>,
+}
+
+#[derive(Deserialize)]
+struct ResponseUsage {
+    #[serde(default)]
+    total_tokens: i64,
+    #[serde(default)]
+    prompt_tokens: i64,
+}
+
+/// Vectors with what producing them cost.
+#[derive(Debug, Clone, Default)]
+pub struct Embedded {
+    pub vectors: Vec<Vec<f32>>,
+    /// Tokens the endpoint says it read; 0 for the built-in embedding.
+    pub tokens: i64,
 }
 
 #[derive(Deserialize)]
@@ -58,7 +80,7 @@ struct Item {
 
 /// The vectors of a response in the order of the inputs, L2-normalised so
 /// that a dot product is a cosine. Fails unless there is one per input.
-fn vectors(body: &str, inputs: usize) -> anyhow::Result<Vec<Vec<f32>>> {
+fn vectors(body: &str, inputs: usize) -> anyhow::Result<Embedded> {
     let mut response: Response = serde_json::from_str(body)?;
     anyhow::ensure!(
         response.data.len() == inputs,
@@ -66,11 +88,17 @@ fn vectors(body: &str, inputs: usize) -> anyhow::Result<Vec<Vec<f32>>> {
         response.data.len()
     );
     response.data.sort_by_key(|item| item.index);
-    Ok(response
-        .data
-        .into_iter()
-        .map(|item| normalised(item.embedding))
-        .collect())
+    let tokens = response
+        .usage
+        .map_or(0, |u| u.total_tokens.max(u.prompt_tokens));
+    Ok(Embedded {
+        vectors: response
+            .data
+            .into_iter()
+            .map(|item| normalised(item.embedding))
+            .collect(),
+        tokens,
+    })
 }
 
 fn normalised(mut v: Vec<f32>) -> Vec<f32> {
@@ -89,15 +117,18 @@ pub async fn embed(
     http: &reqwest::Client,
     target: &EmbedTarget,
     inputs: &[String],
-) -> anyhow::Result<Vec<Vec<f32>>> {
+) -> anyhow::Result<Embedded> {
     let Some(base) = target.base_url.as_deref() else {
-        return Ok(inputs
-            .iter()
-            .map(|text| kernel::embed(text).to_vec())
-            .collect());
+        return Ok(Embedded {
+            vectors: inputs
+                .iter()
+                .map(|text| kernel::embed(text).to_vec())
+                .collect(),
+            tokens: 0,
+        });
     };
     if inputs.is_empty() {
-        return Ok(Vec::new());
+        return Ok(Embedded::default());
     }
     let mut body = json!({ "model": target.model, "input": inputs });
     if let Some(dims) = target.dims {
@@ -162,9 +193,11 @@ mod tests {
 
     #[test]
     fn response_vectors_are_ordered_and_normalised() {
-        let body = r#"{"data":[{"index":1,"embedding":[0,2]},{"index":0,"embedding":[3,4]}]}"#;
+        let body = r#"{"data":[{"index":1,"embedding":[0,2]},{"index":0,"embedding":[3,4]}],
+            "usage":{"prompt_tokens":7,"total_tokens":7}}"#;
         let v = vectors(body, 2).unwrap();
-        assert_eq!(v, vec![vec![0.6, 0.8], vec![0.0, 1.0]]);
+        assert_eq!(v.vectors, vec![vec![0.6, 0.8], vec![0.0, 1.0]]);
+        assert_eq!(v.tokens, 7);
         assert!(vectors(body, 3).is_err(), "one vector per input");
     }
 
@@ -181,7 +214,7 @@ mod tests {
         let v = embed(&http, &EmbedTarget::builtin(), &["hello world".into()])
             .await
             .unwrap();
-        assert_eq!(v[0].len(), kernel::EMBED_DIM);
+        assert_eq!((v.vectors[0].len(), v.tokens), (kernel::EMBED_DIM, 0));
         assert!(!EmbedTarget::builtin().is_semantic());
     }
 }

@@ -105,6 +105,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`GET /memories/topics`, `topic_id` on `GET /memories`), shown as chips on the Memory page.
   Topic names are drawn only from memories the whole workspace can read; personal notes and
   private teams' memories are placed under a topic but never shape its name.
+- Memory can forget, when a workspace says so: guardrails gain `memory_limit` and
+  `memory_forget_after_days` (both off by default). Hourly, memories neither recalled nor updated
+  for that long are removed, then the least important and least recalled beyond the limit.
+- Embedding calls are booked in the usage ledger under the purpose `embedding` (tokens; the price
+  of embedding models is not known to the server, so their cost is recorded as zero).
 - Workflow editor: the Teams page opens a team's workflow, where team owners and workspace admins
   add, rename, recolour, reorder and remove issue states; other members see it read-only.
 - "Your teams" in the sidebar opens a team's issues (`/app/issues?team=<id>`), and `C` on the

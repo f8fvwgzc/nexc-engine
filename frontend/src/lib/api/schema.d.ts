@@ -2029,6 +2029,19 @@ export interface components {
             member_monthly_token_budget: number | null;
             /**
              * Format: int64
+             * @description Memories neither recalled nor updated for this many days are
+             *     forgotten; `null` never forgets by age.
+             */
+            memory_forget_after_days: number | null;
+            /**
+             * Format: int64
+             * @description The most memories the workspace keeps; `null` keeps all. Past it, the
+             *     least valuable are forgotten first: low importance, rarely recalled,
+             *     longest untouched.
+             */
+            memory_limit: number | null;
+            /**
+             * Format: int64
              * @description Tokens (in + out) the workspace may spend per calendar month (UTC);
              *     `null` for no limit. New plans, runs and assistant calls are refused
              *     once it is reached; work already running finishes.
@@ -2932,7 +2945,7 @@ export interface components {
              * @description What an LLM call was for.
              * @enum {string}
              */
-            key: "plan" | "node" | "memory" | "assistant";
+            key: "plan" | "node" | "memory" | "assistant" | "embedding";
         };
         /** @description Sums over a set of calls. */
         UsageTotals: {

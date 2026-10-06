@@ -470,6 +470,13 @@ impl Validate for Guardrails {
                 errors.add(field, "must not be negative");
             }
         }
+        // Low values would forget what was learned minutes ago.
+        if self.memory_limit.is_some_and(|n| n < 100) {
+            errors.add("memory_limit", "must be at least 100");
+        }
+        if self.memory_forget_after_days.is_some_and(|d| d < 7) {
+            errors.add("memory_forget_after_days", "must be at least 7");
+        }
     }
 }
 

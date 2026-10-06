@@ -79,5 +79,9 @@ export const guardrailsSchema = z.object({
   allowed_providers: z.array(z.enum(['anthropic', 'openai_compatible', 'claude_code', 'demo'])),
   allow_code_exec: z.boolean(),
   redact_secrets: z.boolean(),
+  /** The most memories the workspace keeps; null keeps all. */
+  memory_limit: z.number().int().nullable(),
+  /** Memories untouched for this many days are forgotten; null never forgets by age. */
+  memory_forget_after_days: z.number().int().nullable(),
 });
 export type Guardrails = z.infer<typeof guardrailsSchema>;

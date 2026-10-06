@@ -36,6 +36,17 @@ pub struct Guardrails {
     #[serde(default = "yes")]
     #[schema(required = true)]
     pub redact_secrets: bool,
+    /// The most memories the workspace keeps; `null` keeps all. Past it, the
+    /// least valuable are forgotten first: low importance, rarely recalled,
+    /// longest untouched.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub memory_limit: Option<i64>,
+    /// Memories neither recalled nor updated for this many days are
+    /// forgotten; `null` never forgets by age.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub memory_forget_after_days: Option<i64>,
 }
 
 fn yes() -> bool {
@@ -50,6 +61,8 @@ impl Default for Guardrails {
             allowed_providers: Vec::new(),
             allow_code_exec: true,
             redact_secrets: true,
+            memory_limit: None,
+            memory_forget_after_days: None,
         }
     }
 }

@@ -221,7 +221,7 @@ pub async fn search(
     let q: String = query.q.trim().chars().take(1_000).collect();
     let limit = query.limit.unwrap_or(8).clamp(1, 20);
     Ok(Json(
-        knowledge::search(&state, wid, &q, query.topic_id, limit).await?,
+        knowledge::search(&state, wid, Some(auth.id), &q, query.topic_id, limit).await?,
     ))
 }
 

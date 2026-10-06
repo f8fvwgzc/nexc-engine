@@ -239,7 +239,9 @@ async fn build_context(
     };
     let memories = recalled.into_iter().map(|m| m.content).collect();
     let documents = match graph.workspace_id {
-        Some(workspace) => knowledge::context(state, workspace, &query, knowledge::Use::Plan).await,
+        Some(workspace) => {
+            knowledge::context(state, workspace, owner, &query, knowledge::Use::Plan).await
+        }
         None => Vec::new(),
     };
     let workspace_agents = match graph.workspace_id {

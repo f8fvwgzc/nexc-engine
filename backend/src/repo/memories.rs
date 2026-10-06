@@ -187,6 +187,65 @@ pub async fn page_readable(
     .await
 }
 
+// ---------- forgetting ----------
+
+/// Workspaces that set a forgetting policy: `(workspace, memory limit, days)`.
+pub async fn forgetting_policies(
+    db: impl PgExecutor<'_>,
+) -> Result<Vec<(Uuid, Option<i64>, Option<i64>)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT workspace_id, (config->>'memory_limit')::bigint,
+                (config->>'memory_forget_after_days')::bigint
+         FROM workspace_guardrails
+         WHERE config->>'memory_limit' IS NOT NULL
+            OR config->>'memory_forget_after_days' IS NOT NULL",
+    )
+    .fetch_all(db)
+    .await
+}
+
+/// Forgets the memories of a workspace that were neither recalled nor
+/// updated for `days` days. Returns how many.
+pub async fn forget_untouched(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    days: i64,
+) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        "DELETE FROM memories
+         WHERE workspace_id = $1
+           AND GREATEST(updated_at, COALESCE(last_accessed_at, updated_at))
+               < now() - make_interval(days => $2::int)",
+    )
+    .bind(workspace_id)
+    .bind(days)
+    .execute(db)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+/// Brings a workspace down to `limit` memories by forgetting the least
+/// valuable: lowest importance and recall count first, then the longest
+/// untouched. Returns how many were forgotten.
+pub async fn forget_excess(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    limit: i64,
+) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        "DELETE FROM memories WHERE id IN (
+            SELECT id FROM memories WHERE workspace_id = $1
+            ORDER BY importance + 0.1 * ln(1 + access_count) DESC,
+                     GREATEST(updated_at, COALESCE(last_accessed_at, updated_at)) DESC, id
+            OFFSET $2)",
+    )
+    .bind(workspace_id)
+    .bind(limit)
+    .execute(db)
+    .await?;
+    Ok(result.rows_affected())
+}
+
 // ---------- topics ----------
 
 /// A stored topic with its centre.

@@ -291,6 +291,28 @@ pub async fn retrieve(
     Ok(ranked)
 }
 
+/// Applies every workspace's forgetting policy (see `Guardrails`): memories
+/// untouched for too long go first, then whatever exceeds the workspace's
+/// limit, least valuable first. Workspaces without a policy keep everything.
+pub async fn forget(index: &MemoryIndex, db: &PgPool) -> anyhow::Result<u64> {
+    let mut forgotten = 0;
+    for (workspace, limit, days) in memories::forgetting_policies(db).await? {
+        let mut here = 0;
+        if let Some(days) = days.filter(|d| *d >= 7) {
+            here += memories::forget_untouched(db, workspace, days).await?;
+        }
+        if let Some(limit) = limit.filter(|n| *n >= 100) {
+            here += memories::forget_excess(db, workspace, limit).await?;
+        }
+        if here > 0 {
+            index.invalidate(workspace);
+            tracing::info!(%workspace, forgotten = here, "memories forgotten by policy");
+        }
+        forgotten += here;
+    }
+    Ok(forgotten)
+}
+
 /// One memory proposed by the extraction call.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Candidate {

@@ -22,7 +22,9 @@ use crate::domain::knowledge::{
     BUILTIN_EMBED_MODEL, Block, BlockKind, Chunk, Document, DocumentStatus, KnowledgeSettings,
     Parsed, Passage, Topic, chunk,
 };
+use crate::domain::settings::{ConfigScope, LlmProviderKind};
 use crate::domain::topics as cluster;
+use crate::domain::usage::{UsageEvent, UsagePurpose};
 use crate::llm::embeddings::{self, EmbedTarget};
 use crate::memory::any_term_query_without;
 use crate::repo;
@@ -87,6 +89,7 @@ fn server_target(state: &AppState) -> EmbedTarget {
             model: model.clone(),
             dims: s.embed_dims,
             api_key: s.embed_api_key.clone(),
+            credential: ConfigScope::Server,
         },
         _ => EmbedTarget::builtin(),
     }
@@ -119,6 +122,7 @@ pub async fn settings(state: &AppState, workspace: Uuid) -> anyhow::Result<Resol
                 model: model.clone(),
                 dims: stored.embed_dims.and_then(|d| u32::try_from(d).ok()),
                 api_key,
+                credential: ConfigScope::Workspace,
             }
         }
         _ => server_target(state),
@@ -132,6 +136,36 @@ pub async fn settings(state: &AppState, workspace: Uuid) -> anyhow::Result<Resol
         has_own_key: stored.api_key_enc.is_some(),
         key_hint: stored.key_hint,
     })
+}
+
+/// Books what an embedding call read. The built-in embedding costs nothing
+/// and books nothing. The price of embedding models is not known here, so
+/// the tokens are recorded and the cost is left at zero.
+async fn book(
+    state: &AppState,
+    workspace: Uuid,
+    user: Option<Uuid>,
+    target: &EmbedTarget,
+    tokens: i64,
+) {
+    let Some(user_id) = user else {
+        return;
+    };
+    let event = UsageEvent {
+        workspace_id: Some(workspace),
+        user_id,
+        graph_id: None,
+        run_id: None,
+        purpose: UsagePurpose::Embedding,
+        provider: LlmProviderKind::OpenaiCompatible,
+        model: target.model.clone(),
+        credential: target.credential,
+        tokens_in: tokens,
+        tokens_out: 0,
+        cost_usd: 0.0,
+        context_chars_saved: 0,
+    };
+    super::usage::record(state, event).await;
 }
 
 // ---------- ingestion ----------
@@ -271,7 +305,17 @@ async fn embed_document(
                 .embed_text(&document.name)
             })
             .collect();
-        let vectors = embeddings::embed(&state.http, target, &texts).await?;
+        let embedded = embeddings::embed(&state.http, target, &texts).await?;
+        let workspace = document.workspace_id;
+        book(
+            state,
+            workspace,
+            document.uploaded_by,
+            target,
+            embedded.tokens,
+        )
+        .await;
+        let vectors = embedded.vectors;
         let ids: Vec<Uuid> = batch.iter().map(|c| c.id).collect();
         let bytes: Vec<Vec<u8>> = vectors.iter().map(|v| embeddings::to_bytes(v)).collect();
         repo::knowledge::set_embeddings(&state.db, &ids, &bytes, &target.model).await?;
@@ -421,6 +465,7 @@ pub fn fuse(
 pub async fn search(
     state: &AppState,
     workspace: Uuid,
+    user: Option<Uuid>,
     query: &str,
     topic: Option<Uuid>,
     limit: usize,
@@ -447,7 +492,10 @@ pub async fn search(
         .any(|c| c.embedding_model.as_deref() == Some(model));
     let vector = if comparable || state.passage_vectors.available() {
         match embeddings::embed(&state.http, &resolved.target, &[query.to_owned()]).await {
-            Ok(mut vectors) => vectors.pop(),
+            Ok(mut embedded) => {
+                book(state, workspace, user, &resolved.target, embedded.tokens).await;
+                embedded.vectors.pop()
+            }
             Err(err) => {
                 tracing::warn!(error = %err, "query embedding failed; ranking by keywords only");
                 None
@@ -633,7 +681,13 @@ pub enum Use {
 /// within the workspace's passage count and character budget. Empty when the
 /// workspace turned documents off for this use, or has none that match;
 /// never an error: a prompt is built with or without documents.
-pub async fn context(state: &AppState, workspace: Uuid, query: &str, purpose: Use) -> Vec<String> {
+pub async fn context(
+    state: &AppState,
+    workspace: Uuid,
+    user: Uuid,
+    query: &str,
+    purpose: Use,
+) -> Vec<String> {
     let resolved = match settings(state, workspace).await {
         Ok(resolved) => resolved,
         Err(err) => {
@@ -648,7 +702,8 @@ pub async fn context(state: &AppState, workspace: Uuid, query: &str, purpose: Us
     if !enabled || resolved.passages == 0 {
         return Vec::new();
     }
-    let passages = match search(state, workspace, query, None, resolved.passages).await {
+    let passages = match search(state, workspace, Some(user), query, None, resolved.passages).await
+    {
         Ok(passages) => passages,
         Err(err) => {
             tracing::warn!(error = %err, "document search failed; no documents used");

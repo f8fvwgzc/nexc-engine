@@ -86,6 +86,37 @@ function GuardrailsForm({ workspace }: { workspace: Workspace }) {
               }
             />
           </label>
+          <label className="space-y-1.5 text-sm">
+            <span className="font-medium">Most memories kept</span>
+            <Input
+              inputMode="numeric"
+              value={draft.memory_limit ?? ''}
+              placeholder="Keep all (at least 100)"
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, memory_limit: parseBudget(e.target.value) }))
+              }
+            />
+            <span className="block text-xs text-muted-foreground">
+              Past it, the least important and least recalled are forgotten first.
+            </span>
+          </label>
+          <label className="space-y-1.5 text-sm">
+            <span className="font-medium">Forget memories untouched for (days)</span>
+            <Input
+              inputMode="numeric"
+              value={draft.memory_forget_after_days ?? ''}
+              placeholder="Never (at least 7)"
+              onChange={(e) =>
+                setDraft((d) => ({
+                  ...d,
+                  memory_forget_after_days: parseBudget(e.target.value),
+                }))
+              }
+            />
+            <span className="block text-xs text-muted-foreground">
+              Neither recalled by a node nor updated in that time. Checked hourly.
+            </span>
+          </label>
         </div>
         <div className="space-y-2 text-sm">
           <p className="font-medium">Allowed providers</p>

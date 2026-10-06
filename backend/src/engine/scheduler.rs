@@ -691,11 +691,13 @@ impl NodeTask {
             .map(|m| data.policy.scrub(m.content))
             .collect();
         let documents = match data.workspace_id {
-            Some(workspace) => knowledge::context(&state, workspace, &query, knowledge::Use::Node)
-                .await
-                .into_iter()
-                .map(|d| data.policy.scrub(d))
-                .collect(),
+            Some(workspace) => {
+                knowledge::context(&state, workspace, data.owner, &query, knowledge::Use::Node)
+                    .await
+                    .into_iter()
+                    .map(|d| data.policy.scrub(d))
+                    .collect()
+            }
             None => Vec::new(),
         };
         // An agent works over several turns and takes more context than one LLM call.

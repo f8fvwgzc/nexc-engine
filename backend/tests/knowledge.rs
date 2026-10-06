@@ -171,7 +171,7 @@ async fn documents_are_ingested_searched_and_cited(pool: PgPool) {
 
     // A prompt gets passages headed by their citation, within the workspace's settings.
     let query = "customs reference for Rotterdam invoices";
-    let context = knowledge::context(&app.state, workspace, query, Use::Node).await;
+    let context = knowledge::context(&app.state, workspace, Uuid::now_v7(), query, Use::Node).await;
     assert!(
         context[0].starts_with("[handbook.md › Warehouse handbook › Customs]\n"),
         "{context:?}"
@@ -200,7 +200,7 @@ async fn documents_are_ingested_searched_and_cited(pool: PgPool) {
     assert_eq!(status, StatusCode::OK, "{saved}");
     assert_eq!(saved["use_in_plan"], false);
     assert!(
-        knowledge::context(&app.state, workspace, query, Use::Node)
+        knowledge::context(&app.state, workspace, Uuid::now_v7(), query, Use::Node)
             .await
             .is_empty(),
         "zero passages keeps documents out of prompts"
@@ -326,7 +326,7 @@ async fn passages_are_found_by_vector_and_grouped_into_topics(pool: PgPool) {
     // A question whose words are all too short for the keyword search is still
     // answered: the passage is the query's nearest neighbour.
     assert_eq!(nexc::memory::any_term_query("VAT fee tax"), "");
-    let found = knowledge::search(&app.state, workspace, "VAT fee tax", None, 3)
+    let found = knowledge::search(&app.state, workspace, None, "VAT fee tax", None, 3)
         .await
         .unwrap();
     assert_eq!(
@@ -334,7 +334,7 @@ async fn passages_are_found_by_vector_and_grouped_into_topics(pool: PgPool) {
         "{found:?}"
     );
     // Another workspace's question finds nothing of this one.
-    let elsewhere = knowledge::search(&app.state, Uuid::now_v7(), "VAT fee tax", None, 3)
+    let elsewhere = knowledge::search(&app.state, Uuid::now_v7(), None, "VAT fee tax", None, 3)
         .await
         .unwrap();
     assert!(elsewhere.is_empty());

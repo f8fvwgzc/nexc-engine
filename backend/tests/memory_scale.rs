@@ -331,3 +331,103 @@ async fn memory_is_grouped_into_topics_named_from_shared_memories(pool: PgPool) 
         .await;
     assert_eq!(started.status, StatusCode::ACCEPTED);
 }
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_workspace_can_let_memory_forget(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), &[]).await;
+    let (token, _) = app.register("forget@example.com").await;
+    let me = app
+        .request(Method::GET, "/api/v1/auth/me", Some(&token), None)
+        .await;
+    let user: Uuid = me.body["id"].as_str().unwrap().parse().unwrap();
+    let graph = app
+        .request(
+            Method::POST,
+            "/api/v1/graphs",
+            Some(&token),
+            Some(json!({"name": "G"})),
+        )
+        .await;
+    let graph_id: Uuid = graph.body["id"].as_str().unwrap().parse().unwrap();
+    let workspace: Uuid = graph.body["workspace_id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    for i in 0..130 {
+        let content = format!("Memory number {i} about subject {}", i % 7);
+        let embedding = nexc::kernel::embed(&content);
+        let new = NewMemory {
+            owner_id: user,
+            workspace_id: Some(workspace),
+            scope: MemoryScope::Graph,
+            graph_id: Some(graph_id),
+            node_id: None,
+            kind: MemoryKind::Fact,
+            content: &content,
+            embedding: &embedding,
+            // The first thirty matter least.
+            importance: if i < 30 { 0.1 } else { 0.7 },
+        };
+        memories::insert(&pool, &new).await.unwrap();
+    }
+    let count = || {
+        let pool = pool.clone();
+        async move { memories::count_for(&pool, workspace).await.unwrap() }
+    };
+    let state = &app.state;
+
+    // Without a policy nothing is ever forgotten.
+    assert_eq!(memory::forget(&state.memories, &pool).await.unwrap(), 0);
+    assert_eq!(count().await, 130);
+
+    // A limit that would forget what was just learned is refused.
+    let guardrails = format!("/api/v1/workspaces/{workspace}/guardrails");
+    let tiny = json!({"memory_limit": 5});
+    let refused = app
+        .request(Method::PUT, &guardrails, Some(&token), Some(tiny))
+        .await;
+    assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // With a limit, the least important go first.
+    let limit = json!({"memory_limit": 100});
+    let saved = app
+        .request(Method::PUT, &guardrails, Some(&token), Some(limit))
+        .await;
+    assert_eq!(saved.status, StatusCode::OK, "{:?}", saved.body);
+    assert_eq!(memory::forget(&state.memories, &pool).await.unwrap(), 30);
+    assert_eq!(count().await, 100);
+    let weak: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM memories WHERE workspace_id = $1 AND importance < 0.5",
+    )
+    .bind(workspace)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(weak, 0);
+    // Running it again forgets nothing more.
+    assert_eq!(memory::forget(&state.memories, &pool).await.unwrap(), 0);
+
+    // By age: untouched for a month goes, but not what was recalled since.
+    sqlx::query(
+        "UPDATE memories SET updated_at = now() - interval '30 days'
+         WHERE id IN (SELECT id FROM memories WHERE workspace_id = $1 ORDER BY id LIMIT 10)",
+    )
+    .bind(workspace)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE memories SET last_accessed_at = now()
+         WHERE id IN (SELECT id FROM memories WHERE workspace_id = $1 ORDER BY id LIMIT 4)",
+    )
+    .bind(workspace)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let by_age = json!({"memory_limit": 100, "memory_forget_after_days": 14});
+    app.request(Method::PUT, &guardrails, Some(&token), Some(by_age))
+        .await;
+    assert_eq!(memory::forget(&state.memories, &pool).await.unwrap(), 6);
+    assert_eq!(count().await, 94);
+}
