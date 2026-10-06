@@ -1,6 +1,6 @@
 import type { Agent } from '@/schemas/agent';
 import type { AuthResponse, User } from '@/schemas/auth';
-import type { Graph, GraphEdge, GraphNode } from '@/schemas/graph';
+import type { Graph, GraphEdge, GraphNode, Ontology } from '@/schemas/graph';
 import type { Memory } from '@/schemas/memory';
 import type { OrchestratorStatus } from '@/schemas/orchestrator';
 import type { Plan } from '@/schemas/plan';
@@ -11,6 +11,7 @@ import type { GraphTemplate } from '@/schemas/template';
 /** Contract fixtures (CONTRACT §4) shared by schema and store tests. UUID v7 ids, RFC 3339 times. */
 export const ids = {
   user: '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b',
+  workspace: '0190a1b2-c3d4-7e5f-8a9b-9c1d2e3f4a5b',
   graph: '0190a1b2-c3d4-7e5f-8a9b-1c1d2e3f4a5b',
   nodeA: '0190a1b2-c3d4-7e5f-8a9b-2c1d2e3f4a5b',
   nodeB: '0190a1b2-c3d4-7e5f-8a9b-3c1d2e3f4a5b',
@@ -38,6 +39,39 @@ export const authResponse: AuthResponse = {
   expires_in: 900,
 };
 
+export const ontology: Ontology = {
+  node_types: [
+    {
+      key: 'research',
+      label: 'Research',
+      description: 'Finding and summarising information.',
+      color: '#0ea5e9',
+      icon: 'book-open',
+      default_role: 'researcher',
+      default_executor: 'llm',
+      stage: 1,
+      produces_artifact: false,
+      allow_code_exec: false,
+    },
+    {
+      key: 'task',
+      label: 'Task',
+      description: 'A concrete step to carry out.',
+      color: '#10b981',
+      icon: 'list-todo',
+      default_role: 'engineer',
+      default_executor: 'llm',
+      stage: 2,
+      produces_artifact: false,
+      allow_code_exec: false,
+    },
+  ],
+  relation_types: [
+    { key: 'depends_on', label: 'Depends on', description: '', blocking: true },
+    { key: 'relates_to', label: 'Relates to', description: '', blocking: false },
+  ],
+};
+
 export const node: GraphNode = {
   id: ids.nodeA,
   graph_id: ids.graph,
@@ -62,16 +96,21 @@ export const edge: GraphEdge = {
   source: ids.nodeA,
   target: ids.nodeB,
   kind: 'depends_on',
+  blocking: true,
+  reason: 'the outline is built from the sources',
   origin: 'auto',
   weight: 1,
 };
 
 export const graph: Graph = {
   id: ids.graph,
+  workspace_id: ids.workspace,
+  team_id: null,
   name: 'Research report',
   description: 'docx',
   goal: 'Write a research docx',
   version: 3,
+  ontology,
   nodes: [node, { ...node, id: ids.nodeB, title: 'Outline', kind: 'task' }],
   edges: [edge],
   created_at: at,
@@ -134,7 +173,15 @@ export const plan: Plan = {
       tags: [],
     },
   ],
-  edges: [{ source_ref: 'n1', target_ref: 'n2' }],
+  ontology: { node_types: [], relation_types: [] },
+  edges: [
+    {
+      source_ref: 'n1',
+      target_ref: 'n2',
+      kind: 'depends_on',
+      reason: 'citations need the sources',
+    },
+  ],
   error: null,
   created_at: at,
 };
@@ -210,4 +257,5 @@ export const llmSettings: LlmSettings = {
   has_api_key: false,
   key_hint: null,
   source: 'none',
+  scope: 'server',
 };

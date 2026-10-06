@@ -98,17 +98,18 @@ pub async fn list_for_node(
     .await
 }
 
-/// One artifact, only if its run belongs to `owner_id`.
+/// One artifact, only if `owner_id` may work on the graph of its run.
 pub async fn find_owned(
     db: impl PgExecutor<'_>,
     owner_id: Uuid,
     id: Uuid,
 ) -> Result<Option<StoredArtifact>, sqlx::Error> {
-    sqlx::query_as(
+    sqlx::query_as(concat!(
         "SELECT a.id, a.run_id, a.node_id, a.path, a.size, a.mime, a.created_at, a.storage_path
-         FROM artifacts a JOIN runs r ON r.id = a.run_id
-         WHERE a.id = $1 AND r.owner_id = $2",
-    )
+         FROM artifacts a JOIN runs r ON r.id = a.run_id JOIN graphs g ON g.id = r.graph_id
+         WHERE a.id = $1 AND ",
+        graph_access!("g", "$2")
+    ))
     .bind(id)
     .bind(owner_id)
     .fetch_optional(db)

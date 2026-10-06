@@ -140,17 +140,22 @@ pub async fn find_row(db: impl PgExecutor<'_>, id: Uuid) -> Result<Option<RunRow
         .await
 }
 
-/// Loads a run row owned by `owner_id`.
+/// Loads a run of a graph that `owner_id` may work on.
 pub async fn find_owned(
     db: impl PgExecutor<'_>,
     owner_id: Uuid,
     id: Uuid,
 ) -> Result<Option<RunRow>, sqlx::Error> {
-    sqlx::query_as("SELECT * FROM runs WHERE id = $1 AND owner_id = $2")
-        .bind(id)
-        .bind(owner_id)
-        .fetch_optional(db)
-        .await
+    sqlx::query_as(concat!(
+        "SELECT * FROM runs WHERE id = $1 AND EXISTS (
+            SELECT 1 FROM graphs g WHERE g.id = runs.graph_id AND ",
+        graph_access!("g", "$2"),
+        ")"
+    ))
+    .bind(id)
+    .bind(owner_id)
+    .fetch_optional(db)
+    .await
 }
 
 /// Node results of a run in submission order.
@@ -256,12 +261,15 @@ pub async fn request_cancel(
     owner_id: Uuid,
     id: Uuid,
 ) -> Result<Option<RunRow>, sqlx::Error> {
-    sqlx::query_as(
+    sqlx::query_as(concat!(
         "UPDATE runs SET cancel_requested = true,
                 status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
                 finished_at = CASE WHEN status = 'queued' THEN now() ELSE finished_at END
-         WHERE id = $1 AND owner_id = $2 RETURNING *",
-    )
+         WHERE id = $1 AND EXISTS (
+            SELECT 1 FROM graphs g WHERE g.id = runs.graph_id AND ",
+        graph_access!("g", "$2"),
+        ") RETURNING *"
+    ))
     .bind(id)
     .bind(owner_id)
     .fetch_optional(db)

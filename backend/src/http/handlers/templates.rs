@@ -5,13 +5,14 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use serde::Deserialize;
 use utoipa::ToSchema;
+use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::graph::{GRAPH_NAME_MAX, Graph};
 use crate::domain::template::{self, GraphTemplate, TEMPLATE_TOPIC_MAX};
 use crate::domain::validation::{FieldErrors, Validate, check_text};
-use crate::engine::templates;
+use crate::engine::{editor, templates};
 use crate::http::extract::{AuthUser, ValidatedJson};
 use crate::http::problem::Problem;
 
@@ -25,6 +26,10 @@ pub struct FromTemplate {
     /// What this instance is about, e.g. the research question or product. It is put at the top
     /// of the graph goal so every planner and node prompt sees it.
     pub topic: Option<String>,
+    /// Workspace to create the graph in (default: the caller's first workspace).
+    pub workspace_id: Option<Uuid>,
+    /// Team to create the graph in (default: a graph of the whole workspace).
+    pub team_id: Option<Uuid>,
 }
 
 impl Validate for FromTemplate {
@@ -55,8 +60,15 @@ pub async fn instantiate(
     auth: AuthUser,
     ValidatedJson(req): ValidatedJson<FromTemplate>,
 ) -> Result<(StatusCode, Json<Graph>), AppError> {
-    let graph =
-        templates::instantiate(&state, auth.id, req.template_id.trim(), req.name, req.topic)
-            .await?;
+    let home = editor::graph_home(&state, auth.id, req.workspace_id, req.team_id).await?;
+    let graph = templates::instantiate(
+        &state,
+        auth.id,
+        home,
+        req.template_id.trim(),
+        req.name,
+        req.topic,
+    )
+    .await?;
     Ok((StatusCode::CREATED, Json(graph)))
 }

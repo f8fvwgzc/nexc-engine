@@ -1,5 +1,6 @@
 import { memo } from 'react';
 
+import { relationLabel, useOntology } from '@/components/custom-ui/node-kind-meta';
 import type { EdgeSuggestion, GraphEdge } from '@/schemas/graph';
 
 interface EdgeViewProps {
@@ -9,8 +10,8 @@ interface EdgeViewProps {
 }
 
 const EdgeView = memo(function EdgeView({ edge, selected, onSelect }: EdgeViewProps) {
-  const marker =
-    edge.kind === 'depends_on' ? `url(#${selected ? 'garrow-active' : 'garrow'})` : undefined;
+  const relation = useOntology().relation_types.find((r) => r.key === edge.kind);
+  const marker = edge.blocking ? `url(#${selected ? 'garrow-active' : 'garrow'})` : undefined;
   return (
     <g
       className="gedge"
@@ -18,13 +19,15 @@ const EdgeView = memo(function EdgeView({ edge, selected, onSelect }: EdgeViewPr
       data-link-target={edge.target}
       data-edge-id={edge.id}
       data-kind={edge.kind}
+      data-blocking={edge.blocking}
       data-origin={edge.origin}
       data-selected={selected}
       onClick={() => onSelect(edge.id)}
     >
       <title>
-        {edge.kind === 'depends_on' ? 'Depends on' : 'Related'}
+        {relationLabel(relation, edge.kind)}
         {edge.origin !== 'user' ? ` (${edge.origin})` : ''}
+        {edge.reason ? ` — ${edge.reason}` : ''}
       </title>
       <path className="gedge-hit" />
       <path className="gedge-line" markerEnd={marker} />
@@ -55,7 +58,7 @@ export function EdgeLayer({
   );
 }
 
-/** Auto-detected dependency candidates: dashed + animated; click to accept as a depends_on edge. */
+/** Auto-detected dependency candidates: dashed + animated; click to accept as a dependency. */
 export function SuggestionLayer({
   suggestions,
   onAccept,

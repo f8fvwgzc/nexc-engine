@@ -10,6 +10,8 @@ export const routeModules = {
   runDetail: () => import('@/pages/run-detail-page'),
   agents: () => import('@/pages/agents-page'),
   memory: () => import('@/pages/memory-page'),
+  members: () => import('@/pages/members-page'),
+  teams: () => import('@/pages/teams-page'),
   settings: () => import('@/pages/settings-page'),
   notFound: () => import('@/pages/not-found-page'),
 };

@@ -439,3 +439,140 @@ async fn llm_settings_store_encrypted_keys(pool: PgPool) {
         .await;
     assert_eq!(cleared.body["has_api_key"], false);
 }
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn ontology_is_data_owned_by_the_graph(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let (token, _) = app.register("ontology@example.com").await;
+    let gid = app.graph(&token, "Trade gold").await;
+    let url = format!("/api/v1/graphs/{gid}");
+    let graph = app.request(Method::GET, &url, Some(&token), None).await;
+    let mut ontology = graph.body["ontology"].clone();
+    assert!(
+        ontology["node_types"].as_array().unwrap().len() >= 2,
+        "a new graph starts from the starter ontology"
+    );
+
+    // A type the graph does not define is rejected until the ontology declares it.
+    let unknown = app
+        .request(
+            Method::POST,
+            &format!("{url}/nodes"),
+            Some(&token),
+            Some(json!({"title": "RSI divergence", "kind": "market_signal"})),
+        )
+        .await;
+    assert_eq!(unknown.status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    ontology["node_types"].as_array_mut().unwrap().push(json!({
+        "key": "Market Signal", "label": "", "description": "An observable market condition.",
+        "default_role": "researcher", "stage": 1
+    }));
+    ontology["relation_types"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "key": "confirms", "label": "Confirms", "blocking": false
+        }));
+    let put = app
+        .request(
+            Method::PUT,
+            &format!("{url}/ontology"),
+            Some(&token),
+            Some(ontology.clone()),
+        )
+        .await;
+    assert_eq!(put.status, StatusCode::OK, "{}", put.body);
+    let stored = put.body["ontology"]["node_types"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["key"] == "market_signal")
+        .expect("keys are slugged")
+        .clone();
+    assert_eq!(stored["label"], "Market signal");
+    assert!(stored["color"].as_str().unwrap().starts_with('#'));
+
+    let signal = app
+        .node(
+            &token,
+            &gid,
+            json!({"title": "RSI divergence", "kind": "market_signal"}),
+        )
+        .await;
+    let entry = app.node(&token, &gid, json!({"title": "Entry rule"})).await;
+    let edges_url = format!("{url}/edges");
+    let edge = |source: &str, target: &str, kind: &str| {
+        app.request(
+            Method::POST,
+            &edges_url,
+            Some(&token),
+            Some(json!({
+                "source": source, "target": target, "kind": kind,
+                "reason": "divergence is the trigger the rule waits for"
+            })),
+        )
+    };
+    let confirms = edge(&signal, &entry, "confirms").await;
+    assert_eq!(confirms.status, StatusCode::CREATED, "{}", confirms.body);
+    assert_eq!(confirms.body["blocking"], false);
+    assert_eq!(
+        confirms.body["reason"],
+        "divergence is the trigger the rule waits for"
+    );
+    assert_eq!(
+        edge(&signal, &entry, "contradicts").await.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "relations must be declared too"
+    );
+    // The reverse direction is fine while `confirms` does not order execution...
+    assert_eq!(
+        edge(&entry, &signal, "confirms").await.status,
+        StatusCode::CREATED
+    );
+
+    // ...which is why making it blocking now would close a cycle.
+    let mut blocking = put.body["ontology"].clone();
+    for relation in blocking["relation_types"].as_array_mut().unwrap() {
+        if relation["key"] == "confirms" {
+            relation["blocking"] = json!(true);
+        }
+    }
+    let cyclic = app
+        .request(
+            Method::PUT,
+            &format!("{url}/ontology"),
+            Some(&token),
+            Some(blocking),
+        )
+        .await;
+    assert_eq!(cyclic.status, StatusCode::CONFLICT);
+
+    // Types that are in use cannot be dropped.
+    let mut pruned = put.body["ontology"].clone();
+    pruned["node_types"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|t| t["key"] != "market_signal");
+    let in_use = app
+        .request(
+            Method::PUT,
+            &format!("{url}/ontology"),
+            Some(&token),
+            Some(pruned),
+        )
+        .await;
+    assert_eq!(in_use.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(in_use.body.to_string().contains("market_signal"));
+
+    let patched = app
+        .request(
+            Method::PATCH,
+            &format!("{url}/edges/{}", confirms.body["id"].as_str().unwrap()),
+            Some(&token),
+            Some(json!({"reason": "updated"})),
+        )
+        .await;
+    assert_eq!(patched.status, StatusCode::OK);
+    assert_eq!(patched.body["reason"], "updated");
+}

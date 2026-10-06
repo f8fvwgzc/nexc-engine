@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import json
+import os
 import stat
 from collections.abc import Callable
 from pathlib import Path
@@ -16,7 +18,7 @@ from fastapi.testclient import TestClient
 from nexc_runtime.agents import agent
 from nexc_runtime.api.app import create_app
 from nexc_runtime.config import Settings
-from nexc_runtime.llm.claude_code import describe_failure
+from nexc_runtime.llm.claude_code import ClaudeCodeProvider, describe_failure
 
 from .conftest import AUTH, execute_body, parse_ndjson
 
@@ -194,3 +196,34 @@ def test_structured_output_failure_falls_back_to_a_plain_answer(
         events = parse_ndjson(client.post("/v1/execute", json=body, headers=AUTH).content)
     assert events[-1]["type"] == "result", events[-1]
     assert events[-1]["output"] == "# Sources\n\nA long plain answer."
+
+
+def test_cancelling_a_turn_stops_the_cli(tmp_path: Path) -> None:
+    """A node the backend gave up on must not leave `claude` generating in the background."""
+    pid_file = tmp_path / "pid"
+    cli = tmp_path / "claude"
+    cli.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, sys, time\n"
+        f"open({str(pid_file)!r}, 'w').write(str(os.getpid()))\n"
+        "time.sleep(60)\n"
+    )
+    cli.chmod(cli.stat().st_mode | stat.S_IEXEC)
+
+    async def scenario() -> int:
+        provider = ClaudeCodeProvider(model="claude-sonnet-5", binary=str(cli))
+        try:
+            turn = asyncio.create_task(provider._invoke("system", "prompt", None, 1024))
+            # The fake CLI reports its pid through a file; there is nothing to await on.
+            while not pid_file.exists() or not pid_file.read_text():  # noqa: ASYNC110
+                await asyncio.sleep(0.02)
+            turn.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await turn
+        finally:
+            await provider.aclose()
+        return int(pid_file.read_text())
+
+    pid = asyncio.run(scenario())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)

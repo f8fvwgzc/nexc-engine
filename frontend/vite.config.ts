@@ -71,7 +71,12 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: {
-      '/api': { target: 'http://localhost:8080', changeOrigin: true, ws: true },
+      // NEXC_API_URL points the dev proxy at a backend on another port.
+      '/api': {
+        target: process.env.NEXC_API_URL ?? 'http://localhost:8080',
+        changeOrigin: true,
+        ws: true,
+      },
     },
   },
   preview: { port: 4173 },

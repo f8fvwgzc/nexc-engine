@@ -48,6 +48,23 @@ pub async fn bootstrap_admin(state: &AppState) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Gives every account created before workspaces existed a personal one.
+pub async fn seed_missing_workspaces(state: &AppState) -> anyhow::Result<()> {
+    use crate::http::handlers::{auth::personal_workspace_name, workspaces::create_owned};
+    for (user, name) in repo::workspaces::users_without_workspace(&state.db).await? {
+        let mut tx = state.db.begin().await?;
+        create_owned(&mut tx, user, &personal_workspace_name(&name))
+            .await
+            .map_err(|e| anyhow::anyhow!("cannot create a workspace for {user}: {e}"))?;
+        tx.commit().await?;
+    }
+    let adopted = repo::graphs::adopt_orphans(&state.db).await?;
+    if adopted > 0 {
+        tracing::info!(adopted, "graphs assigned to their creators' workspaces");
+    }
+    Ok(())
+}
+
 /// Runs the HTTP server until Ctrl-C / SIGTERM, then drains connections and
 /// cancels local runs.
 pub async fn serve(settings: Settings) -> anyhow::Result<()> {
@@ -56,6 +73,7 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
     let state = AppState::new(settings, db)?;
     bootstrap_admin(&state).await?;
     orchestrator::seed_missing_orgs(&state).await?;
+    seed_missing_workspaces(&state).await?;
     tokio::fs::create_dir_all(state.settings.artifacts_dir()).await?;
 
     let shutdown = CancellationToken::new();

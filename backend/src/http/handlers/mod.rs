@@ -14,4 +14,6 @@ pub mod plans;
 pub mod realtime;
 pub mod runs;
 pub mod settings;
+pub mod teams;
 pub mod templates;
+pub mod workspaces;

@@ -7,10 +7,16 @@ import { graphSchema, graphSummarySchema, type GraphInput } from '@/schemas/grap
 import { orchestratorStatusSchema } from '@/schemas/orchestrator';
 import { graphTemplateSchema, type CreateFromTemplateBody } from '@/schemas/template';
 
-export const graphsQuery = () =>
+/** Graphs the caller can open; scoped to one workspace when its id is given. */
+export const graphsQuery = (workspaceId?: string) =>
   queryOptions({
-    queryKey: qk.graphs.list(),
-    queryFn: ({ signal }) => apiRequest('/graphs', z.array(graphSummarySchema), { signal }),
+    queryKey: qk.graphs.list(workspaceId),
+    queryFn: ({ signal }) =>
+      apiRequest(
+        workspaceId ? `/graphs?workspace_id=${workspaceId}` : '/graphs',
+        z.array(graphSummarySchema),
+        { signal },
+      ),
   });
 
 export const graphQuery = (graphId: string) =>
@@ -36,7 +42,7 @@ export const orchestratorQuery = () =>
     refetchInterval: 15_000,
   });
 
-export function createGraph(body: GraphInput) {
+export function createGraph(body: GraphInput & { workspace_id?: string }) {
   return apiRequest('/graphs', graphSchema, { method: 'POST', body });
 }
 

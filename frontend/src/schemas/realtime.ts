@@ -7,6 +7,7 @@ import {
   graphNodeSchema,
   graphSummarySchema,
   nodeStatusSchema,
+  ontologySchema,
 } from './graph';
 import { planSchema, proposedEdgeSchema, proposedNodeSchema } from './plan';
 import { artifactSchema, runSchema } from './run';
@@ -73,6 +74,7 @@ export const wsServerMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('edge.upserted'), edge: graphEdgeSchema }),
   z.object({ type: z.literal('edge.deleted'), edge_id: idSchema }),
   z.object({ type: z.literal('graph.updated'), graph: graphSummarySchema }),
+  z.object({ type: z.literal('ontology.updated'), ontology: ontologySchema }),
   z.object({ type: z.literal('suggestions'), items: z.array(edgeSuggestionSchema) }),
   z.object({
     type: z.literal('presence'),

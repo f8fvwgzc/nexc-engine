@@ -9,7 +9,6 @@ use serde_json::json;
 
 use super::super::artifacts::MAX_ARTIFACT_BYTES;
 use super::{ExecContext, ExecError, ExecOutput, NodeExecutor};
-use crate::domain::graph::NodeKind;
 use crate::realtime::events::LogLevel;
 
 /// Longest NDJSON line accepted (a base64 artifact of 20 MiB plus envelope).
@@ -88,7 +87,13 @@ fn request_body(ctx: &ExecContext) -> serde_json::Value {
             "model": target.model,
             "budget_tokens": agent.map_or(0, |a| (a.budget_tokens - a.spent_tokens).max(0)),
         },
-        "task": { "title": ctx.node.title, "content": ctx.node.content, "kind": ctx.node.kind },
+        "task": {
+            "title": ctx.node.title,
+            "content": ctx.node.content,
+            "kind": ctx.node.kind,
+            "kind_description": ctx.node_type.as_ref().map_or("", |t| t.description.as_str()),
+            "produces_artifact": ctx.node_type.as_ref().is_some_and(|t| t.produces_artifact),
+        },
         "context": {
             "goal": ctx.goal,
             "upstream": ctx.upstream.iter().map(|u| json!({
@@ -105,7 +110,7 @@ fn request_body(ctx: &ExecContext) -> serde_json::Value {
         "limits": {
             "max_turns": MAX_TURNS,
             "timeout_s": settings.node_timeout.as_secs(),
-            "allow_code_exec": ctx.node.kind == NodeKind::Code,
+            "allow_code_exec": ctx.node_type.as_ref().is_some_and(|t| t.allow_code_exec),
         },
     })
 }

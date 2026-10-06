@@ -11,6 +11,7 @@
 #![forbid(unsafe_code)]
 
 pub mod anthropic;
+pub mod catalog;
 pub mod claude_code;
 pub mod demo;
 pub mod openai_compat;

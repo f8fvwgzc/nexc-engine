@@ -11,8 +11,8 @@ use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::agent::is_valid_role;
 use crate::domain::graph::{
-    CONTENT_MAX_BYTES, Executor, GraphNode, NodeDraft, NodeKind, NodeOrigin, NodePatch, NodeStatus,
-    TAG_LEN_MAX, TAGS_MAX, TITLE_MAX, normalize_tags,
+    CONTENT_MAX_BYTES, Executor, GraphNode, NodePatch, NodeStatus, TAG_LEN_MAX, TAGS_MAX,
+    TITLE_MAX, normalize_tags,
 };
 use crate::domain::validation::{FieldErrors, Validate, check_coordinate, check_text};
 use crate::engine::editor;
@@ -60,7 +60,8 @@ pub struct CreateNode {
     pub title: String,
     #[serde(default)]
     pub content: String,
-    pub kind: Option<NodeKind>,
+    /// Key of a node type of the graph's ontology (its default type when absent).
+    pub kind: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
     pub x: Option<f64>,
@@ -87,7 +88,8 @@ impl Validate for CreateNode {
 pub struct UpdateNode {
     pub title: Option<String>,
     pub content: Option<String>,
-    pub kind: Option<NodeKind>,
+    /// Key of a node type of the graph's ontology.
+    pub kind: Option<String>,
     pub tags: Option<Vec<String>>,
     pub x: Option<f64>,
     pub y: Option<f64>,
@@ -152,10 +154,10 @@ pub async fn create(
     Path(gid): Path<Uuid>,
     ValidatedJson(req): ValidatedJson<CreateNode>,
 ) -> Result<(StatusCode, Json<GraphNode>), AppError> {
-    let draft = NodeDraft {
+    let new = editor::NewNode {
         title: req.title.trim().to_owned(),
         content: req.content,
-        kind: req.kind.unwrap_or(NodeKind::Task),
+        kind: req.kind,
         tags: normalize_tags(&req.tags),
         x: req.x.unwrap_or_default(),
         y: req.y.unwrap_or_default(),
@@ -163,12 +165,11 @@ pub async fn create(
             .agent_role
             .map(|r| r.trim().to_owned())
             .filter(|r| !r.is_empty()),
-        executor: req.executor.unwrap_or(Executor::Llm),
-        origin: NodeOrigin::User,
+        executor: req.executor,
     };
     Ok((
         StatusCode::CREATED,
-        Json(editor::create_node(&state, auth.id, gid, draft).await?),
+        Json(editor::create_node(&state, auth.id, gid, new).await?),
     ))
 }
 

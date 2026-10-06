@@ -76,7 +76,8 @@ environment.
 
 | | |
 |---|---|
-| **Visual graph editor** | Obsidian-like canvas with typed nodes (topic, task, research, code, document, output), drag-and-drop, `[[wikilink]]` auto-edges, live multi-user presence over WebSocket. |
+| **Visual graph editor** | Obsidian-like canvas with typed nodes, drag-and-drop, `[[wikilink]]` auto-edges, live multi-user presence over WebSocket. |
+| **Ontology per graph** | Node types and relation types are data, not code: each graph owns its vocabulary, the planner extends it for the goal's domain, every edge states why it exists, and only relations marked *blocking* order execution. |
 | **LLM plan refinement** | One click turns a rough sketch into a structured plan; proposed nodes and edges stream over SSE and are applied atomically. |
 | **DAG execution engine** | Topological scheduling with concurrency limits, retries, timeouts, cancellation, critical-path analysis and a content-hash result cache that skips unchanged nodes. |
 | **Agents from birth** | Each agent node spawns a role-specific agent in the Python runtime with its own token budget; agents may delegate to sub-agents (bounded depth and fan-out). |

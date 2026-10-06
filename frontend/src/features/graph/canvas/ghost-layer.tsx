@@ -16,7 +16,7 @@ export function GhostLayer({
     <g aria-hidden>
       {plan.edges.map((edge) => (
         <g
-          key={`${edge.source_ref}->${edge.target_ref}`}
+          key={`${edge.source_ref}-${edge.kind}->${edge.target_ref}`}
           data-link-source={keyOf(edge.source_ref)}
           data-link-target={keyOf(edge.target_ref)}
         >

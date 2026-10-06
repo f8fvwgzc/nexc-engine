@@ -94,31 +94,18 @@ pub async fn list(
     .await
 }
 
-/// Retrieval candidates for `query`: full-text matches (GIN index) plus the
-/// most recent memories, deduplicated. Ranking happens in Rust.
-pub async fn candidates(
+/// Every memory of an owner (the `limit` most recently updated), for the
+/// in-process index.
+pub async fn all_for(
     db: impl PgExecutor<'_>,
     owner_id: Uuid,
-    graph_id: Option<Uuid>,
-    query: &str,
+    limit: i64,
 ) -> Result<Vec<StoredMemory>, sqlx::Error> {
-    sqlx::query_as(
-        "SELECT * FROM memories
-         WHERE id IN (
-            (SELECT id FROM memories
-             WHERE owner_id = $1 AND ($2::uuid IS NULL OR graph_id = $2 OR scope = 'user')
-               AND content_tsv @@ plainto_tsquery('simple', $3)
-             LIMIT 200)
-            UNION
-            (SELECT id FROM memories
-             WHERE owner_id = $1 AND ($2::uuid IS NULL OR graph_id = $2 OR scope = 'user')
-             ORDER BY updated_at DESC LIMIT 300))",
-    )
-    .bind(owner_id)
-    .bind(graph_id)
-    .bind(query)
-    .fetch_all(db)
-    .await
+    sqlx::query_as("SELECT * FROM memories WHERE owner_id = $1 ORDER BY updated_at DESC LIMIT $2")
+        .bind(owner_id)
+        .bind(limit)
+        .fetch_all(db)
+        .await
 }
 
 /// Memories in exactly one scope (for consolidation).

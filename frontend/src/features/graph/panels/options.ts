@@ -1,10 +1,13 @@
-import { NODE_KIND_META } from '@/components/custom-ui/node-kind-meta';
-import { EXECUTORS, NODE_KINDS, type Executor, type NodeKind } from '@/schemas/graph';
+import { labelFromKey } from '@/components/custom-ui/node-kind-meta';
+import { EXECUTORS, type Executor, type Ontology } from '@/schemas/graph';
 
-export const KIND_OPTIONS = NODE_KINDS.map((kind) => ({
-  value: kind,
-  label: NODE_KIND_META[kind].label,
-})) satisfies { value: NodeKind; label: string }[];
+/** The kinds a node of this graph may have; `current` stays selectable even if its type was removed. */
+export function kindOptions(ontology: Ontology, current: string) {
+  const options = ontology.node_types.map((t) => ({ value: t.key, label: t.label || t.key }));
+  return options.some((o) => o.value === current)
+    ? options
+    : [...options, { value: current, label: labelFromKey(current) }];
+}
 
 const EXECUTOR_LABELS: Record<Executor, string> = {
   llm: 'LLM (single call)',

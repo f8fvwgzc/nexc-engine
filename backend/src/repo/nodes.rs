@@ -17,7 +17,7 @@ impl FromRow<'_, PgRow> for GraphNode {
             graph_id: row.try_get("graph_id")?,
             title: row.try_get("title")?,
             content: row.try_get("content")?,
-            kind: enum_col(row, "kind")?,
+            kind: row.try_get("kind")?,
             tags,
             x: row.try_get("x")?,
             y: row.try_get("y")?,
@@ -48,7 +48,7 @@ pub async fn create(
     .bind(graph_id)
     .bind(&draft.title)
     .bind(&draft.content)
-    .bind(draft.kind.as_str())
+    .bind(&draft.kind)
     .bind(Json(&draft.tags))
     .bind(draft.x)
     .bind(draft.y)
@@ -99,7 +99,7 @@ pub async fn save(db: impl PgExecutor<'_>, node: &GraphNode) -> Result<GraphNode
     .bind(node.id)
     .bind(&node.title)
     .bind(&node.content)
-    .bind(node.kind.as_str())
+    .bind(&node.kind)
     .bind(Json(&node.tags))
     .bind(node.x)
     .bind(node.y)

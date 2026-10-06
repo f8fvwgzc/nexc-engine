@@ -20,6 +20,7 @@ import { useLogout } from '@/features/auth/hooks/use-logout';
 import { graphsQuery } from '@/features/graphs/api';
 import { useTheme } from '@/hooks/use-theme';
 import { useCommandStore } from '@/stores/command-store';
+import { useWorkspaceId } from '@/features/workspaces/use-current-workspace';
 
 /** ⌘K palette: navigation, graphs, page actions (canvas), theme and account. */
 export function CommandPalette() {
@@ -30,7 +31,8 @@ export function CommandPalette() {
   const navigate = useNavigate();
   const { setTheme } = useTheme();
   const logout = useLogout();
-  const { data: graphs } = useQuery({ ...graphsQuery(), enabled: open });
+  const workspaceId = useWorkspaceId();
+  const { data: graphs } = useQuery({ ...graphsQuery(workspaceId), enabled: open });
 
   const run = (fn: () => void) => {
     setOpen(false);

@@ -48,11 +48,14 @@ export function useGraphSocket(graphId: string): GraphSocketApi {
         case 'graph.updated': {
           const { name, description } = message.graph;
           updateGraphCache(queryClient, graphId, (g) => ({ ...g, name, description }));
-          queryClient.setQueryData<GraphSummary[]>(qk.graphs.list(), (list) =>
+          queryClient.setQueriesData<GraphSummary[]>({ queryKey: qk.graphs.lists() }, (list) =>
             list?.map((s) => (s.id === message.graph.id ? message.graph : s)),
           );
           break;
         }
+        case 'ontology.updated':
+          updateGraphCache(queryClient, graphId, (g) => ({ ...g, ontology: message.ontology }));
+          break;
         case 'suggestions':
           queryClient.setQueryData(qk.graphs.suggestions(graphId), message.items);
           break;

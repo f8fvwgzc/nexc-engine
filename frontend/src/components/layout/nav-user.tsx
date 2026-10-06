@@ -44,7 +44,7 @@ function UserSummary({ name, email }: { name: string; email: string }) {
   return (
     <>
       <Avatar className="size-8 rounded-lg">
-        <AvatarFallback className="rounded-lg bg-gradient-to-br from-brand to-brand-2 text-xs font-semibold text-white">
+        <AvatarFallback className="rounded-lg bg-primary text-xs font-semibold text-primary-foreground">
           {initials(name)}
         </AvatarFallback>
       </Avatar>

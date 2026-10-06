@@ -19,7 +19,7 @@ export function NavMain() {
   return (
     <SidebarGroup>
       <SidebarGroupLabel>Workspace</SidebarGroupLabel>
-      <SidebarMenu>
+      <SidebarMenu className="gap-1">
         {NAV_ITEMS.map((item) => (
           <SidebarMenuItem key={item.to}>
             <SidebarMenuButton asChild tooltip={item.title} isActive={isActive(item.to, item.end)}>

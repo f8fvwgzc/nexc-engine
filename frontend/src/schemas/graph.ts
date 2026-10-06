@@ -2,10 +2,6 @@ import { z } from 'zod';
 
 import { idSchema, timestampSchema } from './common';
 
-export const NODE_KINDS = ['topic', 'task', 'research', 'code', 'document', 'output'] as const;
-export const nodeKindSchema = z.enum(NODE_KINDS);
-export type NodeKind = z.infer<typeof nodeKindSchema>;
-
 export const NODE_STATUSES = [
   'idle',
   'queued',
@@ -22,12 +18,47 @@ export const EXECUTORS = ['llm', 'agent', 'symphony'] as const;
 export const executorSchema = z.enum(EXECUTORS);
 export type Executor = z.infer<typeof executorSchema>;
 
+/** A node type of a graph's ontology. Node `kind`s are keys of these. */
+export const nodeTypeSchema = z.object({
+  key: z.string().min(1),
+  label: z.string(),
+  description: z.string().default(''),
+  color: z.string().default(''),
+  icon: z.string().default(''),
+  default_role: z.string().default(''),
+  default_executor: executorSchema.default('llm'),
+  stage: z.number().int().default(0),
+  produces_artifact: z.boolean().default(false),
+  allow_code_exec: z.boolean().default(false),
+});
+export type NodeType = z.infer<typeof nodeTypeSchema>;
+
+/** A relation type of a graph's ontology. Edge `kind`s are keys of these. */
+export const relationTypeSchema = z.object({
+  key: z.string().min(1),
+  label: z.string(),
+  description: z.string().default(''),
+  /** The source must finish before the target runs (blocking relations form the DAG). */
+  blocking: z.boolean().default(false),
+});
+export type RelationType = z.infer<typeof relationTypeSchema>;
+
+/** The vocabulary a graph is built from. It is data owned by the graph, not a fixed list. */
+export const ontologySchema = z.object({
+  node_types: z.array(nodeTypeSchema).default([]),
+  relation_types: z.array(relationTypeSchema).default([]),
+});
+export type Ontology = z.infer<typeof ontologySchema>;
+
+export const EMPTY_ONTOLOGY: Ontology = { node_types: [], relation_types: [] };
+
 export const graphNodeSchema = z.object({
   id: idSchema,
   graph_id: idSchema,
   title: z.string(),
   content: z.string(),
-  kind: nodeKindSchema,
+  /** Key of a node type of the graph's ontology. */
+  kind: z.string(),
   tags: z.array(z.string()),
   x: z.number(),
   y: z.number(),
@@ -41,16 +72,16 @@ export const graphNodeSchema = z.object({
 });
 export type GraphNode = z.infer<typeof graphNodeSchema>;
 
-export const edgeKindSchema = z.enum(['depends_on', 'relates_to']);
-export type EdgeKind = z.infer<typeof edgeKindSchema>;
-
-/** depends_on: source must finish before target runs (source → target). */
+/** `kind` is a relation type key; `blocking`: source must finish before target runs. */
 export const graphEdgeSchema = z.object({
   id: idSchema,
   graph_id: idSchema,
   source: idSchema,
   target: idSchema,
-  kind: edgeKindSchema,
+  kind: z.string(),
+  blocking: z.boolean(),
+  /** Why the two nodes are related this way. */
+  reason: z.string(),
   origin: z.enum(['user', 'auto', 'plan']),
   weight: z.number(),
 });
@@ -58,6 +89,8 @@ export type GraphEdge = z.infer<typeof graphEdgeSchema>;
 
 export const graphSummarySchema = z.object({
   id: idSchema,
+  workspace_id: idSchema.nullable(),
+  team_id: idSchema.nullable(),
   name: z.string(),
   description: z.string(),
   node_count: z.number().int().nonnegative(),
@@ -68,10 +101,15 @@ export type GraphSummary = z.infer<typeof graphSummarySchema>;
 
 export const graphSchema = z.object({
   id: idSchema,
+  /** The workspace the graph belongs to. */
+  workspace_id: idSchema.nullable(),
+  /** The team it belongs to; null for a graph of the whole workspace. */
+  team_id: idSchema.nullable(),
   name: z.string(),
   description: z.string(),
   goal: z.string(),
   version: z.number().int(),
+  ontology: ontologySchema,
   nodes: z.array(graphNodeSchema),
   edges: z.array(graphEdgeSchema),
   created_at: timestampSchema,
@@ -118,7 +156,7 @@ export const nodeFormSchema = z.object({
   content: z.string().refine((v) => new TextEncoder().encode(v).length <= CONTENT_MAX, {
     error: 'Content must be at most 64 KiB',
   }),
-  kind: nodeKindSchema,
+  kind: z.string().min(1, { error: 'Pick a kind' }),
   executor: executorSchema,
   agent_role: z.string().trim().max(100, { error: 'Role must be at most 100 characters' }),
   tags: z
@@ -144,7 +182,8 @@ export function parseTags(text: string): string[] {
 export interface CreateNodeBody {
   title: string;
   content?: string;
-  kind?: NodeKind;
+  /** Omit to get the default type of the graph's ontology. */
+  kind?: string;
   tags?: string[];
   x?: number;
   y?: number;
@@ -159,5 +198,7 @@ export type UpdateNodeBody = Partial<
 export interface CreateEdgeBody {
   source: string;
   target: string;
-  kind?: EdgeKind;
+  /** Omit to get the dependency relation of the graph's ontology. */
+  kind?: string;
+  reason?: string;
 }

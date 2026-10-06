@@ -7,6 +7,7 @@ import type {
   CreateEdgeBody,
   CreateNodeBody,
   EdgeSuggestion,
+  Ontology,
   UpdateNodeBody,
 } from '@/schemas/graph';
 import { useGraphStore } from '@/stores/graph-store';
@@ -17,8 +18,10 @@ import {
   createNode,
   deleteEdge,
   deleteNode,
+  replaceOntology,
   requestPlan,
   startRun,
+  updateEdge,
   updateNode,
 } from '../api';
 import { removeEdge, removeNode, updateGraphCache, upsertEdge, upsertNode } from '../graph-cache';
@@ -59,7 +62,7 @@ export function useDeleteNode(graphId: string) {
 function edgeErrorToast(error: unknown) {
   if (error instanceof ApiError && error.status === 409) {
     toast.error('That dependency would create a cycle', {
-      description: error.detail ?? 'depends_on edges must form a DAG.',
+      description: error.detail ?? 'Blocking relations must form a DAG.',
     });
   } else {
     toast.error(errorMessage(error));
@@ -80,7 +83,7 @@ export function useAcceptSuggestion(graphId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (s: EdgeSuggestion) =>
-      createEdge(graphId, { source: s.source, target: s.target, kind: 'depends_on' }),
+      createEdge(graphId, { source: s.source, target: s.target, reason: s.reason }),
     meta: { errorToast: false, successMessage: 'Dependency added' },
     onSuccess: (edge, s) => {
       updateGraphCache(queryClient, graphId, (g) => upsertEdge(g, edge));
@@ -89,6 +92,24 @@ export function useAcceptSuggestion(graphId: string) {
       );
     },
     onError: edgeErrorToast,
+  });
+}
+
+export function useUpdateEdge(graphId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ edgeId, reason }: { edgeId: string; reason: string }) =>
+      updateEdge(graphId, edgeId, { reason }),
+    onSuccess: (edge) => updateGraphCache(queryClient, graphId, (g) => upsertEdge(g, edge)),
+  });
+}
+
+export function useReplaceOntology(graphId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (ontology: Ontology) => replaceOntology(graphId, ontology),
+    meta: { successMessage: 'Ontology saved' },
+    onSuccess: (graph) => queryClient.setQueryData(qk.graphs.detail(graphId), graph),
   });
 }
 
@@ -125,7 +146,7 @@ export function useApplyPlan(graphId: string) {
     meta: { successMessage: 'Plan applied to the graph' },
     onSuccess: (graph) => {
       queryClient.setQueryData(qk.graphs.detail(graphId), graph);
-      void queryClient.invalidateQueries({ queryKey: qk.graphs.list() });
+      void queryClient.invalidateQueries({ queryKey: qk.graphs.lists() });
       useGraphStore.getState().clearPlan();
     },
   });

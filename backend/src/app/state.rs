@@ -13,6 +13,7 @@ use crate::llm::LlmProvider;
 use crate::llm::claude_code::ClaudeCodeProvider;
 use crate::llm::router::ProviderRouter;
 use crate::llm::service::LlmService;
+use crate::memory::index::MemoryIndex;
 use crate::observability::metrics::Metrics;
 use crate::orchestrator::health::HealthCache;
 use crate::realtime::hub::Hub;
@@ -34,6 +35,8 @@ pub struct AppState {
     pub engine: Arc<Engine>,
     pub symphony: Arc<SymphonyBridge>,
     pub health: Arc<HealthCache>,
+    /// Decoded memories per owner, so retrieval does not hit the database every time.
+    pub memories: Arc<MemoryIndex>,
 }
 
 impl AppState {
@@ -72,6 +75,7 @@ impl AppState {
             engine: Arc::new(Engine::new(hub.instance())),
             symphony: Arc::new(SymphonyBridge::new(&settings)),
             health: Arc::new(HealthCache::default()),
+            memories: Arc::new(MemoryIndex::default()),
             hub,
             metrics,
             http,

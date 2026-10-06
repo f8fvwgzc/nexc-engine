@@ -6,6 +6,8 @@ import {
   NetworkIcon,
   PlayIcon,
   SettingsIcon,
+  UsersIcon,
+  UsersRoundIcon,
 } from 'lucide-react';
 
 import { env } from '@/lib/env';
@@ -24,6 +26,8 @@ export const NAV_ITEMS: NavItem[] = [
   { title: 'Runs', to: '/app/runs', icon: PlayIcon },
   { title: 'Agents', to: '/app/agents', icon: BotIcon },
   { title: 'Memory', to: '/app/memory', icon: BrainIcon },
+  { title: 'Teams', to: '/app/teams', icon: UsersRoundIcon },
+  { title: 'Members', to: '/app/members', icon: UsersIcon },
   { title: 'Settings', to: '/app/settings', icon: SettingsIcon },
 ];
 

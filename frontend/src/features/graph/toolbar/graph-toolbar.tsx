@@ -1,17 +1,20 @@
 import { LayoutGridIcon, MaximizeIcon, PlusIcon, Trash2Icon } from 'lucide-react';
 
+import type { Graph } from '@/schemas/graph';
+
 import { GlassCard } from '@/components/custom-ui/glass-card';
 import { Separator } from '@/components/ui/separator';
 import type { ConnectionState } from '@/lib/realtime/connection-state';
 import { useGraphStore } from '@/stores/graph-store';
 
 import { ConnectionIndicator } from './connection-indicator';
+import { OntologyDialog } from './ontology-dialog';
 import { PlanControls } from './plan-controls';
 import { RunControls } from './run-controls';
 import { ToolbarButton } from './toolbar-button';
 
 interface GraphToolbarProps {
-  graphId: string;
+  graph: Graph;
   nodeCount: number;
   sse: ConnectionState;
   ws: ConnectionState;
@@ -25,7 +28,7 @@ interface GraphToolbarProps {
 }
 
 export function GraphToolbar({
-  graphId,
+  graph,
   nodeCount,
   sse,
   ws,
@@ -37,6 +40,7 @@ export function GraphToolbar({
   onPlanApplied,
 }: GraphToolbarProps) {
   const selectedEdgeId = useGraphStore((s) => s.selectedEdgeId);
+  const graphId = graph.id;
   return (
     <GlassCard
       role="toolbar"
@@ -52,6 +56,7 @@ export function GraphToolbar({
         onClick={onAutoLayout}
       />
       <ToolbarButton icon={MaximizeIcon} label="Fit to view" shortcut="f" onClick={onFit} />
+      <OntologyDialog graph={graph} />
       {selectedEdgeId && (
         <ToolbarButton
           icon={Trash2Icon}

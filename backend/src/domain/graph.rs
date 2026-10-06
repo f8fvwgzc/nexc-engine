@@ -5,6 +5,7 @@ use serde::Serialize;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use super::ontology::Ontology;
 use super::string_enum;
 
 /// Maximum node title length in characters.
@@ -23,18 +24,6 @@ pub const TAGS_MAX: usize = 20;
 pub const TAG_LEN_MAX: usize = 40;
 /// Maximum agent role length.
 pub const ROLE_MAX: usize = 64;
-
-string_enum!(
-    /// What a node represents.
-    NodeKind {
-        Topic => "topic",
-        Task => "task",
-        Research => "research",
-        Code => "code",
-        Document => "document",
-        Output => "output",
-    }
-);
 
 string_enum!(
     /// Execution status of a node (last run).
@@ -67,14 +56,6 @@ string_enum!(
 );
 
 string_enum!(
-    /// Semantics of an edge. `depends_on`: source must finish before target runs.
-    EdgeKind {
-        DependsOn => "depends_on",
-        RelatesTo => "relates_to",
-    }
-);
-
-string_enum!(
     /// Who created an edge (`auto` = `[[wikilink]]` dependency detection).
     EdgeOrigin {
         User => "user",
@@ -90,7 +71,8 @@ pub struct GraphNode {
     pub graph_id: Uuid,
     pub title: String,
     pub content: String,
-    pub kind: NodeKind,
+    /// Key of a node type of the graph's ontology.
+    pub kind: String,
     pub tags: Vec<String>,
     pub x: f64,
     pub y: f64,
@@ -112,7 +94,12 @@ pub struct GraphEdge {
     pub graph_id: Uuid,
     pub source: Uuid,
     pub target: Uuid,
-    pub kind: EdgeKind,
+    /// Key of a relation type of the graph's ontology.
+    pub kind: String,
+    /// Copied from the relation type: source must finish before target runs.
+    pub blocking: bool,
+    /// Why the two nodes are related this way.
+    pub reason: String,
     pub origin: EdgeOrigin,
     pub weight: f64,
 }
@@ -121,6 +108,10 @@ pub struct GraphEdge {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct GraphSummary {
     pub id: Uuid,
+    #[schema(required = true)]
+    pub workspace_id: Option<Uuid>,
+    #[schema(required = true)]
+    pub team_id: Option<Uuid>,
     pub name: String,
     pub description: String,
     pub node_count: i64,
@@ -132,11 +123,19 @@ pub struct GraphSummary {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Graph {
     pub id: Uuid,
+    /// The workspace the graph belongs to.
+    #[schema(required = true)]
+    pub workspace_id: Option<Uuid>,
+    /// The team it belongs to; `null` for a graph of the whole workspace.
+    #[schema(required = true)]
+    pub team_id: Option<Uuid>,
     pub name: String,
     pub description: String,
     pub goal: String,
     /// Incremented on every mutation of the graph, its nodes or edges.
     pub version: i64,
+    /// The node types and relation types this graph is built from.
+    pub ontology: Ontology,
     pub nodes: Vec<GraphNode>,
     pub edges: Vec<GraphEdge>,
     pub created_at: DateTime<Utc>,
@@ -147,11 +146,15 @@ pub struct Graph {
 #[derive(Debug, Clone)]
 pub struct GraphMeta {
     pub id: Uuid,
+    /// Who created the graph.
     pub owner_id: Uuid,
+    pub workspace_id: Option<Uuid>,
+    pub team_id: Option<Uuid>,
     pub name: String,
     pub description: String,
     pub goal: String,
     pub version: i64,
+    pub ontology: Ontology,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -161,10 +164,13 @@ impl GraphMeta {
     pub fn into_graph(self, nodes: Vec<GraphNode>, edges: Vec<GraphEdge>) -> Graph {
         Graph {
             id: self.id,
+            workspace_id: self.workspace_id,
+            team_id: self.team_id,
             name: self.name,
             description: self.description,
             goal: self.goal,
             version: self.version,
+            ontology: self.ontology,
             nodes,
             edges,
             created_at: self.created_at,
@@ -178,7 +184,7 @@ impl GraphMeta {
 pub struct NodeDraft {
     pub title: String,
     pub content: String,
-    pub kind: NodeKind,
+    pub kind: String,
     pub tags: Vec<String>,
     pub x: f64,
     pub y: f64,
@@ -192,7 +198,7 @@ pub struct NodeDraft {
 pub struct NodePatch {
     pub title: Option<String>,
     pub content: Option<String>,
-    pub kind: Option<NodeKind>,
+    pub kind: Option<String>,
     pub tags: Option<Vec<String>>,
     pub x: Option<f64>,
     pub y: Option<f64>,
@@ -281,16 +287,6 @@ pub fn wikilinks(content: &str) -> Vec<String> {
     found
 }
 
-/// Agent role used for a node when none is set explicitly.
-pub fn default_role_for_kind(kind: NodeKind) -> &'static str {
-    match kind {
-        NodeKind::Topic => "planner",
-        NodeKind::Research => "researcher",
-        NodeKind::Task | NodeKind::Code => "engineer",
-        NodeKind::Document | NodeKind::Output => "writer",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,13 +304,13 @@ mod tests {
 
     #[test]
     fn enum_round_trip() {
-        for kind in ["topic", "task", "research", "code", "document", "output"] {
-            assert_eq!(kind.parse::<NodeKind>().unwrap().as_str(), kind);
+        for executor in ["llm", "agent", "symphony"] {
+            assert_eq!(executor.parse::<Executor>().unwrap().as_str(), executor);
         }
         assert!("nope".parse::<Executor>().is_err());
         assert_eq!(
-            serde_json::to_string(&EdgeKind::DependsOn).unwrap(),
-            "\"depends_on\""
+            serde_json::to_string(&EdgeOrigin::Auto).unwrap(),
+            "\"auto\""
         );
     }
 }

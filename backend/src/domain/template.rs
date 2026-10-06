@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::graph::{Executor, NodeKind};
+use super::graph::Executor;
 
 /// A template as listed by `GET /templates`.
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -26,7 +26,7 @@ pub struct TemplateNode {
     pub key: String,
     pub title: String,
     pub content: String,
-    pub kind: NodeKind,
+    pub kind: String,
     #[serde(default)]
     pub tags: Vec<String>,
     pub x: f64,

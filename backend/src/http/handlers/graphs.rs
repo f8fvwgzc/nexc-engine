@@ -1,11 +1,11 @@
-//! Graph CRUD, dependency suggestions and analysis.
+//! Graph CRUD, ontology, dependency suggestions and analysis.
 
 use axum::Json;
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use crate::app::AppState;
@@ -13,9 +13,10 @@ use crate::domain::AppError;
 use crate::domain::graph::{
     EdgeSuggestion, GRAPH_NAME_MAX, GRAPH_TEXT_MAX, Graph, GraphAnalysis, GraphSummary,
 };
+use crate::domain::ontology::Ontology;
 use crate::domain::validation::{FieldErrors, Validate, check_max_len, check_text};
 use crate::engine::{analysis, deps, editor};
-use crate::http::extract::{AuthUser, Path, ValidatedJson};
+use crate::http::extract::{AuthUser, Path, Query, ValidatedJson};
 use crate::http::problem::Problem;
 use crate::kernel;
 use crate::realtime::events::WsMessage;
@@ -30,6 +31,18 @@ pub struct CreateGraph {
     pub description: String,
     #[serde(default)]
     pub goal: String,
+    /// Workspace to create the graph in (default: the caller's first workspace).
+    pub workspace_id: Option<Uuid>,
+    /// Team to create the graph in (default: a graph of the whole workspace).
+    pub team_id: Option<Uuid>,
+}
+
+/// Query of `GET /graphs`.
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+pub struct GraphQuery {
+    /// Only graphs of this workspace.
+    pub workspace_id: Option<Uuid>,
 }
 
 impl Validate for CreateGraph {
@@ -72,27 +85,33 @@ fn etag(graph: &Graph) -> Result<String, AppError> {
     ))
 }
 
-/// The caller's graphs, most recently updated first.
-#[utoipa::path(get, path = "/graphs", tag = "graphs", security(("bearer" = [])),
+/// The graphs the caller may work on, most recently updated first.
+#[utoipa::path(get, path = "/graphs", tag = "graphs", security(("bearer" = [])), params(GraphQuery),
     responses((status = 200, body = [GraphSummary]), (status = 401, body = Problem)))]
 pub async fn list(
     State(state): State<AppState>,
     auth: AuthUser,
+    Query(query): Query<GraphQuery>,
 ) -> Result<Json<Vec<GraphSummary>>, AppError> {
-    Ok(Json(repo::graphs::list(&state.db, auth.id).await?))
+    Ok(Json(
+        repo::graphs::list(&state.db, auth.id, query.workspace_id).await?,
+    ))
 }
 
-/// Creates an empty graph.
+/// Creates an empty graph in a workspace, or in one of its teams.
 #[utoipa::path(post, path = "/graphs", tag = "graphs", security(("bearer" = [])), request_body = CreateGraph,
-    responses((status = 201, body = Graph), (status = 422, body = Problem)))]
+    responses((status = 201, body = Graph), (status = 403, body = Problem), (status = 404, body = Problem), (status = 422, body = Problem)))]
 pub async fn create(
     State(state): State<AppState>,
     auth: AuthUser,
     ValidatedJson(req): ValidatedJson<CreateGraph>,
 ) -> Result<(StatusCode, Json<Graph>), AppError> {
+    let home = editor::graph_home(&state, auth.id, req.workspace_id, req.team_id).await?;
     let meta = repo::graphs::create(
         &state.db,
         auth.id,
+        home.workspace_id,
+        home.team_id,
         req.name.trim(),
         &req.description,
         &req.goal,
@@ -158,6 +177,26 @@ pub async fn update(
     Ok(Json(editor::load_graph(&state, auth.id, gid).await?))
 }
 
+/// Replaces the graph's ontology: its node types and relation types.
+#[utoipa::path(put, path = "/graphs/{gid}/ontology", tag = "graphs", security(("bearer" = [])),
+    params(("gid" = Uuid, Path, description = "Graph id")), request_body = Ontology,
+    responses(
+        (status = 200, body = Graph),
+        (status = 404, body = Problem),
+        (status = 409, description = "A relation made blocking would create a cycle", body = Problem),
+        (status = 422, description = "Invalid, or a type still in use was removed", body = Problem),
+    ))]
+pub async fn replace_ontology(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(gid): Path<Uuid>,
+    ValidatedJson(ontology): ValidatedJson<Ontology>,
+) -> Result<Json<Graph>, AppError> {
+    Ok(Json(
+        editor::replace_ontology(&state, auth.id, gid, ontology).await?,
+    ))
+}
+
 /// Deletes a graph with everything in it.
 #[utoipa::path(delete, path = "/graphs/{gid}", tag = "graphs", security(("bearer" = [])),
     params(("gid" = Uuid, Path, description = "Graph id")),
@@ -184,7 +223,11 @@ pub async fn suggestions(
     Path(gid): Path<Uuid>,
 ) -> Result<Json<Vec<EdgeSuggestion>>, AppError> {
     let graph = editor::load_graph(&state, auth.id, gid).await?;
-    Ok(Json(deps::suggestions(&graph.nodes, &graph.edges)))
+    Ok(Json(deps::suggestions(
+        &graph.nodes,
+        &graph.edges,
+        &graph.ontology,
+    )))
 }
 
 /// Topological order, parallel levels, critical path, cycles and components.

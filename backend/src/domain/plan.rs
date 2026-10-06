@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use super::graph::{EdgeKind, Executor, NodeKind, TITLE_MAX};
+use super::graph::{Executor, TITLE_MAX};
+use super::ontology::{Ontology, REASON_MAX, slug};
 use super::string_enum;
 use crate::dsa::graph::DiGraph;
 
@@ -40,7 +41,8 @@ pub struct ProposedNode {
     pub existing_id: Option<Uuid>,
     pub title: String,
     pub content: String,
-    pub kind: NodeKind,
+    /// Key of a node type: one of the graph's, or one the plan's ontology adds.
+    pub kind: String,
     pub agent_role: String,
     pub executor: Executor,
     pub tags: Vec<String>,
@@ -51,11 +53,19 @@ fn lenient_uuid<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Uuid>, 
     Ok(raw.and_then(|s| s.trim().parse().ok()))
 }
 
-/// A `depends_on` edge between two proposed nodes (by `ref`).
+/// A typed relation between two proposed nodes (by `ref`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 pub struct ProposedEdge {
     pub source_ref: String,
     pub target_ref: String,
+    /// Key of a relation type; empty means the ontology's dependency relation.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub kind: String,
+    /// Why the two nodes are related this way.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub reason: String,
 }
 
 /// A plan as returned by the API.
@@ -65,6 +75,8 @@ pub struct Plan {
     pub graph_id: Uuid,
     pub status: PlanStatus,
     pub summary: String,
+    /// Node and relation types the plan adds to the graph's ontology.
+    pub ontology: Ontology,
     pub nodes: Vec<ProposedNode>,
     pub edges: Vec<ProposedEdge>,
     #[schema(required = true)]
@@ -76,6 +88,9 @@ pub struct Plan {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PlanProposal {
     pub summary: String,
+    /// New node and relation types; types the graph already has are not repeated.
+    #[serde(default)]
+    pub ontology: Ontology,
     pub nodes: Vec<ProposedNode>,
     pub edges: Vec<ProposedEdge>,
 }
@@ -85,7 +100,7 @@ pub struct PlanProposal {
 pub struct ContextNode {
     pub id: Uuid,
     pub title: String,
-    pub kind: NodeKind,
+    pub kind: String,
     pub content: String,
     pub tags: Vec<String>,
     pub agent_role: Option<String>,
@@ -97,7 +112,9 @@ pub struct ContextNode {
 pub struct ContextEdge {
     pub source: Uuid,
     pub target: Uuid,
-    pub kind: EdgeKind,
+    pub kind: String,
+    #[serde(default)]
+    pub reason: String,
 }
 
 /// Everything the planner tells the LLM about the graph. Serialised as JSON
@@ -106,6 +123,9 @@ pub struct ContextEdge {
 pub struct PlanContext {
     pub goal: String,
     pub instructions: String,
+    /// The graph's current node types and relation types.
+    #[serde(default)]
+    pub ontology: Ontology,
     pub nodes: Vec<ContextNode>,
     pub edges: Vec<ContextEdge>,
     /// Detected-but-unconfirmed dependencies, as "source title -> target title: reason".
@@ -125,15 +145,23 @@ impl PlanContext {
 
 /// Makes an LLM proposal safe to apply: unique non-empty refs, bounded
 /// titles, `existing_id`s that really exist in the graph (each used once),
-/// edges between known refs only, no duplicates and no cycles (edges that
-/// would close a cycle are dropped in order). Returns human readable notes
-/// about every correction.
+/// node and edge kinds that resolve to a type of `ontology` or of the plan's
+/// own additions (kinds the model used without declaring are declared for
+/// it), edges between known refs only, no duplicates and no cycle among
+/// blocking edges (edges that would close one are dropped in order). The
+/// proposal's ontology is reduced to the types the graph does not have yet.
+/// Returns human readable notes about every correction.
 pub fn sanitize_proposal(
     mut proposal: PlanProposal,
     existing: &HashSet<Uuid>,
+    ontology: &Ontology,
     max_nodes: usize,
 ) -> (PlanProposal, Vec<String>) {
     let mut notes = Vec::new();
+    proposal.ontology.normalize();
+    let mut merged = ontology.clone();
+    merged.merge(&proposal.ontology);
+
     let mut seen_refs = HashSet::new();
     let mut used_existing = HashSet::new();
     proposal.nodes.retain_mut(|node| {
@@ -158,6 +186,21 @@ pub fn sanitize_proposal(
             ));
             node.existing_id = None;
         }
+        let kind = slug(&node.kind);
+        if merged.node_type(&kind).is_none() {
+            if merged.ensure_node_type(&kind) {
+                notes.push(format!("declared undeclared node type `{kind}`"));
+            } else {
+                let fallback = merged.default_node_kind().unwrap_or_default().to_owned();
+                notes.push(format!(
+                    "node `{}` used unusable type `{}`; using `{fallback}`",
+                    node.reference, node.kind
+                ));
+                node.kind = fallback;
+                return !node.kind.is_empty();
+            }
+        }
+        node.kind = kind;
         true
     });
     if proposal.nodes.len() > max_nodes {
@@ -174,7 +217,7 @@ pub fn sanitize_proposal(
     let mut dag = DiGraph::new(proposal.nodes.len());
     let mut kept = Vec::new();
     let mut seen_edges = HashSet::new();
-    for edge in proposal.edges.drain(..) {
+    for mut edge in proposal.edges.drain(..) {
         let (Some(&s), Some(&t)) = (
             index.get(edge.source_ref.as_str()),
             index.get(edge.target_ref.as_str()),
@@ -185,20 +228,51 @@ pub fn sanitize_proposal(
             ));
             continue;
         };
-        if s == t || !seen_edges.insert((s, t)) {
+        let mut kind = slug(&edge.kind);
+        if kind.is_empty() {
+            kind = merged
+                .default_relation()
+                .map(|r| r.key.clone())
+                .unwrap_or_default();
+        }
+        if merged.relation_type(&kind).is_none() {
+            // An undeclared relation never orders execution: only relations the
+            // ontology marks blocking may hold a node back.
+            if !merged.ensure_relation_type(&kind, false) {
+                notes.push(format!(
+                    "dropped edge {} -> {} (unusable relation `{}`)",
+                    edge.source_ref, edge.target_ref, edge.kind
+                ));
+                continue;
+            }
+            notes.push(format!("declared undeclared relation type `{kind}`"));
+        }
+        if s == t || !seen_edges.insert((s, t, kind.clone())) {
             continue;
         }
-        if dag.would_create_cycle(s, t) {
-            notes.push(format!(
-                "dropped edge {} -> {} (would create a cycle)",
-                edge.source_ref, edge.target_ref
-            ));
-            continue;
+        if merged.relation_type(&kind).is_some_and(|r| r.blocking) {
+            if dag.would_create_cycle(s, t) {
+                notes.push(format!(
+                    "dropped edge {} -> {} (would create a cycle)",
+                    edge.source_ref, edge.target_ref
+                ));
+                continue;
+            }
+            dag.add_edge(s, t);
         }
-        dag.add_edge(s, t);
+        edge.kind = kind;
+        edge.reason = edge.reason.trim().chars().take(REASON_MAX).collect();
         kept.push(edge);
     }
     proposal.edges = kept;
+
+    merged
+        .node_types
+        .retain(|t| ontology.node_type(&t.key).is_none());
+    merged
+        .relation_types
+        .retain(|t| ontology.relation_type(&t.key).is_none());
+    proposal.ontology = merged;
     (proposal, notes)
 }
 
@@ -212,7 +286,7 @@ mod tests {
             existing_id: existing,
             title: format!("Node {r}"),
             content: String::new(),
-            kind: NodeKind::Task,
+            kind: "task".into(),
             agent_role: "writer".into(),
             executor: Executor::Llm,
             tags: vec![],
@@ -223,6 +297,8 @@ mod tests {
         ProposedEdge {
             source_ref: s.into(),
             target_ref: t.into(),
+            kind: "depends_on".into(),
+            reason: String::new(),
         }
     }
 
@@ -232,6 +308,7 @@ mod tests {
         let unknown = Uuid::now_v7();
         let proposal = PlanProposal {
             summary: "s".into(),
+            ontology: Ontology::default(),
             nodes: vec![
                 node("a", Some(known)),
                 node("b", Some(unknown)),
@@ -246,7 +323,8 @@ mod tests {
                 edge("a", "b"),
             ],
         };
-        let (clean, notes) = sanitize_proposal(proposal, &HashSet::from([known]), 10);
+        let (clean, notes) =
+            sanitize_proposal(proposal, &HashSet::from([known]), &Ontology::starter(), 10);
         assert_eq!(clean.nodes.len(), 3);
         assert_eq!(clean.nodes[0].existing_id, Some(known));
         assert_eq!(clean.nodes[1].existing_id, None);
@@ -256,6 +334,53 @@ mod tests {
         );
         assert_eq!(clean.edges, vec![edge("a", "b"), edge("b", "c")]);
         assert!(notes.iter().any(|n| n.contains("cycle")));
+        assert_eq!(
+            clean.ontology,
+            Ontology::default(),
+            "nothing new was needed"
+        );
+    }
+
+    #[test]
+    fn resolves_kinds_against_the_ontology() {
+        let mut hypothesis = node("h", None);
+        hypothesis.kind = "Hypothesis".into();
+        let mut signal = node("s", None);
+        signal.kind = "market signal".into();
+        let proposal: PlanProposal = serde_json::from_value(serde_json::json!({
+            "summary": "s",
+            "ontology": {
+                "node_types": [{ "key": "hypothesis", "label": "Hypothesis", "stage": 1 }],
+                "relation_types": [
+                    { "key": "validates", "label": "Validates", "blocking": true },
+                    { "key": "depends_on", "label": "redeclared" }
+                ]
+            },
+            "nodes": [hypothesis, signal],
+            "edges": [
+                { "source_ref": "h", "target_ref": "s", "kind": "validates", "reason": " tested first " },
+                { "source_ref": "s", "target_ref": "h", "kind": "validates" },
+                { "source_ref": "s", "target_ref": "h", "kind": "contradicts" },
+                { "source_ref": "h", "target_ref": "s" }
+            ]
+        }))
+        .unwrap();
+        let (clean, notes) = sanitize_proposal(proposal, &HashSet::new(), &Ontology::starter(), 10);
+        assert_eq!(clean.nodes[1].kind, "market_signal");
+        let kinds: Vec<&str> = clean.edges.iter().map(|e| e.kind.as_str()).collect();
+        assert_eq!(kinds, ["validates", "contradicts", "depends_on"]);
+        assert_eq!(clean.edges[0].reason, "tested first");
+        let added: Vec<&str> = clean
+            .ontology
+            .node_types
+            .iter()
+            .map(|t| t.key.as_str())
+            .collect();
+        assert_eq!(added, ["hypothesis", "market_signal"]);
+        let relations = &clean.ontology.relation_types;
+        assert_eq!(relations.len(), 2, "the graph already has depends_on");
+        assert!(relations[0].blocking && !relations[1].blocking);
+        assert!(notes.iter().any(|n| n.contains("market_signal")));
     }
 
     #[test]
@@ -263,6 +388,7 @@ mod tests {
         let ctx = PlanContext {
             goal: "g".into(),
             instructions: String::new(),
+            ontology: Ontology::starter(),
             nodes: vec![],
             edges: vec![],
             suggestions: vec![],

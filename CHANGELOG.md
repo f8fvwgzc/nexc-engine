@@ -7,6 +7,43 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Per-graph ontology: node types and relation types are data owned by each graph instead of fixed
+  enums. `GET /graphs/{gid}` returns it, `PUT /graphs/{gid}/ontology` replaces it, and the canvas
+  toolbar has an editor for it.
+- Edges carry a `reason` (`PATCH /graphs/{gid}/edges/{eid}`), shown in the new edge inspector and
+  passed to downstream nodes with the upstream output.
+- The planner proposes new node and relation types for the goal's domain and justifies every edge.
+- Workspaces, members and teams with Linear-style roles (workspace owner / admin / member /
+  guest, team owner / member, private teams), invitations by e-mail that are accepted on sign-up,
+  and a personal workspace for every account.
+- Graphs belong to a workspace and optionally a team (`workspace_id`, `team_id`); access to a
+  graph, its runs and artifacts follows membership instead of who created it. The sidebar has a
+  workspace switcher and lists are scoped to the open workspace. Agents, memories and LLM
+  settings are still per user.
+- Workspace credentials: admins set one LLM credential per workspace (`/workspaces/{wid}/llm`);
+  a member's own connected account takes precedence, then the workspace's, then the server
+  default. `DELETE /settings/llm` disconnects a personal account. `LlmSettings` gains `scope`.
+- `GET /settings/llm/models` lists the models the effective provider offers, asked from the
+  provider at request time (Anthropic and OpenAI-compatible endpoints).
+- Members and Teams pages, and a settings page split into "Your AI account" and "Workspace
+  credential".
+- Memory retrieval reads from an in-process index (one `DashMap` entry per owner, 30 s TTL,
+  dropped on write) instead of querying PostgreSQL per node, ranks every memory in scope, and
+  records accesses in the background.
+- The agent runtime stops the `claude` CLI when a node is cancelled or times out.
+- Canvas legend with a switch for dependency suggestions (now off by default).
+
+### Changed
+
+- `kind` on nodes and edges is a key of the graph's ontology; edges gain `blocking`, which replaces
+  the special meaning of `depends_on` in scheduling, cycle checks and analysis.
+- Node type attributes are part of the result-cache hash, so cached node results from earlier
+  versions are not reused.
+- The logged-in shell uses an inset sidebar and a neutral colour theme; the window no longer
+  scrolls on the graph page.
+
 ## [0.1.0] - 2026-10-04
 
 First public release.

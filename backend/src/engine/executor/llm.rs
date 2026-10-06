@@ -5,7 +5,6 @@ use futures::StreamExt;
 use futures::future::BoxFuture;
 
 use super::{ExecContext, ExecError, ExecOutput, NodeExecutor, slug};
-use crate::domain::graph::NodeKind;
 use crate::domain::prompt::{NodePrompt, node_prompt};
 use crate::domain::settings::LlmProviderKind;
 use crate::llm::{LlmEvent, LlmRequest, Message, StopReason};
@@ -24,7 +23,8 @@ async fn run(ctx: &ExecContext) -> Result<ExecOutput, ExecError> {
     let prompt = node_prompt(NodePrompt {
         goal: &ctx.goal,
         title: &ctx.node.title,
-        kind: ctx.node.kind,
+        kind: &ctx.node.kind,
+        node_type: ctx.node_type.as_ref(),
         content: &ctx.node.content,
         upstream: &ctx.upstream,
         memories: &ctx.memories,
@@ -62,7 +62,7 @@ async fn run(ctx: &ExecContext) -> Result<ExecOutput, ExecError> {
         Some(StopReason::MaxTokens) => ctx.log(LogLevel::Warn, "output truncated at max_tokens"),
         Some(StopReason::EndTurn) => {}
     }
-    let wants_artifact = matches!(ctx.node.kind, NodeKind::Document | NodeKind::Output)
+    let wants_artifact = ctx.node_type.as_ref().is_some_and(|t| t.produces_artifact)
         || ctx.target.provider == LlmProviderKind::Demo;
     if wants_artifact && !out.output.trim().is_empty() {
         let path = format!("{}.md", slug(&ctx.node.title));

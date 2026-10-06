@@ -5,7 +5,8 @@ use sqlx::{FromRow, PgExecutor, Row};
 use uuid::Uuid;
 
 use super::enum_col;
-use crate::domain::graph::{EdgeKind, EdgeOrigin, GraphEdge};
+use crate::domain::graph::{EdgeOrigin, GraphEdge};
+use crate::domain::ontology::RelationType;
 
 impl FromRow<'_, PgRow> for GraphEdge {
     fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
@@ -14,7 +15,9 @@ impl FromRow<'_, PgRow> for GraphEdge {
             graph_id: row.try_get("graph_id")?,
             source: row.try_get("source")?,
             target: row.try_get("target")?,
-            kind: enum_col(row, "kind")?,
+            kind: row.try_get("kind")?,
+            blocking: row.try_get("blocking")?,
+            reason: row.try_get("reason")?,
             origin: enum_col(row, "origin")?,
             weight: row.try_get("weight")?,
         })
@@ -27,19 +30,23 @@ pub async fn create(
     graph_id: Uuid,
     source: Uuid,
     target: Uuid,
-    kind: EdgeKind,
+    relation: &RelationType,
+    reason: &str,
     origin: EdgeOrigin,
 ) -> Result<Option<GraphEdge>, sqlx::Error> {
     sqlx::query_as(
-        "INSERT INTO edges (id, graph_id, source, target, kind, origin) VALUES ($1, $2, $3, $4, $5, $6)
+        "INSERT INTO edges (id, graph_id, source, target, kind, blocking, reason, origin)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          ON CONFLICT (source, target, kind) DO NOTHING
-         RETURNING id, graph_id, source, target, kind, origin, weight",
+         RETURNING id, graph_id, source, target, kind, blocking, reason, origin, weight",
     )
     .bind(Uuid::now_v7())
     .bind(graph_id)
     .bind(source)
     .bind(target)
-    .bind(kind.as_str())
+    .bind(&relation.key)
+    .bind(relation.blocking)
+    .bind(reason)
     .bind(origin.as_str())
     .fetch_optional(db)
     .await
@@ -48,11 +55,45 @@ pub async fn create(
 /// All edges of a graph.
 pub async fn list(db: impl PgExecutor<'_>, graph_id: Uuid) -> Result<Vec<GraphEdge>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT id, graph_id, source, target, kind, origin, weight FROM edges WHERE graph_id = $1 ORDER BY created_at, id",
+        "SELECT id, graph_id, source, target, kind, blocking, reason, origin, weight FROM edges WHERE graph_id = $1 ORDER BY created_at, id",
     )
     .bind(graph_id)
     .fetch_all(db)
     .await
+}
+
+/// Updates the reason of one edge of a graph.
+pub async fn set_reason(
+    db: impl PgExecutor<'_>,
+    graph_id: Uuid,
+    id: Uuid,
+    reason: &str,
+) -> Result<Option<GraphEdge>, sqlx::Error> {
+    sqlx::query_as(
+        "UPDATE edges SET reason = $3 WHERE graph_id = $1 AND id = $2
+         RETURNING id, graph_id, source, target, kind, blocking, reason, origin, weight",
+    )
+    .bind(graph_id)
+    .bind(id)
+    .bind(reason)
+    .fetch_optional(db)
+    .await
+}
+
+/// Copies a relation type's `blocking` flag onto every edge of that kind.
+pub async fn set_blocking(
+    db: impl PgExecutor<'_>,
+    graph_id: Uuid,
+    kind: &str,
+    blocking: bool,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE edges SET blocking = $3 WHERE graph_id = $1 AND kind = $2")
+        .bind(graph_id)
+        .bind(kind)
+        .bind(blocking)
+        .execute(db)
+        .await?;
+    Ok(())
 }
 
 /// Deletes one edge of a graph. Returns false if absent.

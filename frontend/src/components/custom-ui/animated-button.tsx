@@ -8,7 +8,7 @@ interface AnimatedButtonProps extends ComponentProps<typeof Button> {
   loading?: boolean;
   /** Replaces the label while loading (defaults to the label itself). */
   loadingText?: string;
-  /** Brand gradient fill for primary calls to action. */
+  /** Solid primary fill for primary calls to action. */
   glow?: boolean;
 }
 
@@ -28,8 +28,7 @@ export function AnimatedButton({
       aria-busy={loading || undefined}
       className={cn(
         'transition-[transform,background-color,box-shadow,opacity] duration-200 ease-out-soft motion-safe:active:scale-[0.97]',
-        glow &&
-          'bg-gradient-to-r from-brand to-brand-2 text-white shadow-md shadow-brand/25 hover:opacity-95 hover:shadow-lg hover:shadow-brand/30',
+        glow && 'bg-primary text-primary-foreground shadow-sm hover:bg-primary/90',
         className,
       )}
       {...props}

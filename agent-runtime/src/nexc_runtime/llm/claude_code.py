@@ -288,6 +288,12 @@ class ClaudeCodeProvider:
             proc.kill()
             await proc.wait()
             raise LLMError("claude CLI timed out", retryable=True) from exc
+        except asyncio.CancelledError:
+            # The run was cancelled or the backend gave up on the node. Without this the CLI
+            # would keep generating (and spending the operator's usage) with nobody listening.
+            proc.kill()
+            await proc.wait()
+            raise
 
         try:
             result: dict[str, Any] = json.loads(stdout)

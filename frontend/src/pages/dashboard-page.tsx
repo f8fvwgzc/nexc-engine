@@ -11,9 +11,11 @@ import { DashboardStats } from '@/features/graphs/components/dashboard-stats';
 import { FirstRunHero } from '@/features/graphs/components/first-run-hero';
 import { GraphCard } from '@/features/graphs/components/graph-card';
 import { TemplateGallery } from '@/features/graphs/components/template-gallery';
+import { useWorkspaceId } from '@/features/workspaces/use-current-workspace';
 
 function Dashboard() {
-  const { data: graphs } = useSuspenseQuery(graphsQuery());
+  const workspaceId = useWorkspaceId();
+  const { data: graphs } = useSuspenseQuery(graphsQuery(workspaceId));
   const sorted = [...graphs].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
 
   return (

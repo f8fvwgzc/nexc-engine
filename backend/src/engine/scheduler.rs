@@ -23,7 +23,8 @@ use super::{artifacts, credentials, editor};
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::agent::{Agent, AgentStatus};
-use crate::domain::graph::{EdgeKind, Executor, GraphEdge, GraphNode, NodeStatus};
+use crate::domain::graph::{Executor, GraphEdge, GraphNode, NodeStatus};
+use crate::domain::ontology::Ontology;
 use crate::domain::prompt::UpstreamOutput;
 use crate::domain::run::{Run, RunStatus, final_status};
 use crate::domain::settings::LlmProviderKind;
@@ -80,7 +81,7 @@ pub async fn create_run(
         }
     };
     if selected.iter().any(|n| n.executor != Executor::Symphony) {
-        credentials::require(state, owner).await?;
+        credentials::require(state, owner, graph.workspace_id).await?;
     }
     let concurrency = opts
         .max_concurrency
@@ -238,6 +239,7 @@ struct RunData {
     goal: String,
     force: bool,
     target: LlmTarget,
+    ontology: Ontology,
     edges: Vec<GraphEdge>,
 }
 
@@ -277,7 +279,9 @@ impl Execution {
             .into_iter()
             .filter(|n| selected.contains(&n.id))
             .collect();
-        let target = credentials::resolve(state, row.owner_id).await?.target;
+        let target = credentials::resolve(state, row.owner_id, graph.workspace_id)
+            .await?
+            .target;
         let data = RunData {
             run_id: row.id,
             graph_id: row.graph_id,
@@ -285,6 +289,7 @@ impl Execution {
             goal: graph.goal,
             force: row.force,
             target,
+            ontology: graph.ontology,
             edges,
         };
         Ok(Execution {
@@ -385,11 +390,7 @@ impl Execution {
             .data
             .edges
             .iter()
-            .filter(|e| {
-                e.kind == EdgeKind::DependsOn
-                    && selected.contains(&e.target)
-                    && !selected.contains(&e.source)
-            })
+            .filter(|e| e.blocking && selected.contains(&e.target) && !selected.contains(&e.source))
             .map(|e| e.source)
             .collect();
         let mut outputs = HashMap::new();
@@ -412,7 +413,7 @@ fn upstream_of(
 ) -> Vec<(Uuid, String)> {
     let mut up: Vec<(Uuid, String)> = edges
         .iter()
-        .filter(|e| e.kind == EdgeKind::DependsOn && e.target == node.id)
+        .filter(|e| e.blocking && e.target == node.id)
         .filter_map(|e| outputs.get(&e.source).map(|o| (e.source, o.clone())))
         .collect();
     up.sort_by_key(|(id, _)| *id);
@@ -527,6 +528,7 @@ fn content_hash(data: &RunData, node: &GraphNode, upstream: &[(Uuid, String)]) -
         "title": node.title,
         "content": node.content,
         "kind": node.kind,
+        "type": data.ontology.node_type(&node.kind),
         "executor": node.executor,
         "agent_role": node.agent_role,
         "provider": data.target.provider,
@@ -610,24 +612,40 @@ impl NodeTask {
         upstream: Vec<(Uuid, String)>,
     ) -> anyhow::Result<Self> {
         let hash = content_hash(&data, &node, &upstream);
-        let agent = orchestrator::assign(&state, data.owner, &node).await?;
+        let agent = orchestrator::assign(&state, data.owner, &node, &data.ontology).await?;
         let query = format!("{} {}", node.title, node.content);
-        let memories = memory::retrieve(&state.db, data.owner, Some(data.graph_id), &query, 5)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .map(|m| m.content)
-            .collect();
+        let memories = memory::retrieve(
+            &state.memories,
+            &state.db,
+            data.owner,
+            Some(data.graph_id),
+            &query,
+            5,
+        )
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|m| m.content)
+        .collect();
         let mut upstream_outputs = Vec::with_capacity(upstream.len());
         for (id, output) in upstream {
             let title = repo::nodes::find(&state.db, data.graph_id, id)
                 .await?
                 .map(|n| n.title)
                 .unwrap_or_default();
+            let edge = data
+                .edges
+                .iter()
+                .find(|e| e.blocking && e.source == id && e.target == node.id);
             upstream_outputs.push(UpstreamOutput {
                 node_id: id,
                 title,
                 output,
+                relation: edge
+                    .and_then(|e| data.ontology.relation_type(&e.kind))
+                    .map(|r| r.label.clone())
+                    .unwrap_or_default(),
+                reason: edge.map(|e| e.reason.clone()).unwrap_or_default(),
             });
         }
         let ctx = ExecContext {
@@ -635,6 +653,7 @@ impl NodeTask {
             run_id: data.run_id,
             graph_id: data.graph_id,
             goal: data.goal.clone(),
+            node_type: data.ontology.node_type(&node.kind).cloned(),
             node,
             upstream: upstream_outputs,
             memories,
@@ -878,7 +897,7 @@ impl NodeTask {
         tokio::spawn(async move {
             let result = async {
                 let candidates = memory::extract(&state.llm, target, &goal, &node, &output).await?;
-                memory::store(&state.db, owner, graph_id, &candidates).await
+                memory::store(&state.memories, &state.db, owner, graph_id, &candidates).await
             }
             .await;
             if let Err(err) = result {

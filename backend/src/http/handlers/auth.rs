@@ -147,7 +147,15 @@ pub async fn register(
     Ok(with_session(&state, StatusCode::CREATED, session))
 }
 
-/// Inserts a user and its default agent organisation in one transaction.
+/// Name of the workspace a new account starts in.
+pub fn personal_workspace_name(user_name: &str) -> String {
+    let first = user_name.split_whitespace().next().unwrap_or("My");
+    let name: String = first.chars().take(60).collect();
+    format!("{name}'s workspace")
+}
+
+/// Inserts a user, its default agent organisation and its first workspace
+/// membership in one transaction.
 pub async fn create_user(
     state: &AppState,
     email: &str,
@@ -158,6 +166,11 @@ pub async fn create_user(
     let mut tx = state.db.begin().await?;
     let user = repo::users::create(&mut *tx, email, name, role, hash).await?;
     orchestrator::seed_default_org(&mut tx, user.id, &state.settings.llm_model).await?;
+    // Join the workspaces this address was invited to; without any, start a personal one so
+    // that every account works in at least one workspace.
+    if repo::workspaces::accept_invites(&mut tx, user.id, email).await? == 0 {
+        super::workspaces::create_owned(&mut tx, user.id, &personal_workspace_name(name)).await?;
+    }
     tx.commit().await?;
     Ok(user)
 }

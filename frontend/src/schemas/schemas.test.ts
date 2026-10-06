@@ -35,6 +35,8 @@ describe('contract schemas (CONTRACT §4)', () => {
   it('parses a GraphSummary', () => {
     const summary = {
       id: f.ids.graph,
+      workspace_id: f.ids.workspace,
+      team_id: null,
       name: 'g',
       description: '',
       node_count: 2,

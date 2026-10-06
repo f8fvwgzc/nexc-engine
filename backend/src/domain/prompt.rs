@@ -1,7 +1,7 @@
 //! Prompt layouts shared by the executors and the offline demo provider
 //! (which reads the same structure back to produce plausible output).
 
-use super::graph::NodeKind;
+use super::ontology::NodeType;
 
 /// First line of every node prompt, followed by the node title.
 pub const TASK_HEADING: &str = "# Task: ";
@@ -18,6 +18,10 @@ pub struct UpstreamOutput {
     pub node_id: uuid::Uuid,
     pub title: String,
     pub output: String,
+    /// Label of the relation that makes this node an upstream (may be empty).
+    pub relation: String,
+    /// Why the edge exists (may be empty).
+    pub reason: String,
 }
 
 /// Inputs of [`node_prompt`].
@@ -25,7 +29,9 @@ pub struct UpstreamOutput {
 pub struct NodePrompt<'a> {
     pub goal: &'a str,
     pub title: &'a str,
-    pub kind: NodeKind,
+    pub kind: &'a str,
+    /// The node's type in the graph's ontology, when it still exists.
+    pub node_type: Option<&'a NodeType>,
     pub content: &'a str,
     pub upstream: &'a [UpstreamOutput],
     pub memories: &'a [String],
@@ -34,6 +40,9 @@ pub struct NodePrompt<'a> {
 /// Renders the user message for executing one node.
 pub fn node_prompt(p: NodePrompt<'_>) -> String {
     let mut out = format!("{TASK_HEADING}{}\nKind: {}\n", p.title, p.kind);
+    if let Some(t) = p.node_type.filter(|t| !t.description.trim().is_empty()) {
+        out.push_str(&format!("Meaning of this kind: {}\n", t.description.trim()));
+    }
     if !p.goal.trim().is_empty() {
         out.push_str(&format!("\n## Overall goal\n{}\n", p.goal.trim()));
     }
@@ -44,7 +53,16 @@ pub fn node_prompt(p: NodePrompt<'_>) -> String {
         out.push_str(&format!("\n{UPSTREAM_HEADING}\n"));
         for u in p.upstream {
             let text: String = u.output.chars().take(UPSTREAM_CHARS).collect();
-            out.push_str(&format!("\n### {}\n{}\n", u.title, text.trim()));
+            out.push_str(&format!("\n### {}\n", u.title));
+            if !u.reason.trim().is_empty() {
+                let relation = Some(u.relation.trim()).filter(|r| !r.is_empty());
+                out.push_str(&format!(
+                    "Why it matters here ({}): {}\n",
+                    relation.unwrap_or("upstream"),
+                    u.reason.trim()
+                ));
+            }
+            out.push_str(&format!("{}\n", text.trim()));
         }
     }
     if !p.memories.is_empty() {
@@ -87,17 +105,21 @@ mod tests {
             node_id: uuid::Uuid::nil(),
             title: "Sources".into(),
             output: "a\nb".into(),
+            relation: "Depends on".into(),
+            reason: "the report cites them".into(),
         }];
         let prompt = node_prompt(NodePrompt {
             goal: "Write a report",
             title: "Draft",
-            kind: NodeKind::Document,
+            kind: "document",
+            node_type: None,
             content: "Write it.",
             upstream: &upstream,
             memories: &["User prefers APA".into()],
         });
         assert!(prompt.starts_with("# Task: Draft\nKind: document"));
         assert!(prompt.contains("- User prefers APA"));
+        assert!(prompt.contains("Why it matters here (Depends on): the report cites them"));
         assert_eq!(
             parse_node_prompt(&prompt),
             Some(("Draft".into(), vec!["Sources".into()]))

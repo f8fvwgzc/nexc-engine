@@ -12,6 +12,7 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::domain::agent::{Agent, FALLBACK_SYSTEM_PROMPT};
 use crate::domain::graph::{Executor, GraphNode};
+use crate::domain::ontology::NodeType;
 use crate::domain::prompt::UpstreamOutput;
 use crate::domain::run::Artifact;
 use crate::domain::settings::LlmProviderKind;
@@ -25,6 +26,8 @@ pub struct ExecContext {
     pub graph_id: Uuid,
     pub goal: String,
     pub node: GraphNode,
+    /// The node's type in the graph's ontology (absent if the type was removed).
+    pub node_type: Option<NodeType>,
     pub upstream: Vec<UpstreamOutput>,
     pub memories: Vec<String>,
     pub agent: Option<Agent>,

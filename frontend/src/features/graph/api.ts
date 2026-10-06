@@ -10,6 +10,7 @@ import {
   graphNodeSchema,
   graphSchema,
   type CreateEdgeBody,
+  type Ontology,
   type CreateNodeBody,
   type UpdateNodeBody,
 } from '@/schemas/graph';
@@ -44,6 +45,18 @@ export function deleteNode(graphId: string, nodeId: string) {
 
 export function createEdge(graphId: string, body: CreateEdgeBody) {
   return apiRequest(`/graphs/${graphId}/edges`, graphEdgeSchema, { method: 'POST', body });
+}
+
+export function updateEdge(graphId: string, edgeId: string, body: { reason: string }) {
+  return apiRequest(`/graphs/${graphId}/edges/${edgeId}`, graphEdgeSchema, {
+    method: 'PATCH',
+    body,
+  });
+}
+
+/** Replaces the graph's node types and relation types. */
+export function replaceOntology(graphId: string, ontology: Ontology) {
+  return apiRequest(`/graphs/${graphId}/ontology`, graphSchema, { method: 'PUT', body: ontology });
 }
 
 export function deleteEdge(graphId: string, edgeId: string) {

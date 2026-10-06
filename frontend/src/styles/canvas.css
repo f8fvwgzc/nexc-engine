@@ -3,22 +3,8 @@
 
 .graph-canvas {
   background-color: var(--canvas-bg);
-  background-image:
-    radial-gradient(
-      circle at 20% 0%,
-      color-mix(in oklch, var(--brand) 9%, transparent),
-      transparent 45%
-    ),
-    radial-gradient(
-      circle at 100% 100%,
-      color-mix(in oklch, var(--brand-2) 8%, transparent),
-      transparent 40%
-    ),
-    radial-gradient(var(--canvas-dot) 1px, transparent 1px);
-  background-size:
-    100% 100%,
-    100% 100%,
-    22px 22px;
+  background-image: radial-gradient(var(--canvas-dot) 1px, transparent 1px);
+  background-size: 22px 22px;
   touch-action: none;
   user-select: none;
 }
@@ -117,7 +103,7 @@
     stroke 200ms ease,
     opacity 200ms ease;
 }
-.gedge[data-kind='relates_to'] .gedge-line {
+.gedge[data-blocking='false'] .gedge-line {
   stroke-dasharray: 5 5;
   opacity: 0.5;
 }

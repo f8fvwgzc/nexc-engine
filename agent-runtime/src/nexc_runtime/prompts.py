@@ -87,6 +87,8 @@ def build_system_prompt(
     kind: str,
     can_spawn: bool,
     code_exec: bool,
+    kind_description: str = "",
+    produces_artifact: bool = False,
 ) -> str:
     sections = [
         persona_for(role),
@@ -98,7 +100,12 @@ def build_system_prompt(
         "Quality bar: deliver industry-quality, complete work that a demanding professional "
         "would sign off on. Be specific and concrete; never leave placeholders or TODOs."
     )
-    sections.append(KIND_INSTRUCTIONS.get(kind, DEFAULT_KIND_INSTRUCTION))
+    if kind_description.strip():
+        sections.append(f"This task is of kind {kind!r}: {kind_description.strip()}")
+    # Kinds are defined per graph, so an unknown kind is normal: what it must deliver follows
+    # from its declared attributes.
+    fallback = KIND_INSTRUCTIONS["document"] if produces_artifact else DEFAULT_KIND_INSTRUCTION
+    sections.append(KIND_INSTRUCTIONS.get(kind, fallback))
     tooling = [
         "You work in a private workspace directory; all paths are relative to it and every file "
         "you leave there is delivered as an artifact."

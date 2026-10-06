@@ -11,11 +11,13 @@ import { Button } from '@/components/ui/button';
 import { graphsQuery } from '@/features/graphs/api';
 import { graphRunsQuery } from '@/features/runs/api';
 import { RunsTable, type RunRow } from '@/features/runs/components/runs-table';
+import { useWorkspaceId } from '@/features/workspaces/use-current-workspace';
 
 const MAX_ROWS = 100;
 
 function RecentRuns() {
-  const { data: graphs } = useSuspenseQuery(graphsQuery());
+  const workspaceId = useWorkspaceId();
+  const { data: graphs } = useSuspenseQuery(graphsQuery(workspaceId));
   const results = useQueries({ queries: graphs.map((g) => graphRunsQuery(g.id)) });
   const loading = results.some((r) => r.isPending);
   const rows: RunRow[] = results

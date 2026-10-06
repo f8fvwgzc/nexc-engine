@@ -4,7 +4,6 @@ import { Link, useParams } from 'react-router-dom';
 
 import {
   SidebarGroup,
-  SidebarGroupAction,
   SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuBadge,
@@ -14,6 +13,7 @@ import {
 } from '@/components/ui/sidebar';
 import { routeModules } from '@/app/route-modules';
 import { graphQuery, graphsQuery } from '@/features/graphs/api';
+import { useWorkspaceId } from '@/features/workspaces/use-current-workspace';
 
 const MAX_GRAPHS = 8;
 
@@ -21,8 +21,9 @@ const MAX_GRAPHS = 8;
 export function NavGraphs() {
   const queryClient = useQueryClient();
   const { graphId: activeId } = useParams();
+  const workspaceId = useWorkspaceId();
   const { data: graphs, isPending } = useQuery({
-    ...graphsQuery(),
+    ...graphsQuery(workspaceId),
     select: (list) =>
       [...list].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, MAX_GRAPHS),
   });
@@ -34,12 +35,17 @@ export function NavGraphs() {
 
   return (
     <SidebarGroup className="group-data-[collapsible=icon]:hidden">
-      <SidebarGroupLabel>Recent graphs</SidebarGroupLabel>
-      <SidebarGroupAction asChild title="New graph">
-        <Link to="/app?new=1" aria-label="Create a new graph">
-          <PlusIcon />
+      <div className="flex items-center justify-between">
+        <SidebarGroupLabel>Recent graphs</SidebarGroupLabel>
+        <Link
+          to="/app?new=1"
+          title="New graph"
+          aria-label="Create a new graph"
+          className="mr-1 flex size-6 items-center justify-center rounded-md text-sidebar-foreground/70 ring-sidebar-ring outline-hidden hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2"
+        >
+          <PlusIcon className="size-4" />
         </Link>
-      </SidebarGroupAction>
+      </div>
       <SidebarMenu>
         {isPending &&
           Array.from({ length: 3 }, (_, i) => (
@@ -49,7 +55,13 @@ export function NavGraphs() {
           ))}
         {graphs?.map((graph) => (
           <SidebarMenuItem key={graph.id}>
-            <SidebarMenuButton asChild isActive={graph.id === activeId} size="sm">
+            <SidebarMenuButton
+              asChild
+              isActive={graph.id === activeId}
+              size="sm"
+              className="pr-8"
+              tooltip={graph.name}
+            >
               <Link
                 to={`/app/graphs/${graph.id}`}
                 onMouseEnter={() => prefetch(graph.id)}
@@ -59,7 +71,9 @@ export function NavGraphs() {
                 <span>{graph.name}</span>
               </Link>
             </SidebarMenuButton>
-            <SidebarMenuBadge>{graph.node_count}</SidebarMenuBadge>
+            <SidebarMenuBadge className="text-sidebar-foreground/60">
+              {graph.node_count}
+            </SidebarMenuBadge>
           </SidebarMenuItem>
         ))}
         {graphs?.length === 0 && (

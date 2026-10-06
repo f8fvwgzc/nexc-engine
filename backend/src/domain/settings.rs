@@ -27,8 +27,21 @@ string_enum!(
     /// Where the effective API key comes from.
     KeySource {
         User => "user",
+        Workspace => "workspace",
         Server => "server",
         None => "none",
+    }
+);
+
+string_enum!(
+    /// Whose LLM configuration is in effect.
+    ConfigScope {
+        /// The account the user connected themselves.
+        User => "user",
+        /// The credential of the workspace, managed by its admins.
+        Workspace => "workspace",
+        /// The server defaults.
+        Server => "server",
     }
 );
 
@@ -44,6 +57,8 @@ pub struct LlmSettings {
     #[schema(required = true)]
     pub key_hint: Option<String>,
     pub source: KeySource,
+    /// Whose configuration this is: the user's own, the workspace's or the server's.
+    pub scope: ConfigScope,
 }
 
 /// `…` followed by the last four characters of `key`.

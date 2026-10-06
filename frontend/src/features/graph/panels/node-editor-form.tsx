@@ -6,6 +6,7 @@ import { useForm } from 'react-hook-form';
 
 import { AnimatedButton } from '@/components/custom-ui/animated-button';
 import { FormField } from '@/components/custom-ui/form-field';
+import { useOntology } from '@/components/custom-ui/node-kind-meta';
 import { OptionSelect } from '@/components/custom-ui/option-select';
 import { Button } from '@/components/ui/button';
 import { FieldGroup } from '@/components/ui/field';
@@ -16,7 +17,7 @@ import { applyProblemToForm } from '@/lib/api/form-errors';
 import { nodeFormSchema, parseTags, type GraphNode, type NodeFormValues } from '@/schemas/graph';
 
 import { useUpdateNode } from '../hooks/use-graph-mutations';
-import { EXECUTOR_OPTIONS, KIND_OPTIONS } from './options';
+import { EXECUTOR_OPTIONS, kindOptions } from './options';
 
 function toFormValues(node: GraphNode): NodeFormValues {
   return {
@@ -33,6 +34,7 @@ const FIELDS = ['title', 'content', 'kind', 'executor', 'agent_role', 'tags'] as
 
 export function NodeEditorForm({ node, onDelete }: { node: GraphNode; onDelete: () => void }) {
   const rolesListId = useId();
+  const ontology = useOntology();
   const updateNode = useUpdateNode(node.graph_id);
   const { data: roles = [] } = useQuery({
     ...agentsQuery(),
@@ -69,7 +71,7 @@ export function NodeEditorForm({ node, onDelete }: { node: GraphNode; onDelete: 
                 {...field}
                 value={value}
                 onValueChange={onChange}
-                options={KIND_OPTIONS}
+                options={kindOptions(ontology, value)}
               />
             )}
           </FormField>

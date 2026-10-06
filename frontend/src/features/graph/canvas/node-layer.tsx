@@ -1,9 +1,9 @@
 import { memo } from 'react';
 
 import { NodeKindIcon } from '@/components/custom-ui/node-kind-icon';
-import { NODE_KIND_META } from '@/components/custom-ui/node-kind-meta';
+import { useNodeType } from '@/components/custom-ui/node-kind-meta';
 import { displayStatus, STATUS_META } from '@/components/custom-ui/status-meta';
-import type { GraphNode, NodeKind, NodeStatus } from '@/schemas/graph';
+import type { GraphNode, NodeStatus } from '@/schemas/graph';
 import type { LiveNodeState } from '@/stores/graph-store';
 
 import { NODE_HEIGHT, NODE_WIDTH, truncate } from './geometry';
@@ -11,7 +11,7 @@ import { NODE_HEIGHT, NODE_WIDTH, truncate } from './geometry';
 interface NodeCardProps {
   id: string;
   title: string;
-  kind: NodeKind;
+  kind: string;
   status: NodeStatus;
   cached: boolean;
   selected: boolean;
@@ -29,6 +29,7 @@ const NodeCard = memo(function NodeCard({
 }: NodeCardProps) {
   const shown = displayStatus(status, cached);
   const meta = STATUS_META[shown];
+  const type = useNodeType(kind);
   return (
     <g
       className="gnode"
@@ -39,7 +40,7 @@ const NodeCard = memo(function NodeCard({
       role="button"
       tabIndex={0}
       aria-pressed={selected}
-      aria-label={`${title} — ${NODE_KIND_META[kind].label}, ${meta.label}`}
+      aria-label={`${title} — ${type.label}, ${meta.label}`}
       onClick={() => onSelect(id)}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
@@ -48,7 +49,7 @@ const NodeCard = memo(function NodeCard({
         }
       }}
     >
-      <title>{title}</title>
+      <title>{type.description ? `${title} — ${type.label}: ${type.description}` : title}</title>
       <rect
         className="gnode-ring"
         x={-3}
@@ -69,7 +70,7 @@ const NodeCard = memo(function NodeCard({
         {truncate(title || 'Untitled', 21)}
       </text>
       <text className="gnode-sub" x={38} y={38}>
-        {NODE_KIND_META[kind].label} · {meta.label}
+        {truncate(type.label, 14)} · {meta.label}
       </text>
       <circle className="gnode-dot" cx={NODE_WIDTH - 12} cy={12} r={3.5} />
     </g>

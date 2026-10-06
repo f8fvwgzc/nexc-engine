@@ -5,7 +5,7 @@ use uuid::Uuid;
 use super::{deps, editor};
 use crate::app::AppState;
 use crate::domain::AppError;
-use crate::domain::graph::{EdgeKind, EdgeOrigin, Graph, NodeDraft, NodeOrigin, normalize_tags};
+use crate::domain::graph::{EdgeOrigin, Graph, NodeDraft, NodeOrigin, normalize_tags};
 use crate::domain::template;
 use crate::repo;
 
@@ -14,6 +14,7 @@ use crate::repo;
 pub async fn instantiate(
     state: &AppState,
     owner: Uuid,
+    home: editor::GraphHome,
     template_id: &str,
     name: Option<String>,
     topic: Option<String>,
@@ -25,14 +26,22 @@ pub async fn instantiate(
         .unwrap_or_else(|| template::instance_name(&spec.name, topic.as_deref()));
     let goal = template::instance_goal(&spec.goal, topic.as_deref());
     let mut tx = state.db.begin().await?;
-    let graph =
-        repo::graphs::create(&mut *tx, owner, name.trim(), &spec.description, &goal).await?;
+    let graph = repo::graphs::create(
+        &mut *tx,
+        owner,
+        home.workspace_id,
+        home.team_id,
+        name.trim(),
+        &spec.description,
+        &goal,
+    )
+    .await?;
     let mut ids = Vec::with_capacity(spec.nodes.len());
     for n in &spec.nodes {
         let draft = NodeDraft {
             title: n.title.clone(),
             content: n.content.clone(),
-            kind: n.kind,
+            kind: n.kind.clone(),
             tags: normalize_tags(&n.tags),
             x: n.x,
             y: n.y,
@@ -46,16 +55,20 @@ pub async fn instantiate(
                 .id,
         );
     }
-    for (s, t) in spec.edge_indices() {
-        repo::edges::create(
-            &mut *tx,
-            graph.id,
-            ids[s],
-            ids[t],
-            EdgeKind::DependsOn,
-            EdgeOrigin::User,
-        )
-        .await?;
+    // Templates are written against the starter ontology every new graph begins with.
+    if let Some(relation) = graph.ontology.dependency_relation() {
+        for (s, t) in spec.edge_indices() {
+            repo::edges::create(
+                &mut *tx,
+                graph.id,
+                ids[s],
+                ids[t],
+                relation,
+                "",
+                EdgeOrigin::User,
+            )
+            .await?;
+        }
     }
     tx.commit().await?;
     deps::schedule(state, graph.id);

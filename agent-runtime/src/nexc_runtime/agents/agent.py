@@ -75,6 +75,8 @@ class RunScope:
     kind: str
     max_turns: int
     allow_code_exec: bool
+    kind_description: str = ""
+    produces_artifact: bool = False
 
 
 class Agent:
@@ -100,6 +102,8 @@ class Agent:
             role=record.role,
             custom_prompt=system_prompt,
             kind=scope.kind if record.depth == 0 else "subtask",
+            kind_description=scope.kind_description if record.depth == 0 else "",
+            produces_artifact=scope.produces_artifact and record.depth == 0,
             can_spawn=can_spawn,
             code_exec=scope.allow_code_exec,
         )

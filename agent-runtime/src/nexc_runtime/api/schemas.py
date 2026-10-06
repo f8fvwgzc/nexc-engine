@@ -8,7 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from ..agents.spec import AgentSpec
 
-NodeKind = Literal["topic", "task", "research", "code", "document", "output"]
+# A node kind is the key of a node type in the graph's ontology: any slug, not a fixed list.
+NODE_KIND_PATTERN = r"^[a-z][a-z0-9_]{0,39}$"
 ProviderName = Literal["anthropic", "openai_compatible", "demo", "claude_code"]
 
 
@@ -19,7 +20,11 @@ class _Model(BaseModel):
 class TaskIn(_Model):
     title: str = Field(min_length=1, max_length=200)
     content: str = Field(default="", max_length=64 * 1024)
-    kind: NodeKind = "task"
+    kind: str = Field(default="task", pattern=NODE_KIND_PATTERN)
+    # What the ontology says about the node's type.
+    kind_description: str = Field(default="", max_length=500)
+    # None: the backend did not say (older backends); fall back to the well-known kinds.
+    produces_artifact: bool | None = None
 
 
 class UpstreamIn(_Model):

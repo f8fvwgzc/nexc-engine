@@ -16,6 +16,7 @@ import { MemoryList } from '@/features/memory/components/memory-list';
 import { useDeleteMemory } from '@/features/memory/hooks/use-delete-memory';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import type { Memory } from '@/schemas/memory';
+import { useWorkspaceId } from '@/features/workspaces/use-current-workspace';
 
 const ALL_GRAPHS = '__all__';
 const LIMIT = 50;
@@ -25,7 +26,8 @@ export default function MemoryPage() {
   const [graphId, setGraphId] = useState(ALL_GRAPHS);
   const [deleting, setDeleting] = useState<Memory | null>(null);
   const debouncedQ = useDebouncedValue(q.trim(), 300);
-  const { data: graphs = [] } = useQuery(graphsQuery());
+  const workspaceId = useWorkspaceId();
+  const { data: graphs = [] } = useQuery(graphsQuery(workspaceId));
   const {
     data: memories,
     isPending,

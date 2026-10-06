@@ -3,16 +3,16 @@
 
 use uuid::Uuid;
 
-use crate::domain::graph::{EdgeKind, GraphAnalysis, GraphEdge, GraphNode};
+use crate::domain::graph::{GraphAnalysis, GraphEdge, GraphNode};
 use crate::dsa::graph::{DiGraph, Indexed};
 
-/// Index of node ids plus the `depends_on` digraph over them.
+/// Index of node ids plus the digraph of blocking edges over them.
 pub fn dependency_graph(nodes: &[GraphNode], edges: &[GraphEdge]) -> (Indexed<Uuid>, DiGraph) {
     let index = Indexed::new(nodes.iter().map(|n| n.id));
     let graph = index.graph(
         edges
             .iter()
-            .filter(|e| e.kind == EdgeKind::DependsOn)
+            .filter(|e| e.blocking)
             .map(|e| (e.source, e.target)),
     );
     (index, graph)
@@ -37,7 +37,7 @@ pub(crate) mod tests {
     use chrono::Utc;
 
     use super::*;
-    use crate::domain::graph::{EdgeOrigin, Executor, NodeKind, NodeOrigin, NodeStatus};
+    use crate::domain::graph::{EdgeOrigin, Executor, NodeOrigin, NodeStatus};
 
     pub fn node(title: &str) -> GraphNode {
         GraphNode {
@@ -45,7 +45,7 @@ pub(crate) mod tests {
             graph_id: Uuid::nil(),
             title: title.into(),
             content: String::new(),
-            kind: NodeKind::Task,
+            kind: "task".into(),
             tags: vec![],
             x: 0.0,
             y: 0.0,
@@ -59,13 +59,16 @@ pub(crate) mod tests {
         }
     }
 
-    pub fn edge(s: &GraphNode, t: &GraphNode, kind: EdgeKind) -> GraphEdge {
+    /// An edge of relation `kind`; only `depends_on` blocks, as in the starter ontology.
+    pub fn edge(s: &GraphNode, t: &GraphNode, kind: &str) -> GraphEdge {
         GraphEdge {
             id: Uuid::now_v7(),
             graph_id: Uuid::nil(),
             source: s.id,
             target: t.id,
-            kind,
+            kind: kind.into(),
+            blocking: kind == "depends_on",
+            reason: String::new(),
             origin: EdgeOrigin::User,
             weight: 1.0,
         }
@@ -75,9 +78,9 @@ pub(crate) mod tests {
     fn analyzes_dependencies() {
         let (a, b, c, d) = (node("a"), node("b"), node("c"), node("d"));
         let edges = vec![
-            edge(&a, &b, EdgeKind::DependsOn),
-            edge(&b, &c, EdgeKind::DependsOn),
-            edge(&a, &d, EdgeKind::RelatesTo),
+            edge(&a, &b, "depends_on"),
+            edge(&b, &c, "depends_on"),
+            edge(&a, &d, "relates_to"),
         ];
         let r = analyze(&[a.clone(), b.clone(), c.clone(), d.clone()], &edges);
         assert_eq!(r.topo_order.len(), 4);

@@ -149,10 +149,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The caller's graphs, most recently updated first. */
+        /** The graphs the caller may work on, most recently updated first. */
         get: operations["list"];
         put?: never;
-        /** Creates an empty graph. */
+        /** Creates an empty graph in a workspace, or in one of its teams. */
         post: operations["create"];
         delete?: never;
         options?: never;
@@ -222,7 +222,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Adds an edge; a `depends_on` edge that would create a cycle is a 409. */
+        /** Adds an edge; an edge of a blocking relation that would create a cycle is a 409. */
         post: operations["create"];
         delete?: never;
         options?: never;
@@ -244,7 +244,8 @@ export interface paths {
         delete: operations["delete"];
         options?: never;
         head?: never;
-        patch?: never;
+        /** Rewrites why an edge exists. */
+        patch: operations["update"];
         trace?: never;
     };
     "/api/v1/graphs/{gid}/events": {
@@ -297,6 +298,23 @@ export interface paths {
         head?: never;
         /** Updates a node. */
         patch: operations["update"];
+        trace?: never;
+    };
+    "/api/v1/graphs/{gid}/ontology": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Replaces the graph's ontology: its node types and relation types. */
+        put: operations["replace_ontology"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/graphs/{gid}/plan": {
@@ -582,10 +600,40 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The effective LLM settings of the caller. */
+        /**
+         * The LLM settings that apply to the caller: their own account, else the
+         *     credential of the workspace they name, else the server defaults.
+         */
         get: operations["get_llm"];
-        /** Updates provider, model, base URL and (encrypted) API key. */
+        /**
+         * Connects the caller's own account: provider, model, base URL and
+         *     (encrypted) API key. It takes precedence over any workspace credential.
+         */
         put: operations["put_llm"];
+        post?: never;
+        /**
+         * Disconnects the caller's own account, so the workspace's credential (or
+         *     the server default) applies to their work again.
+         */
+        delete: operations["delete_llm"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/settings/llm/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The models the provider behind the caller's effective settings offers
+         *     right now, newest first. Asked from the provider, never from a built-in list.
+         */
+        get: operations["llm_models"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -605,6 +653,220 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The workspaces the caller belongs to. */
+        get: operations["list"];
+        put?: never;
+        /** Creates a workspace; the caller becomes its owner. */
+        post: operations["create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One workspace the caller belongs to. */
+        get: operations["get"];
+        put?: never;
+        post?: never;
+        /**
+         * Deletes a workspace with everything in it (owners only). A user's last
+         *     workspace cannot be deleted: every account works in at least one.
+         */
+        delete: operations["delete"];
+        options?: never;
+        head?: never;
+        /** Renames a workspace (admins and owners). */
+        patch: operations["update"];
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/invites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Pending invitations (admins and owners). */
+        get: operations["invites"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/invites/{iid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Withdraws an invitation. */
+        delete: operations["delete_invite"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/llm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The credential of a workspace, as every member may see it (never the key). */
+        get: operations["get_workspace_llm"];
+        /**
+         * Sets the credential members use when they have not connected their own
+         *     account (workspace admins and owners).
+         */
+        put: operations["put_workspace_llm"];
+        post?: never;
+        /** Removes the workspace's credential (workspace admins and owners). */
+        delete: operations["delete_workspace_llm"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Members of a workspace (not visible to guests). */
+        get: operations["members"];
+        put?: never;
+        /**
+         * Invites someone by e-mail. A registered user joins immediately; anyone
+         *     else joins when they sign up with that address.
+         */
+        post: operations["invite"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/members/{uid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Removes a member, or lets the caller leave. The last owner cannot go. */
+        delete: operations["remove_member"];
+        options?: never;
+        head?: never;
+        /**
+         * Changes a member's role. Only owners change owners, and a workspace
+         *     always keeps at least one owner.
+         */
+        patch: operations["update_member"];
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/teams": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The teams of a workspace that the caller can see. */
+        get: operations["list"];
+        put?: never;
+        /** Creates a team (members and above); the caller becomes its owner. */
+        post: operations["create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/teams/{tid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One team. */
+        get: operations["get"];
+        put?: never;
+        post?: never;
+        /** Deletes a team (team owners and workspace admins). */
+        delete: operations["delete"];
+        options?: never;
+        head?: never;
+        /** Updates a team (team owners and workspace admins). */
+        patch: operations["update"];
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/teams/{tid}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Members of a team. */
+        get: operations["members"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/teams/{tid}/members/{uid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Adds a workspace member to the team or changes their team role. Anyone
+         *     may add themselves to a public team; everything else needs a team owner
+         *     or a workspace admin.
+         */
+        put: operations["set_member"];
+        post?: never;
+        /** Removes a member from the team, or lets the caller leave it. */
+        delete: operations["remove_member"];
         options?: never;
         head?: never;
         patch?: never;
@@ -705,6 +967,11 @@ export interface components {
             llm: components["schemas"]["BackendHealth"];
             symphony: components["schemas"]["BackendHealth"];
         };
+        /**
+         * @description Whose LLM configuration is in effect.
+         * @enum {string}
+         */
+        ConfigScope: "user" | "workspace" | "server";
         /** @description `POST /agents` body. */
         CreateAgent: {
             /** Format: int64 */
@@ -718,9 +985,15 @@ export interface components {
             system_prompt?: string;
             title?: string;
         };
-        /** @description `POST /graphs/{gid}/edges` body. `depends_on`: source finishes before target. */
+        /** @description `POST /graphs/{gid}/edges` body. */
         CreateEdge: {
-            kind?: components["schemas"]["EdgeKind"] | null;
+            /**
+             * @description Key of a relation type of the graph's ontology (its dependency
+             *     relation when absent).
+             */
+            kind?: string | null;
+            /** @description Why the two nodes are related this way. */
+            reason?: string;
             /** Format: uuid */
             source: string;
             /** Format: uuid */
@@ -731,13 +1004,24 @@ export interface components {
             description?: string;
             goal?: string;
             name: string;
+            /**
+             * Format: uuid
+             * @description Team to create the graph in (default: a graph of the whole workspace).
+             */
+            team_id?: string | null;
+            /**
+             * Format: uuid
+             * @description Workspace to create the graph in (default: the caller's first workspace).
+             */
+            workspace_id?: string | null;
         };
         /** @description `POST /graphs/{gid}/nodes` body. */
         CreateNode: {
             agent_role?: string | null;
             content?: string;
             executor?: components["schemas"]["Executor"] | null;
-            kind?: components["schemas"]["NodeKind"] | null;
+            /** @description Key of a node type of the graph's ontology (its default type when absent). */
+            kind?: string | null;
             tags?: string[];
             title: string;
             /** Format: double */
@@ -761,6 +1045,14 @@ export interface components {
             /** @description Run only these nodes (default: all). */
             node_ids?: string[] | null;
         };
+        /** @description `POST /workspaces/{wid}/teams` body. */
+        CreateTeam: {
+            description?: string;
+            /** @description Short identifier such as `ENG`; derived from the name when absent. */
+            key?: string | null;
+            name: string;
+            private?: boolean;
+        };
         /** @description A cursor position on the canvas. */
         Cursor: {
             /** Format: double */
@@ -768,11 +1060,6 @@ export interface components {
             /** Format: double */
             y: number;
         };
-        /**
-         * @description Semantics of an edge. `depends_on`: source must finish before target runs.
-         * @enum {string}
-         */
-        EdgeKind: "depends_on" | "relates_to";
         /**
          * @description Who created an edge (`auto` = `[[wikilink]]` dependency detection).
          * @enum {string}
@@ -801,12 +1088,22 @@ export interface components {
         FromTemplate: {
             /** @description Graph name (default: the template's name, plus the topic when given). */
             name?: string | null;
+            /**
+             * Format: uuid
+             * @description Team to create the graph in (default: a graph of the whole workspace).
+             */
+            team_id?: string | null;
             template_id: string;
             /**
              * @description What this instance is about, e.g. the research question or product. It is put at the top
              *     of the graph goal so every planner and node prompt sees it.
              */
             topic?: string | null;
+            /**
+             * Format: uuid
+             * @description Workspace to create the graph in (default: the caller's first workspace).
+             */
+            workspace_id?: string | null;
         };
         /** @description A full graph with its nodes and edges. */
         Graph: {
@@ -819,6 +1116,13 @@ export interface components {
             id: string;
             name: string;
             nodes: components["schemas"]["GraphNode"][];
+            /** @description The node types and relation types this graph is built from. */
+            ontology: components["schemas"]["Ontology"];
+            /**
+             * Format: uuid
+             * @description The team it belongs to; `null` for a graph of the whole workspace.
+             */
+            team_id: string | null;
             /** Format: date-time */
             updated_at: string;
             /**
@@ -826,6 +1130,11 @@ export interface components {
              * @description Incremented on every mutation of the graph, its nodes or edges.
              */
             version: number;
+            /**
+             * Format: uuid
+             * @description The workspace the graph belongs to.
+             */
+            workspace_id: string | null;
         };
         /** @description Structural analysis of the `depends_on` graph. */
         GraphAnalysis: {
@@ -842,12 +1151,17 @@ export interface components {
         };
         /** @description A directed edge between two nodes of the same graph. */
         GraphEdge: {
+            /** @description Copied from the relation type: source must finish before target runs. */
+            blocking: boolean;
             /** Format: uuid */
             graph_id: string;
             /** Format: uuid */
             id: string;
-            kind: components["schemas"]["EdgeKind"];
+            /** @description Key of a relation type of the graph's ontology. */
+            kind: string;
             origin: components["schemas"]["EdgeOrigin"];
+            /** @description Why the two nodes are related this way. */
+            reason: string;
             /** Format: uuid */
             source: string;
             /** Format: uuid */
@@ -866,7 +1180,8 @@ export interface components {
             graph_id: string;
             /** Format: uuid */
             id: string;
-            kind: components["schemas"]["NodeKind"];
+            /** @description Key of a node type of the graph's ontology. */
+            kind: string;
             origin: components["schemas"]["NodeOrigin"];
             output: string | null;
             status: components["schemas"]["NodeStatus"];
@@ -889,8 +1204,12 @@ export interface components {
             name: string;
             /** Format: int64 */
             node_count: number;
+            /** Format: uuid */
+            team_id: string | null;
             /** Format: date-time */
             updated_at: string;
+            /** Format: uuid */
+            workspace_id: string | null;
         };
         /** @description A template as listed by `GET /templates`. */
         GraphTemplate: {
@@ -907,11 +1226,24 @@ export interface components {
             status: string;
             version: string;
         };
+        /** @description `POST /workspaces/{wid}/members` body. */
+        InviteMember: {
+            email: string;
+            role?: components["schemas"]["WorkspaceRole"] | null;
+        };
+        /**
+         * @description Outcome of inviting someone: they joined at once (they already have an
+         *     account) or an invitation waits for them to sign up.
+         */
+        InviteResult: {
+            invite: components["schemas"]["WorkspaceInvite"] | null;
+            member: components["schemas"]["WorkspaceMember"] | null;
+        };
         /**
          * @description Where the effective API key comes from.
          * @enum {string}
          */
-        KeySource: "user" | "server" | "none";
+        KeySource: "user" | "workspace" | "server" | "none";
         /**
          * @description LLM backend family. `demo` is a deterministic offline provider; `claude_code` runs the
          *     local Claude Code CLI with the operator's own login (no API key).
@@ -926,6 +1258,8 @@ export interface components {
             key_hint: string | null;
             model: string;
             provider: components["schemas"]["LlmProviderKind"];
+            /** @description Whose configuration this is: the user's own, the workspace's or the server's. */
+            scope: components["schemas"]["ConfigScope"];
             source: components["schemas"]["KeySource"];
         };
         /**
@@ -973,11 +1307,27 @@ export interface components {
          * @enum {string}
          */
         MemoryScope: "user" | "graph" | "node";
-        /**
-         * @description What a node represents.
-         * @enum {string}
-         */
-        NodeKind: "topic" | "task" | "research" | "code" | "document" | "output";
+        /** @description What `GET /settings/llm/models` returns. */
+        ModelCatalog: {
+            /** @description Newest first; models without a release date come last, by id. */
+            models: components["schemas"]["ModelInfo"][];
+            /** @description Why the list is empty or partial, when the provider cannot be asked. */
+            note: string | null;
+            provider: components["schemas"]["LlmProviderKind"];
+        };
+        /** @description One model a provider offers. */
+        ModelInfo: {
+            /** @description The identifier to configure. */
+            id: string;
+            name: string;
+            /** @description Released within the last [`RECENT_DAYS`] days. */
+            recent: boolean;
+            /**
+             * Format: date-time
+             * @description When the provider released it, if it says.
+             */
+            released_at: string | null;
+        };
         /**
          * @description Who created a node.
          * @enum {string}
@@ -1020,6 +1370,40 @@ export interface components {
             run_id: string;
             status: components["schemas"]["NodeStatus"];
         };
+        /**
+         * @description A type of node. Its attributes drive everything the engine used to derive
+         *     from a fixed kind: default agent role and executor, ordering of suggested
+         *     dependencies, artifact production and code execution.
+         */
+        NodeType: {
+            /** @description Agents running nodes of this type may execute code. */
+            allow_code_exec: boolean;
+            /** @description `#rrggbb` colour of the type on the canvas. */
+            color: string;
+            default_executor: components["schemas"]["Executor"];
+            /** @description Agent role used when a node of this type sets none. */
+            default_role: string;
+            /** @description What a node of this type means; shown to the planner and to agents. */
+            description: string;
+            /** @description Icon name from the UI's icon vocabulary (unknown names fall back to a dot). */
+            icon: string;
+            /** @description Stable identifier stored on nodes (`[a-z][a-z0-9_]*`). */
+            key: string;
+            label: string;
+            /** @description Nodes of this type are expected to deliver a file. */
+            produces_artifact: boolean;
+            /**
+             * Format: int32
+             * @description Position in the usual flow of work: suggested dependencies point from
+             *     lower to higher stages.
+             */
+            stage: number;
+        };
+        /** @description The node types and relation types of one graph. */
+        Ontology: {
+            node_types: components["schemas"]["NodeType"][];
+            relation_types: components["schemas"]["RelationType"][];
+        };
         /** @description Live view of the orchestrator for the current user. */
         OrchestratorStatus: {
             /** Format: int64 */
@@ -1045,6 +1429,8 @@ export interface components {
             /** Format: uuid */
             id: string;
             nodes: components["schemas"]["ProposedNode"][];
+            /** @description Node and relation types the plan adds to the graph's ontology. */
+            ontology: components["schemas"]["Ontology"];
             status: components["schemas"]["PlanStatus"];
             summary: string;
         };
@@ -1066,8 +1452,12 @@ export interface components {
             /** @description Always `about:blank`. */
             type: string;
         };
-        /** @description A `depends_on` edge between two proposed nodes (by `ref`). */
+        /** @description A typed relation between two proposed nodes (by `ref`). */
         ProposedEdge: {
+            /** @description Key of a relation type; empty means the ontology's dependency relation. */
+            kind: string;
+            /** @description Why the two nodes are related this way. */
+            reason: string;
             source_ref: string;
             target_ref: string;
         };
@@ -1082,7 +1472,8 @@ export interface components {
              *     Malformed ids from the model are read as `null`.
              */
             existing_id: string | null;
-            kind: components["schemas"]["NodeKind"];
+            /** @description Key of a node type: one of the graph's, or one the plan's ontology adds. */
+            kind: string;
             ref: string;
             tags: string[];
             title: string;
@@ -1093,6 +1484,19 @@ export interface components {
             name: string;
             /** @description 12–128 characters. */
             password: string;
+        };
+        /** @description A type of relation between two nodes. */
+        RelationType: {
+            /**
+             * @description The source must finish before the target runs. Blocking relations form
+             *     the execution DAG and may not close a cycle.
+             */
+            blocking: boolean;
+            /** @description What the relation asserts about source and target. */
+            description: string;
+            /** @description Stable identifier stored on edges (`[a-z][a-z0-9_]*`). */
+            key: string;
+            label: string;
         };
         /**
          * @description Authorization role of a user.
@@ -1125,6 +1529,10 @@ export interface components {
          * @enum {string}
          */
         RunStatus: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+        /** @description `PUT /workspaces/{wid}/teams/{tid}/members/{uid}` body. */
+        SetTeamMember: {
+            role?: components["schemas"]["TeamRole"] | null;
+        };
         /** @description One server-sent event (`data:` payload). The variant determines the SSE `event:` name. */
         SseEvent: {
             /** Format: uuid */
@@ -1172,6 +1580,38 @@ export interface components {
         } | {
             run: components["schemas"]["Run"];
         };
+        /** @description A team as seen by the caller. */
+        Team: {
+            /** Format: date-time */
+            created_at: string;
+            description: string;
+            /** Format: uuid */
+            id: string;
+            /** @description Short identifier that prefixes the team's issues, e.g. `ENG`. */
+            key: string;
+            /** Format: int64 */
+            member_count: number;
+            name: string;
+            private: boolean;
+            role: components["schemas"]["TeamRole"] | null;
+            /** Format: uuid */
+            workspace_id: string;
+        };
+        /** @description A member of a team. */
+        TeamMember: {
+            email: string;
+            /** Format: date-time */
+            joined_at: string;
+            name: string;
+            role: components["schemas"]["TeamRole"];
+            /** Format: uuid */
+            user_id: string;
+        };
+        /**
+         * @description Role of a user in a team.
+         * @enum {string}
+         */
+        TeamRole: "owner" | "member";
         /** @description `POST /realtime/tickets` body. */
         TicketRequest: {
             /** Format: uuid */
@@ -1200,6 +1640,10 @@ export interface components {
             system_prompt?: string | null;
             title?: string | null;
         };
+        /** @description `PATCH /graphs/{gid}/edges/{eid}` body. */
+        UpdateEdge: {
+            reason: string;
+        };
         /** @description `PATCH /graphs/{gid}` body. */
         UpdateGraph: {
             description?: string | null;
@@ -1216,6 +1660,10 @@ export interface components {
             model: string;
             provider: components["schemas"]["LlmProviderKind"];
         };
+        /** @description `PATCH /workspaces/{wid}/members/{uid}` body. */
+        UpdateMember: {
+            role: components["schemas"]["WorkspaceRole"];
+        };
         /**
          * @description `PATCH /graphs/{gid}/nodes/{nid}` body: any subset of the mutable node
          *     fields. `agent_role` and `output` accept `null` to clear them.
@@ -1224,7 +1672,8 @@ export interface components {
             agent_role?: string | null;
             content?: string | null;
             executor?: components["schemas"]["Executor"] | null;
-            kind?: components["schemas"]["NodeKind"] | null;
+            /** @description Key of a node type of the graph's ontology. */
+            kind?: string | null;
             output?: string | null;
             status?: components["schemas"]["NodeStatus"] | null;
             tags?: string[] | null;
@@ -1233,6 +1682,12 @@ export interface components {
             x?: number | null;
             /** Format: double */
             y?: number | null;
+        };
+        /** @description `PATCH /workspaces/{wid}/teams/{tid}` body (any subset). */
+        UpdateTeam: {
+            description?: string | null;
+            name?: string | null;
+            private?: boolean | null;
         };
         /** @description A registered user (never includes credentials). */
         User: {
@@ -1244,6 +1699,48 @@ export interface components {
             name: string;
             role: components["schemas"]["Role"];
         };
+        /** @description A workspace as seen by one of its members. */
+        Workspace: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: int64 */
+            member_count: number;
+            name: string;
+            /** @description The caller's role. */
+            role: components["schemas"]["WorkspaceRole"];
+            /** @description URL-safe unique identifier. */
+            slug: string;
+        };
+        /** @description `POST /workspaces` and `PATCH /workspaces/{wid}` body. */
+        WorkspaceInput: {
+            name: string;
+        };
+        /** @description An invitation that waits for its recipient to sign up. */
+        WorkspaceInvite: {
+            /** Format: date-time */
+            created_at: string;
+            email: string;
+            /** Format: uuid */
+            id: string;
+            role: components["schemas"]["WorkspaceRole"];
+        };
+        /** @description A member of a workspace. */
+        WorkspaceMember: {
+            email: string;
+            /** Format: date-time */
+            joined_at: string;
+            name: string;
+            role: components["schemas"]["WorkspaceRole"];
+            /** Format: uuid */
+            user_id: string;
+        };
+        /**
+         * @description Role of a user in a workspace, from most to least privileged.
+         * @enum {string}
+         */
+        WorkspaceRole: "owner" | "admin" | "member" | "guest";
         /** @description A server → client WebSocket message. */
         WsMessage: {
             node: components["schemas"]["GraphNode"];
@@ -1267,6 +1764,10 @@ export interface components {
             graph: components["schemas"]["GraphSummary"];
             /** @enum {string} */
             type: "graph.updated";
+        } | {
+            ontology: components["schemas"]["Ontology"];
+            /** @enum {string} */
+            type: "ontology.updated";
         } | {
             items: components["schemas"]["EdgeSuggestion"][];
             /** @enum {string} */
@@ -1661,7 +2162,10 @@ export interface operations {
     };
     list: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Only graphs of this workspace. */
+                workspace_id?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -1705,6 +2209,22 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Graph"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
                 };
             };
             422: {
@@ -1971,6 +2491,50 @@ export interface operations {
             };
         };
     };
+    update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Graph id */
+                gid: string;
+                /** @description Edge id */
+                eid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateEdge"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphEdge"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     events: {
         parameters: {
             query: {
@@ -2112,6 +2676,58 @@ export interface operations {
                     "application/json": components["schemas"]["Problem"];
                 };
             };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    replace_ontology: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Graph id */
+                gid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Ontology"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Graph"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description A relation made blocking would create a cycle */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invalid, or a type still in use was removed */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -2684,7 +3300,13 @@ export interface operations {
     };
     get_llm: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description The workspace the caller is working in; its credential applies when
+                 *     they have not connected an account of their own.
+                 */
+                workspace_id?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2700,6 +3322,14 @@ export interface operations {
                 };
             };
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2740,6 +3370,66 @@ export interface operations {
             };
         };
     };
+    delete_llm: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Disconnected (also when nothing was connected) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    llm_models: {
+        parameters: {
+            query?: {
+                /**
+                 * @description The workspace the caller is working in; its credential applies when
+                 *     they have not connected an account of their own.
+                 */
+                workspace_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelCatalog"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The provider could not be asked */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     list: {
         parameters: {
             query?: never;
@@ -2758,6 +3448,907 @@ export interface operations {
                 };
             };
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"][];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceInput"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    invites: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceInvite"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    delete_invite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Invite id */
+                iid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Withdrawn */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_workspace_llm: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description `null` when the workspace has no credential */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmSettings"] | null;
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    put_workspace_llm: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateLlmSettings"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmSettings"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    delete_workspace_llm: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed (also when there was none) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    members: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceMember"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    invite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InviteMember"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InviteResult"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Already a member */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    remove_member: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description User id */
+                uid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Would leave no owner */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    update_member: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description User id */
+                uid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateMember"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceMember"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Would leave no owner */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Team"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateTeam"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Team"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The key is taken */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Team id */
+                tid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Team"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Team id */
+                tid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The team still has graphs */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Team id */
+                tid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateTeam"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Team"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    members: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Team id */
+                tid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamMember"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    set_member: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Team id */
+                tid: string;
+                /** @description User id */
+                uid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetTeamMember"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamMember"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not a workspace member */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    remove_member: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Team id */
+                tid: string;
+                /** @description User id */
+                uid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

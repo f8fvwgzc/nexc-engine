@@ -8,6 +8,7 @@ pub mod agent;
 pub mod error;
 pub mod graph;
 pub mod memory;
+pub mod ontology;
 pub mod plan;
 pub mod prompt;
 pub mod run;
@@ -16,6 +17,7 @@ pub mod status;
 pub mod template;
 pub mod user;
 pub mod validation;
+pub mod workspace;
 
 pub use error::AppError;
 

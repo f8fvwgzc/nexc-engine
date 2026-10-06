@@ -9,8 +9,9 @@ use async_stream::stream;
 use serde_json::json;
 
 use super::{LlmEvent, LlmProvider, LlmRequest, LlmStream, StopReason, Usage, estimate_tokens};
-use crate::domain::graph::{EdgeKind, Executor, NodeKind, default_role_for_kind};
+use crate::domain::graph::Executor;
 use crate::domain::memory::MEMORY_SCHEMA_NAME;
+use crate::domain::ontology::Ontology;
 use crate::domain::plan::{
     PLAN_SCHEMA_NAME, PlanContext, PlanProposal, ProposedEdge, ProposedNode,
 };
@@ -148,25 +149,81 @@ fn bullets(content: &str) -> Vec<String> {
         .collect()
 }
 
-fn proposed(reference: String, title: String, content: String, kind: NodeKind) -> ProposedNode {
-    ProposedNode {
-        reference,
-        existing_id: None,
-        title,
-        content,
-        kind,
-        agent_role: default_role_for_kind(kind).into(),
-        executor: executor_for_kind(kind, Executor::Llm),
-        tags: vec!["demo".into()],
-    }
+/// The parts of a graph's ontology the rule-based planner works with.
+struct Vocabulary {
+    ontology: Ontology,
+    /// Type of an ordinary step.
+    work: String,
+    /// Type of the node that delivers the result: produces a file, latest stage.
+    deliverable: String,
+    /// Relation that orders execution.
+    dependency: String,
 }
 
-/// Steps that produce files (documents, final deliverables) go to the agent
-/// runtime, which has file tools; everything else keeps its executor.
-fn executor_for_kind(kind: NodeKind, current: Executor) -> Executor {
-    match kind {
-        NodeKind::Document | NodeKind::Output => Executor::Agent,
-        _ => current,
+impl Vocabulary {
+    fn of(ctx: &PlanContext) -> Vocabulary {
+        // Prompts written before graphs had ontologies carry none.
+        let ontology = if ctx.ontology.node_types.is_empty() {
+            Ontology::starter()
+        } else {
+            ctx.ontology.clone()
+        };
+        let work = ontology.default_node_kind().unwrap_or_default().to_owned();
+        let deliverable = ontology
+            .node_types
+            .iter()
+            .filter(|t| t.produces_artifact)
+            .max_by_key(|t| t.stage)
+            .or(ontology.node_types.iter().max_by_key(|t| t.stage))
+            .map(|t| t.key.clone())
+            .unwrap_or_default();
+        let dependency = ontology
+            .default_relation()
+            .map(|r| r.key.clone())
+            .unwrap_or_default();
+        Vocabulary {
+            ontology,
+            work,
+            deliverable,
+            dependency,
+        }
+    }
+
+    /// Whether `kind` frames or explores the work, i.e. comes before ordinary steps.
+    fn is_exploratory(&self, kind: &str) -> bool {
+        self.ontology.stage_of(kind) < self.ontology.stage_of(&self.work)
+    }
+
+    /// Steps that produce files (documents, final deliverables) go to the agent
+    /// runtime, which has file tools; everything else keeps its executor.
+    fn executor(&self, kind: &str, current: Executor) -> Executor {
+        if self.ontology.produces_artifact(kind) {
+            Executor::Agent
+        } else {
+            current
+        }
+    }
+
+    fn node(&self, reference: String, title: String, content: String, kind: &str) -> ProposedNode {
+        ProposedNode {
+            reference,
+            existing_id: None,
+            title,
+            content,
+            kind: kind.to_owned(),
+            agent_role: self.ontology.role_for(kind).into(),
+            executor: self.executor(kind, Executor::Llm),
+            tags: vec!["demo".into()],
+        }
+    }
+
+    fn edge(&self, source_ref: &str, target_ref: &str, reason: String) -> ProposedEdge {
+        ProposedEdge {
+            source_ref: source_ref.to_owned(),
+            target_ref: target_ref.to_owned(),
+            kind: self.dependency.clone(),
+            reason,
+        }
     }
 }
 
@@ -186,12 +243,14 @@ const MAX_SPLIT_ITEMS: usize = 3;
 
 /// Rule-based plan refinement, standing in for the model: keeps every node,
 /// routes file-producing steps to the agent runtime, splits the single
-/// broadest research/topic node into a few parallel sub-tasks that feed it,
-/// preserves dependencies, links nodes whose content mentions another node's
-/// title, and adds a final output node when there is none.
+/// broadest exploratory node into a few parallel sub-tasks that feed it,
+/// preserves edges with their reasons, links nodes whose content mentions
+/// another node's title, and adds a final deliverable node when there is
+/// none. Node and relation types come from the graph's ontology.
 pub fn refine(ctx: &PlanContext) -> PlanProposal {
+    let vocab = Vocabulary::of(ctx);
     if ctx.nodes.is_empty() {
-        return starter_plan(ctx);
+        return starter_plan(ctx, &vocab);
     }
     let refs: Vec<String> = (0..ctx.nodes.len())
         .map(|i| format!("n{}", i + 1))
@@ -212,163 +271,202 @@ pub fn refine(ctx: &PlanContext) -> PlanProposal {
             } else {
                 n.content.clone()
             },
-            kind: n.kind,
+            kind: n.kind.clone(),
             agent_role: n
                 .agent_role
                 .clone()
-                .unwrap_or_else(|| default_role_for_kind(n.kind).into()),
-            executor: executor_for_kind(n.kind, n.executor),
+                .unwrap_or_else(|| vocab.ontology.role_for(&n.kind).into()),
+            executor: vocab.executor(&n.kind, n.executor),
             tags: n.tags.clone(),
         })
         .collect();
 
     let index = |id| ctx.nodes.iter().position(|n| n.id == id);
     let mut edges: Vec<ProposedEdge> = Vec::new();
-    let link = |s: usize, t: usize, edges: &mut Vec<ProposedEdge>| {
-        let edge = ProposedEdge {
-            source_ref: refs[s].clone(),
-            target_ref: refs[t].clone(),
+    let link = |edge: ProposedEdge, edges: &mut Vec<ProposedEdge>| {
+        let same = |e: &ProposedEdge| {
+            e.source_ref == edge.source_ref
+                && e.target_ref == edge.target_ref
+                && e.kind == edge.kind
         };
-        if s != t && !edges.contains(&edge) {
+        if edge.source_ref != edge.target_ref && !edges.iter().any(same) {
             edges.push(edge);
         }
     };
-    for e in ctx.edges.iter().filter(|e| e.kind == EdgeKind::DependsOn) {
+    for e in &ctx.edges {
         if let (Some(s), Some(t)) = (index(e.source), index(e.target)) {
-            link(s, t, &mut edges);
+            let edge = ProposedEdge {
+                source_ref: refs[s].clone(),
+                target_ref: refs[t].clone(),
+                kind: e.kind.clone(),
+                reason: e.reason.clone(),
+            };
+            link(edge, &mut edges);
         }
     }
     for (t, target) in ctx.nodes.iter().enumerate() {
         let haystack = target.content.to_lowercase();
         for (s, source) in ctx.nodes.iter().enumerate() {
             if source.title.len() >= 4 && haystack.contains(&source.title.to_lowercase()) {
-                link(s, t, &mut edges);
+                let reason = format!(
+                    "\"{}\" mentions \"{}\" in its instructions",
+                    target.title, source.title
+                );
+                link(vocab.edge(&refs[s], &refs[t], reason), &mut edges);
             }
         }
     }
 
-    // Split the broadest research/topic node: its sub-tasks run in parallel,
+    // Split the broadest exploratory node: its sub-tasks run in parallel,
     // inherit its upstream dependencies, and all feed back into it.
     let broadest = ctx
         .nodes
         .iter()
         .enumerate()
-        .filter(|(_, n)| matches!(n.kind, NodeKind::Research | NodeKind::Topic))
+        .filter(|(_, n)| vocab.is_exploratory(&n.kind))
         .map(|(i, n)| (i, bullets(&n.content)))
         .filter(|(_, items)| items.len() > MAX_SPLIT_ITEMS)
         .max_by_key(|(_, items)| items.len());
     let split = broadest.is_some();
     if let Some((i, items)) = broadest {
         let parent = &ctx.nodes[i];
-        let upstream: Vec<String> = edges
+        let upstream: Vec<ProposedEdge> = edges
             .iter()
-            .filter(|e| e.target_ref == refs[i])
-            .map(|e| e.source_ref.clone())
+            .filter(|e| e.target_ref == refs[i] && e.kind == vocab.dependency)
+            .cloned()
             .collect();
         for (j, item) in items.iter().take(MAX_SPLIT_ITEMS).enumerate() {
             let sub = format!("{}-{}", refs[i], j + 1);
-            nodes.push(proposed(
+            nodes.push(vocab.node(
                 sub.clone(),
                 short_title(item),
                 format!("Part of \"{}\": {item}", parent.title),
-                NodeKind::Task,
+                &vocab.work,
             ));
             edges.extend(upstream.iter().map(|u| ProposedEdge {
-                source_ref: u.clone(),
                 target_ref: sub.clone(),
+                ..u.clone()
             }));
-            edges.push(ProposedEdge {
-                source_ref: sub,
-                target_ref: refs[i].clone(),
-            });
+            edges.push(vocab.edge(
+                &sub,
+                &refs[i],
+                format!("covers one part of \"{}\"", parent.title),
+            ));
         }
     }
 
-    let has_output = ctx.nodes.iter().any(|n| n.kind == NodeKind::Output);
-    if !has_output {
+    let has_deliverable = ctx.nodes.iter().any(|n| n.kind == vocab.deliverable);
+    if !has_deliverable {
         let sinks: Vec<String> = nodes
             .iter()
             .map(|n| n.reference.clone())
-            .filter(|r| !edges.iter().any(|e| &e.source_ref == r))
+            .filter(|r| {
+                !edges
+                    .iter()
+                    .any(|e| &e.source_ref == r && e.kind == vocab.dependency)
+            })
             .collect();
-        nodes.push(proposed(
+        nodes.push(vocab.node(
             "final".into(),
             "Final deliverable".into(),
             "Combine all upstream results into one polished, well-structured deliverable that fulfils the goal."
                 .into(),
-            NodeKind::Output,
+            &vocab.deliverable,
         ));
-        edges.extend(sinks.into_iter().map(|s| ProposedEdge {
-            source_ref: s,
-            target_ref: "final".into(),
+        edges.extend(sinks.iter().map(|s| {
+            vocab.edge(
+                s,
+                "final",
+                "its result is combined into the final deliverable".into(),
+            )
         }));
     }
     let summary = format!(
         "[demo] Refined {} node(s){}{}; file-producing steps run on the agent runtime. Configure an API key for model-generated plans.",
         ctx.nodes.len(),
         if split {
-            ", split the broadest research step into parallel sub-tasks"
+            ", split the broadest exploratory step into parallel sub-tasks"
         } else {
             ""
         },
-        if has_output {
+        if has_deliverable {
             ""
         } else {
-            " and added a final output node"
+            " and added a final deliverable node"
         },
     );
     PlanProposal {
         summary,
+        ontology: Ontology::default(),
         nodes,
         edges,
     }
 }
 
-fn starter_plan(ctx: &PlanContext) -> PlanProposal {
+/// Four steps for an empty graph, typed by walking the ontology's stages:
+/// the earliest type frames the work, the next explores it, the first type
+/// that delivers a file drafts it and the deliverable type finishes it.
+fn starter_plan(ctx: &PlanContext, vocab: &Vocabulary) -> PlanProposal {
     let goal = if ctx.goal.trim().is_empty() {
         "the goal"
     } else {
         ctx.goal.trim()
     };
+    let mut by_stage: Vec<_> = vocab.ontology.node_types.iter().collect();
+    by_stage.sort_by_key(|t| t.stage);
+    let key_at = |i: usize| {
+        by_stage
+            .get(i)
+            .or(by_stage.last())
+            .map_or(vocab.work.as_str(), |t| t.key.as_str())
+    };
+    let draft_kind = by_stage
+        .iter()
+        .find(|t| t.produces_artifact)
+        .map_or(vocab.work.as_str(), |t| t.key.as_str());
     let steps = [
         (
             "scope",
             "Clarify scope",
-            NodeKind::Topic,
+            key_at(0),
             format!("Define the questions, audience and success criteria for: {goal}"),
         ),
         (
             "research",
             "Research",
-            NodeKind::Research,
+            key_at(1),
             "Collect the facts, sources and constraints needed.".to_owned(),
         ),
         (
             "draft",
             "Draft",
-            NodeKind::Document,
+            draft_kind,
             "Write a complete first draft from the research.".to_owned(),
         ),
         (
             "final",
             "Final deliverable",
-            NodeKind::Output,
+            vocab.deliverable.as_str(),
             "Review the draft and produce the final deliverable.".to_owned(),
         ),
     ];
     let nodes = steps
         .iter()
-        .map(|(r, t, k, c)| proposed((*r).into(), (*t).into(), c.clone(), *k))
+        .map(|(r, t, k, c)| vocab.node((*r).into(), (*t).into(), c.clone(), k))
         .collect();
     let edges = steps
         .windows(2)
-        .map(|w| ProposedEdge {
-            source_ref: w[0].0.into(),
-            target_ref: w[1].0.into(),
+        .map(|w| {
+            vocab.edge(
+                w[0].0,
+                w[1].0,
+                format!("\"{}\" builds on the result of \"{}\"", w[1].1, w[0].1),
+            )
         })
         .collect();
     PlanProposal {
         summary: "[demo] Created a starter plan for an empty graph.".into(),
+        ontology: Ontology::default(),
         nodes,
         edges,
     }
@@ -383,11 +481,11 @@ mod tests {
     use super::*;
     use crate::domain::plan::{ContextEdge, ContextNode, sanitize_proposal};
 
-    fn node(title: &str, content: &str, kind: NodeKind) -> ContextNode {
+    fn node(title: &str, content: &str, kind: &str) -> ContextNode {
         ContextNode {
             id: Uuid::now_v7(),
             title: title.into(),
-            kind,
+            kind: kind.into(),
             content: content.into(),
             tags: vec![],
             agent_role: None,
@@ -399,6 +497,7 @@ mod tests {
         PlanContext {
             goal: "Write a report".into(),
             instructions: String::new(),
+            ontology: Ontology::starter(),
             nodes,
             edges,
             suggestions: vec![],
@@ -412,31 +511,33 @@ mod tests {
         let a = node(
             "Literature review",
             "- history\n- current tools\n- open problems\n- adoption",
-            NodeKind::Research,
+            "research",
         );
         let b = node(
             "Write draft",
             "Use the Literature review findings.",
-            NodeKind::Document,
+            "document",
         );
         let plan = refine(&ctx(vec![a.clone(), b.clone()], vec![]));
         let existing: HashSet<_> = [a.id, b.id].into();
-        let (clean, notes) = sanitize_proposal(plan.clone(), &existing, 500);
+        let (clean, notes) = sanitize_proposal(plan.clone(), &existing, &Ontology::starter(), 500);
         assert_eq!(clean, plan, "demo plans need no correction: {notes:?}");
         assert_eq!(
             plan.nodes.len(),
             2 + 3 + 1,
             "kept 2, split 3 bullets, added final"
         );
-        assert!(plan.edges.contains(&ProposedEdge {
-            source_ref: "n1".into(),
-            target_ref: "n2".into()
-        }));
+        let linked = |s: &str, t: &str| {
+            plan.edges.iter().any(|e| {
+                e.source_ref == s
+                    && e.target_ref == t
+                    && e.kind == "depends_on"
+                    && !e.reason.is_empty()
+            })
+        };
+        assert!(linked("n1", "n2"));
         assert!(
-            plan.edges.contains(&ProposedEdge {
-                source_ref: "n1-1".into(),
-                target_ref: "n1".into()
-            }),
+            linked("n1-1", "n1"),
             "sub-tasks feed the node they were split from"
         );
         let draft = plan.nodes.iter().find(|n| n.reference == "n2").unwrap();
@@ -445,7 +546,7 @@ mod tests {
             Executor::Agent,
             "documents run on the agent runtime"
         );
-        assert!(plan.nodes.iter().any(|n| n.kind == NodeKind::Output));
+        assert!(plan.nodes.iter().any(|n| n.kind == "output"));
         assert!(plan.summary.starts_with("[demo]"));
     }
 

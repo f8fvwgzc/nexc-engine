@@ -6,8 +6,10 @@
 //!   cosine) with memories in the same scope: ≥ 0.92 reinforces the existing
 //!   memory, 0.75–0.92 replaces it, otherwise the candidate is added.
 //! * **Retrieval** – hybrid score `0.5·cosine + 0.3·BM25 + 0.2·recency×importance`
-//!   over full-text and recency candidates.
+//!   over every memory in scope, read from the in-process [`index`].
 #![forbid(unsafe_code)]
+
+pub mod index;
 
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
@@ -26,13 +28,15 @@ use crate::kernel;
 use crate::llm::service::LlmService;
 use crate::llm::{JsonSchema, LlmRequest, LlmTarget, Message, collect};
 use crate::repo::memories::{self, NewMemory, StoredMemory};
+use index::MemoryIndex;
 
 const MAX_CANDIDATES_PER_NODE: usize = 8;
 const OUTPUT_CHARS_FOR_EXTRACTION: usize = 8_000;
 
 /// Ranks `candidates` for `query` and returns the best `limit` with scores.
+/// Only the winners are cloned.
 pub fn rank(
-    candidates: Vec<StoredMemory>,
+    candidates: &[&StoredMemory],
     query: &str,
     limit: usize,
     now: DateTime<Utc>,
@@ -48,38 +52,67 @@ pub fn rank(
             .collect::<Vec<_>>(),
     );
     let lexical = bm25.normalized_scores(query);
-    let mut scored: Vec<Memory> = candidates
-        .into_iter()
+    let mut scored: Vec<(f64, &StoredMemory)> = candidates
+        .iter()
         .zip(lexical)
         .map(|(c, lex)| {
             let age_days = (now - c.memory.updated_at).num_seconds() as f64 / 86_400.0;
             let cosine = f64::from(kernel::dot(&q, &c.embedding));
-            let mut memory = c.memory;
-            memory.score = Some(
-                (hybrid_score(cosine, lex, age_days, memory.importance) * 1000.0).round() / 1000.0,
-            );
-            memory
+            let score = hybrid_score(cosine, lex, age_days, c.memory.importance);
+            ((score * 1000.0).round() / 1000.0, *c)
         })
         .collect();
-    scored.sort_by(|a, b| b.score.unwrap_or(0.0).total_cmp(&a.score.unwrap_or(0.0)));
-    scored.truncate(limit);
+    // Only the top `limit` need to be in order.
+    let top = limit.min(scored.len());
+    if top < scored.len() {
+        scored.select_nth_unstable_by(top - 1, |a, b| b.0.total_cmp(&a.0));
+        scored.truncate(top);
+    }
+    scored.sort_by(|a, b| b.0.total_cmp(&a.0));
     scored
+        .into_iter()
+        .map(|(score, c)| Memory {
+            score: Some(score),
+            ..c.memory.clone()
+        })
+        .collect()
+}
+
+/// Whether a memory is visible to a retrieval restricted to `graph_id`:
+/// memories of that graph plus the owner's user-scope memories. Without a
+/// graph, everything the owner has.
+fn in_view(memory: &Memory, graph_id: Option<Uuid>) -> bool {
+    match graph_id {
+        None => true,
+        Some(id) => memory.graph_id == Some(id) || memory.scope == MemoryScope::User,
+    }
 }
 
 /// Hybrid retrieval of a user's memories (optionally restricted to a graph
-/// plus user-scope memories). Counts an access for each returned memory.
+/// plus user-scope memories). Counts an access for each returned memory in
+/// the background, so the caller never waits for that write.
 pub async fn retrieve(
+    index: &MemoryIndex,
     db: &PgPool,
     owner: Uuid,
     graph_id: Option<Uuid>,
     query: &str,
     limit: usize,
 ) -> anyhow::Result<Vec<Memory>> {
-    let candidates = memories::candidates(db, owner, graph_id, query).await?;
-    let ranked = rank(candidates, query, limit, Utc::now());
+    let all = index.load(db, owner).await?;
+    let candidates: Vec<&StoredMemory> = all
+        .iter()
+        .filter(|m| in_view(&m.memory, graph_id))
+        .collect();
+    let ranked = rank(&candidates, query, limit, Utc::now());
     let ids: Vec<Uuid> = ranked.iter().map(|m| m.id).collect();
     if !ids.is_empty() {
-        memories::record_access(db, &ids).await?;
+        let db = db.clone();
+        tokio::spawn(async move {
+            if let Err(err) = memories::record_access(&db, &ids).await {
+                tracing::warn!(error = %err, "cannot record memory access");
+            }
+        });
     }
     Ok(ranked)
 }
@@ -170,6 +203,7 @@ pub async fn extract(
 
 /// Consolidates candidates into a graph's memory; returns the decisions taken.
 pub async fn store(
+    index: &MemoryIndex,
     db: &PgPool,
     owner: Uuid,
     graph_id: Uuid,
@@ -229,6 +263,9 @@ pub async fn store(
         }
         decisions.push(decision);
     }
+    if !decisions.is_empty() {
+        index.invalidate(owner);
+    }
     Ok(decisions)
 }
 
@@ -258,19 +295,64 @@ mod tests {
 
     #[test]
     fn ranks_relevant_memories_first() {
-        let ranked = rank(
-            vec![
-                stored("The report must follow APA citation style", 1, 0.8),
-                stored("Deploy target is Kubernetes on GKE", 1, 0.8),
-                stored("Citation style for the report is APA 7th edition", 200, 0.2),
-            ],
-            "which citation style does the report use",
-            2,
-            Utc::now(),
-        );
+        let memories = [
+            stored("The report must follow APA citation style", 1, 0.8),
+            stored("Deploy target is Kubernetes on GKE", 1, 0.8),
+            stored("Citation style for the report is APA 7th edition", 200, 0.2),
+        ];
+        let candidates: Vec<&StoredMemory> = memories.iter().collect();
+        let query = "which citation style does the report use";
+        let ranked = rank(&candidates, query, 2, Utc::now());
         assert_eq!(ranked.len(), 2);
         assert!(ranked[0].content.contains("APA"));
         assert!(ranked[0].score.unwrap() >= ranked[1].score.unwrap());
-        assert!(rank(vec![], "x", 5, Utc::now()).is_empty());
+        assert!(rank(&[], "x", 5, Utc::now()).is_empty());
+        // Asking for fewer results returns a prefix of the full ranking.
+        let all = rank(&candidates, query, 10, Utc::now());
+        assert_eq!(all.len(), 3);
+        assert_eq!(ranked[0].id, all[0].id);
+        assert_eq!(rank(&candidates, query, 1, Utc::now())[0].id, all[0].id);
+    }
+
+    #[test]
+    fn graph_retrieval_sees_the_graph_and_user_scope() {
+        let graph = Uuid::now_v7();
+        let mut of_graph = stored("a", 0, 0.5).memory;
+        of_graph.graph_id = Some(graph);
+        let mut of_other = stored("b", 0, 0.5).memory;
+        of_other.graph_id = Some(Uuid::now_v7());
+        let mut of_user = stored("c", 0, 0.5).memory;
+        of_user.scope = MemoryScope::User;
+        assert!(in_view(&of_graph, Some(graph)));
+        assert!(!in_view(&of_other, Some(graph)));
+        assert!(in_view(&of_user, Some(graph)));
+        assert!(in_view(&of_other, None));
+    }
+
+    /// Not a correctness test: prints how long ranking a large owner takes.
+    #[test]
+    #[ignore = "timing; run with --ignored --nocapture"]
+    fn ranking_speed() {
+        let memories: Vec<StoredMemory> = (0..5_000)
+            .map(|i| {
+                stored(
+                    &format!("fact {i} about topic {} and detail {}", i % 97, i % 13),
+                    1,
+                    0.5,
+                )
+            })
+            .collect();
+        let candidates: Vec<&StoredMemory> = memories.iter().collect();
+        let started = std::time::Instant::now();
+        for _ in 0..20 {
+            assert_eq!(
+                rank(&candidates, "detail 7 about topic 42", 5, Utc::now()).len(),
+                5
+            );
+        }
+        println!(
+            "rank over 5000 memories: {:?} per query",
+            started.elapsed() / 20
+        );
     }
 }

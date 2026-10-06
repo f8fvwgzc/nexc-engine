@@ -76,24 +76,43 @@ interface AuthResponse { user: User; access_token: string; expires_in: number }
 
 type LlmProvider = "anthropic" | "openai_compatible" | "claude_code" | "demo";
 interface LlmSettings { provider: LlmProvider; model: string; base_url: string | null;
-  has_api_key: boolean; key_hint: string | null /* e.g. "…a1b2" */; source: "user" | "server" | "none" }
+  has_api_key: boolean; key_hint: string | null /* e.g. "…a1b2" */;
+  source: "user" | "workspace" | "server" | "none" /* where the key comes from */;
+  scope: "user" | "workspace" | "server" /* whose configuration is in effect */ }
+// Work a user does in a workspace runs on the account they connected themselves, else on the
+// workspace's credential, else on the server default; usage is spent on whichever supplied the key.
+interface ModelInfo { id: string; name: string; released_at: string | null; recent: boolean /* ≤ 120 days old */ }
+interface ModelCatalog { provider: LlmProvider; models: ModelInfo[] /* newest first */; note: string | null }
 
-type NodeKind = "topic" | "task" | "research" | "code" | "document" | "output";
+// Node and relation types are data: every graph owns an ontology and `kind` fields are keys into it
+// (`[a-z][a-z0-9_]{0,39}`). A new graph starts from a starter ontology (topic, research, task, code,
+// document, output; depends_on, relates_to) that users and the planner may extend or rewrite.
+interface NodeType { key: string; label: string; description: string; color: string /* #rrggbb */;
+  icon: string; default_role: string; default_executor: Executor;
+  stage: number /* position in the flow of work; suggestions point from lower to higher */;
+  produces_artifact: boolean /* its nodes deliver a file */; allow_code_exec: boolean }
+interface RelationType { key: string; label: string; description: string;
+  blocking: boolean /* source must finish before target runs; blocking relations form the DAG */ }
+interface Ontology { node_types: NodeType[]; relation_types: RelationType[] } // each 1..40 types
+
 type NodeStatus = "idle" | "queued" | "running" | "succeeded" | "failed" | "skipped" | "cancelled";
 type Executor = "llm" | "agent" | "symphony";
-interface GraphNode { id: string; graph_id: string; title: string; content: string; kind: NodeKind;
-  tags: string[]; x: number; y: number; status: NodeStatus; agent_role: string | null;
+interface GraphNode { id: string; graph_id: string; title: string; content: string;
+  kind: string /* NodeType.key */; tags: string[]; x: number; y: number; status: NodeStatus; agent_role: string | null;
   executor: Executor; output: string | null; origin: "user" | "plan"; created_at: string; updated_at: string }
 
-type EdgeKind = "depends_on" | "relates_to";
-interface GraphEdge { id: string; graph_id: string; source: string; target: string; kind: EdgeKind;
+interface GraphEdge { id: string; graph_id: string; source: string; target: string;
+  kind: string /* RelationType.key */; blocking: boolean /* copied from the relation type */;
+  reason: string /* why the two nodes are related this way, ≤ 500 chars */;
   origin: "user" | "auto" | "plan"; weight: number }
-// depends_on: source must finish before target runs (source → target).
 
-interface GraphSummary { id: string; name: string; description: string; node_count: number;
+interface GraphSummary { id: string; workspace_id: string | null; team_id: string | null; name: string; description: string; node_count: number;
   edge_count: number; updated_at: string }
-interface Graph { id: string; name: string; description: string; goal: string; version: number;
-  nodes: GraphNode[]; edges: GraphEdge[]; created_at: string; updated_at: string }
+// A graph belongs to a workspace and optionally to one of its teams. Team graphs are open to the
+// team's members; workspace graphs to every member but guests. Everyone else gets 404.
+interface Graph { id: string; workspace_id: string | null; team_id: string | null /* null: whole workspace */;
+  name: string; description: string; goal: string; version: number;
+  ontology: Ontology; nodes: GraphNode[]; edges: GraphEdge[]; created_at: string; updated_at: string }
 
 interface EdgeSuggestion { source: string; target: string; score: number; reason: string }
 interface GraphAnalysis { topo_order: string[]; levels: string[][]; critical_path: string[];
@@ -101,10 +120,24 @@ interface GraphAnalysis { topo_order: string[]; levels: string[][]; critical_pat
 
 type PlanStatus = "streaming" | "ready" | "failed" | "applied";
 interface ProposedNode { ref: string; existing_id: string | null; title: string; content: string;
-  kind: NodeKind; agent_role: string; executor: Executor; tags: string[] }
-interface ProposedEdge { source_ref: string; target_ref: string }
+  kind: string; agent_role: string; executor: Executor; tags: string[] }
+interface ProposedEdge { source_ref: string; target_ref: string; kind: string; reason: string }
 interface Plan { id: string; graph_id: string; status: PlanStatus; summary: string;
+  ontology: Ontology /* only the types the plan adds; merged into the graph on apply */;
   nodes: ProposedNode[]; edges: ProposedEdge[]; error: string | null; created_at: string }
+
+// Organisations. Every account belongs to at least one workspace (a personal one is created on
+// sign-up unless the address was invited to an existing workspace).
+type WorkspaceRole = "owner" | "admin" | "member" | "guest";
+type TeamRole = "owner" | "member";
+interface Workspace { id: string; name: string; slug: string; role: WorkspaceRole /* the caller's */;
+  member_count: number; created_at: string }
+interface WorkspaceMember { user_id: string; name: string; email: string; role: WorkspaceRole; joined_at: string }
+interface WorkspaceInvite { id: string; email: string; role: WorkspaceRole; created_at: string }
+interface Team { id: string; workspace_id: string; name: string; key: string /* e.g. "ENG" */;
+  description: string; private: boolean; role: TeamRole | null /* the caller's */;
+  member_count: number; created_at: string }
+interface TeamMember { user_id: string; name: string; email: string; role: TeamRole; joined_at: string }
 
 interface GraphTemplate { id: string; name: string; description: string; category: string;
   node_count: number; tags: string[] }
@@ -147,13 +180,27 @@ Public: `GET /healthz`, `GET /readyz`, `POST /auth/register`, `POST /auth/login`
 | POST `/auth/refresh` | — (cookie + `X-Requested-With`) | 200 `AuthResponse` + rotated cookie |
 | POST `/auth/logout` | — | 204, cookie cleared, family revoked |
 | GET `/auth/me` | — | `User` |
-| GET/PUT `/settings/llm` | PUT `{provider, model, base_url?, api_key?}` (`api_key: ""` deletes) | `LlmSettings` |
-| GET `/graphs` | — | `GraphSummary[]` |
-| POST `/graphs` | `{name, description?, goal?}` | 201 `Graph` |
+| GET `/settings/llm?workspace_id=` | — | `LlmSettings` in effect for the caller (in that workspace) |
+| PUT/DELETE `/settings/llm` | PUT `{provider, model, base_url?, api_key?}` (`api_key: ""` deletes the key) | `LlmSettings` / 204: connects or disconnects the caller's own account |
+| GET `/settings/llm/models?workspace_id=` | — | `ModelCatalog`: what the effective provider's own `/models` endpoint lists; 422 if it cannot be reached |
+| GET/PUT/DELETE `/workspaces/{wid}/llm` | PUT as above (admin+) | `LlmSettings \| null` (any member) / `LlmSettings` / 204 |
+| GET/POST `/workspaces` | POST `{name}` | `Workspace[]` / 201 `Workspace` (caller becomes owner) |
+| GET/PATCH/DELETE `/workspaces/{wid}` | PATCH `{name}` (admin+) | `Workspace` / 204 (owner; 409 for the caller's only workspace) |
+| GET/POST `/workspaces/{wid}/members` | POST `{email, role?}` (admin+; `owner` only by owners) | `WorkspaceMember[]` (not guests) / 201 `{member, invite}`: registered users join at once, others get an invite that is accepted on sign-up |
+| PATCH/DELETE `/workspaces/{wid}/members/{uid}` | PATCH `{role}` | `WorkspaceMember[]` / 204; only owners change owners; 409 if no owner would remain; anyone may remove themselves |
+| GET `/workspaces/{wid}/invites`, DELETE `/workspaces/{wid}/invites/{iid}` | — | `WorkspaceInvite[]` / 204 (admin+) |
+| GET/POST `/workspaces/{wid}/teams` | POST `{name, key?, description?, private?}` (member+) | `Team[]` visible to the caller / 201 `Team`; 409 if the key is taken |
+| GET/PATCH/DELETE `/workspaces/{wid}/teams/{tid}` | PATCH `{name?, description?, private?}` | `Team` / 204 (team owner or workspace admin) |
+| GET `/workspaces/{wid}/teams/{tid}/members` | — | `TeamMember[]` |
+| PUT/DELETE `/workspaces/{wid}/teams/{tid}/members/{uid}` | PUT `{role?}` | `TeamMember[]` / 204; members may add themselves to a public team and anyone may leave; otherwise team owner or workspace admin |
+| GET `/graphs?workspace_id=` | — | `GraphSummary[]` the caller can open, optionally of one workspace |
+| POST `/graphs` | `{name, description?, goal?, workspace_id?, team_id?}` (default: the caller's first workspace) | 201 `Graph`; 403 for a guest outside their teams; 404 for a team the caller is not in |
 | GET/PATCH/DELETE `/graphs/{gid}` | PATCH `{name?, description?, goal?}` | `Graph` / 204 |
-| POST `/graphs/{gid}/nodes` | `{title, content?, kind?, tags?, x?, y?, executor?, agent_role?}` | 201 `GraphNode` |
+| POST `/graphs/{gid}/nodes` | `{title, content?, kind?, tags?, x?, y?, executor?, agent_role?}` (`kind` and `executor` default from the ontology) | 201 `GraphNode`; 422 if `kind` is not a node type of the graph |
 | PATCH/DELETE `/graphs/{gid}/nodes/{nid}` | any subset of node fields | `GraphNode` / 204 |
-| POST `/graphs/{gid}/edges` | `{source, target, kind?}` | 201 `GraphEdge`; 409 if a `depends_on` cycle |
+| PUT `/graphs/{gid}/ontology` | `Ontology` (keys are slugged; missing colours/icons are filled in) | `Graph`; 422 if a type still in use is removed; 409 if a relation made blocking would close a cycle |
+| POST `/graphs/{gid}/edges` | `{source, target, kind?, reason?}` (`kind` defaults to the first blocking relation) | 201 `GraphEdge`; 422 unknown relation; 409 if a blocking edge would close a cycle |
+| PATCH `/graphs/{gid}/edges/{eid}` | `{reason}` | `GraphEdge` |
 | DELETE `/graphs/{gid}/edges/{eid}` | — | 204 |
 | GET `/graphs/{gid}/suggestions` | — | `EdgeSuggestion[]` (dependency detection) |
 | GET `/graphs/{gid}/analysis` | — | `GraphAnalysis` |
@@ -178,8 +225,9 @@ Public: `GET /healthz`, `GET /readyz`, `POST /auth/register`, `POST /auth/login`
 | GET `/graphs/{gid}/ws?ticket=` | — | WebSocket (§7) |
 | GET `/metrics` (outside `/api/v1`, at `/metrics`) | — | Prometheus text (admin bearer or `NEXC_METRICS_TOKEN`) |
 
-Executing a graph: nodes run in dependency order (`depends_on` edges). A node's prompt context is its
-own title/content + the graph goal + outputs of its upstream nodes + retrieved memories. A node whose
+Executing a graph: nodes run in dependency order (edges of blocking relations). A node's prompt
+context is its own title/content, the meaning of its type, the graph goal, the outputs of its upstream
+nodes (each with the reason of the edge that makes it an upstream) and retrieved memories. A node whose
 upstream failed is `skipped`. Unchanged nodes (same content hash + same upstream outputs) are served
 from the result cache (`cached: true`) unless `force: true`.
 
@@ -207,7 +255,7 @@ Frames: `id: <seq>\nevent: <type>\ndata: <json>\n\n`; `retry: 3000` first; `hear
 
 Client → server: `{type:"node.move", node_id, x, y}` (persisted, throttled), `{type:"presence", cursor:{x,y}|null}`, `{type:"ping"}`.
 Server → client: `{type:"node.upserted", node}`, `{type:"node.deleted", node_id}`, `{type:"edge.upserted", edge}`,
-`{type:"edge.deleted", edge_id}`, `{type:"graph.updated", graph: GraphSummary}`, `{type:"suggestions", items: EdgeSuggestion[]}`,
+`{type:"edge.deleted", edge_id}`, `{type:"graph.updated", graph: GraphSummary}`, `{type:"ontology.updated", ontology: Ontology}`, `{type:"suggestions", items: EdgeSuggestion[]}`,
 `{type:"presence", user_id, name, cursor}`, `{type:"pong"}`.
 Every REST mutation of nodes/edges is broadcast to all sockets of that graph; dependency detection
 runs after each node create/update and pushes `suggestions` plus any auto-created `[[wikilink]]` edges.
@@ -222,7 +270,7 @@ Auth: `Authorization: Bearer $NEXC_RUNTIME_TOKEN` (constant-time compare). Bind 
 ```json
 { "run_id": "…", "node_id": "…",
   "agent": { "name": "researcher", "role": "researcher", "system_prompt": "…", "model": "claude-opus-5", "budget_tokens": 200000 },
-  "task": { "title": "…", "content": "…", "kind": "document" },
+  "task": { "title": "…", "content": "…", "kind": "document", "kind_description": "A written deliverable.", "produces_artifact": true },
   "context": { "goal": "…", "upstream": [{"node_id": "…", "title": "…", "output": "…"}], "memories": ["…"] },
   "llm": { "provider": "anthropic", "api_key": "sk-…", "model": "claude-opus-5", "base_url": null },
   "limits": { "max_turns": 12, "timeout_s": 600, "allow_code_exec": false } }

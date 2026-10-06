@@ -6,6 +6,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::domain::graph::{EdgeSuggestion, GraphEdge, GraphNode, GraphSummary, NodeStatus};
+use crate::domain::ontology::Ontology;
 use crate::domain::plan::{Plan, ProposedEdge, ProposedNode};
 use crate::domain::run::{Artifact, Run};
 
@@ -122,6 +123,8 @@ pub enum WsMessage {
     EdgeDeleted { edge_id: Uuid },
     #[serde(rename = "graph.updated")]
     GraphUpdated { graph: GraphSummary },
+    #[serde(rename = "ontology.updated")]
+    OntologyUpdated { ontology: Ontology },
     #[serde(rename = "suggestions")]
     Suggestions { items: Vec<EdgeSuggestion> },
     #[serde(rename = "presence")]

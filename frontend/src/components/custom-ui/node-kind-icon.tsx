@@ -1,12 +1,19 @@
 import type { SVGProps } from 'react';
 
-import type { NodeKind } from '@/schemas/graph';
+import { useNodeType } from './node-kind-meta';
 
-import { NODE_KIND_META } from './node-kind-meta';
+type NodeKindIconProps = SVGProps<SVGSVGElement> & { kind: string; size?: number };
 
-type NodeKindIconProps = SVGProps<SVGSVGElement> & { kind: NodeKind; size?: number };
-
-export function NodeKindIcon({ kind, size = 16, ...props }: NodeKindIconProps) {
-  const Icon = NODE_KIND_META[kind].icon;
-  return <Icon width={size} height={size} aria-label={NODE_KIND_META[kind].label} {...props} />;
+/** Icon of a node kind, as the current graph's ontology defines it. */
+export function NodeKindIcon({ kind, size = 16, style, ...props }: NodeKindIconProps) {
+  const { icon: Icon, label, color } = useNodeType(kind);
+  return (
+    <Icon
+      width={size}
+      height={size}
+      aria-label={label}
+      style={color ? { color, ...style } : style}
+      {...props}
+    />
+  );
 }

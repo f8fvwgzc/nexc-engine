@@ -1,12 +1,12 @@
 //! Dependency detection.
 //!
-//! 1. **Wikilinks** – `[[Title]]` in a node's content creates an `auto`
-//!    `depends_on` edge from the node titled `Title` to the linking node.
-//!    Auto edges whose link disappeared are removed.
+//! 1. **Wikilinks** – `[[Title]]` in a node's content creates an `auto` edge
+//!    of the ontology's dependency relation from the node titled `Title` to
+//!    the linking node. Auto edges whose link disappeared are removed.
 //! 2. **Suggestions** – pairs of nodes with similar content (C kernel
 //!    embedding cosine blended with BM25) are suggested as dependencies;
-//!    near-duplicates (MinHash Jaccard ≥ 0.8) are skipped. The more general
-//!    or earlier node becomes the source.
+//!    near-duplicates (MinHash Jaccard ≥ 0.8) are skipped. The node whose
+//!    type has the earlier stage, or the older node, becomes the source.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -15,9 +15,8 @@ use uuid::Uuid;
 
 use super::analysis::dependency_graph;
 use crate::app::AppState;
-use crate::domain::graph::{
-    EdgeKind, EdgeOrigin, EdgeSuggestion, GraphEdge, GraphNode, NodeKind, wikilinks,
-};
+use crate::domain::graph::{EdgeOrigin, EdgeSuggestion, GraphEdge, GraphNode, wikilinks};
+use crate::domain::ontology::Ontology;
 use crate::dsa::bm25::Bm25Index;
 use crate::kernel;
 use crate::realtime::events::WsMessage;
@@ -46,16 +45,6 @@ pub fn wikilink_pairs(nodes: &[GraphNode]) -> Vec<(Uuid, Uuid)> {
         .collect()
 }
 
-fn kind_rank(kind: NodeKind) -> u8 {
-    match kind {
-        NodeKind::Topic => 0,
-        NodeKind::Research => 1,
-        NodeKind::Task | NodeKind::Code => 2,
-        NodeKind::Document => 3,
-        NodeKind::Output => 4,
-    }
-}
-
 fn mentions(haystack: &GraphNode, needle: &GraphNode) -> bool {
     needle.title.chars().count() >= 4
         && haystack
@@ -65,18 +54,22 @@ fn mentions(haystack: &GraphNode, needle: &GraphNode) -> bool {
 }
 
 /// True when `a` should be the source of an edge between `a` and `b`: the
-/// node mentioned by the other, then the more general kind, then the older.
-fn is_source(a: &GraphNode, b: &GraphNode) -> bool {
+/// node mentioned by the other, then the earlier stage, then the older.
+fn is_source(a: &GraphNode, b: &GraphNode, ontology: &Ontology) -> bool {
     match (mentions(b, a), mentions(a, b)) {
         (true, false) => return true,
         (false, true) => return false,
         _ => {}
     }
-    (kind_rank(a.kind), a.created_at) <= (kind_rank(b.kind), b.created_at)
+    (ontology.stage_of(&a.kind), a.created_at) <= (ontology.stage_of(&b.kind), b.created_at)
 }
 
 /// Ranked dependency suggestions for unconnected node pairs.
-pub fn suggestions(nodes: &[GraphNode], edges: &[GraphEdge]) -> Vec<EdgeSuggestion> {
+pub fn suggestions(
+    nodes: &[GraphNode],
+    edges: &[GraphEdge],
+    ontology: &Ontology,
+) -> Vec<EdgeSuggestion> {
     let docs: Vec<String> = nodes
         .iter()
         .map(|n| format!("{}\n{}", n.title, n.content))
@@ -106,7 +99,7 @@ pub fn suggestions(nodes: &[GraphNode], edges: &[GraphEdge]) -> Vec<EdgeSuggesti
                 continue;
             }
             // Vertex indices of `deps` equal node positions (ids are unique).
-            let (s, t) = if is_source(&nodes[i], &nodes[j]) {
+            let (s, t) = if is_source(&nodes[i], &nodes[j], ontology) {
                 (i, j)
             } else {
                 (j, i)
@@ -156,7 +149,8 @@ pub fn schedule(state: &AppState, graph_id: Uuid) {
 pub async fn detect(state: &AppState, graph_id: Uuid) -> anyhow::Result<()> {
     let nodes = repo::nodes::list(&state.db, graph_id).await?;
     let mut edges = repo::edges::list(&state.db, graph_id).await?;
-    let changed = sync_wikilinks(state, graph_id, &nodes, &mut edges).await?;
+    let ontology = repo::graphs::ontology(&state.db, graph_id).await?;
+    let changed = sync_wikilinks(state, graph_id, &nodes, &mut edges, &ontology).await?;
     if changed {
         repo::graphs::touch(&state.db, graph_id).await?;
         if let Some(summary) = repo::graphs::summary(&state.db, graph_id).await? {
@@ -168,7 +162,7 @@ pub async fn detect(state: &AppState, graph_id: Uuid) -> anyhow::Result<()> {
     state.hub.broadcast(
         graph_id,
         WsMessage::Suggestions {
-            items: suggestions(&nodes, &edges),
+            items: suggestions(&nodes, &edges, &ontology),
         },
     );
     Ok(())
@@ -179,6 +173,7 @@ async fn sync_wikilinks(
     graph_id: Uuid,
     nodes: &[GraphNode],
     edges: &mut Vec<GraphEdge>,
+    ontology: &Ontology,
 ) -> anyhow::Result<bool> {
     let wanted: HashSet<(Uuid, Uuid)> = wikilink_pairs(nodes).into_iter().collect();
     let mut changed = false;
@@ -197,9 +192,13 @@ async fn sync_wikilinks(
     }
     edges.retain(|e| e.origin != EdgeOrigin::Auto || wanted.contains(&(e.source, e.target)));
 
+    // Without a blocking relation in the ontology a link cannot become a dependency.
+    let Some(relation) = ontology.dependency_relation() else {
+        return Ok(changed);
+    };
     let existing: HashSet<(Uuid, Uuid)> = edges
         .iter()
-        .filter(|e| e.kind == EdgeKind::DependsOn)
+        .filter(|e| e.blocking)
         .map(|e| (e.source, e.target))
         .collect();
     for (source, target) in wanted.into_iter().filter(|p| !existing.contains(p)) {
@@ -215,7 +214,8 @@ async fn sync_wikilinks(
             graph_id,
             source,
             target,
-            EdgeKind::DependsOn,
+            relation,
+            "linked with a [[wikilink]] in the target's content",
             EdgeOrigin::Auto,
         )
         .await?
@@ -246,15 +246,16 @@ mod tests {
     #[test]
     fn suggests_similar_unconnected_nodes() {
         let mut a = node("Research Rust async runtimes");
-        a.kind = NodeKind::Research;
+        a.kind = "research".into();
         a.content = "Compare tokio and async-std schedulers, work stealing and io drivers.".into();
         let mut b = node("Write runtime comparison");
-        b.kind = NodeKind::Document;
+        b.kind = "document".into();
         b.content =
             "Write a report comparing tokio and async-std schedulers and their io drivers.".into();
         let mut c = node("Bake bread");
         c.content = "Sourdough starter, flour, water and patience.".into();
-        let s = suggestions(&[b.clone(), a.clone(), c.clone()], &[]);
+        let ontology = Ontology::starter();
+        let s = suggestions(&[b.clone(), a.clone(), c.clone()], &[], &ontology);
         assert_eq!(s.len(), 1, "{s:?}");
         assert_eq!(
             (s[0].source, s[0].target),
@@ -265,7 +266,8 @@ mod tests {
         assert!(
             suggestions(
                 &[a.clone(), b.clone()],
-                &[edge(&a, &b, EdgeKind::RelatesTo)]
+                &[edge(&a, &b, "relates_to")],
+                &ontology
             )
             .is_empty()
         );
@@ -277,6 +279,6 @@ mod tests {
         a.content = "the quick brown fox jumps over the lazy dog again and again".into();
         let mut b = node("Draft");
         b.content = a.content.clone();
-        assert!(suggestions(&[a, b], &[]).is_empty());
+        assert!(suggestions(&[a, b], &[], &Ontology::starter()).is_empty());
     }
 }

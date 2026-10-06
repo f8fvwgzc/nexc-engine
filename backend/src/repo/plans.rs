@@ -6,10 +6,12 @@ use sqlx::{FromRow, PgExecutor, Row};
 use uuid::Uuid;
 
 use super::enum_col;
+use crate::domain::ontology::Ontology;
 use crate::domain::plan::{Plan, PlanProposal, PlanStatus, ProposedEdge, ProposedNode};
 
 impl FromRow<'_, PgRow> for Plan {
     fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
+        let Json(ontology): Json<Ontology> = row.try_get("ontology")?;
         let Json(nodes): Json<Vec<ProposedNode>> = row.try_get("nodes")?;
         let Json(edges): Json<Vec<ProposedEdge>> = row.try_get("edges")?;
         Ok(Plan {
@@ -17,6 +19,7 @@ impl FromRow<'_, PgRow> for Plan {
             graph_id: row.try_get("graph_id")?,
             status: enum_col(row, "status")?,
             summary: row.try_get("summary")?,
+            ontology,
             nodes,
             edges,
             error: row.try_get("error")?,
@@ -34,7 +37,7 @@ pub async fn create(
 ) -> Result<Plan, sqlx::Error> {
     sqlx::query_as(
         "INSERT INTO plans (id, graph_id, owner_id, status, instructions) VALUES ($1, $2, $3, 'streaming', $4)
-         RETURNING id, graph_id, status, summary, nodes, edges, error, created_at",
+         RETURNING id, graph_id, status, summary, ontology, nodes, edges, error, created_at",
     )
     .bind(Uuid::now_v7())
     .bind(graph_id)
@@ -51,7 +54,7 @@ pub async fn find(
     id: Uuid,
 ) -> Result<Option<Plan>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT id, graph_id, status, summary, nodes, edges, error, created_at FROM plans WHERE graph_id = $1 AND id = $2",
+        "SELECT id, graph_id, status, summary, ontology, nodes, edges, error, created_at FROM plans WHERE graph_id = $1 AND id = $2",
     )
     .bind(graph_id)
     .bind(id)
@@ -66,13 +69,14 @@ pub async fn complete(
     proposal: &PlanProposal,
 ) -> Result<Plan, sqlx::Error> {
     sqlx::query_as(
-        "UPDATE plans SET status = 'ready', summary = $2, nodes = $3, edges = $4, updated_at = now() WHERE id = $1
-         RETURNING id, graph_id, status, summary, nodes, edges, error, created_at",
+        "UPDATE plans SET status = 'ready', summary = $2, nodes = $3, edges = $4, ontology = $5, updated_at = now() WHERE id = $1
+         RETURNING id, graph_id, status, summary, ontology, nodes, edges, error, created_at",
     )
     .bind(id)
     .bind(&proposal.summary)
     .bind(Json(&proposal.nodes))
     .bind(Json(&proposal.edges))
+    .bind(Json(&proposal.ontology))
     .fetch_one(db)
     .await
 }

@@ -10,7 +10,8 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::agent::{Agent, AgentStatus, DEFAULT_ORG};
-use crate::domain::graph::{GraphNode, default_role_for_kind};
+use crate::domain::graph::GraphNode;
+use crate::domain::ontology::Ontology;
 use crate::domain::status::{Backends, OrchestratorStatus};
 use crate::engine::credentials;
 use crate::repo;
@@ -54,23 +55,24 @@ pub async fn seed_missing_orgs(state: &AppState) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The agent responsible for a node: by its `agent_role`, else by its kind.
+/// The agent responsible for a node: by its `agent_role`, else by the
+/// default role of its type in `ontology`.
 pub async fn assign(
     state: &AppState,
     owner: Uuid,
     node: &GraphNode,
+    ontology: &Ontology,
 ) -> Result<Option<Agent>, sqlx::Error> {
+    let type_role = ontology.role_for(&node.kind);
     let role = node
         .agent_role
         .as_deref()
         .map(str::trim)
         .filter(|r| !r.is_empty())
-        .unwrap_or_else(|| default_role_for_kind(node.kind));
+        .unwrap_or(type_role);
     match repo::agents::find_by_role(&state.db, owner, role).await? {
         Some(agent) => Ok(Some(agent)),
-        None => {
-            repo::agents::find_by_role(&state.db, owner, default_role_for_kind(node.kind)).await
-        }
+        None => repo::agents::find_by_role(&state.db, owner, type_role).await,
     }
 }
 
@@ -91,7 +93,7 @@ pub async fn heartbeat(state: &AppState) -> anyhow::Result<()> {
 pub async fn status(state: &AppState, owner: Uuid) -> Result<OrchestratorStatus, AppError> {
     let (queue_depth, running_nodes, active_runs) = repo::runs::activity(&state.db, owner).await?;
     let agents_active = repo::agents::count_active(&state.db, owner).await?;
-    let llm = credentials::resolve(state, owner).await?;
+    let llm = credentials::resolve(state, owner, None).await?;
     Ok(OrchestratorStatus {
         demo_mode: llm.is_demo(),
         queue_depth,

@@ -16,4 +16,6 @@ export interface CreateFromTemplateBody {
   name?: string;
   /** What this instance is about (research question, product, …); it leads the graph goal. */
   topic?: string;
+  /** Workspace to create the graph in (default: the caller's first workspace). */
+  workspace_id?: string;
 }

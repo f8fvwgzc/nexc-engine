@@ -126,6 +126,8 @@ async def _run(
         settings=settings,
         meter=Meter(),
         kind=request.task.kind,
+        kind_description=request.task.kind_description,
+        produces_artifact=_produces_artifact(request),
         max_turns=min(request.limits.max_turns, settings.runtime_max_turns_cap),
         allow_code_exec=allow_code_exec,
     )
@@ -176,9 +178,9 @@ def _loggable(value: str) -> str:
 def _ensure_document(
     request: ExecuteRequest, workspace: Workspace, output: str, events: EventStream
 ) -> None:
-    """Document and output nodes always deliver a .docx: when the agent answered in text without
-    calling make_docx, its final Markdown answer is converted."""
-    if request.task.kind not in DOCUMENT_KINDS or not output.strip():
+    """Nodes whose type produces an artifact always deliver a .docx: when the agent answered in
+    text without calling make_docx, its final Markdown answer is converted."""
+    if not _produces_artifact(request) or not output.strip():
         return
     if any(p.suffix.lower() == ".docx" for p in workspace.root.rglob("*") if p.is_file()):
         return
@@ -186,6 +188,12 @@ def _ensure_document(
     args = markdown_to_docx_args(request.task.title, output, filename)
     workspace.write_bytes(filename, render_docx(args))
     events.log("info", f"no .docx was produced; converted the final answer into {filename}")
+
+
+def _produces_artifact(request: ExecuteRequest) -> bool:
+    """Whether the node's type delivers a file, as the graph's ontology declares it."""
+    declared = request.task.produces_artifact
+    return request.task.kind in DOCUMENT_KINDS if declared is None else declared
 
 
 def _slug(text: str) -> str:

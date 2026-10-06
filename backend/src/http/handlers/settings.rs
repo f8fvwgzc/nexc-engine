@@ -1,19 +1,26 @@
-//! Per-user LLM settings.
+//! LLM settings: the account a user connects, the credential of a workspace,
+//! and the models their provider offers.
 
 use std::net::IpAddr;
 
 use axum::Json;
 use axum::extract::State;
+use axum::http::StatusCode;
 use serde::Deserialize;
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
+use uuid::Uuid;
+
+use super::workspaces::{member_of, require};
 
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::settings::{LlmProviderKind, LlmSettings, key_hint};
 use crate::domain::validation::{FieldErrors, Validate, check_text};
+use crate::domain::workspace::WorkspaceAction;
 use crate::engine::credentials;
-use crate::http::extract::{AuthUser, ValidatedJson};
+use crate::http::extract::{AuthUser, Path, Query, ValidatedJson};
 use crate::http::problem::Problem;
+use crate::llm::catalog::{self, ModelCatalog};
 use crate::repo;
 use crate::repo::settings::KeyUpdate;
 
@@ -90,27 +97,34 @@ fn check_production_url(url: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-/// The effective LLM settings of the caller.
-#[utoipa::path(get, path = "/settings/llm", tag = "settings", security(("bearer" = [])),
-    responses((status = 200, body = LlmSettings), (status = 401, body = Problem)))]
-pub async fn get_llm(
-    State(state): State<AppState>,
-    auth: AuthUser,
-) -> Result<Json<LlmSettings>, AppError> {
-    Ok(Json(
-        credentials::resolve(&state, auth.id).await?.settings(),
-    ))
+/// Query of the `/settings/llm` reads.
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+pub struct LlmScopeQuery {
+    /// The workspace the caller is working in; its credential applies when
+    /// they have not connected an account of their own.
+    pub workspace_id: Option<Uuid>,
 }
 
-/// Updates provider, model, base URL and (encrypted) API key.
-#[utoipa::path(put, path = "/settings/llm", tag = "settings", security(("bearer" = [])),
-    request_body = UpdateLlmSettings,
-    responses((status = 200, body = LlmSettings), (status = 422, body = Problem)))]
-pub async fn put_llm(
-    State(state): State<AppState>,
+/// 404 unless the caller belongs to the workspace they name.
+async fn checked_workspace(
+    state: &AppState,
     auth: AuthUser,
-    ValidatedJson(req): ValidatedJson<UpdateLlmSettings>,
-) -> Result<Json<LlmSettings>, AppError> {
+    workspace_id: Option<Uuid>,
+) -> Result<Option<Uuid>, AppError> {
+    if let Some(id) = workspace_id {
+        member_of(state, auth, id).await?;
+    }
+    Ok(workspace_id)
+}
+
+/// Validated pieces of an [`UpdateLlmSettings`]: the base URL to store and
+/// what to do with the key, sealed to `owner` (a user or a workspace).
+fn prepare(
+    state: &AppState,
+    req: &UpdateLlmSettings,
+    owner: Uuid,
+) -> Result<(Option<String>, KeyUpdate), AppError> {
     let base_url = req
         .base_url
         .as_deref()
@@ -125,22 +139,149 @@ pub async fn put_llm(
         None => KeyUpdate::Keep,
         Some("") => KeyUpdate::Clear,
         Some(key) => KeyUpdate::Set {
-            ciphertext: state.secret_box.seal(key.as_bytes(), auth.id.as_bytes())?,
+            ciphertext: state.secret_box.seal(key.as_bytes(), owner.as_bytes())?,
             hint: key_hint(key),
         },
     };
+    Ok((base_url.map(str::to_owned), key))
+}
+
+/// The LLM settings that apply to the caller: their own account, else the
+/// credential of the workspace they name, else the server defaults.
+#[utoipa::path(get, path = "/settings/llm", tag = "settings", security(("bearer" = [])),
+    params(LlmScopeQuery),
+    responses((status = 200, body = LlmSettings), (status = 401, body = Problem), (status = 404, body = Problem)))]
+pub async fn get_llm(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Query(query): Query<LlmScopeQuery>,
+) -> Result<Json<LlmSettings>, AppError> {
+    let workspace = checked_workspace(&state, auth, query.workspace_id).await?;
+    Ok(Json(
+        credentials::resolve(&state, auth.id, workspace)
+            .await?
+            .settings(),
+    ))
+}
+
+/// Connects the caller's own account: provider, model, base URL and
+/// (encrypted) API key. It takes precedence over any workspace credential.
+#[utoipa::path(put, path = "/settings/llm", tag = "settings", security(("bearer" = [])),
+    request_body = UpdateLlmSettings,
+    responses((status = 200, body = LlmSettings), (status = 422, body = Problem)))]
+pub async fn put_llm(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    ValidatedJson(req): ValidatedJson<UpdateLlmSettings>,
+) -> Result<Json<LlmSettings>, AppError> {
+    let (base_url, key) = prepare(&state, &req, auth.id)?;
     repo::settings::upsert(
         &state.db,
         auth.id,
         req.provider,
         req.model.trim(),
-        base_url,
+        base_url.as_deref(),
         key,
     )
     .await?;
     Ok(Json(
-        credentials::resolve(&state, auth.id).await?.settings(),
+        credentials::resolve(&state, auth.id, None)
+            .await?
+            .settings(),
     ))
+}
+
+/// Disconnects the caller's own account, so the workspace's credential (or
+/// the server default) applies to their work again.
+#[utoipa::path(delete, path = "/settings/llm", tag = "settings", security(("bearer" = [])),
+    responses((status = 204, description = "Disconnected (also when nothing was connected)")))]
+pub async fn delete_llm(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<StatusCode, AppError> {
+    repo::settings::delete(&state.db, auth.id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// The models the provider behind the caller's effective settings offers
+/// right now, newest first. Asked from the provider, never from a built-in list.
+#[utoipa::path(get, path = "/settings/llm/models", tag = "settings", security(("bearer" = [])),
+    params(LlmScopeQuery),
+    responses((status = 200, body = ModelCatalog), (status = 404, body = Problem),
+        (status = 422, description = "The provider could not be asked", body = Problem)))]
+pub async fn llm_models(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Query(query): Query<LlmScopeQuery>,
+) -> Result<Json<ModelCatalog>, AppError> {
+    let workspace = checked_workspace(&state, auth, query.workspace_id).await?;
+    let resolved = credentials::resolve(&state, auth.id, workspace).await?;
+    Ok(Json(catalog::list(&state.http, &resolved.target).await?))
+}
+
+/// The credential of a workspace, as every member may see it (never the key).
+#[utoipa::path(get, path = "/workspaces/{wid}/llm", tag = "settings", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id")),
+    responses((status = 200, description = "`null` when the workspace has no credential", body = Option<LlmSettings>),
+        (status = 404, body = Problem)))]
+pub async fn get_workspace_llm(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(wid): Path<Uuid>,
+) -> Result<Json<Option<LlmSettings>>, AppError> {
+    member_of(&state, auth, wid).await?;
+    Ok(Json(credentials::workspace_settings(&state, wid).await?))
+}
+
+/// Sets the credential members use when they have not connected their own
+/// account (workspace admins and owners).
+#[utoipa::path(put, path = "/workspaces/{wid}/llm", tag = "settings", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id")), request_body = UpdateLlmSettings,
+    responses((status = 200, body = LlmSettings), (status = 403, body = Problem),
+        (status = 404, body = Problem), (status = 422, body = Problem)))]
+pub async fn put_workspace_llm(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(wid): Path<Uuid>,
+    ValidatedJson(req): ValidatedJson<UpdateLlmSettings>,
+) -> Result<Json<LlmSettings>, AppError> {
+    require(
+        &member_of(&state, auth, wid).await?,
+        WorkspaceAction::UpdateSettings,
+    )?;
+    let (base_url, key) = prepare(&state, &req, wid)?;
+    repo::settings::upsert_for_workspace(
+        &state.db,
+        wid,
+        auth.id,
+        req.provider,
+        req.model.trim(),
+        base_url.as_deref(),
+        key,
+    )
+    .await?;
+    credentials::workspace_settings(&state, wid)
+        .await?
+        .map(Json)
+        .ok_or(AppError::NotFound("workspace credential"))
+}
+
+/// Removes the workspace's credential (workspace admins and owners).
+#[utoipa::path(delete, path = "/workspaces/{wid}/llm", tag = "settings", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id")),
+    responses((status = 204, description = "Removed (also when there was none)"),
+        (status = 403, body = Problem), (status = 404, body = Problem)))]
+pub async fn delete_workspace_llm(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(wid): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    require(
+        &member_of(&state, auth, wid).await?,
+        WorkspaceAction::UpdateSettings,
+    )?;
+    repo::settings::delete_for_workspace(&state.db, wid).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[cfg(test)]

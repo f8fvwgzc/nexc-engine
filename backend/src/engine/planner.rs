@@ -13,9 +13,9 @@ use super::{credentials, deps, editor};
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::graph::{
-    EdgeKind, EdgeOrigin, Graph, GraphEdge, GraphNode, MAX_NODES, NodeDraft, NodeOrigin,
-    normalize_tags,
+    EdgeOrigin, Graph, GraphEdge, GraphNode, MAX_NODES, NodeDraft, NodeOrigin, normalize_tags,
 };
+use crate::domain::ontology::{ICONS, Ontology};
 use crate::domain::plan::{
     ContextEdge, ContextNode, PLAN_CONTEXT_MARKER, PLAN_SCHEMA_NAME, Plan, PlanContext,
     PlanProposal, PlanStatus, ProposedEdge, ProposedNode, sanitize_proposal,
@@ -34,24 +34,84 @@ const MARGIN: f64 = 80.0;
 
 const SYSTEM_PROMPT: &str = "You are the planning engine of nexc, a tool that executes graphs of notes and \
     tasks with LLM agents. Refine the user's graph into an executable plan: keep every useful existing \
-    node (set existing_id to its id), split nodes that are too broad into concrete steps, add missing \
-    steps, and connect them with depends_on edges (source must finish before target). Each node must \
-    be independently executable by one agent with clear instructions in `content`. Prefer parallel \
-    branches where steps are independent. End with exactly one node of kind `output` that produces the \
-    final deliverable. Choose each node's executor: `llm` for text-only steps, `agent` for steps \
-    that must produce files (documents such as .docx, code, data) or need tools - the final `output` \
-    node is `agent` whenever the goal asks for a file - and `symphony` only for coding tasks against a \
-    git repository. Use only the given agent roles. `ref` values are short unique identifiers.";
+    node (set existing_id to its id), split nodes that are too broad into concrete steps and add missing \
+    steps. Each node must be independently executable by one agent with clear instructions in `content`. \
+    \n\nThe graph has an ontology: `ontology.node_types` are the kinds a node may have and \
+    `ontology.relation_types` are the relations an edge may have. Reuse those types when they fit. When \
+    the domain of the goal needs a concept they do not cover, add it: return every new type in the \
+    proposal's `ontology` (never repeat an existing key) with a snake_case `key`, a `label`, a one \
+    sentence `description`, and for node types `default_role` (one of the given agent roles), \
+    `default_executor`, `stage` (position in the flow of work, lower runs earlier), `produces_artifact` \
+    (its nodes deliver a file), `allow_code_exec`, a `#rrggbb` `color` and an `icon` from the given \
+    `icons`; for relation \
+    types `blocking` (true only when the source must finish before the target can run). Use an empty \
+    `ontology` when the existing types are enough. \
+    \n\nConnect nodes with typed edges. Every edge names its relation in `kind` and states in `reason`, \
+    in one specific sentence, why this source relates to this target (what the target takes from the \
+    source, or what the relation asserts) - never a generic phrase. Blocking relations define execution \
+    order and must not form a cycle; non-blocking relations record meaning only. Delete edges that do \
+    not carry real work or meaning, and prefer parallel branches where steps are independent. End with \
+    exactly one node whose type has `produces_artifact` and the highest `stage`: it produces the final \
+    deliverable. Choose each node's executor: `llm` for text-only steps, `agent` for steps that must \
+    produce files (documents such as .docx, code, data) or need tools - the final node is `agent` \
+    whenever the goal asks for a file - and `symphony` only for coding tasks against a git repository. \
+    Use only the given agent roles. `ref` values are short unique identifiers.";
 
 /// JSON schema of [`PlanProposal`] (strict: every object closed, every field required).
 pub fn plan_schema() -> serde_json::Value {
     let string = json!({ "type": "string" });
+    let boolean = json!({ "type": "boolean" });
+    let executor = json!({ "type": "string", "enum": ["llm", "agent", "symphony"] });
     json!({
         "type": "object",
         "additionalProperties": false,
-        "required": ["summary", "nodes", "edges"],
+        "required": ["summary", "ontology", "nodes", "edges"],
         "properties": {
             "summary": string,
+            "ontology": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["node_types", "relation_types"],
+                "properties": {
+                    "node_types": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                                "key", "label", "description", "color", "icon", "default_role",
+                                "default_executor", "stage", "produces_artifact", "allow_code_exec"
+                            ],
+                            "properties": {
+                                "key": string,
+                                "label": string,
+                                "description": string,
+                                "color": string,
+                                "icon": string,
+                                "default_role": string,
+                                "default_executor": executor,
+                                "stage": { "type": "integer" },
+                                "produces_artifact": boolean,
+                                "allow_code_exec": boolean
+                            }
+                        }
+                    },
+                    "relation_types": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["key", "label", "description", "blocking"],
+                            "properties": {
+                                "key": string,
+                                "label": string,
+                                "description": string,
+                                "blocking": boolean
+                            }
+                        }
+                    }
+                }
+            },
             "nodes": {
                 "type": "array",
                 "items": {
@@ -63,9 +123,9 @@ pub fn plan_schema() -> serde_json::Value {
                         "existing_id": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
                         "title": string,
                         "content": string,
-                        "kind": { "type": "string", "enum": ["topic", "task", "research", "code", "document", "output"] },
+                        "kind": string,
                         "agent_role": string,
-                        "executor": { "type": "string", "enum": ["llm", "agent", "symphony"] },
+                        "executor": executor,
                         "tags": { "type": "array", "items": string }
                     }
                 }
@@ -75,8 +135,13 @@ pub fn plan_schema() -> serde_json::Value {
                 "items": {
                     "type": "object",
                     "additionalProperties": false,
-                    "required": ["source_ref", "target_ref"],
-                    "properties": { "source_ref": string, "target_ref": string }
+                    "required": ["source_ref", "target_ref", "kind", "reason"],
+                    "properties": {
+                        "source_ref": string,
+                        "target_ref": string,
+                        "kind": string,
+                        "reason": string
+                    }
                 }
             }
         }
@@ -91,7 +156,7 @@ pub async fn start(
     instructions: String,
 ) -> Result<Plan, AppError> {
     let graph = editor::load_graph(state, owner, graph_id).await?;
-    let llm = credentials::require(state, owner).await?;
+    let llm = credentials::require(state, owner, graph.workspace_id).await?;
     let plan = plans::create(&state.db, graph_id, owner, &instructions).await?;
     let (state, plan_id) = (state.clone(), plan.id);
     tokio::spawn(async move {
@@ -142,7 +207,7 @@ async fn build_context(
         .iter()
         .map(|n| (n.id, n.title.as_str()))
         .collect();
-    let suggestions = deps::suggestions(&graph.nodes, &graph.edges)
+    let suggestions = deps::suggestions(&graph.nodes, &graph.edges, &graph.ontology)
         .into_iter()
         .take(10)
         .map(|s| {
@@ -153,7 +218,7 @@ async fn build_context(
         })
         .collect();
     let query = format!("{} {instructions}", graph.goal);
-    let memories = memory::retrieve(&state.db, owner, Some(graph.id), &query, 8)
+    let memories = memory::retrieve(&state.memories, &state.db, owner, Some(graph.id), &query, 8)
         .await
         .unwrap_or_default()
         .into_iter()
@@ -170,13 +235,14 @@ async fn build_context(
     PlanContext {
         goal: graph.goal.clone(),
         instructions: instructions.to_owned(),
+        ontology: graph.ontology.clone(),
         nodes: graph
             .nodes
             .iter()
             .map(|n| ContextNode {
                 id: n.id,
                 title: n.title.clone(),
-                kind: n.kind,
+                kind: n.kind.clone(),
                 content: n.content.chars().take(CONTEXT_CONTENT_CHARS).collect(),
                 tags: n.tags.clone(),
                 agent_role: n.agent_role.clone(),
@@ -189,7 +255,8 @@ async fn build_context(
             .map(|e| ContextEdge {
                 source: e.source,
                 target: e.target,
-                kind: e.kind,
+                kind: e.kind.clone(),
+                reason: e.reason.clone(),
             })
             .collect(),
         suggestions,
@@ -208,12 +275,13 @@ async fn generate(
 ) -> Result<PlanProposal, String> {
     let context = build_context(state, owner, graph, instructions).await;
     let prompt = format!(
-        "Refine the graph described below.{}\n\n{PLAN_CONTEXT_MARKER}\n{}",
+        "Refine the graph described below.{}\nicons: {}\n\n{PLAN_CONTEXT_MARKER}\n{}",
         if instructions.trim().is_empty() {
             String::new()
         } else {
             format!("\nUser instructions: {instructions}")
         },
+        ICONS.join(", "),
         serde_json::to_string(&context).map_err(|e| e.to_string())?
     );
     let request = LlmRequest {
@@ -232,7 +300,8 @@ async fn generate(
     let proposal: PlanProposal = serde_json::from_str(text.trim())
         .map_err(|e| format!("the model returned an invalid plan: {e}"))?;
     let existing: HashSet<Uuid> = graph.nodes.iter().map(|n| n.id).collect();
-    let (proposal, notes) = sanitize_proposal(proposal, &existing, MAX_NODES as usize);
+    let (proposal, notes) =
+        sanitize_proposal(proposal, &existing, &graph.ontology, MAX_NODES as usize);
     for note in &notes {
         tracing::info!(%plan_id, note, "plan corrected");
     }
@@ -283,8 +352,9 @@ async fn stream_nodes(
     Err("the LLM stream ended unexpectedly".into())
 }
 
-/// Applies a ready plan in one transaction: upserts its nodes, replaces the
-/// graph's plan-origin edges and lays out new nodes by topological level.
+/// Applies a ready plan in one transaction: adds its new types to the
+/// graph's ontology, upserts its nodes, replaces the graph's plan-origin
+/// edges and lays out new nodes by topological level.
 pub async fn apply(
     state: &AppState,
     owner: Uuid,
@@ -292,9 +362,10 @@ pub async fn apply(
     plan_id: Uuid,
 ) -> Result<Graph, AppError> {
     let mut tx = state.db.begin().await?;
-    repo::graphs::lock(&mut *tx, owner, graph_id)
+    let mut ontology = repo::graphs::lock(&mut *tx, owner, graph_id)
         .await
-        .or_not_found("graph")?;
+        .or_not_found("graph")?
+        .ontology;
     let plan = plans::find(&mut *tx, graph_id, plan_id)
         .await
         .or_not_found("plan")?;
@@ -317,9 +388,13 @@ pub async fn apply(
         )));
     }
 
+    let ontology_changed = ontology.merge(&plan.ontology);
+    if ontology_changed {
+        repo::graphs::set_ontology(&mut *tx, graph_id, &ontology).await?;
+    }
     let removed = repo::edges::delete_by_origin(&mut *tx, graph_id, EdgeOrigin::Plan).await?;
     let mut edges = repo::edges::list(&mut *tx, graph_id).await?;
-    let layout = layout_new_nodes(&plan, &ids, &existing, &edges);
+    let layout = layout_new_nodes(&plan, &ids, &existing, &edges, &ontology);
     let mut upserted = Vec::new();
     for proposed in &plan.nodes {
         let id = ids[&proposed.reference];
@@ -341,16 +416,27 @@ pub async fn apply(
     for ProposedEdge {
         source_ref,
         target_ref,
+        kind,
+        reason,
     } in &plan.edges
     {
         let (Some(&source), Some(&target)) = (ids.get(source_ref), ids.get(target_ref)) else {
+            continue;
+        };
+        // Plans stored before relations were typed carry no kind: they meant a dependency.
+        let relation = if kind.is_empty() {
+            ontology.dependency_relation()
+        } else {
+            ontology.relation_type(kind)
+        };
+        let Some(relation) = relation else {
             continue;
         };
         let (index, deps) = dependency_graph(&all_nodes, &edges);
         let (Some(s), Some(t)) = (index.get(&source), index.get(&target)) else {
             continue;
         };
-        if deps.would_create_cycle(s, t) {
+        if relation.blocking && deps.would_create_cycle(s, t) {
             continue;
         }
         if let Some(edge) = repo::edges::create(
@@ -358,7 +444,8 @@ pub async fn apply(
             graph_id,
             source,
             target,
-            EdgeKind::DependsOn,
+            relation,
+            reason,
             EdgeOrigin::Plan,
         )
         .await?
@@ -370,6 +457,11 @@ pub async fn apply(
     repo::graphs::touch(&mut *tx, graph_id).await?;
     tx.commit().await?;
 
+    if ontology_changed {
+        state
+            .hub
+            .broadcast(graph_id, WsMessage::OntologyUpdated { ontology });
+    }
     for edge_id in removed {
         state
             .hub
@@ -408,7 +500,7 @@ fn refined(current: &GraphNode, p: &ProposedNode) -> GraphNode {
     GraphNode {
         title: p.title.clone(),
         content: p.content.clone(),
-        kind: p.kind,
+        kind: p.kind.clone(),
         tags: normalize_tags(&p.tags),
         agent_role: Some(p.agent_role.clone()).filter(|r| !r.trim().is_empty()),
         executor: p.executor,
@@ -420,7 +512,7 @@ fn draft(p: &ProposedNode, x: f64, y: f64) -> NodeDraft {
     NodeDraft {
         title: p.title.clone(),
         content: p.content.clone(),
-        kind: p.kind,
+        kind: p.kind.clone(),
         tags: normalize_tags(&p.tags),
         x,
         y,
@@ -437,6 +529,7 @@ fn layout_new_nodes(
     ids: &HashMap<String, Uuid>,
     existing: &[GraphNode],
     edges: &[GraphEdge],
+    ontology: &Ontology,
 ) -> HashMap<Uuid, (f64, f64)> {
     let index = Indexed::new(
         existing
@@ -447,11 +540,15 @@ fn layout_new_nodes(
     let graph = index.graph(
         edges
             .iter()
-            .filter(|e| e.kind == EdgeKind::DependsOn)
+            .filter(|e| e.blocking)
             .map(|e| (e.source, e.target))
             .chain(
                 plan.edges
                     .iter()
+                    .filter(|e| {
+                        e.kind.is_empty()
+                            || ontology.relation_type(&e.kind).is_some_and(|r| r.blocking)
+                    })
                     .filter_map(|e| Some((*ids.get(&e.source_ref)?, *ids.get(&e.target_ref)?))),
             ),
     );
@@ -484,7 +581,6 @@ fn layout_new_nodes(
 mod tests {
     use super::*;
     use crate::domain::graph::Executor;
-    use crate::domain::graph::NodeKind;
 
     fn proposed(r: &str) -> ProposedNode {
         ProposedNode {
@@ -492,7 +588,7 @@ mod tests {
             existing_id: None,
             title: r.into(),
             content: String::new(),
-            kind: NodeKind::Task,
+            kind: "task".into(),
             agent_role: "writer".into(),
             executor: Executor::Llm,
             tags: vec![],
@@ -503,11 +599,22 @@ mod tests {
     fn schema_is_strict() {
         let schema = plan_schema();
         assert_eq!(schema["additionalProperties"], false);
-        let item = &schema["properties"]["nodes"]["items"];
-        assert_eq!(item["additionalProperties"], false);
-        assert_eq!(
-            item["required"].as_array().unwrap().len(),
-            item["properties"].as_object().unwrap().len()
+        let ontology = &schema["properties"]["ontology"]["properties"];
+        for item in [
+            &schema["properties"]["nodes"]["items"],
+            &schema["properties"]["edges"]["items"],
+            &ontology["node_types"]["items"],
+            &ontology["relation_types"]["items"],
+        ] {
+            assert_eq!(item["additionalProperties"], false);
+            assert_eq!(
+                item["required"].as_array().unwrap().len(),
+                item["properties"].as_object().unwrap().len()
+            );
+        }
+        assert!(
+            schema["properties"]["nodes"]["items"]["properties"]["kind"]["enum"].is_null(),
+            "node kinds come from the ontology, not from a fixed list"
         );
     }
 
@@ -518,22 +625,33 @@ mod tests {
             graph_id: Uuid::nil(),
             status: PlanStatus::Ready,
             summary: String::new(),
+            ontology: Ontology::default(),
             nodes: vec![proposed("a"), proposed("b"), proposed("c")],
             edges: vec![
                 ProposedEdge {
                     source_ref: "a".into(),
                     target_ref: "b".into(),
+                    kind: "depends_on".into(),
+                    reason: String::new(),
                 },
                 ProposedEdge {
                     source_ref: "a".into(),
                     target_ref: "c".into(),
+                    kind: String::new(),
+                    reason: String::new(),
+                },
+                ProposedEdge {
+                    source_ref: "c".into(),
+                    target_ref: "a".into(),
+                    kind: "relates_to".into(),
+                    reason: "non-blocking relations do not shape the layout".into(),
                 },
             ],
             error: None,
             created_at: chrono::Utc::now(),
         };
         let ids = assign_ids(&plan.nodes, &[]);
-        let pos = layout_new_nodes(&plan, &ids, &[], &[]);
+        let pos = layout_new_nodes(&plan, &ids, &[], &[], &Ontology::starter());
         assert_eq!(pos[&ids["a"]], (MARGIN, MARGIN));
         assert_eq!(pos[&ids["b"]], (MARGIN + COLUMN_WIDTH, MARGIN));
         assert_eq!(pos[&ids["c"]], (MARGIN + COLUMN_WIDTH, MARGIN + ROW_HEIGHT));

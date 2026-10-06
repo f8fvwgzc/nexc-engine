@@ -6,10 +6,27 @@ import type { MemoryQuery } from '@/schemas/memory';
  */
 export const qk = {
   me: ['auth', 'me'] as const,
-  settings: { llm: ['settings', 'llm'] as const },
+  settings: {
+    llm: ['settings', 'llm'] as const,
+    /** The settings in effect for the caller in one workspace. */
+    effective: (workspaceId?: string) =>
+      ['settings', 'llm', 'effective', workspaceId ?? 'none'] as const,
+    workspace: (workspaceId: string) => ['settings', 'llm', 'workspace', workspaceId] as const,
+    models: (workspaceId?: string) => ['settings', 'llm', 'models', workspaceId ?? 'none'] as const,
+  },
+  workspaces: {
+    all: ['workspaces'] as const,
+    members: (workspaceId: string) => ['workspaces', workspaceId, 'members'] as const,
+    invites: (workspaceId: string) => ['workspaces', workspaceId, 'invites'] as const,
+    teams: (workspaceId: string) => ['workspaces', workspaceId, 'teams'] as const,
+    teamMembers: (workspaceId: string, teamId: string) =>
+      ['workspaces', workspaceId, 'teams', teamId, 'members'] as const,
+  },
   graphs: {
     all: ['graphs'] as const,
-    list: () => [...qk.graphs.all, 'list'] as const,
+    /** Prefix of every graph list, whatever workspace it is scoped to. */
+    lists: () => [...qk.graphs.all, 'list'] as const,
+    list: (workspaceId?: string) => [...qk.graphs.lists(), workspaceId ?? 'all'] as const,
     detail: (graphId: string) => [...qk.graphs.all, 'detail', graphId] as const,
     suggestions: (graphId: string) => [...qk.graphs.all, 'detail', graphId, 'suggestions'] as const,
     analysis: (graphId: string) => [...qk.graphs.all, 'detail', graphId, 'analysis'] as const,

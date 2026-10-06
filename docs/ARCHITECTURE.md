@@ -76,12 +76,12 @@ sequenceDiagram
         L-->>B: next proposed node / edge
         B-->>F: SSE plan.node / plan.edge
     end
-    B->>B: validate (refs, kinds, acyclic depends_on)
+    B->>B: validate (refs, kinds resolve to the ontology, blocking edges acyclic)
     B->>DB: plan status ready
     B-->>F: SSE plan.ready {plan}
     U->>F: review, then "Apply"
     F->>B: POST /graphs/{gid}/plans/{pid}/apply
-    B->>DB: upsert nodes + edges in one transaction, plan status applied
+    B->>DB: merge new types into the ontology, upsert nodes + edges in one transaction, plan status applied
     B-->>F: 200 Graph
     B-->>F: WS node.upserted / edge.upserted (all collaborators)
 ```
@@ -89,9 +89,24 @@ sequenceDiagram
 If the model fails or produces an invalid plan the backend emits `plan.failed {plan_id, error}`
 and the graph is untouched. In demo mode the planner is a deterministic offline generator.
 
+### The ontology
+
+Nothing about node or relation types is compiled in. Every graph stores an **ontology**: its node
+types (label, meaning, colour, default role and executor, stage, whether its nodes deliver a file or
+may run code) and its relation types (label, meaning, and whether the relation is *blocking*). A
+node's `kind` and an edge's `kind` are keys into it, and every edge carries a `reason`.
+
+A new graph starts from a small starter ontology. The planner sees the current ontology, reuses its
+types where they fit and proposes new node and relation types when the goal's domain needs them;
+applying the plan merges them into the graph. Users edit the ontology in the canvas toolbar. The
+engine reads behaviour from the types instead of from fixed names: blocking relations form the
+execution DAG (other relations record meaning only and may point "backwards"), `stage` orders
+suggested dependencies, `produces_artifact` routes deliverables, and each upstream output reaches
+the next node together with the reason of the edge that carried it.
+
 ## Flow 2: running a graph
 
-Running executes the `depends_on` DAG. Every node's prompt context is its own title and content,
+Running executes the DAG of blocking edges (`depends_on` in the starter ontology). Every node's prompt context is its own title and content,
 the graph goal, the outputs of its upstream nodes and retrieved memories.
 
 ```mermaid

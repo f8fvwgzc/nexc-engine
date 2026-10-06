@@ -17,8 +17,8 @@ describe('graph store — plan slice', () => {
     s.planRequested();
     s.planNode(f.ids.plan, f.plan.nodes[0]!);
     s.planNode(f.ids.run, { ...f.plan.nodes[0]!, ref: 'other' });
-    s.planEdge(f.ids.plan, { source_ref: 'n1', target_ref: 'n2' });
-    s.planEdge(f.ids.plan, { source_ref: 'n1', target_ref: 'n2' });
+    s.planEdge(f.ids.plan, f.plan.edges[0]!);
+    s.planEdge(f.ids.plan, f.plan.edges[0]!);
     const plan = useGraphStore.getState().plan!;
     expect(plan.id).toBe(f.ids.plan);
     expect(plan.status).toBe('streaming');

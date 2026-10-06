@@ -3,6 +3,42 @@
 //! the owner's id so that other users' resources read as "not found".
 #![forbid(unsafe_code)]
 
+/// SQL predicate: user `$u` may work on the graph row aliased `$g`.
+///
+/// A graph of a team is open to that team's members; a graph that belongs to
+/// the workspace as a whole is open to every member but guests. This is the
+/// SQL form of `domain::workspace::TeamAccess::can_contribute` and of
+/// `WorkspaceRole::is_member`; `tests/workspaces.rs` holds the two together.
+/// Graphs that predate workspaces (no `workspace_id` yet) stay with their creator.
+macro_rules! graph_access {
+    ($g:literal, $u:literal) => {
+        concat!(
+            "((",
+            $g,
+            ".workspace_id IS NULL AND ",
+            $g,
+            ".owner_id = ",
+            $u,
+            ") OR EXISTS (",
+            "SELECT 1 FROM workspace_members wm WHERE wm.workspace_id = ",
+            $g,
+            ".workspace_id",
+            " AND wm.user_id = ",
+            $u,
+            " AND CASE WHEN ",
+            $g,
+            ".team_id IS NULL",
+            " THEN wm.role <> 'guest'",
+            " ELSE EXISTS (SELECT 1 FROM team_members tm WHERE tm.team_id = ",
+            $g,
+            ".team_id",
+            " AND tm.user_id = ",
+            $u,
+            ") END))"
+        )
+    };
+}
+
 pub mod agents;
 pub mod artifacts;
 pub mod edges;
@@ -13,9 +49,11 @@ pub mod outbox;
 pub mod plans;
 pub mod runs;
 pub mod settings;
+pub mod teams;
 pub mod tickets;
 pub mod tokens;
 pub mod users;
+pub mod workspaces;
 
 use std::str::FromStr;
 use std::time::Duration;

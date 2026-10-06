@@ -34,6 +34,8 @@ use handlers::*;
     tags(
         (name = "auth", description = "Accounts and sessions"),
         (name = "settings", description = "Per-user LLM settings"),
+        (name = "workspaces", description = "Organisations, their members and invitations"),
+        (name = "teams", description = "Teams of a workspace"),
         (name = "graphs", description = "Graphs, dependency detection and analysis"),
         (name = "nodes"), (name = "edges"),
         (name = "plans", description = "LLM planning"),
@@ -67,9 +69,37 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(auth::refresh))
         .routes(routes!(auth::logout))
         .routes(routes!(auth::me))
-        .routes(routes!(settings::get_llm, settings::put_llm))
+        .routes(routes!(
+            settings::get_llm,
+            settings::put_llm,
+            settings::delete_llm
+        ))
+        .routes(routes!(settings::llm_models))
+        .routes(routes!(
+            settings::get_workspace_llm,
+            settings::put_workspace_llm,
+            settings::delete_workspace_llm
+        ))
+        .routes(routes!(workspaces::list, workspaces::create))
+        .routes(routes!(
+            workspaces::get,
+            workspaces::update,
+            workspaces::delete
+        ))
+        .routes(routes!(workspaces::members, workspaces::invite))
+        .routes(routes!(
+            workspaces::update_member,
+            workspaces::remove_member
+        ))
+        .routes(routes!(workspaces::invites))
+        .routes(routes!(workspaces::delete_invite))
+        .routes(routes!(teams::list, teams::create))
+        .routes(routes!(teams::get, teams::update, teams::delete))
+        .routes(routes!(teams::members))
+        .routes(routes!(teams::set_member, teams::remove_member))
         .routes(routes!(graphs::list, graphs::create))
         .routes(routes!(graphs::get, graphs::update, graphs::delete))
+        .routes(routes!(graphs::replace_ontology))
         .routes(routes!(graphs::suggestions))
         .routes(routes!(graphs::analysis))
         .routes(routes!(templates::list))
@@ -77,7 +107,7 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(nodes::create))
         .routes(routes!(nodes::update, nodes::delete))
         .routes(routes!(edges::create))
-        .routes(routes!(edges::delete))
+        .routes(routes!(edges::update, edges::delete))
         .routes(routes!(plans::create))
         .routes(routes!(plans::get))
         .routes(routes!(plans::apply))
@@ -138,7 +168,7 @@ mod tests {
     /// accepts and emits; generated client types depend on it.
     #[test]
     fn spec_enum_values_match_the_wire_format() {
-        use crate::domain::{agent, graph, memory, plan, run, settings, user};
+        use crate::domain::{agent, graph, memory, plan, run, settings, user, workspace};
         use serde_json::Value;
 
         fn check<T: serde::de::DeserializeOwned + serde::Serialize>(values: &[Value]) {
@@ -158,24 +188,25 @@ mod tests {
             };
             match name.as_str() {
                 "Role" => check::<user::Role>(values),
-                "NodeKind" => check::<graph::NodeKind>(values),
                 "NodeStatus" => check::<graph::NodeStatus>(values),
                 "Executor" => check::<graph::Executor>(values),
                 "NodeOrigin" => check::<graph::NodeOrigin>(values),
-                "EdgeKind" => check::<graph::EdgeKind>(values),
                 "EdgeOrigin" => check::<graph::EdgeOrigin>(values),
                 "RunStatus" => check::<run::RunStatus>(values),
+                "WorkspaceRole" => check::<workspace::WorkspaceRole>(values),
+                "TeamRole" => check::<workspace::TeamRole>(values),
                 "MemoryKind" => check::<memory::MemoryKind>(values),
                 "MemoryScope" => check::<memory::MemoryScope>(values),
                 "PlanStatus" => check::<plan::PlanStatus>(values),
                 "LlmProviderKind" => check::<settings::LlmProviderKind>(values),
                 "KeySource" => check::<settings::KeySource>(values),
+                "ConfigScope" => check::<settings::ConfigScope>(values),
                 "AgentStatus" => check::<agent::AgentStatus>(values),
                 "AgentRuntime" => check::<agent::AgentRuntime>(values),
                 _ => continue,
             }
             checked += 1;
         }
-        assert_eq!(checked, 15, "every string enum schema is covered");
+        assert_eq!(checked, 16, "every string enum schema is covered");
     }
 }

@@ -46,7 +46,17 @@ pub async fn list(
         .filter(|q| !q.is_empty())
         .map(|q| q.chars().take(500).collect::<String>());
     let memories = match q {
-        Some(q) => memory::retrieve(&state.db, auth.id, query.graph_id, &q, limit).await?,
+        Some(q) => {
+            memory::retrieve(
+                &state.memories,
+                &state.db,
+                auth.id,
+                query.graph_id,
+                &q,
+                limit,
+            )
+            .await?
+        }
         None => repo::memories::list(&state.db, auth.id, query.graph_id, limit as i64)
             .await?
             .into_iter()
@@ -66,6 +76,7 @@ pub async fn delete(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
     if repo::memories::delete(&state.db, auth.id, id).await? {
+        state.memories.invalidate(auth.id);
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(AppError::NotFound("memory"))
