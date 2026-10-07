@@ -182,6 +182,37 @@ Only nginx is published (`NEXC_HTTP_PORT`, default 8080). The backend, runtime a
 internal networks; every container runs as non-root with a read-only root filesystem,
 `cap_drop: ALL` and `no-new-privileges`. `make demo` forces demo mode regardless of `.env`.
 
+This path is tested: `make docker-up` builds the three images from source (backend 133 MB,
+frontend 62 MB, runtime 295 MB), the stack comes up healthy, and `make smoke` walks register →
+plan → run → artifacts against it.
+
+#### Putting it on the internet
+
+Nothing in the stack serves TLS. Put a reverse proxy in front of the published port (Caddy,
+nginx, Traefik, or a cloud load balancer) that terminates HTTPS and forwards to
+`http://localhost:8080`, then set in `.env`:
+
+```sh
+NEXC_ENV=production                 # refuses weak secrets and demo defaults
+NEXC_CORS_ORIGINS=https://nexc.example.com
+NEXC_COOKIE_SECURE=true             # the refresh cookie only travels over HTTPS
+NEXC_TRUST_PROXY=true               # visitor addresses come from X-Forwarded-For
+```
+
+`NEXC_TRUST_PROXY` must stay `false` without a proxy, or anyone can forge their address. A Caddy
+file that does all of it: `nexc.example.com { reverse_proxy localhost:8080 }`.
+
+#### Backups
+
+```sh
+make backup                 # database dump + files on disk → backups/<time>
+make backup-check           # restore the latest into a scratch database and count what is in it
+make restore FROM=backups/<time>   # into an EMPTY installation only
+```
+
+Set `NEXC_BACKUP_COMPOSE=1` for the Docker stack. Keep `NEXC_MASTER_KEY` with the backup: without
+it, stored AI keys cannot be read after a restore (everything else can).
+
 ### 3. Kubernetes (minikube)
 
 ```sh
@@ -255,6 +286,12 @@ the final message. Outside Docker run Symphony yourself with
 - Containers are non-root with read-only root filesystems and no capabilities; the runtime and
   database are unreachable from outside, enforced by Compose networks or Kubernetes NetworkPolicies.
 - `/metrics` is never exposed through the public edge.
+- Two-factor sign-in with an authenticator app, per account, with one-time recovery codes.
+- Platform administrators are walled off from workspace content on the server, not only in the
+  interface; every action they take is in an activity log, and each person sees what happened to
+  their own account.
+- Every documented route is tested against missing, forged and other people's tokens, hostile
+  input, races and a 20,000-issue workspace (`backend/tests/worst_case.rs`).
 
 Please report vulnerabilities privately, see [SECURITY.md](SECURITY.md).
 

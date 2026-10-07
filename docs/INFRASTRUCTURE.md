@@ -61,6 +61,22 @@ providers while the workspace ran here. Encryption in transit to the target is t
 string's `sslmode`; encryption at rest is the target's. Agreements such as a BAA are between the
 organisations, not something the software provides.
 
+What the software does provide, for whoever is building a compliance case on it:
+
+| Requirement                     | Where it is                                                                                                                                                              |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Access control                  | Workspace roles, team visibility, platform administrators walled off from content on the server                                                                          |
+| Strong authentication           | Argon2 passwords, short-lived tokens, lockout after failed attempts, two-factor sign-in with recovery codes                                                              |
+| Accountability                  | Per-workspace audit log, platform activity log, each account's own security activity (sign-ins with address, password and factor changes, what administrators did to it) |
+| Right of access and portability | A person downloads a copy of their data; a workspace moves to its own database                                                                                           |
+| Right of erasure                | Account deletion that empties the account and replaces its name in the logs; workspace deletion that removes files too                                                   |
+| Session control                 | Suspension and sign-out-everywhere end live tokens, open streams and sockets at once                                                                                     |
+| Backups                         | `make backup`, `make backup-check`, `make restore`                                                                                                                       |
+| Encryption at rest              | Stored AI keys and two-factor secrets are sealed with `NEXC_MASTER_KEY`; everything else relies on disk or database encryption of the host                               |
+
+What it does not provide: a log of who _read_ what (only changes are logged), encryption of the
+database itself, and anything about the LLM provider's handling of what was sent to it.
+
 ## Secrets
 
 | Secret                                | How it is kept                                                                                                             |
