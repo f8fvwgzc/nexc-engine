@@ -14,7 +14,7 @@ BACKEND_MANIFEST := backend/Cargo.toml
 LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a;
 
 .PHONY: help init setup dev dev-backend dev-frontend dev-runtime db-up db-down db-shell \
-        backup backup-check restore \
+        backup backup-check restore prove test-worst-case \
         build test test-backend test-frontend test-runtime lint fmt check \
         docker-build docker-up docker-down docker-logs demo seed-demo \
         minikube-up minikube-down k8s-render openapi doctor clean
@@ -114,6 +114,12 @@ smoke: ## End-to-end smoke test against a running stack (SMOKE_URL, default http
 
 seed-demo: ## Fill the running app with a demo workspace, five accounts and their inboxes
 	@python3 scripts/seed-demo.py
+
+prove: ## Run real issues through plan, agents and result with the configured model: make prove ISSUES="ENG-7 DES-2" (needs NEXC_PROVE_EMAIL/PASSWORD)
+	@python3 scripts/prove-loop.py $(ISSUES)
+
+test-worst-case: ## Every documented route against missing/forged tokens, outsiders, hostile input, races and a 20,000-issue workspace
+	cd backend && cargo test --test worst_case
 
 demo: ## Start the stack in demo mode (offline LLM, no API key needed)
 	@[ -f .env ] || scripts/init-env.sh

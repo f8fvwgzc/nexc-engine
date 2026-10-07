@@ -291,7 +291,9 @@ the final message. Outside Docker run Symphony yourself with
   interface; every action they take is in an activity log, and each person sees what happened to
   their own account.
 - Every documented route is tested against missing, forged and other people's tokens, hostile
-  input, races and a 20,000-issue workspace (`backend/tests/worst_case.rs`).
+  input, races and a 20,000-issue workspace (`make test-worst-case`).
+- What the software gives, and does not give, a GDPR or HIPAA case is laid out in
+  [docs/INFRASTRUCTURE.md](docs/INFRASTRUCTURE.md).
 
 Please report vulnerabilities privately, see [SECURITY.md](SECURITY.md).
 

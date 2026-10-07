@@ -6,13 +6,13 @@ contract wins.
 
 ## Components
 
-| Component | Tech | Responsibility |
-|---|---|---|
-| **frontend** | React 19, Vite, TypeScript, TanStack Query, zod | Graph canvas, plan review, run monitoring, agents, memory, settings. Talks only to `/api/v1`. |
-| **backend** (`nexc serve`) | Rust, axum, sqlx, utoipa | Auth, REST API, SSE + WebSocket hub, graph analysis, planner, scheduler, memory, orchestrator, artifact storage. |
-| **agent-runtime** | Python 3.12, FastAPI, Anthropic SDK, python-docx | Executes `executor: agent` nodes: agents are born from a spec per request and run a tool loop in a sandboxed workspace. |
-| **PostgreSQL 17** | | Users, graphs, nodes, edges, plans, runs, artifacts metadata, agents, memories, refresh-token families. `LISTEN/NOTIFY` carries realtime events between backend replicas. |
-| **texc-symphony** (optional) | Rust | Executes `executor: symphony` nodes as Codex coding tasks. |
+| Component                    | Tech                                             | Responsibility                                                                                                                                                            |
+| ---------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **frontend**                 | React 19, Vite, TypeScript, TanStack Query, zod  | Graph canvas, plan review, run monitoring, agents, memory, settings. Talks only to `/api/v1`.                                                                             |
+| **backend** (`nexc serve`)   | Rust, axum, sqlx, utoipa                         | Auth, REST API, SSE + WebSocket hub, graph analysis, planner, scheduler, memory, orchestrator, artifact storage.                                                          |
+| **agent-runtime**            | Python 3.12, FastAPI, Anthropic SDK, python-docx | Executes `executor: agent` nodes: agents are born from a spec per request and run a tool loop in a sandboxed workspace.                                                   |
+| **PostgreSQL 17**            |                                                  | Users, graphs, nodes, edges, plans, runs, artifacts metadata, agents, memories, refresh-token families. `LISTEN/NOTIFY` carries realtime events between backend replicas. |
+| **texc-symphony** (optional) | Rust                                             | Executes `executor: symphony` nodes as Codex coding tasks.                                                                                                                |
 
 ```mermaid
 flowchart TB
@@ -102,7 +102,7 @@ and the graph is untouched. In demo mode the planner is a deterministic offline 
 
 Nothing about node or relation types is compiled in. Every graph stores an **ontology**: its node
 types (label, meaning, colour, default role and executor, stage, whether its nodes deliver a file or
-may run code) and its relation types (label, meaning, and whether the relation is *blocking*). A
+may run code) and its relation types (label, meaning, and whether the relation is _blocking_). A
 node's `kind` and an edge's `kind` are keys into it, and every edge carries a `reason`.
 
 A new graph starts from a small starter ontology. The planner sees the current ontology, reuses its
@@ -187,16 +187,16 @@ flowchart LR
 
 ## Scaling and state
 
-* **Backend** – stateless apart from `NEXC_DATA_DIR` (artifacts). Realtime events are published
+- **Backend** – stateless apart from `NEXC_DATA_DIR` (artifacts). Realtime events are published
   through PostgreSQL `LISTEN/NOTIFY`, so an SSE or WebSocket client receives events no matter which
   replica it is connected to, and you can run several replicas behind a load balancer. Scheduler
   note: a run is executed by the replica that accepted its `POST /runs`; the other replicas only
   relay its events. If that replica stops, its in-flight run is not migrated to another replica.
   With more than one node, mount the artifact directory on shared (ReadWriteMany) storage.
-* **Agent runtime** – fully stateless (per-run scratch directories are deleted after each run);
+- **Agent runtime** – fully stateless (per-run scratch directories are deleted after each run);
   scale freely. Each instance limits concurrent runs (`RUNTIME_MAX_CONCURRENT_RUNS`, default 8) and
   answers 429 when full.
-* **PostgreSQL** – the single source of truth; back it up together with `NEXC_MASTER_KEY`.
+- **PostgreSQL** – the single source of truth; back it up together with `NEXC_MASTER_KEY`.
 
 ## Deleting an account
 
@@ -208,36 +208,37 @@ replaces its name and address (`users.deleted_at` marks the row). What it made i
 workspaces keeps pointing at that row and reads as "Deleted account". Audit logs and the
 platform's activity log keep every entry; the copies of the name and address in them are replaced
 too, so the record of what happened stays and stops identifying the person. A name written into
-free text (an issue's assignee history, a comment, a day summary) is not found and stays. The same routine serves a person deleting their own account and a platform
-administrator erasing one on request.
+free text (an issue's assignee history, a comment, a day summary) is not found and stays. The
+same routine serves a person deleting their own account and a platform administrator erasing one
+on request.
 
 ## Worst cases that are tested
 
 `backend/tests/worst_case.rs` reads the routes from the OpenAPI document, so a route added later
 is covered without being listed anywhere:
 
-| Worst case | What the test does |
-|---|---|
-| Someone without a session | Every protected route is called with no token, a garbage token and a token signed with another key: 401 each time. |
-| A member of another workspace | Every `GET` that names a workspace, issue, graph, project or team is called with a victim's real ids: refused, or answered with nothing. |
-| Hostile input | Every route gets bodies of the wrong shape and type, injection strings, deep nesting, long strings and hostile query values (about 1,800 requests, the console's routes as a platform administrator): never a 5xx. |
-| Races | Forty issues filed at once get forty consecutive numbers; two owners stepping down at once leave one; a refresh token or a reset link used several times at once works once. |
-| A large workspace | With 20,000 issues and as many comments every list stays capped and answers within a budget; a 2 MiB body is refused; one account hammering the API gets 429 with `Retry-After` while others are served. |
-| A dependency that is down | Without the agent runtime, uploads are accepted, plain text is still read, and the rest of the API answers. |
-| Several servers | A session ended on one server stops working on another after its next look at the database. |
-| A reverse proxy | The visitor's address is taken from the proxy's header only when `NEXC_TRUST_PROXY` is set. |
+| Worst case                    | What the test does                                                                                                                                                                                                 |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Someone without a session     | Every protected route is called with no token, a garbage token and a token signed with another key: 401 each time.                                                                                                 |
+| A member of another workspace | Every `GET` that names a workspace, issue, graph, project or team is called with a victim's real ids: refused, or answered with nothing.                                                                           |
+| Hostile input                 | Every route gets bodies of the wrong shape and type, injection strings, deep nesting, long strings and hostile query values (about 1,800 requests, the console's routes as a platform administrator): never a 5xx. |
+| Races                         | Forty issues filed at once get forty consecutive numbers; two owners stepping down at once leave one; a refresh token or a reset link used several times at once works once.                                       |
+| A large workspace             | With 20,000 issues and as many comments every list stays capped and answers within a budget; a 2 MiB body is refused; one account hammering the API gets 429 with `Retry-After` while others are served.           |
+| A dependency that is down     | Without the agent runtime, uploads are accepted, plain text is still read, and the rest of the API answers.                                                                                                        |
+| Several servers               | A session ended on one server stops working on another after its next look at the database.                                                                                                                        |
+| A reverse proxy               | The visitor's address is taken from the proxy's header only when `NEXC_TRUST_PROXY` is set.                                                                                                                        |
 
 Not covered by a test: the database itself being down (`/readyz` reports it), disk full, and load
 from many machines at once.
 
 ## Security boundaries
 
-| Boundary | Control |
-|---|---|
-| Browser → backend | JWT + refresh-cookie rotation, CSRF header on cookie endpoints, rate limits, 1 MiB body limit, problem+json errors without internals. |
-| Platform → workspaces | A platform administrator's token is refused on every workspace route; the console reads counts and members, never content. Its actions (roles, suspensions, owners, deletions) are written to an activity log, and an owner it assigns also to that workspace's audit log. |
-| Backend → runtime | Shared bearer token (constant-time compare), internal network only, 4 MiB request limit, API keys passed per request and never stored or logged. |
-| Agent → filesystem | Per-run workspace; `safe_path` rejects absolute paths, `..`, NUL/backslashes and symlink escapes; per-file and per-workspace quotas. |
-| Agent → code execution | Disabled by default. When enabled: `python -I`, scrubbed environment, rlimits (CPU, memory, file size, processes, open files), wall-clock timeout that kills the process group, truncated output. |
-| Untrusted model input | Upstream outputs and memories are wrapped in tags and the system prompt marks them as data, not instructions. |
-| Containers | Non-root, read-only root filesystem, all capabilities dropped, `no-new-privileges`, seccomp `RuntimeDefault` on Kubernetes. |
+| Boundary               | Control                                                                                                                                                                                                                                                                    |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Browser → backend      | JWT + refresh-cookie rotation, CSRF header on cookie endpoints, rate limits, 1 MiB body limit, problem+json errors without internals.                                                                                                                                      |
+| Platform → workspaces  | A platform administrator's token is refused on every workspace route; the console reads counts and members, never content. Its actions (roles, suspensions, owners, deletions) are written to an activity log, and an owner it assigns also to that workspace's audit log. |
+| Backend → runtime      | Shared bearer token (constant-time compare), internal network only, 4 MiB request limit, API keys passed per request and never stored or logged.                                                                                                                           |
+| Agent → filesystem     | Per-run workspace; `safe_path` rejects absolute paths, `..`, NUL/backslashes and symlink escapes; per-file and per-workspace quotas.                                                                                                                                       |
+| Agent → code execution | Disabled by default. When enabled: `python -I`, scrubbed environment, rlimits (CPU, memory, file size, processes, open files), wall-clock timeout that kills the process group, truncated output.                                                                          |
+| Untrusted model input  | Upstream outputs and memories are wrapped in tags and the system prompt marks them as data, not instructions.                                                                                                                                                              |
+| Containers             | Non-root, read-only root filesystem, all capabilities dropped, `no-new-privileges`, seccomp `RuntimeDefault` on Kubernetes.                                                                                                                                                |
