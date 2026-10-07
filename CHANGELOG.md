@@ -222,6 +222,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- An agent could end a task that delivers a file by describing a file it never wrote; the
+  runtime then turned that description into the "deliverable". `finish` now refuses, on such a
+  task, until something exists in the workspace, so the model gets told and goes on to write it;
+  and when the fallback still has to convert a text answer, the document says so on its first
+  page instead of repeating the claim. Found by running a real issue through the loop.
+
 - Uploading a document failed with a 500 when the documents folder had gone missing since the
   server started; the upload now creates it again.
 

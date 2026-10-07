@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import io
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 import docx
 import pytest
 
+from nexc_runtime.config import Settings
+from nexc_runtime.streaming import EventStream
 from nexc_runtime.tools import PathError, Workspace, build_toolset, render_docx, safe_path
+from nexc_runtime.tools.agent_tools import FINISH
+from nexc_runtime.tools.base import ToolContext, ToolError
 from nexc_runtime.tools.docx_tool import MakeDocxArgs
 
 
@@ -126,3 +131,29 @@ def test_run_python_is_disabled_by_default() -> None:
 def test_safe_path_dot_is_the_workspace_root(tmp_path: Path) -> None:
     assert safe_path(tmp_path, ".") == tmp_path.resolve()
     assert safe_path(tmp_path, "./") == tmp_path.resolve()
+
+
+async def test_finish_waits_for_the_file_on_a_task_that_delivers_one(
+    tmp_path: Path, make_settings: Callable[..., Settings]
+) -> None:
+    def ctx(produces_artifact: bool) -> ToolContext:
+        return ToolContext(
+            workspace=Workspace(tmp_path, max_file_bytes=10_000, max_total_bytes=10_000),
+            events=EventStream(),
+            settings=make_settings(),
+            agent_name="writer",
+            produces_artifact=produces_artifact,
+        )
+
+    # A describing answer is refused until something was written; plain tasks are not held up.
+    empty = ctx(produces_artifact=True)
+    with pytest.raises(ToolError, match="make_docx"):
+        await FINISH.invoke(empty, {"answer": "Saved the report as report.docx."})
+    assert empty.final_answer is None
+    plain = ctx(produces_artifact=False)
+    await FINISH.invoke(plain, {"answer": "Done."})
+    assert plain.final_answer == "Done."
+    written = ctx(produces_artifact=True)
+    written.workspace.write_bytes("report.docx", b"PK")
+    await FINISH.invoke(written, {"answer": "Saved the report as report.docx."})
+    assert written.final_answer is not None

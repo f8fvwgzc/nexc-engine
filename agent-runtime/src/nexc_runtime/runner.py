@@ -186,9 +186,20 @@ def _ensure_document(
     if any(p.suffix.lower() == ".docx" for p in workspace.root.rglob("*") if p.is_file()):
         return
     filename = f"{_slug(request.task.title)}.docx"
-    args = markdown_to_docx_args(request.task.title, output, filename)
+    # The answer may claim a file that was never written; say what this file is instead.
+    note = (
+        "Note: the agent did not write the document it describes, so this file was made from "
+        "its final answer. Run the task again for the full document."
+    )
+    lines = output.strip().splitlines()
+    noted = (
+        "\n".join([lines[0], "", note, *lines[1:]])
+        if lines and lines[0].startswith("# ")
+        else f"{note}\n\n{output}"
+    )
+    args = markdown_to_docx_args(request.task.title, noted, filename)
     workspace.write_bytes(filename, render_docx(args))
-    events.log("info", f"no .docx was produced; converted the final answer into {filename}")
+    events.log("warning", f"no .docx was produced; converted the final answer into {filename}")
 
 
 def _produces_artifact(request: ExecuteRequest) -> bool:

@@ -120,6 +120,7 @@ class Agent:
             settings=scope.settings,
             agent_name=self.record.name,
             spawn=self._spawn if "spawn_subagent" in self.tools else None,
+            produces_artifact=scope.produces_artifact,
         )
         last_text = ""
 

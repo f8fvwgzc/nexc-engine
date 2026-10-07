@@ -36,6 +36,8 @@ class ToolContext:
     spawn: SpawnFn | None = None
     final_answer: str | None = None
     notes: list[str] = field(default_factory=list)
+    # The node's type says it delivers a file; `finish` then needs one in the workspace.
+    produces_artifact: bool = False
 
 
 @dataclass(frozen=True, slots=True)

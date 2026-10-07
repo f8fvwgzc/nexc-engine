@@ -61,7 +61,8 @@ def test_spawn_subagent_runs_child_with_budget_share(client_for: ClientFactory) 
                 tokens_in=1_000,
                 tokens_out=0,
             ),
-            # the child's turns
+            # the child's turns: it writes the file the parent's document task delivers
+            Step(calls=[call("write_file", path="facts.md", content="# Facts\n")]),
             Step(text="Child working."),
             # back in the parent
             Step(calls=[call("finish", answer="Parent done.")]),
@@ -76,7 +77,9 @@ def test_spawn_subagent_runs_child_with_budget_share(client_for: ClientFactory) 
     ]
     born = [e["message"] for e in events if e["type"] == "log" and "born with" in e["message"]]
     assert any("50000 tokens" in message for message in born)  # half of 100k remaining
-    assert provider.tool_results[0].content == "Child working."
+    # the child's own write comes first; the spawn's return is what the parent reads
+    assert provider.tool_results[0].content == "wrote facts.md (8 bytes)"
+    assert provider.tool_results[1].content == "Child working."
     assert events[-1]["output"] == "Parent done."
     # the child (depth 1) may spawn too; nobody beyond depth 2 gets the tool
     assert "spawn_subagent" in provider.seen_tools[1]

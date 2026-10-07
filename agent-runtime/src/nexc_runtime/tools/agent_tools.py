@@ -28,6 +28,13 @@ async def spawn_subagent(ctx: ToolContext, args: SpawnArgs) -> str:
 
 
 async def finish(ctx: ToolContext, args: FinishArgs) -> str:
+    # A model sometimes describes a file it never wrote. On a node that delivers one, the
+    # description is not accepted until the file exists: the model gets this back and goes on.
+    if ctx.produces_artifact and not any(p.is_file() for p in ctx.workspace.root.rglob("*")):
+        raise ToolError(
+            "nothing has been written to the workspace yet. This task delivers a file: create "
+            "it with make_docx (documents) or write_file (everything else), then call finish."
+        )
     ctx.final_answer = args.answer
     return "final answer recorded"
 
@@ -44,7 +51,10 @@ SPAWN_SUBAGENT = Tool(
 )
 FINISH = Tool(
     name="finish",
-    description="Call exactly once when the deliverable is complete, with your final answer.",
+    description=(
+        "Call exactly once when the deliverable is complete, with your final answer. On a task "
+        "that delivers a file, the file must already exist in the workspace."
+    ),
     args=FinishArgs,
     handler=finish,
 )
