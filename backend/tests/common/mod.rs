@@ -122,6 +122,7 @@ impl LlmProvider for FakeLlm {
         let usage = Usage {
             input_tokens: 100,
             output_tokens: 20,
+            cached_tokens: 0,
         };
         match req.json_schema.as_ref().map(|s| s.name) {
             Some(PLAN_SCHEMA_NAME) => return Self::events(Self::plan(&prompt), usage),

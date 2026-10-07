@@ -116,6 +116,7 @@ mod tests {
                 Ok(LlmEvent::Usage(Usage {
                     input_tokens: 3,
                     output_tokens: 1,
+                    cached_tokens: 0,
                 })),
                 Ok(LlmEvent::Done(StopReason::EndTurn)),
             ]))

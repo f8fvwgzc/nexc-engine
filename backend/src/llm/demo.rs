@@ -54,7 +54,11 @@ impl LlmProvider for DemoProvider {
         let input_tokens = estimate_tokens(&req.system) + estimate_tokens(&prompt);
         let pace = self.pace;
         Box::pin(stream! {
-            let mut usage = Usage { input_tokens, output_tokens: 0 };
+            let mut usage = Usage {
+                input_tokens,
+                output_tokens: 0,
+                cached_tokens: 0,
+            };
             yield Ok(LlmEvent::Usage(usage));
             for (i, chunk) in chunks(&text, chunk_chars).into_iter().enumerate() {
                 if !pace.is_zero() {

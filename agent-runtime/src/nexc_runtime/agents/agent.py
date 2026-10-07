@@ -60,6 +60,7 @@ class Meter:
 
     tokens_in: int = 0
     tokens_out: int = 0
+    tokens_cached: int = 0
 
 
 @dataclass(slots=True)
@@ -138,7 +139,7 @@ class Agent:
                 scope.events,
                 label=self.record.name,
             )
-            self._account(turn.input_tokens, turn.output_tokens)
+            self._account(turn.input_tokens, turn.output_tokens, turn.cached_tokens)
             if turn.text.strip():
                 last_text = turn.text
 
@@ -167,11 +168,12 @@ class Agent:
         return self._give_up(last_text, f"reached the limit of {scope.max_turns} turns")
 
     # --- internals --------------------------------------------------------------------------
-    def _account(self, tokens_in: int, tokens_out: int) -> None:
+    def _account(self, tokens_in: int, tokens_out: int, tokens_cached: int = 0) -> None:
         self.budget.spend(tokens_in + tokens_out)
         self.scope.meter.tokens_in += tokens_in
         self.scope.meter.tokens_out += tokens_out
-        self.scope.events.tokens(tokens_in, tokens_out)
+        self.scope.meter.tokens_cached += tokens_cached
+        self.scope.events.tokens(tokens_in, tokens_out, tokens_cached)
 
     def _give_up(self, last_text: str, reason: str) -> str:
         if last_text.strip():

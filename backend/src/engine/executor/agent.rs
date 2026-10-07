@@ -48,6 +48,9 @@ enum RuntimeLine {
         input: i64,
         #[serde(default)]
         output: i64,
+        /// Of `input`, the cache reads.
+        #[serde(default)]
+        cached: i64,
     },
     Spawn {
         agent: SpawnedAgent,
@@ -64,6 +67,8 @@ enum RuntimeLine {
         tokens_in: i64,
         #[serde(default)]
         tokens_out: i64,
+        #[serde(default)]
+        tokens_cached: i64,
     },
     Error {
         message: String,
@@ -155,7 +160,7 @@ async fn run(ctx: &ExecContext) -> Result<ExecOutput, ExecError> {
     }
     let mut bytes = resp.bytes_stream();
     let mut buf: Vec<u8> = Vec::new();
-    let mut usage = (0i64, 0i64);
+    let mut usage = (0i64, 0i64, 0i64);
     while let Some(chunk) = bytes.next().await {
         let chunk = chunk.map_err(|e| {
             ExecError::transient(format!("agent runtime stream failed: {}", e.without_url()))
@@ -183,7 +188,7 @@ async fn run(ctx: &ExecContext) -> Result<ExecOutput, ExecError> {
 async fn handle_line(
     ctx: &ExecContext,
     line: &[u8],
-    usage: &mut (i64, i64),
+    usage: &mut (i64, i64, i64),
 ) -> Result<Option<ExecOutput>, ExecError> {
     let text = String::from_utf8_lossy(line);
     let text = text.trim();
@@ -195,9 +200,14 @@ async fn handle_line(
     match parsed {
         RuntimeLine::Log { level, message } => ctx.log(parse_level(&level), message),
         RuntimeLine::Delta { text } => ctx.output(&text),
-        RuntimeLine::Tokens { input, output } => {
+        RuntimeLine::Tokens {
+            input,
+            output,
+            cached,
+        } => {
             usage.0 += input.max(0);
             usage.1 += output.max(0);
+            usage.2 += cached.max(0);
             ctx.tokens(usage.0, usage.1);
         }
         RuntimeLine::Spawn { agent } => {
@@ -227,13 +237,16 @@ async fn handle_line(
             output,
             tokens_in,
             tokens_out,
+            tokens_cached,
         } => {
             let (tokens_in, tokens_out) = (tokens_in.max(usage.0), tokens_out.max(usage.1));
+            let tokens_cached = tokens_cached.max(usage.2);
             ctx.tokens(tokens_in, tokens_out);
             return Ok(Some(ExecOutput {
                 output,
                 tokens_in,
                 tokens_out,
+                tokens_cached,
             }));
         }
         RuntimeLine::Error { message, retryable } => {

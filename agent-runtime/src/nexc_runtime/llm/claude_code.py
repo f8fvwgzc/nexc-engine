@@ -70,8 +70,11 @@ You have NO callable tools here: invoking any tool directly fails. Instead, ever
 - `actions`: actions for the host to perform now, each `{"action": <name>, "input": {...}}` with \
 `input` following that action's schema below. The host performs them and shows you the results \
 on your next turn. Use an empty list when you are finished; then `text` is your final answer.
-Keep every action input modest (a few thousand words at most): put the main deliverable in your \
-final `text` - it is passed on and saved - and split large files into several smaller ones.
+Keep every action input modest (a few thousand words at most) and split large files into several \
+smaller ones. If the task delivers a file (a document, code, data), write it with the actions \
+below BEFORE you finish: your final `text` is a summary that is passed on, not the file, and a \
+description of a file you never wrote is not accepted. Only the action names listed below exist; \
+an action with any other name is rejected and does nothing.
 
 ## Actions you can request (via `actions` only)
 """
@@ -204,8 +207,13 @@ class ClaudeCodeProvider:
         text = str(output.get("text", ""))
         known = {t.name for t in tools}
         calls: list[ToolCall] = []
+        rejected: list[str] = []
         for raw in output.get("actions") or []:
             if not isinstance(raw, dict) or raw.get("action") not in known:
+                # Silently dropping it would leave the model believing it was done. It is told
+                # on its next turn instead, through the same channel as a tool error.
+                name = raw.get("action") if isinstance(raw, dict) else None
+                rejected.append(str(name) if name else "<malformed action>")
                 continue
             self._calls += 1
             tool_input = raw.get("input")
@@ -224,6 +232,17 @@ class ClaudeCodeProvider:
                 "tool_calls": [{"name": c.name, "input": c.input} for c in calls],
             }
         )
+        if rejected:
+            log.warning("rejected %d unknown action(s): %s", len(rejected), rejected)
+            conversation.messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"Rejected: {', '.join(sorted(set(rejected)))} is not an action here. "
+                        f"The actions are: {', '.join(sorted(known))}. Nothing was done for it."
+                    ),
+                }
+            )
         if on_text is not None and text:
             on_text(text)
 
@@ -239,6 +258,7 @@ class ClaudeCodeProvider:
             + int(usage.get("cache_creation_input_tokens", 0))
             + int(usage.get("cache_read_input_tokens", 0)),
             output_tokens=int(usage.get("output_tokens", 0)),
+            cached_tokens=int(usage.get("cache_read_input_tokens", 0)),
         )
 
     async def _invoke(

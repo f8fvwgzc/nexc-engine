@@ -50,6 +50,7 @@ async fn run(ctx: &ExecContext) -> Result<ExecOutput, ExecError> {
             }
             LlmEvent::Usage(u) => {
                 (out.tokens_in, out.tokens_out) = (u.input_tokens as i64, u.output_tokens as i64);
+                out.tokens_cached = u.cached_tokens as i64;
                 ctx.tokens(out.tokens_in, out.tokens_out);
             }
             LlmEvent::Done(reason) => {

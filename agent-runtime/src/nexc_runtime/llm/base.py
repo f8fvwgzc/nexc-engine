@@ -49,6 +49,8 @@ class Turn:
     input_tokens: int
     output_tokens: int
     detail: str | None = None  # e.g. the refusal category
+    # Of input_tokens, the ones the provider read from its prompt cache (a tenth of the price).
+    cached_tokens: int = 0
 
 
 @dataclass(slots=True)

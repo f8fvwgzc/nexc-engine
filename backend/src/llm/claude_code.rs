@@ -192,6 +192,7 @@ fn parse_result(v: &Value, structured: bool) -> Line {
             + n("cache_creation_input_tokens")
             + n("cache_read_input_tokens"),
         output_tokens: n("output_tokens"),
+        cached_tokens: n("cache_read_input_tokens"),
     };
     let stop = if v["stop_reason"] == "max_tokens" {
         StopReason::MaxTokens
@@ -337,6 +338,7 @@ mod tests {
         let usage = Usage {
             input_tokens: 18,
             output_tokens: 4,
+            cached_tokens: 5,
         };
         assert!(matches!(
             parse_line(result, false),

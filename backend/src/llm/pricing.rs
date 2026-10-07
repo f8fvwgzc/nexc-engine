@@ -10,8 +10,21 @@ const PRICES: [(&str, f64, f64); 5] = [
     ("claude-fable-5-1", 10.0, 50.0),
 ];
 
+/// What a cache read costs relative to a fresh input token.
+const CACHE_READ_RATE: f64 = 0.1;
+
 /// Estimated cost of a call; unknown models (local, demo) cost 0.
 pub fn cost_usd(model: &str, input_tokens: u64, output_tokens: u64) -> f64 {
+    cost_usd_cached(model, input_tokens, output_tokens, 0)
+}
+
+/// Like [`cost_usd`], with `cached_tokens` of the input priced as cache reads.
+pub fn cost_usd_cached(
+    model: &str,
+    input_tokens: u64,
+    output_tokens: u64,
+    cached_tokens: u64,
+) -> f64 {
     let Some((_, input, output)) = PRICES
         .iter()
         .filter(|(prefix, _, _)| model.starts_with(prefix))
@@ -19,7 +32,9 @@ pub fn cost_usd(model: &str, input_tokens: u64, output_tokens: u64) -> f64 {
     else {
         return 0.0;
     };
-    (input_tokens as f64 * input + output_tokens as f64 * output) / 1_000_000.0
+    let cached = cached_tokens.min(input_tokens) as f64;
+    let fresh = input_tokens as f64 - cached;
+    (fresh * input + cached * input * CACHE_READ_RATE + output_tokens as f64 * output) / 1_000_000.0
 }
 
 #[cfg(test)]
@@ -34,5 +49,18 @@ mod tests {
         assert!((cost_usd("claude-haiku-4-5", 2_000_000, 0) - 2.0).abs() < 1e-9);
         assert!((cost_usd("claude-fable-5-1", 0, 100_000) - 5.0).abs() < 1e-9);
         assert_eq!(cost_usd("llama3.1:8b", 1_000, 1_000), 0.0);
+    }
+
+    #[test]
+    fn cache_reads_cost_a_tenth() {
+        // A million input tokens, 900k of them cache reads: 100k fresh + 900k at a tenth.
+        let cost = cost_usd_cached("claude-sonnet-5", 1_000_000, 0, 900_000);
+        assert!((cost - (0.1 * 2.0 + 0.9 * 2.0 * 0.1)).abs() < 1e-9);
+        // Reads cannot exceed input, however they were reported.
+        assert!((cost_usd_cached("claude-sonnet-5", 1_000, 0, 5_000) - 0.0002).abs() < 1e-9);
+        assert_eq!(
+            cost_usd_cached("claude-sonnet-5", 1_000, 0, 0),
+            cost_usd("claude-sonnet-5", 1_000, 0)
+        );
     }
 }

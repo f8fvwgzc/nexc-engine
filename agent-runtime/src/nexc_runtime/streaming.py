@@ -57,9 +57,16 @@ class EventStream:
         if text:
             self._emit({"type": "delta", "text": text})
 
-    def tokens(self, input_tokens: int, output_tokens: int) -> None:
+    def tokens(self, input_tokens: int, output_tokens: int, cached_tokens: int = 0) -> None:
         """Token usage of one LLM call (incremental; `result` carries the run totals)."""
-        self._emit({"type": "tokens", "input": input_tokens, "output": output_tokens})
+        self._emit(
+            {
+                "type": "tokens",
+                "input": input_tokens,
+                "output": output_tokens,
+                "cached": cached_tokens,
+            }
+        )
 
     def spawn(self, name: str, role: str) -> None:
         self._emit({"type": "spawn", "agent": {"name": name, "role": role}})
@@ -74,9 +81,15 @@ class EventStream:
             }
         )
 
-    def result(self, output: str, tokens_in: int, tokens_out: int) -> None:
+    def result(self, output: str, tokens_in: int, tokens_out: int, tokens_cached: int = 0) -> None:
         self._terminal(
-            {"type": "result", "output": output, "tokens_in": tokens_in, "tokens_out": tokens_out}
+            {
+                "type": "result",
+                "output": output,
+                "tokens_in": tokens_in,
+                "tokens_out": tokens_out,
+                "tokens_cached": tokens_cached,
+            }
         )
 
     def error(self, message: str, *, retryable: bool) -> None:

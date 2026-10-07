@@ -222,6 +222,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Costs were overstated for long agent sessions: tokens the provider read from its prompt cache
+  were priced as fresh input. They are now reported separately end to end and priced at a tenth,
+  which is what they cost. A three-node coding issue that showed $3.99 is nearer $1.
+- Through the Claude Code provider, an action the model named wrongly was dropped without a
+  word, and the protocol told the model to put "the main deliverable in your final text", so
+  coding agents described files they never wrote. Unknown actions are now rejected to the
+  model's face on its next turn, and the protocol says a file task delivers a file.
 - An agent could end a task that delivers a file by describing a file it never wrote; the
   runtime then turned that description into the "deliverable". `finish` now refuses, on such a
   task, until something exists in the workspace, so the model gets told and goes on to write it;

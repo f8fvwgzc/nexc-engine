@@ -33,7 +33,7 @@ use crate::domain::settings::{ConfigScope, LlmProviderKind};
 use crate::domain::usage::{UsageEvent, UsagePurpose};
 use crate::dsa::priority::ReadyQueue;
 use crate::llm::LlmTarget;
-use crate::llm::pricing::cost_usd;
+use crate::llm::pricing::{cost_usd, cost_usd_cached};
 use crate::llm::retry::full_jitter;
 use crate::realtime::events::{LogLevel, NodeStatusEvent, SseEvent};
 use crate::repo::runs::{NodeOutcome, RunRow};
@@ -930,14 +930,17 @@ impl NodeTask {
     ) -> (NodeStatus, Option<String>) {
         let state = &self.ctx.state;
         let node_id = self.ctx.node.id;
-        let (tokens_in, tokens_out) = out.as_ref().map_or((0, 0), |o| (o.tokens_in, o.tokens_out));
+        let (tokens_in, tokens_out, tokens_cached) = out
+            .as_ref()
+            .map_or((0, 0, 0), |o| (o.tokens_in, o.tokens_out, o.tokens_cached));
         let target = self.ctx.agent_target();
         let cost = match target.provider {
             LlmProviderKind::Demo => 0.0,
-            _ => cost_usd(
+            _ => cost_usd_cached(
                 &target.model,
                 tokens_in.max(0) as u64,
                 tokens_out.max(0) as u64,
+                tokens_cached.max(0) as u64,
             ),
         };
         let outcome = NodeOutcome {

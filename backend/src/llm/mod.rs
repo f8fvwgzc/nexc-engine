@@ -89,8 +89,12 @@ pub struct LlmRequest {
 /// Token usage reported by a provider.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Usage {
+    /// Every input token, cache reads included.
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// Of `input_tokens`, the ones read from the provider's prompt cache,
+    /// which cost a tenth of the input price.
+    pub cached_tokens: u64,
 }
 
 /// Why generation stopped (refusals are reported as [`LlmError::Refused`]).
@@ -235,12 +239,14 @@ mod tests {
             Ok(LlmEvent::Usage(Usage {
                 input_tokens: 10,
                 output_tokens: 0,
+                cached_tokens: 0,
             })),
             Ok(LlmEvent::Text("Hello ".into())),
             Ok(LlmEvent::Text("world".into())),
             Ok(LlmEvent::Usage(Usage {
                 input_tokens: 10,
                 output_tokens: 2,
+                cached_tokens: 0,
             })),
             Ok(LlmEvent::Done(StopReason::MaxTokens)),
         ];

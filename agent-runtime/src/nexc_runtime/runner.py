@@ -165,7 +165,7 @@ async def _run(
         events.log("warning", warning)
     for artifact in artifacts:
         events.artifact(artifact.path, artifact.mime, artifact.content)
-    events.result(output, scope.meter.tokens_in, scope.meter.tokens_out)
+    events.result(output, scope.meter.tokens_in, scope.meter.tokens_out, scope.meter.tokens_cached)
 
 
 DOCUMENT_KINDS = ("document", "output")

@@ -95,10 +95,10 @@ def test_stream_shape_and_ordering(client_for: ClientFactory) -> None:
     allowed = {
         "log": {"type", "level", "message"},
         "delta": {"type", "text"},
-        "tokens": {"type", "input", "output"},
+        "tokens": {"type", "input", "output", "cached"},
         "spawn": {"type", "agent"},
         "artifact": {"type", "path", "mime", "content_b64"},
-        "result": {"type", "output", "tokens_in", "tokens_out"},
+        "result": {"type", "output", "tokens_in", "tokens_out", "tokens_cached"},
         "error": {"type", "message", "retryable"},
     }
     for event in events:

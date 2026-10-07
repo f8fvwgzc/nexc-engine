@@ -130,6 +130,8 @@ pub struct ExecOutput {
     pub output: String,
     pub tokens_in: i64,
     pub tokens_out: i64,
+    /// Of `tokens_in`, the ones read from the provider's prompt cache.
+    pub tokens_cached: i64,
 }
 
 /// A failed node attempt.

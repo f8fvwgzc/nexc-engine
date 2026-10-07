@@ -167,7 +167,11 @@ impl StreamState {
         match kind {
             "message_start" => {
                 let usage = &data["message"]["usage"];
-                self.usage.input_tokens = usage["input_tokens"].as_u64().unwrap_or(0);
+                let n = |k: &str| usage[k].as_u64().unwrap_or(0);
+                self.usage.input_tokens = n("input_tokens")
+                    + n("cache_creation_input_tokens")
+                    + n("cache_read_input_tokens");
+                self.usage.cached_tokens = n("cache_read_input_tokens");
                 self.usage.output_tokens = usage["output_tokens"].as_u64().unwrap_or(0);
                 Ok(vec![LlmEvent::Usage(self.usage)])
             }
@@ -304,12 +308,14 @@ mod tests {
             vec![
                 LlmEvent::Usage(Usage {
                     input_tokens: 12,
-                    output_tokens: 1
+                    output_tokens: 1,
+                    cached_tokens: 0
                 }),
                 LlmEvent::Text("Hi".into()),
                 LlmEvent::Usage(Usage {
                     input_tokens: 12,
-                    output_tokens: 7
+                    output_tokens: 7,
+                    cached_tokens: 0
                 }),
                 LlmEvent::Done(StopReason::EndTurn),
             ]
