@@ -63,6 +63,7 @@ macro_rules! team_visible {
 pub mod account_events;
 pub mod agents;
 pub mod artifacts;
+pub mod assistant;
 pub mod audit;
 pub mod cycles;
 pub mod edges;

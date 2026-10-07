@@ -181,6 +181,40 @@ async fn a_workspace_moves_to_its_owners_database(pool: PgPool) {
 
     // Through the API the outcome is recorded with where the data went, never the password.
     let (url2, name2) = empty_database(&pool).await;
+    // "Test connection" reaches the database before anything is moved; Redis is optional and
+    // reported on its own, and only Redis URLs are accepted for it.
+    let check = format!("{transfers}/check");
+    let (status, checked) = call(
+        &app,
+        Method::POST,
+        &check,
+        &owner,
+        Some(json!({"url": url2})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{checked}");
+    assert_eq!(checked["database_ok"], true, "{checked}");
+    assert!(checked["redis_ok"].is_null(), "{checked}");
+    let (status, checked) = call(
+        &app,
+        Method::POST,
+        &check,
+        &owner,
+        Some(json!({"url": url2, "redis_url": "redis://127.0.0.1:1"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{checked}");
+    assert_eq!(checked["database_ok"], true, "{checked}");
+    assert_eq!(checked["redis_ok"], false, "{checked}");
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &check,
+        &owner,
+        Some(json!({"url": url2, "redis_url": "http://127.0.0.1:1"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     let (status, started) = call(
         &app,
         Method::POST,
@@ -202,6 +236,23 @@ async fn a_workspace_moves_to_its_owners_database(pool: PgPool) {
     }
     assert_eq!(done["status"], "done", "{done}");
     assert!(done["report"].as_array().unwrap().len() > 20);
+    // The files on disk travel inside the target database, as a row per file, to be written out
+    // by the server that owns that database when it next starts.
+    let files = done["report"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["table"] == "files")
+        .expect("a files row in the report");
+    assert_eq!(files["read"], files["written"], "{files}");
+    let target = nexc::repo::connect(&url2, 1).await.unwrap();
+    let carried: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM workspace_files WHERE restored_at IS NULL")
+            .fetch_one(&target)
+            .await
+            .unwrap();
+    assert_eq!(carried, files["written"].as_i64().unwrap());
+    target.close().await;
 
     for database in [name, name2] {
         sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -226,6 +277,10 @@ const NOT_COPIED: &[(&str, &str)] = &[
     (
         "workspace_transfers",
         "the record of the transfers themselves, which stays where they were made",
+    ),
+    (
+        "workspace_files",
+        "filled only on the target, by the transfer itself, with this server's files; a server never carries another's",
     ),
 ];
 

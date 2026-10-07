@@ -134,7 +134,23 @@ export class CanvasEngine implements CanvasApi {
       this.fitted = true;
     }
 
+    // The canvas shares the row with panels that open beside it (the assistant, on the right).
+    // Whenever its box changes the whole graph is fitted to the new box, frame by frame as a
+    // panel slides, so no node is ever left under it.
+    let box = svg.getBoundingClientRect();
+    const observer =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(() => {
+            const next = svg.getBoundingClientRect();
+            const changed = next.width !== box.width || next.height !== box.height;
+            box = next;
+            if (changed && next.width > 0 && next.height > 0) this.fitToView(false);
+          });
+    observer?.observe(svg);
+
     return () => {
+      observer?.disconnect();
       this.cancelZoomAnimation?.();
       this.sim?.stop();
       selection.on('.zoom', null);

@@ -24,6 +24,9 @@ export const qk = {
       ['workspaces', workspaceId, 'usage', days] as const,
     teamMembers: (workspaceId: string, teamId: string) =>
       ['workspaces', workspaceId, 'teams', teamId, 'members'] as const,
+    conversations: (workspaceId: string) => ['workspaces', workspaceId, 'conversations'] as const,
+    conversation: (workspaceId: string, id: string) =>
+      ['workspaces', workspaceId, 'conversations', id] as const,
   },
   graphs: {
     all: ['graphs'] as const,

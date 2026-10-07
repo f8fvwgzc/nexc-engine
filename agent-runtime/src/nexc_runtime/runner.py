@@ -163,6 +163,15 @@ async def _run(
     )
     for warning in warnings:
         events.log("warning", warning)
+    # A node that claims files but delivers none is the failure that hides best: say the count.
+    if artifacts:
+        names = ", ".join(a.path for a in artifacts[:8]) + (" …" if len(artifacts) > 8 else "")
+        events.log("info", f"delivering {len(artifacts)} file(s): {names}")
+    elif _produces_artifact(request) or "write_file" in output or "`" in output[:400]:
+        events.log(
+            "warning",
+            "the agent wrote no files to the workspace; only its final answer is delivered",
+        )
     for artifact in artifacts:
         events.artifact(artifact.path, artifact.mime, artifact.content)
     events.result(output, scope.meter.tokens_in, scope.meter.tokens_out, scope.meter.tokens_cached)

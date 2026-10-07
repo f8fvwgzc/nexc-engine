@@ -66,6 +66,8 @@ const OF_ITS_GRAPHS: &str = "t.graph_id IN (SELECT id FROM graphs WHERE workspac
 const OF_ITS_RUNS: &str = "t.run_id IN (SELECT r.id FROM runs r JOIN graphs g ON g.id = r.graph_id
                                         WHERE g.workspace_id = $1)";
 const OF_ITS_ISSUES: &str = "t.issue_id IN (SELECT id FROM issues WHERE workspace_id = $1)";
+const OF_ITS_CONVERSATIONS: &str =
+    "t.conversation_id IN (SELECT id FROM assistant_conversations WHERE workspace_id = $1)";
 
 /// Every account the workspace's rows refer to, members or not: a row may
 /// name someone who has since left.
@@ -95,7 +97,8 @@ const REFERENCED_USERS: &str = "t.id IN (
           WHERE g.workspace_id = $1
     UNION SELECT updated_by FROM workspace_guardrails WHERE workspace_id = $1
     UNION SELECT created_by FROM day_summaries WHERE workspace_id = $1
-    UNION SELECT updated_by FROM workspace_knowledge_settings WHERE workspace_id = $1)";
+    UNION SELECT updated_by FROM workspace_knowledge_settings WHERE workspace_id = $1
+    UNION SELECT user_id FROM assistant_conversations WHERE workspace_id = $1)";
 
 /// Names of the tables a transfer copies, in the order it copies them.
 pub fn tables() -> impl Iterator<Item = &'static str> {
@@ -162,6 +165,8 @@ const TABLES: &[Table] = &[
     table("audit_log", IN_WORKSPACE, true),
     table("day_summaries", IN_WORKSPACE, false),
     table("llm_usage", IN_WORKSPACE, true),
+    table("assistant_conversations", IN_WORKSPACE, true),
+    table("assistant_messages", OF_ITS_CONVERSATIONS, true),
 ];
 
 /// What a transfer copied for one table.
@@ -314,6 +319,36 @@ async fn copy_table(
 
 /// Copies a workspace to `url`: prepares the schema there, then writes every
 /// table in one transaction. Returns what was copied per table.
+/// Connects to the target, and says what it is: used by the owner's
+/// connection check. Refuses a target that already holds the workspace.
+pub async fn probe_target(url: &str, workspace: Uuid) -> anyhow::Result<String> {
+    let target = repo::connect(url, 1)
+        .await
+        .map_err(|err| anyhow::anyhow!("cannot connect: {err}"))?;
+    let version: String = sqlx::query_scalar("SELECT version()")
+        .fetch_one(&target)
+        .await?;
+    let has_tables: bool =
+        sqlx::query_scalar("SELECT to_regclass('public.workspaces') IS NOT NULL")
+            .fetch_one(&target)
+            .await?;
+    if has_tables {
+        let already: bool =
+            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM workspaces WHERE id = $1)")
+                .bind(workspace)
+                .fetch_one(&target)
+                .await?;
+        anyhow::ensure!(!already, "that database already holds this workspace");
+    }
+    target.close().await;
+    let short = version.split(" on ").next().unwrap_or(&version).to_owned();
+    Ok(if has_tables {
+        format!("{short}; already a Nexc database, the workspace will be added")
+    } else {
+        format!("{short}; empty, the tables will be created")
+    })
+}
+
 pub async fn copy_workspace(
     source: &PgPool,
     url: &str,
@@ -354,8 +389,172 @@ pub async fn copy_workspace(
 }
 
 /// Runs a transfer that was recorded as `transfer_id` and records how it ended.
-pub async fn run(state: &AppState, transfer_id: Uuid, workspace: Uuid, url: String) {
-    let outcome = copy_workspace(&state.db, &url, workspace).await;
+/// Copies the workspace's files on disk into the target's `workspace_files`,
+/// one file per statement so a large workspace never sits in memory at once.
+/// A file that is gone from disk is left out: its record was copied anyway.
+pub async fn copy_files(
+    state: &AppState,
+    target: &PgPool,
+    workspace: Uuid,
+) -> anyhow::Result<TableReport> {
+    let documents: Vec<Uuid> =
+        sqlx::query_scalar("SELECT id FROM documents WHERE workspace_id = $1 ORDER BY id")
+            .bind(workspace)
+            .fetch_all(&state.db)
+            .await?;
+    let artifacts: Vec<String> = sqlx::query_scalar(
+        "SELECT a.storage_path FROM artifacts a
+         JOIN runs r ON r.id = a.run_id JOIN graphs g ON g.id = r.graph_id
+         WHERE g.workspace_id = $1 ORDER BY a.storage_path",
+    )
+    .bind(workspace)
+    .fetch_all(&state.db)
+    .await?;
+    let mut entries: Vec<(String, std::path::PathBuf)> = documents
+        .iter()
+        .map(|id| {
+            (
+                format!("documents/{id}"),
+                state.settings.documents_dir().join(id.to_string()),
+            )
+        })
+        .collect();
+    for storage_path in &artifacts {
+        if let Ok(on_disk) = super::artifacts::resolve(state, storage_path) {
+            entries.push((format!("artifacts/{storage_path}"), on_disk));
+        }
+    }
+    let read = i64::try_from(entries.len()).unwrap_or(i64::MAX);
+    let mut written = 0i64;
+    for (path, on_disk) in entries {
+        let Ok(content) = tokio::fs::read(&on_disk).await else {
+            continue;
+        };
+        sqlx::query(
+            "INSERT INTO workspace_files (id, workspace_id, path, content) VALUES ($1, $2, $3, $4)
+             ON CONFLICT (workspace_id, path) DO NOTHING",
+        )
+        .bind(Uuid::now_v7())
+        .bind(workspace)
+        .bind(&path)
+        .bind(content)
+        .execute(target)
+        .await
+        .map_err(|err| anyhow::anyhow!("copying file {path} failed: {err}"))?;
+        written += 1;
+    }
+    Ok(TableReport {
+        table: "files".into(),
+        read,
+        written,
+    })
+}
+
+/// Tells the Redis at `url` that the workspace now lives there: a small key
+/// the owner's own systems can look for. The server keeps nothing durable
+/// in Redis, so there is nothing more to move; the check is what matters.
+pub async fn hand_over_redis(url: &str, workspace: Uuid, target: &str) -> anyhow::Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    crate::http::handlers::infrastructure::check_redis(url).await?;
+    let rest = url.trim_start_matches("redis://");
+    let (credentials, address) = match rest.rsplit_once('@') {
+        Some((credentials, address)) => (Some(credentials), address),
+        None => (None, rest),
+    };
+    let address = address.split('/').next().unwrap_or(address);
+    let address = if address.contains(':') {
+        address.to_owned()
+    } else {
+        format!("{address}:6379")
+    };
+    let mut stream = tokio::net::TcpStream::connect(&address).await?;
+    let mut reply = [0u8; 256];
+    if let Some(password) = credentials.map(|c| c.rsplit_once(':').map_or(c, |(_, p)| p)) {
+        let auth = format!("*2\r\n$4\r\nAUTH\r\n${}\r\n{password}\r\n", password.len());
+        stream.write_all(auth.as_bytes()).await?;
+        // Only +OK or an error comes back; the check above already proved the password.
+        let _ = stream.read(&mut reply).await?;
+    }
+    let key = format!("nexc:workspace:{workspace}");
+    let value =
+        json!({"workspace_id": workspace, "database": target, "moved_at": chrono::Utc::now()})
+            .to_string();
+    let set = format!(
+        "*3\r\n$3\r\nSET\r\n${}\r\n{key}\r\n${}\r\n{value}\r\n",
+        key.len(),
+        value.len()
+    );
+    stream.write_all(set.as_bytes()).await?;
+    let read = stream.read(&mut reply).await?;
+    anyhow::ensure!(reply[..read].starts_with(b"+OK"), "Redis refused the write");
+    Ok(())
+}
+
+/// On a server that received workspaces: writes every file that travelled
+/// in `workspace_files` to the data folder, where the server expects it,
+/// then marks it restored. Called at start; safe to call again.
+pub async fn restore_files(state: &AppState) -> anyhow::Result<usize> {
+    let mut restored = 0;
+    loop {
+        let batch: Vec<(Uuid, String, Vec<u8>)> = sqlx::query_as(
+            "SELECT id, path, content FROM workspace_files WHERE restored_at IS NULL
+             ORDER BY id LIMIT 50",
+        )
+        .fetch_all(&state.db)
+        .await?;
+        if batch.is_empty() {
+            return Ok(restored);
+        }
+        for (id, path, content) in batch {
+            // Only the two layouts a transfer writes; anything else is left alone.
+            let on_disk = match path.split_once('/') {
+                Some(("documents", name)) if !name.contains('/') && !name.contains("..") => {
+                    state.settings.documents_dir().join(name)
+                }
+                Some(("artifacts", rest)) if !rest.contains("..") => {
+                    state.settings.artifacts_dir().join(rest)
+                }
+                _ => continue,
+            };
+            if let Some(parent) = on_disk.parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+            tokio::fs::write(&on_disk, &content).await?;
+            sqlx::query(
+                "UPDATE workspace_files SET restored_at = now(), content = '' WHERE id = $1",
+            )
+            .bind(id)
+            .execute(&state.db)
+            .await?;
+            restored += 1;
+        }
+    }
+}
+
+/// Runs a transfer to completion and records how it ended: the rows, then
+/// the files, then the Redis handover when one was named.
+pub async fn run(
+    state: &AppState,
+    transfer_id: Uuid,
+    workspace: Uuid,
+    url: String,
+    redis_url: Option<String>,
+) {
+    let outcome = async {
+        let mut report = copy_workspace(&state.db, &url, workspace).await?;
+        let target = repo::connect(&url, 1)
+            .await
+            .map_err(|err| anyhow::anyhow!("cannot connect to the target database: {err}"))?;
+        report.push(copy_files(state, &target, workspace).await?);
+        target.close().await;
+        if let Some(redis) = redis_url.as_deref() {
+            hand_over_redis(redis, workspace, &location(&url))
+                .await
+                .map_err(|err| anyhow::anyhow!("the rows and files are there, but Redis: {err}"))?;
+        }
+        Ok::<_, anyhow::Error>(report)
+    }
+    .await;
     let (status, report, error) = match outcome {
         Ok(reports) => ("done", json!(reports), String::new()),
         Err(err) => {

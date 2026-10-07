@@ -167,7 +167,7 @@ async fn check_postgres(url: &str) -> Result<ConnectionCheck, sqlx::Error> {
 
 /// Says PING to a Redis server (after AUTH when the URL carries a password)
 /// and returns its reply.
-async fn check_redis(url: &str) -> anyhow::Result<String> {
+pub(crate) async fn check_redis(url: &str) -> anyhow::Result<String> {
     let rest = url.trim_start_matches("redis://");
     let (credentials, address) = match rest.rsplit_once('@') {
         Some((credentials, address)) => (Some(credentials), address),

@@ -1300,10 +1300,49 @@ export interface paths {
         /**
          * Asks the workspace assistant. It answers from the workspace's memory and
          *     open issues, as far as the caller can see them, and files issues when asked
-         *     to, with the caller's rights.
+         *     to, with the caller's rights. The exchange is saved to a conversation of
+         *     the caller's, whose id the reply carries.
          */
         post: operations["assistant"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/assistant/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The caller's saved conversations with the assistant in this workspace,
+         *     most recently continued first. Nobody sees another member's.
+         */
+        get: operations["assistant_conversations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/assistant/conversations/{cid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One of the caller's conversations with all of its messages, oldest first. */
+        get: operations["assistant_conversation"];
+        put?: never;
+        post?: never;
+        /** Removes one of the caller's conversations with its messages. */
+        delete: operations["delete_assistant_conversation"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1365,30 +1404,6 @@ export interface paths {
         post?: never;
         /** Removes a document and its passages: whoever uploaded it, or an admin. */
         delete: operations["delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/workspaces/{wid}/files.zip": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * The files of a workspace that are kept on disk rather than in the
-         *     database, as one zip archive (owners only): the uploaded originals of its
-         *     documents under `documents/<document id>` and the artifacts of its runs
-         *     under `artifacts/<run id>/<node id>/<path>`. That is the layout of the
-         *     server's data folder: unpacked into the data folder of the server that
-         *     received the workspace's rows, the files are where it expects them.
-         */
-        get: operations["files"];
-        put?: never;
-        post?: never;
-        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2073,6 +2088,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{wid}/transfers/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Checks that the database (and Redis, if named) can be reached from this
+         *     server and that the database is empty of this workspace (owners only).
+         *     Nothing is written and nothing is kept.
+         */
+        post: operations["check"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{wid}/usage": {
         parameters: {
             query?: never;
@@ -2203,6 +2239,11 @@ export interface components {
         };
         /** @description What the member gets back. */
         AssistantReply: {
+            /**
+             * Format: uuid
+             * @description The conversation this exchange was saved to; send it back to continue it.
+             */
+            conversation_id: string;
             /** @description Issues the assistant filed while answering. */
             created: components["schemas"]["Issue"][];
             /** @description How many memories of the workspace it was given. */
@@ -2213,21 +2254,21 @@ export interface components {
         };
         /** @description `POST /workspaces/{wid}/assistant` body. */
         AssistantRequest: {
-            /** @description Earlier turns of this conversation, oldest first (the last 20 are used). */
-            history?: components["schemas"]["AssistantTurn"][];
+            /**
+             * Format: uuid
+             * @description The conversation to continue, one of the caller's in this workspace; left out, a new
+             *     one starts. Its last 20 turns are the context.
+             */
+            conversation_id?: string | null;
             message: string;
+            /** @description Where in the app the caller is, so "this graph" means something to the assistant. */
+            page?: components["schemas"]["PageContext"];
         };
         /**
          * @description Who said a turn.
          * @enum {string}
          */
         AssistantRole: "user" | "assistant";
-        /** @description An earlier turn of the conversation. */
-        AssistantTurn: {
-            content: string;
-            /** @description `user` or `assistant`. */
-            role: components["schemas"]["AssistantRole"];
-        };
         /**
          * @description What an audit entry records.
          * @enum {string}
@@ -2319,6 +2360,45 @@ export interface components {
             /** @description PostgreSQL: whether pgvector can be enabled there. */
             pgvector_available: boolean | null;
             reachable: boolean;
+        };
+        /** @description A saved conversation with the assistant: one member's, in one workspace. */
+        Conversation: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: int64 */
+            message_count: number;
+            /** @description Where the member was when it started. */
+            page_path: string;
+            page_title: string;
+            /** @description The first message, shortened. */
+            title: string;
+            /**
+             * Format: date-time
+             * @description When the last message was added.
+             */
+            updated_at: string;
+            /** Format: uuid */
+            workspace_id: string;
+        };
+        /** @description A conversation with all of its messages, oldest first. */
+        ConversationDetail: {
+            conversation: components["schemas"]["Conversation"];
+            messages: components["schemas"]["ConversationMessage"][];
+        };
+        /** @description One message of a saved conversation. */
+        ConversationMessage: {
+            content: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            outcome?: components["schemas"]["TurnOutcome"] | null;
+            /** @description For a user turn: where they were when they wrote it. */
+            page_path: string;
+            page_title: string;
+            role: components["schemas"]["AssistantRole"];
         };
         /** @description `POST /agents` body. */
         CreateAgent: {
@@ -2658,6 +2738,13 @@ export interface components {
          * @enum {string}
          */
         Executor: "llm" | "agent" | "symphony";
+        /** @description An issue the assistant filed, as remembered with the conversation. */
+        FiledIssue: {
+            /** Format: uuid */
+            id: string;
+            identifier: string;
+            title: string;
+        };
         /** @description `POST /graphs/from-template` body. */
         FromTemplate: {
             /** @description Graph name (default: the template's name, plus the topic when given). */
@@ -3324,6 +3411,16 @@ export interface components {
             /** Format: int64 */
             running_nodes: number;
         };
+        /**
+         * @description Where in the app the member is while they write; the assistant is told, so
+         *     "this graph" or "this issue" means something.
+         */
+        PageContext: {
+            /** @description The address inside the app, e.g. `/app/graphs/<id>`. */
+            path?: string;
+            /** @description What the member sees it called, e.g. `Graphs › Research report`. */
+            title?: string;
+        };
         /** @description A passage found by a search, with where it comes from. */
         Passage: {
             /** Format: uuid */
@@ -3674,6 +3771,12 @@ export interface components {
         /** @description `POST /workspaces/{wid}/transfers` body. */
         StartTransfer: {
             /**
+             * @description `redis://[:password@]host:6379` the workspace moves to, if any. The
+             *     server keeps nothing durable in Redis; it is checked and told of the
+             *     handover. Neither stored nor logged.
+             */
+            redis_url?: string | null;
+            /**
              * @description `postgres://user:password@host:5432/database` of the database that
              *     should receive the workspace. Used for this transfer only: it is
              *     neither stored nor logged. The user needs the right to create tables.
@@ -3812,12 +3915,29 @@ export interface components {
             finished_at: string | null;
             /** Format: uuid */
             id: string;
+            /** @description The Redis it moved to, without credentials; empty when none was named. */
+            redis_target: string;
             /** @description Per table: rows read here and rows written there. */
             report: components["schemas"]["TableReport"][];
             /** @description `running`, `done` or `failed`. */
             status: string;
             /** @description Where the data went, without credentials. */
             target: string;
+        };
+        /** @description What a connection check found, for each target the owner named. */
+        TransferCheck: {
+            /** @description The database's version, or why it could not be reached. */
+            database: string;
+            database_ok: boolean;
+            redis: string | null;
+            /** @description `null` when no Redis was named. */
+            redis_ok: boolean | null;
+        };
+        /** @description What an assistant turn did besides answering, kept with its message. */
+        TurnOutcome: {
+            created?: components["schemas"]["FiledIssue"][];
+            memories_used?: number;
+            skipped?: string[];
         };
         /** @description Whether an account signs in with a second factor. */
         TwoFactor: {
@@ -7510,6 +7630,98 @@ export interface operations {
             };
         };
     };
+    assistant_conversations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Conversation"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    assistant_conversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Conversation id */
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationDetail"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    delete_assistant_conversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Conversation id */
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     audit_log: {
         parameters: {
             query?: {
@@ -7737,54 +7949,6 @@ export interface operations {
                 };
             };
             404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    files: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Workspace id */
-                wid: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Zip archive */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/zip": number[];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Problem"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description More than 1 GiB of files */
-            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10153,6 +10317,56 @@ export interface operations {
             };
             /** @description A transfer is already running */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    check: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartTransfer"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransferCheck"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -129,6 +129,15 @@ const SECTIONS: &[(&str, &str)] = &[
         "SELECT n.kind, n.created_at, n.read_at FROM notifications n
          WHERE n.user_id = $1 ORDER BY n.created_at",
     ),
+    (
+        "assistant_conversations",
+        "SELECT w.name AS workspace, c.title, c.page_title, c.page_path, c.created_at, c.updated_at,
+                (SELECT jsonb_agg(jsonb_build_object('role', m.role, 'content', m.content,
+                                                     'at', m.created_at) ORDER BY m.created_at)
+                 FROM assistant_messages m WHERE m.conversation_id = c.id) AS messages
+         FROM assistant_conversations c JOIN workspaces w ON w.id = c.workspace_id
+         WHERE c.user_id = $1 ORDER BY c.created_at",
+    ),
 ];
 
 /// Everything held about `user`: the account, where it belongs, what it
@@ -218,6 +227,7 @@ pub async fn erase(state: &AppState, user: Uuid) -> Result<(), AppError> {
         "DELETE FROM team_members WHERE user_id = $1",
         "DELETE FROM workspace_members WHERE user_id = $1",
         "DELETE FROM notifications WHERE user_id = $1",
+        "DELETE FROM assistant_conversations WHERE user_id = $1",
         "DELETE FROM llm_settings WHERE user_id = $1",
         "DELETE FROM refresh_tokens WHERE user_id = $1",
         "DELETE FROM realtime_tickets WHERE user_id = $1",

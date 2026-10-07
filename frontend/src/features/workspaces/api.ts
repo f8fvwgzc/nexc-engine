@@ -4,7 +4,12 @@ import { z } from 'zod';
 import { apiRequest, apiSend } from '@/lib/api/client';
 import { auditEntrySchema } from '@/schemas/audit';
 import { qk } from '@/lib/query-keys';
-import { assistantReplySchema, type AssistantTurn } from '@/schemas/assistant';
+import {
+  assistantReplySchema,
+  conversationDetailSchema,
+  conversationSchema,
+  type PageContext,
+} from '@/schemas/assistant';
 import { usageReportSchema } from '@/schemas/usage';
 import {
   guardrailsSchema,
@@ -99,11 +104,49 @@ export function saveGuardrails(workspaceId: string, body: Guardrails) {
   });
 }
 
-/** Asks the workspace assistant; it may file issues on the caller's behalf. */
-export function askAssistant(workspaceId: string, message: string, history: AssistantTurn[]) {
+/**
+ * Asks the workspace assistant; it may file issues on the caller's behalf. The exchange is saved
+ * to `conversationId`, or to a new conversation when none is given; the reply names it.
+ */
+export function askAssistant(
+  workspaceId: string,
+  message: string,
+  options: { conversationId: string | null; page: PageContext },
+) {
   return apiRequest(`/workspaces/${workspaceId}/assistant`, assistantReplySchema, {
     method: 'POST',
-    body: { message, history },
+    body: { message, conversation_id: options.conversationId, page: options.page },
+  });
+}
+
+/** The caller's saved conversations with the assistant, most recently continued first. */
+export const conversationsQuery = (workspaceId: string) =>
+  queryOptions({
+    queryKey: qk.workspaces.conversations(workspaceId),
+    queryFn: ({ signal }) =>
+      apiRequest(
+        `/workspaces/${workspaceId}/assistant/conversations`,
+        z.array(conversationSchema),
+        {
+          signal,
+        },
+      ),
+  });
+
+export const conversationQuery = (workspaceId: string, id: string) =>
+  queryOptions({
+    queryKey: qk.workspaces.conversation(workspaceId, id),
+    queryFn: ({ signal }) =>
+      apiRequest(
+        `/workspaces/${workspaceId}/assistant/conversations/${id}`,
+        conversationDetailSchema,
+        { signal },
+      ),
+  });
+
+export function deleteConversation(workspaceId: string, id: string) {
+  return apiRequest(`/workspaces/${workspaceId}/assistant/conversations/${id}`, z.void(), {
+    method: 'DELETE',
   });
 }
 

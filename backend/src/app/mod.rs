@@ -90,6 +90,14 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
         tracing::info!("document vector search is off: the database has no pgvector extension");
     }
     bootstrap_admin(&state).await?;
+    // A workspace that was transferred here brought its files inside the database.
+    let restored = crate::engine::transfer::restore_files(&state).await?;
+    if restored > 0 {
+        tracing::info!(
+            restored,
+            "files of transferred workspaces written to the data folder"
+        );
+    }
     seed_missing_workspaces(&state).await?;
     orchestrator::seed_missing_orgs(&state).await?;
     tokio::fs::create_dir_all(state.settings.artifacts_dir()).await?;

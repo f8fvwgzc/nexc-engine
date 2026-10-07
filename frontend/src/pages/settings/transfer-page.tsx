@@ -14,7 +14,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { apiRequest, apiSend } from '@/lib/api/client';
-import { saveDownload } from '@/lib/api/download';
 import { errorMessage } from '@/lib/api/errors';
 import { formatInteger, formatRelative } from '@/lib/format';
 import { qk } from '@/lib/query-keys';
@@ -24,6 +23,7 @@ import type { Workspace } from '@/schemas/workspace';
 const transferSchema = z.object({
   id: idSchema,
   target: z.string(),
+  redis_target: z.string(),
   status: z.enum(['running', 'done', 'failed']),
   report: z.array(z.object({ table: z.string(), read: z.number(), written: z.number() })),
   error: z.string(),
@@ -31,6 +31,13 @@ const transferSchema = z.object({
   finished_at: timestampSchema.nullable(),
 });
 type Transfer = z.infer<typeof transferSchema>;
+
+const checkSchema = z.object({
+  database_ok: z.boolean(),
+  database: z.string(),
+  redis_ok: z.boolean().nullable(),
+  redis: z.string().nullable(),
+});
 
 // Outside the roots copied to browser storage.
 const key = (workspaceId: string) => ['transfers', workspaceId] as const;
@@ -57,7 +64,10 @@ function Report({ transfer }: { transfer: Transfer }) {
               ? 'Failed'
               : 'Copying'}
         </Badge>
-        <span className="font-mono text-xs break-all">{transfer.target}</span>
+        <span className="font-mono text-xs break-all">
+          {transfer.target}
+          {transfer.redis_target && ` + ${transfer.redis_target}`}
+        </span>
         <span className="ml-auto text-xs text-muted-foreground">
           {formatRelative(transfer.created_at)}
         </span>
@@ -88,64 +98,67 @@ function Report({ transfer }: { transfer: Transfer }) {
 function TransferForm({ workspace }: { workspace: Workspace }) {
   const queryClient = useQueryClient();
   const [url, setUrl] = useState('');
+  const [redisUrl, setRedisUrl] = useState('');
   const { data: transfers = [] } = useQuery({
     queryKey: key(workspace.id),
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspace.id}/transfers`, z.array(transferSchema), { signal }),
-    // While a copy runs, look again every two seconds.
+    // While a transfer runs, look again every two seconds.
     refetchInterval: (query) =>
       query.state.data?.some((t) => t.status === 'running') ? 2_000 : false,
+  });
+  const body = () => ({ url: url.trim(), redis_url: redisUrl.trim() || undefined });
+  const check = useMutation({
+    mutationFn: () =>
+      apiRequest(`/workspaces/${workspace.id}/transfers/check`, checkSchema, {
+        method: 'POST',
+        body: body(),
+      }),
+    meta: { errorToast: false },
   });
   const start = useMutation({
     mutationFn: () =>
       apiRequest(`/workspaces/${workspace.id}/transfers`, transferSchema, {
         method: 'POST',
-        body: { url: url.trim() },
+        body: body(),
       }),
-    meta: { errorToast: false },
+    meta: { errorToast: false, successMessage: 'Transfer started' },
     onSuccess: () => {
-      setUrl('');
-      void queryClient.invalidateQueries({ queryKey: key(workspace.id) });
+      check.reset();
+      return queryClient.invalidateQueries({ queryKey: key(workspace.id) });
     },
-  });
-  const copied = transfers.some((t) => t.status === 'done');
-  const files = useMutation({
-    mutationFn: () => saveDownload(`/workspaces/${workspace.id}/files.zip`, 'workspace-files.zip'),
-    meta: { errorToast: false },
   });
   const navigate = useNavigate();
   const [removing, setRemoving] = useState(false);
   const remove = useMutation({
     mutationFn: () => apiSend(`/workspaces/${workspace.id}`, { method: 'DELETE' }),
-    meta: { errorToast: false, successMessage: 'Workspace removed from this server' },
+    meta: { successMessage: 'Workspace removed from this server' },
     onSuccess: () => {
-      // Everything cached belongs to a workspace that is gone.
-      queryClient.clear();
       void queryClient.invalidateQueries({ queryKey: qk.workspaces.all });
-      void navigate('/app');
+      void navigate('/app', { replace: true });
     },
   });
+  const running = transfers.some((t) => t.status === 'running');
+  const copied = transfers.some((t) => t.status === 'done');
+  const checked = check.data;
+  const ready = url.trim().length > 0 && !running && !start.isPending;
   return (
     <div className="space-y-6">
       <section className="space-y-3 rounded-lg border p-4">
-        <div className="space-y-1 text-[13px] text-muted-foreground">
-          <h2 className="font-medium text-foreground">Copy this workspace to your PostgreSQL</h2>
-          <p>
-            Paste the connection string of an empty database you control. Its tables are created
-            there, then everything of {workspace.name} is copied: members, teams, issues, projects,
-            graphs, runs, documents’ passages, memory, settings and logs.
-          </p>
-          <p>
-            Not copied: password hashes (members sign up again or reset on your server), stored API
-            keys (enter them again), and files on disk, which are a separate download below. The
-            connection string is used once and not kept. Nothing changes here.
+        <div>
+          <h2 className="font-medium">Move the workspace to your own database</h2>
+          <p className="text-sm text-muted-foreground">
+            Everything it holds goes in one step: members, teams, issues, graphs, runs, documents
+            with their files, memory and settings. Paste the connection string of a PostgreSQL you
+            control, and of a Redis if you use one. They are used for this transfer only and never
+            kept. Nothing changes here until you remove the workspace below.
           </p>
         </div>
         <form
-          className="flex flex-wrap gap-2"
+          className="space-y-2"
           onSubmit={(e) => {
             e.preventDefault();
-            if (url.trim()) start.mutate();
+            if (ready) start.mutate();
           }}
         >
           <Input
@@ -153,53 +166,65 @@ function TransferForm({ workspace }: { workspace: Workspace }) {
             value={url}
             autoComplete="off"
             placeholder="postgres://user:password@host:5432/database"
-            aria-label="Target database URL"
-            className="h-8 min-w-64 flex-1 font-mono text-xs"
-            onChange={(e) => setUrl(e.target.value)}
+            aria-label="Database connection string"
+            className="h-8 font-mono text-xs"
+            onChange={(e) => {
+              setUrl(e.target.value);
+              check.reset();
+            }}
           />
-          <Button type="submit" size="sm" disabled={!url.trim() || start.isPending}>
-            Copy workspace
-          </Button>
+          <Input
+            type="password"
+            value={redisUrl}
+            autoComplete="off"
+            placeholder="redis://:password@host:6379 (optional)"
+            aria-label="Redis connection string"
+            className="h-8 font-mono text-xs"
+            onChange={(e) => {
+              setRedisUrl(e.target.value);
+              check.reset();
+            }}
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={!url.trim() || check.isPending}
+              onClick={() => check.mutate()}
+            >
+              {check.isPending ? 'Testing…' : 'Test connection'}
+            </Button>
+            <Button type="submit" size="sm" disabled={!ready}>
+              {running ? 'Transferring…' : 'Transfer now'}
+            </Button>
+          </div>
         </form>
-        {start.error && (
+        {checked && (
+          <ul className="space-y-1 text-[13px]" aria-label="Connection check">
+            <li className={checked.database_ok ? '' : 'text-destructive'}>
+              <span className="font-medium">Database:</span> {checked.database}
+            </li>
+            {checked.redis !== null && (
+              <li className={checked.redis_ok ? '' : 'text-destructive'}>
+                <span className="font-medium">Redis:</span> {checked.redis}
+              </li>
+            )}
+          </ul>
+        )}
+        {(check.error ?? start.error) && (
           <p role="alert" className="text-sm text-destructive">
-            {errorMessage(start.error)}
+            {errorMessage(check.error ?? start.error)}
           </p>
         )}
-      </section>
-      <section className="space-y-2 rounded-lg border p-4 text-[13px] text-muted-foreground">
-        <h2 className="font-medium text-foreground">Files that are not in the database</h2>
-        <p>
-          Uploaded originals and run artifacts are kept on disk. Download them as one archive and
-          unpack it into the data folder of the server that received the copy: the layout is the
-          same (<span className="font-mono text-xs">documents/</span>,{' '}
-          <span className="font-mono text-xs">artifacts/</span>). Up to 1 GB; more than that is
-          moved by copying the data folder itself.
-        </p>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={files.isPending}
-          onClick={() => files.mutate()}
-        >
-          {files.isPending ? 'Preparing…' : 'Download files'}
-        </Button>
-        {files.error && (
-          <p role="alert" className="text-sm text-destructive">
-            {errorMessage(files.error)}
-          </p>
-        )}
-      </section>
-      {transfers.length > 0 && (
-        <section aria-label="Transfers" className="space-y-2">
-          <h2 className="text-[13px] font-medium">Transfers</h2>
-          <ul className="divide-y rounded-lg border">
+        {transfers.length > 0 && (
+          <ul className="divide-y rounded-lg border" aria-label="Transfers">
             {transfers.map((t) => (
               <Report key={t.id} transfer={t} />
             ))}
           </ul>
-        </section>
-      )}
+        )}
+      </section>
       <section className="space-y-2 rounded-lg border border-dashed p-4 text-[13px] text-muted-foreground">
         <h2 className="font-medium text-foreground">Then remove it from this server</h2>
         <p>
@@ -244,7 +269,7 @@ export default function TransferPage() {
       <Seo title="Data transfer" noIndex />
       <PageHeader
         title="Data transfer"
-        description="Hold your workspace’s data yourself: copy it to a PostgreSQL you control, then remove it from this server."
+        description="Hold your workspace’s data yourself: move everything to a database you control in one step, then remove it from this server."
       />
       {!current ? (
         <PageSkeleton />

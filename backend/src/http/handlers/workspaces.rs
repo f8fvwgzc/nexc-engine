@@ -9,7 +9,10 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::AppError;
-use crate::domain::assistant::{AssistantReply, AssistantTurn, MESSAGE_MAX};
+use crate::domain::assistant::{
+    AssistantReply, CONVERSATIONS_MAX, Conversation, ConversationDetail, MESSAGE_MAX, PAGE_MAX,
+    PageContext,
+};
 use crate::domain::audit::{AuditAction, AuditEntry};
 use crate::domain::guardrails::Guardrails;
 use crate::domain::usage::{UsageReport, UsageScope};
@@ -441,27 +444,28 @@ pub async fn remove_member(
 #[serde(deny_unknown_fields)]
 pub struct AssistantRequest {
     pub message: String,
-    /// Earlier turns of this conversation, oldest first (the last 20 are used).
+    /// The conversation to continue, one of the caller's in this workspace; left out, a new
+    /// one starts. Its last 20 turns are the context.
     #[serde(default)]
-    pub history: Vec<AssistantTurn>,
+    pub conversation_id: Option<Uuid>,
+    /// Where in the app the caller is, so "this graph" means something to the assistant.
+    #[serde(default)]
+    pub page: PageContext,
 }
 
 impl Validate for AssistantRequest {
     fn validate(&self, errors: &mut FieldErrors) {
         check_text(errors, "message", &self.message, MESSAGE_MAX);
-        if self
-            .history
-            .iter()
-            .any(|t| t.content.len() > 4 * MESSAGE_MAX)
-        {
-            errors.add("history", "a turn is too long");
+        if self.page.path.len() > PAGE_MAX || self.page.title.len() > PAGE_MAX {
+            errors.add("page", "too long");
         }
     }
 }
 
 /// Asks the workspace assistant. It answers from the workspace's memory and
 /// open issues, as far as the caller can see them, and files issues when asked
-/// to, with the caller's rights.
+/// to, with the caller's rights. The exchange is saved to a conversation of
+/// the caller's, whose id the reply carries.
 #[utoipa::path(post, path = "/workspaces/{wid}/assistant", tag = "workspaces", security(("bearer" = [])),
     params(("wid" = Uuid, Path, description = "Workspace id")), request_body = AssistantRequest,
     responses((status = 200, body = AssistantReply), (status = 403, description = "Refused by the workspace's guardrails", body = Problem),
@@ -474,9 +478,69 @@ pub async fn assistant(
 ) -> Result<Json<AssistantReply>, AppError> {
     let workspace = member_of(&state, auth, wid).await?;
     Ok(Json(
-        engine::assistant::reply(&state, auth.id, &workspace, req.history, req.message.trim())
-            .await?,
+        engine::assistant::reply(
+            &state,
+            auth.id,
+            &workspace,
+            req.conversation_id,
+            req.page,
+            req.message.trim(),
+        )
+        .await?,
     ))
+}
+
+/// The caller's saved conversations with the assistant in this workspace,
+/// most recently continued first. Nobody sees another member's.
+#[utoipa::path(get, path = "/workspaces/{wid}/assistant/conversations", tag = "workspaces", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id")),
+    responses((status = 200, body = Vec<Conversation>), (status = 404, body = Problem)))]
+pub async fn assistant_conversations(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(wid): Path<Uuid>,
+) -> Result<Json<Vec<Conversation>>, AppError> {
+    member_of(&state, auth, wid).await?;
+    Ok(Json(
+        repo::assistant::list(&state.db, auth.id, wid, CONVERSATIONS_MAX).await?,
+    ))
+}
+
+/// One of the caller's conversations with all of its messages, oldest first.
+#[utoipa::path(get, path = "/workspaces/{wid}/assistant/conversations/{cid}", tag = "workspaces", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id"), ("cid" = Uuid, Path, description = "Conversation id")),
+    responses((status = 200, body = ConversationDetail), (status = 404, body = Problem)))]
+pub async fn assistant_conversation(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((wid, cid)): Path<(Uuid, Uuid)>,
+) -> Result<Json<ConversationDetail>, AppError> {
+    member_of(&state, auth, wid).await?;
+    let conversation = repo::assistant::find(&state.db, auth.id, wid, cid)
+        .await
+        .or_not_found("conversation")?;
+    let messages = repo::assistant::messages(&state.db, cid).await?;
+    Ok(Json(ConversationDetail {
+        conversation,
+        messages,
+    }))
+}
+
+/// Removes one of the caller's conversations with its messages.
+#[utoipa::path(delete, path = "/workspaces/{wid}/assistant/conversations/{cid}", tag = "workspaces", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id"), ("cid" = Uuid, Path, description = "Conversation id")),
+    responses((status = 204), (status = 404, body = Problem)))]
+pub async fn delete_assistant_conversation(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((wid, cid)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, AppError> {
+    member_of(&state, auth, wid).await?;
+    if repo::assistant::delete(&state.db, auth.id, wid, cid).await? {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(AppError::NotFound("conversation"))
+    }
 }
 
 impl Validate for Guardrails {

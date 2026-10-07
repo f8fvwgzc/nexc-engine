@@ -8,6 +8,7 @@ import {
   FolderKanbanIcon,
   InboxIcon,
   type LucideIcon,
+  MessagesSquareIcon,
   NetworkIcon,
   PlayIcon,
   ScrollTextIcon,
@@ -35,6 +36,7 @@ export const WORK_ITEMS: NavItem[] = [
   { title: 'My issues', to: '/app/my-issues', icon: CircleUserIcon },
   { title: 'Issues', to: '/app/issues', icon: CircleDotIcon },
   { title: 'Projects', to: '/app/projects', icon: FolderKanbanIcon },
+  { title: 'Conversations', to: '/app/conversations', icon: MessagesSquareIcon },
 ];
 
 /** Where work is planned and executed by agents. */
@@ -50,6 +52,7 @@ export const NAV_ITEMS: NavItem[] = [
   { title: 'My issues', to: '/app/my-issues', icon: CircleUserIcon },
   { title: 'Issues', to: '/app/issues', icon: CircleDotIcon },
   { title: 'Projects', to: '/app/projects', icon: FolderKanbanIcon },
+  { title: 'Conversations', to: '/app/conversations', icon: MessagesSquareIcon },
   { title: 'Graphs', to: '/app', icon: NetworkIcon, end: true },
   { title: 'Runs', to: '/app/runs', icon: PlayIcon },
   { title: 'Agents', to: '/app/agents', icon: BotIcon },

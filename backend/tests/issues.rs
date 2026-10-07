@@ -692,11 +692,16 @@ async fn the_assistant_files_issues_with_the_callers_rights(pool: PgPool) {
         (Some("Here you go."), Some(0))
     );
 
-    // Asked to, it files with a team the member can file with and reports what it could not place.
+    let first = answer["conversation_id"].clone();
+    assert!(first.is_string(), "the exchange was saved: {answer}");
+
+    // Asked to, it files with a team the member can file with and reports what it could not
+    // place. Continuing the conversation, from the issues page.
     let body = json!({"message": "Please file an issue for the login bug",
-        "history": [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]});
+        "conversation_id": first, "page": {"path": "/app/issues", "title": "Issues"}});
     let (status, answer) = call(&app, Method::POST, &ask, &w.member, Some(body.clone())).await;
     assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["conversation_id"], first);
     let created = answer["created"].as_array().unwrap();
     assert_eq!(created.len(), 1);
     assert_eq!(
@@ -713,10 +718,54 @@ async fn the_assistant_files_issues_with_the_callers_rights(pool: PgPool) {
     );
     assert_eq!(answer["skipped"], json!(["NOPE: Nowhere"]));
 
-    // A guest in no team has nowhere to file: the same request creates nothing.
-    let (_, answer) = call(&app, Method::POST, &ask, &w.guest, Some(body)).await;
+    // A guest in no team has nowhere to file: the same request creates nothing. Another
+    // member's conversation is not theirs to continue.
+    let (status, _) = call(&app, Method::POST, &ask, &w.guest, Some(body)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let guest_body = json!({"message": "Please file an issue for the login bug"});
+    let (_, answer) = call(&app, Method::POST, &ask, &w.guest, Some(guest_body)).await;
     assert_eq!(answer["created"], json!([]));
     assert_eq!(answer["skipped"].as_array().unwrap().len(), 2);
+
+    // The conversation is kept, the member's own: both exchanges, what was filed, where they
+    // were; listed latest first; gone when they remove it.
+    let conversations = format!("{ask}/conversations");
+    let (_, list) = call(&app, Method::GET, &conversations, &w.member, None).await;
+    let list = list.as_array().unwrap();
+    assert_eq!(list.len(), 1, "{list:?}");
+    assert_eq!(list[0]["id"], first);
+    assert_eq!(list[0]["title"], "What is open?");
+    assert_eq!(list[0]["message_count"], 4);
+    let one = format!("{conversations}/{}", first.as_str().unwrap());
+    let (status, detail) = call(&app, Method::GET, &one, &w.member, None).await;
+    assert_eq!(status, StatusCode::OK, "{detail}");
+    let messages = detail["messages"].as_array().unwrap();
+    let roles: Vec<_> = messages
+        .iter()
+        .map(|m| m["role"].as_str().unwrap())
+        .collect();
+    assert_eq!(roles, ["user", "assistant", "user", "assistant"]);
+    assert_eq!(messages[2]["page_title"], "Issues");
+    assert_eq!(messages[3]["outcome"]["created"][0]["identifier"], "ENG-1");
+    assert_eq!(messages[3]["outcome"]["skipped"], json!(["NOPE: Nowhere"]));
+    let (_, others) = call(&app, Method::GET, &conversations, &w.guest, None).await;
+    assert_eq!(
+        others.as_array().unwrap().len(),
+        1,
+        "the guest sees only their own"
+    );
+    assert_eq!(
+        call(&app, Method::GET, &one, &w.guest, None).await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        call(&app, Method::DELETE, &one, &w.member, None).await.0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        call(&app, Method::GET, &one, &w.member, None).await.0,
+        StatusCode::NOT_FOUND
+    );
 
     // Its calls are on the ledger, it obeys guardrails, and strangers cannot reach it.
     let (_, report) = call(

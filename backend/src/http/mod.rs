@@ -115,6 +115,11 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(workspaces::usage))
         .routes(routes!(workspaces::guardrails, workspaces::put_guardrails))
         .routes(routes!(workspaces::assistant))
+        .routes(routes!(workspaces::assistant_conversations))
+        .routes(routes!(
+            workspaces::assistant_conversation,
+            workspaces::delete_assistant_conversation
+        ))
         .routes(routes!(workspaces::audit_log))
         .routes(routes!(search::search))
         .routes(routes!(platform::workspaces))
@@ -129,7 +134,7 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(infrastructure::status))
         .routes(routes!(infrastructure::check))
         .routes(routes!(transfer::list, transfer::start))
-        .routes(routes!(transfer::files))
+        .routes(routes!(transfer::check))
         .routes(routes!(insight::timeline))
         .routes(routes!(insight::day_summary, insight::write_day_summary))
         .routes(routes!(insight::days))

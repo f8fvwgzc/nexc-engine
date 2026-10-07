@@ -9,6 +9,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Data transfer moves everything: the workspace's files on disk travel inside the target
+  database (`workspace_files`) and are written out by the server that owns it at its next start;
+  an optional Redis receives the handover record; **Test connection**
+  (`POST /workspaces/{wid}/transfers/check`) reaches both before anything moves. The separate
+  `files.zip` download is gone.
+- The assistant docks beside the page as a full-height panel (the page keeps the rest and the
+  graph canvas re-fits to it), is told which page the member is on, and keeps conversations:
+  a **Conversations** page lists them as a timeline, opens one in the panel to continue it
+  (`/workspaces/{wid}/assistant/conversations`). Conversations are each member's own, come with
+  the account export, and go with the account.
 - Per-graph ontology: node types and relation types are data owned by each graph instead of fixed
   enums. `GET /graphs/{gid}` returns it, `PUT /graphs/{gid}/ontology` replaces it, and the canvas
   toolbar has an editor for it.

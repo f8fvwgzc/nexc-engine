@@ -87,6 +87,10 @@ export const routes: RouteObject[] = [
               },
               { path: 'projects', ...page(routeModules.projects, crumbs({ label: 'Projects' })) },
               {
+                path: 'conversations',
+                ...page(routeModules.conversations, crumbs({ label: 'Conversations' })),
+              },
+              {
                 path: 'projects/:projectId',
                 ...page(
                   routeModules.project,

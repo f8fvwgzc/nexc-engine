@@ -13,6 +13,7 @@ export const routeModules = {
   issues: () => import('@/pages/issues-page'),
   myIssues: () => import('@/pages/my-issues-page'),
   inbox: () => import('@/pages/inbox-page'),
+  conversations: () => import('@/pages/conversations-page'),
   memory: () => import('@/pages/memory-page'),
   projects: () => import('@/pages/projects-page'),
   project: () => import('@/pages/project-page'),
