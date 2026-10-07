@@ -115,7 +115,8 @@ const TABLES: &[Table] = &[
         overlay: Some(
             r#"{"password_hash": "!", "failed_logins": 0, "locked_until": null, "role": "user",
                 "suspended_at": null, "suspended_reason": "", "session_epoch": 0,
-                "session_epoch_at": null}"#,
+                "session_epoch_at": null, "totp_secret_enc": null, "totp_enabled_at": null,
+                "totp_last_step": null}"#,
         ),
     },
     table("workspaces", "t.id = $1", false),

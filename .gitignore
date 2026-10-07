@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 data/
+backups/
 deploy/k8s/secret.env
 *.pem
 *.key

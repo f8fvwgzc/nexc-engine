@@ -800,3 +800,194 @@ async fn a_person_sees_what_happened_to_their_access(pool: PgPool) {
     let token = back.body["access_token"].as_str().unwrap().to_owned();
     assert_eq!(activity(&app, &token).await[1], entry("sessions_ended", ""));
 }
+
+/// The bytes an authenticator app decodes a typed secret to (RFC 4648 base32).
+fn base32_decode(text: &str) -> Vec<u8> {
+    let (mut buffer, mut bits, mut out) = (0u32, 0u32, Vec::new());
+    for c in text.bytes() {
+        let value = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'2'..=b'7' => c - b'2' + 26,
+            _ => panic!("not base32: {text}"),
+        };
+        buffer = (buffer << 5) | u32::from(value);
+        bits += 5;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buffer >> bits) as u8);
+        }
+    }
+    out
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn signing_in_can_ask_for_a_second_factor(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let (token, _) = app.register("ada@example.com").await;
+    let sign_in = |code: Option<&str>| {
+        let body = json!({"email": "ada@example.com", "password": PASSWORD, "code": code});
+        let app = &app;
+        async move {
+            app.request(Method::POST, "/api/v1/auth/login", None, Some(body))
+                .await
+        }
+    };
+    let step = || chrono::Utc::now().timestamp() / nexc::security::totp::PERIOD;
+
+    // Off to begin with; setting up changes nothing until a code proves the app has the secret.
+    let (_, status) = call(&app, Method::GET, "/auth/2fa", &token, None).await;
+    assert_eq!(status["enabled"], false);
+    let (code, setup) = call(&app, Method::POST, "/auth/2fa/setup", &token, None).await;
+    assert_eq!(code, StatusCode::OK, "{setup}");
+    assert!(
+        setup["uri"]
+            .as_str()
+            .unwrap()
+            .starts_with("otpauth://totp/Nexc:ada%40example.com?secret=")
+    );
+    let secret = base32_decode(setup["secret"].as_str().unwrap());
+    assert_eq!(sign_in(None).await.status, StatusCode::OK, "not on yet");
+    let wrong = json!({"code": "000000"});
+    let (code, _) = call(&app, Method::POST, "/auth/2fa/enable", &token, Some(wrong)).await;
+    assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY);
+    let first = nexc::security::totp::code(&secret, step());
+    let (code, on) = call(
+        &app,
+        Method::POST,
+        "/auth/2fa/enable",
+        &token,
+        Some(json!({"code": first})),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{on}");
+    let recovery: Vec<String> = on["recovery_codes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c.as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(recovery.len(), 8);
+    let (code, _) = call(&app, Method::POST, "/auth/2fa/setup", &token, None).await;
+    assert_eq!(code, StatusCode::CONFLICT, "on already");
+
+    // The password alone no longer signs in; the answer says a code is wanted.
+    let asked = sign_in(None).await;
+    assert_eq!(asked.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(asked.body["errors"]["code"].is_array(), "{}", asked.body);
+    assert_eq!(
+        sign_in(Some(&first)).await.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "the code that enabled it was used"
+    );
+    let next = nexc::security::totp::code(&secret, step() + 1);
+    assert_eq!(sign_in(Some(&next)).await.status, StatusCode::OK);
+    assert_eq!(
+        sign_in(Some(&next)).await.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "once only"
+    );
+
+    // A recovery code signs in once, however it is typed.
+    let typed = recovery[0].to_uppercase().replace('-', " ");
+    assert_eq!(sign_in(Some(&typed)).await.status, StatusCode::OK);
+    assert_eq!(
+        sign_in(Some(&recovery[0])).await.status,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let (_, status) = call(&app, Method::GET, "/auth/2fa", &token, None).await;
+    assert_eq!(
+        (
+            status["enabled"].as_bool(),
+            status["recovery_codes_left"].as_i64()
+        ),
+        (Some(true), Some(7))
+    );
+
+    // Turning it off takes the password and a code; then the password signs in again.
+    let off = |password: &str, code: &str| Some(json!({"password": password, "code": code}));
+    let (code, _) = call(
+        &app,
+        Method::POST,
+        "/auth/2fa/disable",
+        &token,
+        off("not my password", &recovery[1]),
+    )
+    .await;
+    assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY);
+    let (code, _) = call(
+        &app,
+        Method::POST,
+        "/auth/2fa/disable",
+        &token,
+        off(PASSWORD, &recovery[1]),
+    )
+    .await;
+    assert_eq!(code, StatusCode::NO_CONTENT);
+    let back = sign_in(None).await;
+    assert_eq!(back.status, StatusCode::OK);
+    let fresh = back.body["access_token"].as_str().unwrap().to_owned();
+    let seen = activity(&app, &fresh).await;
+    let kinds: Vec<&str> = seen.iter().map(|(kind, _)| kind.as_str()).collect();
+    assert!(kinds.contains(&"two_factor_enabled") && kinds.contains(&"two_factor_disabled"));
+    assert!(seen.contains(&(
+        "sign_in_failed".to_owned(),
+        "wrong two-factor code".to_owned()
+    )));
+
+    // Someone who lost the app and the codes: a platform administrator turns it off.
+    let (_, setup) = call(&app, Method::POST, "/auth/2fa/setup", &fresh, None).await;
+    let secret = base32_decode(setup["secret"].as_str().unwrap());
+    let again = nexc::security::totp::code(&secret, step());
+    call(
+        &app,
+        Method::POST,
+        "/auth/2fa/enable",
+        &fresh,
+        Some(json!({"code": again})),
+    )
+    .await;
+    assert_eq!(sign_in(None).await.status, StatusCode::UNPROCESSABLE_ENTITY);
+    let hash = nexc::security::password::hash_password(PASSWORD).unwrap();
+    nexc::http::handlers::auth::create_user(
+        &app.state,
+        "root@example.com",
+        "Root",
+        Role::Admin,
+        &hash,
+    )
+    .await
+    .unwrap();
+    let root = login(&app, "root@example.com", PASSWORD).await.body["access_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let account = format!("/admin/users/{}", id_of(&app, &fresh).await);
+    let (code, _) = call(
+        &app,
+        Method::PATCH,
+        &account,
+        &root,
+        Some(json!({"two_factor": true})),
+    )
+    .await;
+    assert_eq!(
+        code,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "only the holder turns it on"
+    );
+    let (code, user) = call(
+        &app,
+        Method::PATCH,
+        &account,
+        &root,
+        Some(json!({"two_factor": false})),
+    )
+    .await;
+    assert_eq!(
+        (code, user["two_factor"].as_bool()),
+        (StatusCode::OK, Some(false))
+    );
+    assert_eq!(sign_in(None).await.status, StatusCode::OK);
+    let (_, events) = call(&app, Method::GET, "/admin/events", &root, None).await;
+    assert_eq!(events[0]["action"], "two_factor_reset");
+}

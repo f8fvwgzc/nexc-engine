@@ -49,6 +49,7 @@ impl FromRow<'_, PgRow> for PlatformUser {
             locked: row.try_get("locked")?,
             suspended: row.try_get("suspended")?,
             suspended_reason: row.try_get("suspended_reason")?,
+            two_factor: row.try_get("two_factor")?,
             created_at: row.try_get("created_at")?,
         })
     }
@@ -170,7 +171,8 @@ macro_rules! user_rows {
                     (SELECT count(*) FROM workspace_members m
                       WHERE m.user_id = u.id AND m.role = 'owner') AS owned_count,
                     COALESCE(u.locked_until > now(), false) AS locked,
-                    u.suspended_at IS NOT NULL AS suspended, u.suspended_reason, u.created_at
+                    u.suspended_at IS NOT NULL AS suspended, u.suspended_reason,
+                    u.totp_enabled_at IS NOT NULL AS two_factor, u.created_at
              FROM users u WHERE u.deleted_at IS NULL AND (",
             $w,
             ")"

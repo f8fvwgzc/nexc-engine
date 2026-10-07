@@ -19,6 +19,8 @@ const KIND: Record<AccountEvent['kind'], { label: string; alert?: boolean }> = {
   suspended: { label: 'Account suspended', alert: true },
   reactivated: { label: 'Account reactivated' },
   role_changed: { label: 'Platform role changed', alert: true },
+  two_factor_enabled: { label: 'Two-factor sign-in turned on' },
+  two_factor_disabled: { label: 'Two-factor sign-in turned off', alert: true },
 };
 
 /**

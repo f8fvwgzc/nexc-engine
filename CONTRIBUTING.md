@@ -99,4 +99,4 @@ version. The release workflow builds multi-arch images with SBOM and provenance 
 ## License
 
 By contributing you agree that your contributions are licensed under the
-[Apache License 2.0](LICENSE).
+[MIT License](LICENSE).

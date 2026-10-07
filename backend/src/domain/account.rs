@@ -32,6 +32,8 @@ string_enum!(
         Reactivated => "reactivated",
         /// The account's platform role changed.
         RoleChanged => "role_changed",
+        TwoFactorEnabled => "two_factor_enabled",
+        TwoFactorDisabled => "two_factor_disabled",
     }
 );
 

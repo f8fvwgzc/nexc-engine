@@ -6,7 +6,7 @@
 
 [![CI](https://github.com/f8fvwgzc/nexc-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/f8fvwgzc/nexc-engine/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/f8fvwgzc/nexc-engine/actions/workflows/codeql.yml/badge.svg)](https://github.com/f8fvwgzc/nexc-engine/actions/workflows/codeql.yml)
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust 1.99](https://img.shields.io/badge/rust-1.99-orange?logo=rust)](backend)
 [![React 19](https://img.shields.io/badge/react-19-61dafb?logo=react&logoColor=white)](frontend)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-3776ab?logo=python&logoColor=white)](agent-runtime)
@@ -325,4 +325,4 @@ labelled [`good first issue`](https://github.com/f8fvwgzc/nexc-engine/labels/goo
 
 ## License
 
-[Apache License 2.0](LICENSE). Copyright the nexc-engine contributors.
+[MIT License](LICENSE). Copyright the nexc-engine contributors.

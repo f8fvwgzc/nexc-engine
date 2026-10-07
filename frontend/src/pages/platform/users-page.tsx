@@ -310,6 +310,7 @@ export default function PlatformUsersPage() {
                 </Badge>
               )}
               {u.locked && <Badge variant="outline">Locked</Badge>}
+              {u.two_factor && <Badge variant="outline">2FA</Badge>}
               <Badge
                 variant={u.role === 'admin' ? 'default' : 'outline'}
                 className="w-28 justify-center"
@@ -345,6 +346,14 @@ export default function PlatformUsersPage() {
                   <DropdownMenuItem onSelect={() => setResetting(u)}>
                     Password reset link…
                   </DropdownMenuItem>
+                  {u.two_factor && (
+                    <DropdownMenuItem
+                      title="For someone who lost their authenticator app and their recovery codes"
+                      onSelect={() => change.mutate({ user: u, change: { two_factor: false } })}
+                    >
+                      Turn off two-factor
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuSeparator />
                   {u.suspended ? (
                     <DropdownMenuItem

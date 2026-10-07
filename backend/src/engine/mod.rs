@@ -18,6 +18,7 @@ pub mod scheduler;
 pub mod summary;
 pub mod templates;
 pub mod transfer;
+pub mod two_factor;
 pub mod usage;
 pub mod workspaces;
 

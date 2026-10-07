@@ -28,7 +28,7 @@ pub const UPLOAD_SLACK: usize = 64 * 1024;
         description = "Graph engine for LLM-planned, agent-executed task graphs. \
             Errors are RFC 7807 `application/problem+json`. Realtime: SSE `/graphs/{gid}/events` \
             and WebSocket `/graphs/{gid}/ws` authenticated with single-use tickets.",
-        license(name = "Apache-2.0", identifier = "Apache-2.0")
+        license(name = "MIT", identifier = "MIT")
     ),
     modifiers(&BearerAuth),
     components(schemas(
@@ -82,6 +82,10 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(account::reset_password))
         .routes(routes!(account::sessions))
         .routes(routes!(account::activity))
+        .routes(routes!(account::two_factor_status))
+        .routes(routes!(account::two_factor_setup))
+        .routes(routes!(account::two_factor_enable))
+        .routes(routes!(account::two_factor_disable))
         .routes(routes!(account::end_all_sessions))
         .routes(routes!(account::export))
         .routes(routes!(account::delete_me))

@@ -26,6 +26,7 @@ string_enum!(
         WorkspaceDeleted => "workspace_deleted",
         AccountErased => "account_erased",
         PasswordResetIssued => "password_reset_issued",
+        TwoFactorReset => "two_factor_reset",
     }
 );
 
@@ -96,6 +97,8 @@ pub struct PlatformUser {
     /// Whether a platform administrator suspended the account, and why.
     pub suspended: bool,
     pub suspended_reason: String,
+    /// Whether the account signs in with a second factor.
+    pub two_factor: bool,
     pub created_at: DateTime<Utc>,
 }
 

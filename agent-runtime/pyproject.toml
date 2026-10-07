@@ -3,7 +3,7 @@ name = "nexc-runtime"
 version = "0.1.0"
 description = "nexc-engine agent runtime: agents born from a spec at request time, executing graph nodes with tools."
 readme = "README.md"
-license = "Apache-2.0"
+license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "nexc-engine contributors" }]
 keywords = ["llm", "agents", "anthropic", "claude", "fastapi"]

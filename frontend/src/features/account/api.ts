@@ -40,6 +40,8 @@ export const accountEventSchema = z.object({
     'suspended',
     'reactivated',
     'role_changed',
+    'two_factor_enabled',
+    'two_factor_disabled',
   ]),
   ip: z.string().nullable(),
   detail: z.string(),
@@ -54,6 +56,36 @@ export const activityQuery = () =>
     queryFn: ({ signal }) =>
       apiRequest('/auth/activity', z.array(accountEventSchema), { query: { limit: 30 }, signal }),
   });
+
+export const twoFactorQuery = () =>
+  queryOptions({
+    queryKey: ['account', 'two-factor'] as const,
+    queryFn: ({ signal }) =>
+      apiRequest(
+        '/auth/2fa',
+        z.object({ enabled: z.boolean(), recovery_codes_left: z.number().int() }),
+        { signal },
+      ),
+  });
+
+/** Starts the setup: a secret for an authenticator app, as text and as an address it can open. */
+export function setupTwoFactor() {
+  return apiRequest('/auth/2fa/setup', z.object({ secret: z.string(), uri: z.string() }), {
+    method: 'POST',
+  });
+}
+
+/** Turns two-factor sign-in on with the app's first code; the recovery codes come back once. */
+export function enableTwoFactor(code: string) {
+  return apiRequest('/auth/2fa/enable', z.object({ recovery_codes: z.array(z.string()) }), {
+    method: 'POST',
+    body: { code },
+  });
+}
+
+export function disableTwoFactor(password: string, code: string) {
+  return apiSend('/auth/2fa/disable', { method: 'POST', body: { password, code } });
+}
 
 /** Signs out everywhere, this device included. */
 export function endSessions() {

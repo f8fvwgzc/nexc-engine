@@ -77,6 +77,13 @@ pub async fn login(
     email: &str,
     pw: &str,
 ) -> Result<Session, AppError> {
+    let user = authenticate(db, email, pw).await?;
+    start(db, cfg, user).await
+}
+
+/// The first step of signing in: who `email` and `pw` are, without starting
+/// a session yet. The caller checks a second factor in between.
+pub async fn authenticate(db: &PgPool, email: &str, pw: &str) -> Result<User, AppError> {
     let creds = users::credentials(db, email).await?;
     let (pw_owned, hash) = (
         pw.to_owned(),
@@ -111,7 +118,7 @@ pub async fn login(
     if creds.suspended {
         return Err(AppError::Forbidden(SUSPENDED.into()));
     }
-    start(db, cfg, creds.user).await
+    Ok(creds.user)
 }
 
 /// Rotates a refresh token. Reuse of a consumed token revokes its family.

@@ -33,7 +33,7 @@ FROM ${RUNTIME_IMAGE} AS runtime
 LABEL org.opencontainers.image.title="nexc-engine-backend" \
       org.opencontainers.image.description="nexc-engine API, scheduler and orchestrator" \
       org.opencontainers.image.source="https://github.com/f8fvwgzc/nexc-engine" \
-      org.opencontainers.image.licenses="Apache-2.0"
+      org.opencontainers.image.licenses="MIT"
 
 # Debian security updates move package versions; the base image tag is the pin.
 # hadolint ignore=DL3008

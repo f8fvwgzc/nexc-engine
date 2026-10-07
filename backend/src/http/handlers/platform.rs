@@ -288,12 +288,18 @@ pub struct UpdatePlatformUser {
     pub suspended: Option<bool>,
     /// Why the account is suspended (with `suspended: true`), for the activity log.
     pub reason: Option<String>,
+    /// `false` turns the account's two-factor sign-in off, for someone who
+    /// lost their authenticator app and their recovery codes.
+    pub two_factor: Option<bool>,
 }
 
 impl Validate for UpdatePlatformUser {
     fn validate(&self, errors: &mut FieldErrors) {
-        if self.role.is_none() && self.suspended.is_none() {
-            errors.add("role", "give a role, a suspension, or both");
+        if self.role.is_none() && self.suspended.is_none() && self.two_factor.is_none() {
+            errors.add("role", "give a role, a suspension, or `two_factor: false`");
+        }
+        if self.two_factor == Some(true) {
+            errors.add("two_factor", "only the account's holder turns it on");
         }
         match &self.reason {
             Some(_) if self.suspended != Some(true) => {
@@ -388,6 +394,11 @@ pub async fn update_user(
             note(&state, uid, AccountEventKind::Reactivated, "").await;
         }
         _ => {}
+    }
+    if req.two_factor == Some(false) && account.two_factor {
+        crate::engine::two_factor::clear(&state, uid).await?;
+        log(&state, admin, PlatformAction::TwoFactorReset, &subject, "").await;
+        note(&state, uid, AccountEventKind::TwoFactorDisabled, "").await;
     }
     Ok(Json(
         repo::platform::user(&state.db, uid)

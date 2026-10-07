@@ -32,7 +32,7 @@ FROM ${PYTHON_IMAGE} AS runtime
 LABEL org.opencontainers.image.title="nexc-engine-runtime" \
       org.opencontainers.image.description="nexc-engine Python agent runtime" \
       org.opencontainers.image.source="https://github.com/f8fvwgzc/nexc-engine" \
-      org.opencontainers.image.licenses="Apache-2.0"
+      org.opencontainers.image.licenses="MIT"
 
 RUN groupadd --system --gid 10001 nexc \
  && useradd --system --uid 10001 --gid nexc --no-create-home --home-dir /nonexistent \

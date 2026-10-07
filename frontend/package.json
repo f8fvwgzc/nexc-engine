@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "description": "nexc-engine web UI: Obsidian-like graph canvas, LLM planning and DAG runs",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "author": "nexc-engine contributors",
   "homepage": "https://github.com/f8fvwgzc/nexc-engine",
   "repository": {

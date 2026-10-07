@@ -4,6 +4,7 @@ import { ActivityCard } from '@/features/account/components/activity-card';
 import { DataCard } from '@/features/account/components/data-card';
 import { PasswordCard } from '@/features/account/components/password-card';
 import { SessionsCard } from '@/features/account/components/sessions-card';
+import { TwoFactorCard } from '@/features/account/components/two-factor-card';
 import { ProfileCard } from '@/features/settings/components/profile-card';
 
 /**
@@ -20,6 +21,7 @@ export default function ProfileSettingsPage() {
       />
       <ProfileCard />
       <PasswordCard />
+      <TwoFactorCard />
       <SessionsCard />
       <ActivityCard />
       <DataCard />

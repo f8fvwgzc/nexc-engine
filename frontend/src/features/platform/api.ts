@@ -53,6 +53,7 @@ export const platformUserSchema = z.object({
   locked: z.boolean(),
   suspended: z.boolean(),
   suspended_reason: z.string(),
+  two_factor: z.boolean(),
   created_at: timestampSchema,
 });
 export type PlatformUser = z.infer<typeof platformUserSchema>;
@@ -65,6 +66,7 @@ export const platformActionSchema = z.enum([
   'workspace_deleted',
   'account_erased',
   'password_reset_issued',
+  'two_factor_reset',
 ]);
 export type PlatformAction = z.infer<typeof platformActionSchema>;
 
@@ -123,7 +125,10 @@ export const platformEventsQuery = (page: PlatformPage) =>
 
 /** A platform role, a suspension with its reason, or lifting one. */
 export type PlatformUserChange =
-  { role: PlatformUser['role'] } | { suspended: true; reason: string } | { suspended: false };
+  | { role: PlatformUser['role'] }
+  | { suspended: true; reason: string }
+  | { suspended: false }
+  | { two_factor: false };
 
 /** Changes an account's platform role or suspends it; either ends its sessions at once. */
 export function updatePlatformUser(userId: string, change: PlatformUserChange) {

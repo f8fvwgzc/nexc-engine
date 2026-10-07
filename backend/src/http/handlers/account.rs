@@ -18,6 +18,7 @@ use crate::domain::account::{ACTIVITY_PAGE_MAX, AccountEvent, AccountEventKind};
 use crate::domain::user::{self, AuthResponse, Role, User};
 use crate::domain::validation::{FieldErrors, Validate};
 use crate::engine::account::{self, AccountExport};
+use crate::engine::two_factor::{self, Setup, TwoFactor};
 use crate::http::extract::{Caller, ClientIp, Query, ValidatedJson};
 use crate::http::middleware::rate_limit::AuthRateLimit;
 use crate::http::problem::Problem;
@@ -233,6 +234,127 @@ pub async fn sessions(
     Ok(Json(Sessions {
         active: repo::tokens::active_sessions(&state.db, auth.id).await?,
     }))
+}
+
+/// Whether the caller signs in with a second factor.
+#[utoipa::path(get, path = "/auth/2fa", tag = "auth", security(("bearer" = [])),
+    responses((status = 200, body = TwoFactor), (status = 401, body = Problem)))]
+pub async fn two_factor_status(
+    State(state): State<AppState>,
+    auth: Caller,
+) -> Result<Json<TwoFactor>, AppError> {
+    Ok(Json(two_factor::status(&state, auth.id).await?))
+}
+
+/// Starts setting up two-factor sign-in: a secret for an authenticator app,
+/// as text and as an `otpauth://` address. Nothing changes about signing in
+/// until `POST /auth/2fa/enable` proves the app has it.
+#[utoipa::path(post, path = "/auth/2fa/setup", tag = "auth", security(("bearer" = [])),
+    responses((status = 200, body = Setup), (status = 401, body = Problem),
+        (status = 409, description = "Already on", body = Problem)))]
+pub async fn two_factor_setup(
+    State(state): State<AppState>,
+    auth: Caller,
+) -> Result<Json<Setup>, AppError> {
+    let account = repo::users::find(&state.db, auth.id)
+        .await
+        .or_not_found("user")?;
+    Ok(Json(two_factor::setup(&state, &account).await?))
+}
+
+/// A code from the authenticator app.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TwoFactorCode {
+    pub code: String,
+}
+
+impl Validate for TwoFactorCode {
+    fn validate(&self, errors: &mut FieldErrors) {
+        if self.code.trim().is_empty() || self.code.len() > 64 {
+            errors.add("code", "enter the code from your authenticator app");
+        }
+    }
+}
+
+/// Recovery codes, shown once.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RecoveryCodes {
+    /// Each signs in once in place of the app's code. Only digests are kept.
+    pub recovery_codes: Vec<String>,
+}
+
+/// Turns two-factor sign-in on, once the code shows the app was set up. From
+/// then on signing in asks for the app's code after the password.
+#[utoipa::path(post, path = "/auth/2fa/enable", tag = "auth", security(("bearer" = [])), request_body = TwoFactorCode,
+    responses((status = 200, body = RecoveryCodes), (status = 401, body = Problem),
+        (status = 409, description = "Already on, or no setup in progress", body = Problem),
+        (status = 422, description = "Wrong code", body = Problem)))]
+pub async fn two_factor_enable(
+    State(state): State<AppState>,
+    auth: Caller,
+    ClientIp(ip): ClientIp,
+    ValidatedJson(req): ValidatedJson<TwoFactorCode>,
+) -> Result<Json<RecoveryCodes>, AppError> {
+    let recovery_codes = two_factor::enable(&state, auth.id, &req.code).await?;
+    account::note(
+        &state,
+        auth.id,
+        AccountEventKind::TwoFactorEnabled,
+        Some(ip),
+        "",
+    )
+    .await;
+    Ok(Json(RecoveryCodes { recovery_codes }))
+}
+
+/// `POST /auth/2fa/disable` body.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DisableTwoFactor {
+    pub password: String,
+    /// The app's current code, or a recovery code.
+    pub code: String,
+}
+
+impl Validate for DisableTwoFactor {
+    fn validate(&self, errors: &mut FieldErrors) {
+        if self.password.is_empty() || self.password.chars().count() > user::PASSWORD_MAX {
+            errors.add("password", "invalid password");
+        }
+        if self.code.trim().is_empty() || self.code.len() > 64 {
+            errors.add("code", "enter the code from your authenticator app");
+        }
+    }
+}
+
+/// Turns two-factor sign-in off; asks for the password and a code, so that
+/// a session left open is not enough to do it.
+#[utoipa::path(post, path = "/auth/2fa/disable", tag = "auth", security(("bearer" = [])), request_body = DisableTwoFactor,
+    responses((status = 204, description = "Off"), (status = 401, body = Problem),
+        (status = 422, description = "Wrong password or code", body = Problem)))]
+pub async fn two_factor_disable(
+    _limit: AuthRateLimit,
+    State(state): State<AppState>,
+    auth: Caller,
+    ClientIp(ip): ClientIp,
+    ValidatedJson(req): ValidatedJson<DisableTwoFactor>,
+) -> Result<StatusCode, AppError> {
+    confirm_password(&state, auth, ip, &req.password, "password").await?;
+    if let Err(err) = two_factor::check(&state, auth.id, Some(&req.code)).await {
+        state.limiters.record_login_failure(ip);
+        return Err(err);
+    }
+    two_factor::clear(&state, auth.id).await?;
+    account::note(
+        &state,
+        auth.id,
+        AccountEventKind::TwoFactorDisabled,
+        Some(ip),
+        "",
+    )
+    .await;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Query of `GET /auth/activity`.

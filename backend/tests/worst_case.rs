@@ -93,7 +93,15 @@ async fn send(
     token: Option<&str>,
     body: Option<String>,
 ) -> (StatusCode, Value) {
-    let mut request = Request::builder().method(method).uri(url);
+    // Each request from an address of its own: a server that trusts its proxy then limits per
+    // visitor, and a sweep is not stopped at the limit before it reaches the handlers.
+    static VISITOR: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+    let n = VISITOR.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let address = format!("10.{}.{}.{}", (n >> 16) & 255, (n >> 8) & 255, n & 255);
+    let mut request = Request::builder()
+        .method(method)
+        .uri(url)
+        .header("x-forwarded-for", address);
     if let Some(token) = token {
         request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
     }
@@ -364,7 +372,7 @@ fn hostile_bodies() -> Vec<(&'static str, String)> {
 
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
 async fn no_route_fails_on_hostile_input(pool: PgPool) {
-    let app = TestApp::new(pool.clone(), &[]).await;
+    let app = TestApp::new(pool.clone(), &[("NEXC_TRUST_PROXY", "true")]).await;
     let w = world(&app).await;
     let tokens = members(&app, &pool, &w.wid, 40).await;
     // The console's routes are swept as platform administrators, on an account made to be hit.

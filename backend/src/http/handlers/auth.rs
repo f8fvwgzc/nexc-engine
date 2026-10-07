@@ -12,7 +12,7 @@ use crate::domain::AppError;
 use crate::domain::account::AccountEventKind;
 use crate::domain::user::{self, AuthResponse, Role, User};
 use crate::domain::validation::{FieldErrors, Validate};
-use crate::engine::account;
+use crate::engine::{account, two_factor};
 use crate::http::extract::{Caller, ClientIp, ValidatedJson};
 use crate::http::middleware::rate_limit::AuthRateLimit;
 use crate::http::problem::Problem;
@@ -50,6 +50,9 @@ impl Validate for RegisterRequest {
 pub struct LoginRequest {
     pub email: String,
     pub password: String,
+    /// For an account with two-factor sign-in: the authenticator app's
+    /// current code, or a recovery code.
+    pub code: Option<String>,
 }
 
 impl Validate for LoginRequest {
@@ -190,6 +193,7 @@ pub async fn create_user(
     responses(
         (status = 200, description = "Logged in; refresh cookie set", body = AuthResponse),
         (status = 401, description = "Invalid credentials", body = Problem),
+        (status = 422, description = "The account has two-factor sign-in: `errors.code` asks for the code, or says it is wrong", body = Problem),
         (status = 429, description = "Too many failed attempts", body = Problem),
     ))]
 pub async fn login(
@@ -200,7 +204,6 @@ pub async fn login(
 ) -> Result<Response, AppError> {
     state.limiters.check_login_allowed(ip)?;
     let email = user::normalize_email(&req.email);
-    let outcome = session::login(&state.db, session_config(&state), &email, &req.password).await;
     // The account's holder sees where they signed in from, and when someone failed to.
     let failed = |detail: &'static str| {
         let (state, email) = (&state, &email);
@@ -217,23 +220,31 @@ pub async fn login(
             }
         }
     };
-    match outcome {
-        Ok(session) => {
-            let user = session.response.user.id;
-            account::note(&state, user, AccountEventKind::SignedIn, Some(ip), "").await;
-            Ok(with_session(&state, StatusCode::OK, session))
-        }
+    let user = match session::authenticate(&state.db, &email, &req.password).await {
+        Ok(user) => user,
         Err(err @ AppError::Unauthorized(_)) => {
             state.limiters.record_login_failure(ip);
             failed("").await;
-            Err(err)
+            return Err(err);
         }
         Err(err @ AppError::Forbidden(_)) => {
             failed("the account is suspended").await;
-            Err(err)
+            return Err(err);
         }
-        Err(err) => Err(err),
+        Err(err) => return Err(err),
+    };
+    // The password was right; an account with a second factor is not in yet.
+    if let Err(err) = two_factor::check(&state, user.id, req.code.as_deref()).await {
+        if req.code.as_deref().is_some_and(|c| !c.trim().is_empty()) {
+            state.limiters.record_login_failure(ip);
+            failed("wrong two-factor code").await;
+        }
+        return Err(err);
     }
+    let id = user.id;
+    let session = session::start(&state.db, session_config(&state), user).await?;
+    account::note(&state, id, AccountEventKind::SignedIn, Some(ip), "").await;
+    Ok(with_session(&state, StatusCode::OK, session))
 }
 
 /// Rotates the refresh token (cookie + `X-Requested-With: nexc`).

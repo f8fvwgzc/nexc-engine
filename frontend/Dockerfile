@@ -31,7 +31,7 @@ FROM ${NGINX_IMAGE} AS runtime
 LABEL org.opencontainers.image.title="nexc-engine-frontend" \
       org.opencontainers.image.description="nexc-engine web UI (nginx)" \
       org.opencontainers.image.source="https://github.com/f8fvwgzc/nexc-engine" \
-      org.opencontainers.image.licenses="Apache-2.0"
+      org.opencontainers.image.licenses="MIT"
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html

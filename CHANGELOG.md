@@ -166,6 +166,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   in races, capped and fast answers on a 20,000-issue workspace, and the API staying up when
   the agent runtime is down (`backend/tests/worst_case.rs`, described in
   `docs/ARCHITECTURE.md`).
+- Two-factor sign-in with an authenticator app (TOTP): set up on the Profile page, eight
+  one-time recovery codes, a code step on the sign-in page, and a platform administrator can
+  turn a lost factor off. A code works once; wrong codes count as failed sign-ins
+  (`/auth/2fa`, `/auth/2fa/setup`, `/auth/2fa/enable`, `/auth/2fa/disable`).
+- Backups: `make backup` writes the database and the files on disk to `backups/<time>`,
+  `make backup-check` restores the latest into a scratch database to prove it can be read, and
+  `make restore FROM=…` restores into an empty installation (`scripts/backup.sh`,
+  `scripts/restore.sh`; `NEXC_BACKUP_COMPOSE=1` for the Docker stack).
+- `scripts/prove-loop.py` runs real issues through plan, agents and result with the configured
+  model and reports each node's outcome, the time and the tokens.
 - Search from the command palette (⌘K): a few typed characters find issues (by title or
   identifier), projects, graphs, documents, teams and people in the open workspace, grouped by
   kind, and picking one opens it. One request, and only what the caller may see: each kind goes
@@ -219,6 +229,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   broke generating the client types; a test now checks that every reference resolves.
 
 ### Changed
+
+- The project is licensed under the MIT License instead of Apache-2.0. No dependency requires a
+  stricter licence: every one is MIT, BSD, ISC, Apache-2.0 or similar, with two npm packages
+  under MPL-2.0, which only covers changes to those packages' own files.
 
 - The platform and the workspaces are separate APIs. A platform administrator's token is refused
   (403) on every workspace route, whatever the account is a member of, and is accepted on

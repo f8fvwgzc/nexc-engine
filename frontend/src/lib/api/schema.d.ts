@@ -274,6 +274,84 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/2fa": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Whether the caller signs in with a second factor. */
+        get: operations["two_factor_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/2fa/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Turns two-factor sign-in off; asks for the password and a code, so that
+         *     a session left open is not enough to do it.
+         */
+        post: operations["two_factor_disable"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/2fa/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Turns two-factor sign-in on, once the code shows the app was set up. From
+         *     then on signing in asks for the app's code after the password.
+         */
+        post: operations["two_factor_enable"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/2fa/setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Starts setting up two-factor sign-in: a secret for an authenticator app,
+         *     as text and as an `otpauth://` address. Nothing changes about signing in
+         *     until `POST /auth/2fa/enable` proves the app has it.
+         */
+        post: operations["two_factor_setup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/activity": {
         parameters: {
             query?: never;
@@ -2055,7 +2133,7 @@ export interface components {
          * @description What an entry of an account's security activity records.
          * @enum {string}
          */
-        AccountEventKind: "registered" | "signed_in" | "sign_in_failed" | "password_changed" | "password_reset" | "reset_link_issued" | "sessions_ended" | "suspended" | "reactivated" | "role_changed";
+        AccountEventKind: "registered" | "signed_in" | "sign_in_failed" | "password_changed" | "password_reset" | "reset_link_issued" | "sessions_ended" | "suspended" | "reactivated" | "role_changed" | "two_factor_enabled" | "two_factor_disabled";
         /** @description A copy of what the installation holds about one account. */
         AccountExport: {
             account: components["schemas"]["User"];
@@ -2510,6 +2588,12 @@ export interface components {
         DeleteWorkspace: {
             /** @description The workspace's name, exactly: deleting cannot be undone. */
             confirm: string;
+        };
+        /** @description `POST /auth/2fa/disable` body. */
+        DisableTwoFactor: {
+            /** @description The app's current code, or a recovery code. */
+            code: string;
+            password: string;
         };
         /** @description An uploaded document. */
         Document: {
@@ -2971,6 +3055,11 @@ export interface components {
         LogLevel: "debug" | "info" | "warn" | "error";
         /** @description `POST /auth/login` body. */
         LoginRequest: {
+            /**
+             * @description For an account with two-factor sign-in: the authenticator app's
+             *     current code, or a recovery code.
+             */
+            code?: string | null;
             email: string;
             password: string;
         };
@@ -3283,7 +3372,7 @@ export interface components {
          * @description What a platform administrator did.
          * @enum {string}
          */
-        PlatformAction: "role_changed" | "account_suspended" | "account_reactivated" | "owner_assigned" | "workspace_deleted" | "account_erased" | "password_reset_issued";
+        PlatformAction: "role_changed" | "account_suspended" | "account_reactivated" | "owner_assigned" | "workspace_deleted" | "account_erased" | "password_reset_issued" | "two_factor_reset";
         /** @description One entry of the platform's activity log. */
         PlatformEvent: {
             action: components["schemas"]["PlatformAction"];
@@ -3336,6 +3425,8 @@ export interface components {
             /** @description Whether a platform administrator suspended the account, and why. */
             suspended: boolean;
             suspended_reason: string;
+            /** @description Whether the account signs in with a second factor. */
+            two_factor: boolean;
             /**
              * Format: int64
              * @description Workspaces the account belongs to, and how many of them it owns.
@@ -3436,6 +3527,11 @@ export interface components {
             tags: string[];
             title: string;
         };
+        /** @description Recovery codes, shown once. */
+        RecoveryCodes: {
+            /** @description Each signs in once in place of the app's code. Only digests are kept. */
+            recovery_codes: string[];
+        };
         /** @description `POST /auth/register` body. */
         RegisterRequest: {
             email: string;
@@ -3520,6 +3616,13 @@ export interface components {
         /** @description `PUT /workspaces/{wid}/teams/{tid}/members/{uid}` body. */
         SetTeamMember: {
             role?: components["schemas"]["TeamRole"] | null;
+        };
+        /** @description What an authenticator app is set up with. */
+        Setup: {
+            /** @description The secret, to type into the app when it cannot open the address. */
+            secret: string;
+            /** @description The `otpauth://` address the app adds the account from. */
+            uri: string;
         };
         /** @description One server-sent event (`data:` payload). The variant determines the SSE `event:` name. */
         SseEvent: {
@@ -3716,6 +3819,19 @@ export interface components {
             /** @description Where the data went, without credentials. */
             target: string;
         };
+        /** @description Whether an account signs in with a second factor. */
+        TwoFactor: {
+            enabled: boolean;
+            /**
+             * Format: int64
+             * @description Recovery codes that were not used yet.
+             */
+            recovery_codes_left: number;
+        };
+        /** @description A code from the authenticator app. */
+        TwoFactorCode: {
+            code: string;
+        };
         /** @description `PATCH /agents/{id}` body (any subset; `reports_to: null` detaches). */
         UpdateAgent: {
             /** Format: int64 */
@@ -3857,6 +3973,11 @@ export interface components {
             role?: components["schemas"]["Role"] | null;
             /** @description `true` stops the account from signing in and ends its sessions; `false` lifts that. */
             suspended?: boolean | null;
+            /**
+             * @description `false` turns the account's two-factor sign-in off, for someone who
+             *     lost their authenticator app and their recovery codes.
+             */
+            two_factor?: boolean | null;
         };
         /** @description `PATCH /auth/me` body. */
         UpdateProfile: {
@@ -4768,6 +4889,157 @@ export interface operations {
             };
         };
     };
+    two_factor_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TwoFactor"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    two_factor_disable: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DisableTwoFactor"];
+            };
+        };
+        responses: {
+            /** @description Off */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Wrong password or code */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    two_factor_enable: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TwoFactorCode"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecoveryCodes"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Already on, or no setup in progress */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Wrong code */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    two_factor_setup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Setup"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Already on */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     activity: {
         parameters: {
             query?: {
@@ -4822,6 +5094,15 @@ export interface operations {
             };
             /** @description Invalid credentials */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The account has two-factor sign-in: `errors.code` asks for the code, or says it is wrong */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

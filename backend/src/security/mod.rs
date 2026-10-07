@@ -8,3 +8,4 @@ pub mod password;
 pub mod random;
 pub mod secret_box;
 pub mod session;
+pub mod totp;

@@ -26,6 +26,8 @@ export type AuthResponse = z.infer<typeof authResponseSchema>;
 export const loginInputSchema = z.object({
   email: z.email({ error: 'Enter a valid email address' }),
   password: z.string().min(1, { error: 'Password is required' }),
+  /** For an account with two-factor sign-in: the app's code or a recovery code. */
+  code: z.string().optional(),
 });
 export type LoginInput = z.infer<typeof loginInputSchema>;
 

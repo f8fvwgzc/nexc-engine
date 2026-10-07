@@ -22,6 +22,7 @@ const VERB: Record<PlatformAction, string> = {
   workspace_deleted: 'deleted the workspace',
   account_erased: 'erased',
   password_reset_issued: 'issued a password reset link for',
+  two_factor_reset: 'turned off two-factor sign-in for',
 };
 
 function Entry({ event }: { event: PlatformEvent }) {

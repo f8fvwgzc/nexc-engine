@@ -14,6 +14,7 @@ BACKEND_MANIFEST := backend/Cargo.toml
 LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a;
 
 .PHONY: help init setup dev dev-backend dev-frontend dev-runtime db-up db-down db-shell \
+        backup backup-check restore \
         build test test-backend test-frontend test-runtime lint fmt check \
         docker-build docker-up docker-down docker-logs demo seed-demo \
         minikube-up minikube-down k8s-render openapi doctor clean
@@ -86,6 +87,17 @@ fmt: ## Format all code
 	cd agent-runtime && $(UV) run ruff check --fix && $(UV) run ruff format
 
 check: lint test ## lint + test (what CI runs)
+
+##@ Backups
+
+backup: ## Back up the database and the files on disk to backups/<time> (NEXC_BACKUP_COMPOSE=1 for the Docker stack)
+	scripts/backup.sh
+
+backup-check: ## Check that the latest backup restores (into a scratch database that is removed again)
+	NEXC_RESTORE_CHECK=1 scripts/restore.sh "$$(ls -d backups/*/ | tail -1)"
+
+restore: ## Restore a backup into an EMPTY installation: make restore FROM=backups/<time>
+	scripts/restore.sh $(FROM)
 
 ##@ Docker Compose
 
