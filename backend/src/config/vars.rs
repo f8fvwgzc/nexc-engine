@@ -134,6 +134,12 @@ pub const ENV_VARS: &[EnvVar] = &[
         "shared bearer secret, at least 32 characters",
     ),
     var(
+        "NEXC_AGENT_TOKEN_KEY",
+        "",
+        true,
+        "signs per-run agent tokens (backend + runtime); derived from NEXC_RUNTIME_TOKEN when unset",
+    ),
+    var(
         "NEXC_SYMPHONY_ENABLED",
         "false",
         false,

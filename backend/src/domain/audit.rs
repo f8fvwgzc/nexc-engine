@@ -32,6 +32,15 @@ string_enum!(
         PlatformOwnerAssigned => "platform_owner_assigned",
         /// A run ended and the final hash of its trace chain was recorded (subject: the run id).
         TraceSealed => "trace_sealed",
+        /// An agent's capabilities changed (subject: the agent's principal; detail: the policy version).
+        PolicyChanged => "policy_changed",
+        /// The runtime's report of an action disagreed with the policy the backend minted
+        /// for it (subject: the principal; detail: the span and the rule).
+        PolicyMismatch => "policy_mismatch",
+        AgentQuarantined => "agent_quarantined",
+        AgentReleased => "agent_released",
+        /// A document, topic or memory was given a classification (subject: what; detail: the label).
+        ClassificationChanged => "classification_changed",
     }
 );
 

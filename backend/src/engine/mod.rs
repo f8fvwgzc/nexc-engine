@@ -34,7 +34,8 @@ pub struct Engine {
     instance: Uuid,
     wake: Notify,
     active_runs: DashMap<Uuid, CancellationToken>,
-    busy_agents: DashMap<Uuid, usize>,
+    /// The nodes each agent is working on here, with what stops each of them.
+    busy_agents: DashMap<Uuid, Vec<(Uuid, CancellationToken)>>,
     deps_pending: DashSet<Uuid>,
 }
 
@@ -87,17 +88,29 @@ impl Engine {
         self.active_runs.iter().for_each(|t| t.cancel());
     }
 
-    /// Marks an agent as working on one more node.
-    pub fn agent_started(&self, agent: Uuid) {
-        *self.busy_agents.entry(agent).or_default() += 1;
+    /// Marks an agent as working on `node`; cancelling `stop` ends that work.
+    pub fn agent_started(&self, agent: Uuid, node: Uuid, stop: CancellationToken) {
+        self.busy_agents
+            .entry(agent)
+            .or_default()
+            .push((node, stop));
     }
 
-    /// Marks an agent as finished with one node.
-    pub fn agent_finished(&self, agent: Uuid) {
-        self.busy_agents.remove_if_mut(&agent, |_, n| {
-            *n -= 1;
-            *n == 0
+    /// Marks an agent as finished with `node`.
+    pub fn agent_finished(&self, agent: Uuid, node: Uuid) {
+        self.busy_agents.remove_if_mut(&agent, |_, nodes| {
+            nodes.retain(|(n, _)| *n != node);
+            nodes.is_empty()
         });
+    }
+
+    /// Stops every node an agent is working on here (it was quarantined);
+    /// returns how many.
+    pub fn quarantine_local(&self, agent: Uuid) -> usize {
+        self.busy_agents.get(&agent).map_or(0, |nodes| {
+            nodes.iter().for_each(|(_, stop)| stop.cancel());
+            nodes.len()
+        })
     }
 
     /// Agents currently executing nodes on this instance.
@@ -128,12 +141,17 @@ mod tests {
         e.unregister_run(run);
         assert!(!e.cancel_local(run));
         let agent = Uuid::now_v7();
-        e.agent_started(agent);
-        e.agent_started(agent);
-        e.agent_finished(agent);
+        let (first, second) = (Uuid::now_v7(), Uuid::now_v7());
+        let (stop_first, stop_second) = (CancellationToken::new(), CancellationToken::new());
+        e.agent_started(agent, first, stop_first.clone());
+        e.agent_started(agent, second, stop_second.clone());
+        e.agent_finished(agent, first);
         assert_eq!(e.busy_agents(), vec![agent]);
-        e.agent_finished(agent);
+        assert_eq!(e.quarantine_local(agent), 1, "the node still running stops");
+        assert!(stop_second.is_cancelled() && !stop_first.is_cancelled());
+        e.agent_finished(agent, second);
         assert!(e.busy_agents().is_empty());
+        assert_eq!(e.quarantine_local(agent), 0);
         assert!(e.mark_deps_pending(run) && !e.mark_deps_pending(run));
     }
 }

@@ -186,22 +186,33 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(artifacts::zip))
         .routes(routes!(artifacts::download))
         .routes(routes!(agents::list, agents::create))
-        .routes(routes!(agents::update, agents::delete))
+        .routes(routes!(agents::get, agents::update, agents::delete))
         .routes(routes!(agents::activity))
+        .routes(routes!(agents::quarantine))
+        .routes(routes!(agents::release))
         .routes(
             routes!(knowledge::upload)
                 .layer(DefaultBodyLimit::max(DOCUMENT_MAX_BYTES + UPLOAD_SLACK)),
         )
         .routes(routes!(knowledge::list))
-        .routes(routes!(knowledge::get, knowledge::delete))
+        .routes(routes!(
+            knowledge::get,
+            knowledge::set_label,
+            knowledge::delete
+        ))
         .routes(routes!(knowledge::search))
         .routes(routes!(knowledge::topics))
+        .routes(routes!(knowledge::set_topic_classification))
         .routes(routes!(knowledge::rebuild_topics))
         .routes(routes!(knowledge::settings, knowledge::put_settings))
         .routes(routes!(memories::list))
         .routes(routes!(memories::topics))
         .routes(routes!(memories::rebuild_topics))
-        .routes(routes!(memories::get, memories::delete))
+        .routes(routes!(
+            memories::get,
+            memories::set_label,
+            memories::delete
+        ))
         .routes(routes!(orchestrator::status))
         .routes(routes!(realtime::ticket))
         .routes(routes!(realtime::events))
@@ -238,6 +249,8 @@ mod tests {
             "/api/v1/runs/{rid}/trace",
             "/api/v1/runs/{rid}/trace/verify",
             "/api/v1/agents/{id}/activity",
+            "/api/v1/agents/{id}/quarantine",
+            "/api/v1/agents/{id}/release",
             "/metrics",
         ] {
             assert!(paths.contains_key(p), "missing {p}");
@@ -286,8 +299,8 @@ mod tests {
     #[test]
     fn spec_enum_values_match_the_wire_format() {
         use crate::domain::{
-            account, agent, audit, cycle, graph, insight, issue, knowledge, memory, plan, platform,
-            run, search, settings, trace, usage, user, workspace,
+            account, agent, audit, capabilities, cycle, graph, insight, issue, knowledge, memory,
+            plan, platform, run, search, settings, trace, usage, user, workspace,
         };
         use serde_json::Value;
 
@@ -339,10 +352,11 @@ mod tests {
                 "AccountEventKind" => check::<account::AccountEventKind>(values),
                 "SpanKind" => check::<trace::SpanKind>(values),
                 "SpanStatus" => check::<trace::SpanStatus>(values),
+                "DataLabel" => check::<capabilities::DataLabel>(values),
                 _ => continue,
             }
             checked += 1;
         }
-        assert_eq!(checked, 31, "every string enum schema is covered");
+        assert_eq!(checked, 32, "every string enum schema is covered");
     }
 }

@@ -8,13 +8,16 @@ pub mod symphony;
 
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
-use serde_json::json;
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::agent::{Agent, FALLBACK_SYSTEM_PROMPT};
+use crate::domain::audit::AuditAction;
+use crate::domain::capabilities::Capabilities;
 use crate::domain::graph::{Executor, GraphNode};
 use crate::domain::ontology::NodeType;
+use crate::domain::policy::{self, Action, Decision};
 use crate::domain::prompt::UpstreamOutput;
 use crate::domain::run::Artifact;
 use crate::domain::settings::LlmProviderKind;
@@ -22,12 +25,18 @@ use crate::domain::trace::{SYSTEM_PRINCIPAL, SpanDraft, SpanKind, SpanStatus};
 use crate::engine::trace::TraceHandle;
 use crate::llm::{LlmError, LlmTarget};
 use crate::realtime::events::{LogLevel, SseEvent};
+use crate::repo;
+use crate::repo::audit::Subject;
 
 /// Everything an executor needs to run one node attempt.
 pub struct ExecContext {
     pub state: AppState,
     pub run_id: Uuid,
     pub graph_id: Uuid,
+    /// The workspace the graph belongs to (policy mismatches are audited there).
+    pub workspace_id: Option<Uuid>,
+    /// Who started the run.
+    pub owner: Uuid,
     pub goal: String,
     pub node: GraphNode,
     /// The node's type in the graph's ontology (absent if the type was removed).
@@ -39,6 +48,11 @@ pub struct ExecContext {
     /// Passages of the workspace's documents, each headed by its citation.
     pub documents: Vec<String>,
     pub agent: Option<Agent>,
+    /// What the node's agent may do: its capabilities, or the unrestricted
+    /// policy for a node without one. The per-run token carries a copy.
+    pub capabilities: Capabilities,
+    /// The agent's policy version the token records.
+    pub policy_version: i32,
     pub target: LlmTarget,
     /// When true, cached LLM responses must not be reused.
     pub force: bool,
@@ -47,11 +61,85 @@ pub struct ExecContext {
 }
 
 impl ExecContext {
-    /// Who this node's actions are attributed to: its agent, or the system.
+    /// Who this node's actions are attributed to: its agent's principal
+    /// (`agent://{workspace}/{name}`), or the system.
     pub fn principal(&self) -> String {
         self.agent
             .as_ref()
-            .map_or_else(|| SYSTEM_PRINCIPAL.to_owned(), |a| a.name.clone())
+            .map_or_else(|| SYSTEM_PRINCIPAL.to_owned(), |a| a.principal_id.clone())
+    }
+
+    /// Decides `action` under the node's capabilities (in-process, microseconds).
+    pub fn decide(&self, action: &Action<'_>) -> Decision {
+        policy::decide(&self.capabilities, action)
+    }
+
+    /// Records a policy decision about `subject` as a `policy` span, with
+    /// status `error` for a denial; `extra` adds attributes. Returns its id.
+    pub fn policy_span(&self, subject: &str, decision: &Decision, extra: Value) -> Uuid {
+        let now = Utc::now();
+        let mut span = self.draft(SpanKind::Policy, subject, now);
+        span.ended_at = Some(now);
+        span.status = if decision.allowed {
+            SpanStatus::Ok
+        } else {
+            SpanStatus::Error
+        };
+        let mut attributes = json!({
+            "decision": decision.verdict(),
+            "rule": decision.rule,
+            "reason": decision.reason,
+            "policy_version": self.policy_version,
+        });
+        if let (Value::Object(into), Value::Object(from)) = (&mut attributes, extra) {
+            into.extend(from);
+        }
+        span.attributes = attributes;
+        let id = span.id;
+        self.record(span);
+        id
+    }
+
+    /// The runtime reported something the policy minted for this node does
+    /// not allow: on the record as a `policy` span, counted on the run, and
+    /// in the workspace's audit log as `policy_mismatch`.
+    pub async fn policy_mismatch(&self, span_id: Uuid, rule: &'static str, detail: String) {
+        let principal = self.principal();
+        self.log(
+            LogLevel::Warn,
+            format!("policy mismatch ({rule}): {detail}"),
+        );
+        self.policy_span(
+            "policy_mismatch",
+            &Decision {
+                allowed: false,
+                rule,
+                reason: detail.clone(),
+            },
+            json!({
+                "decision": "mismatch",
+                "action": "recheck",
+                "span_id": span_id,
+                "principal": principal,
+            }),
+        );
+        self.state.metrics.policy_mismatches.add(1);
+        if let Err(err) = repo::runs::add_policy_mismatch(&self.state.db, self.run_id).await {
+            tracing::error!(run_id = %self.run_id, error = %err, "policy mismatch not counted on the run");
+        }
+        if let Some(workspace) = self.workspace_id
+            && let Err(err) = repo::audit::record(
+                &self.state.db,
+                workspace,
+                self.owner,
+                AuditAction::PolicyMismatch,
+                Subject::Text(&principal),
+                &format!("run {} span {span_id}: {detail} ({rule})", self.run_id),
+            )
+            .await
+        {
+            tracing::error!(run_id = %self.run_id, error = %err, "policy mismatch not audited");
+        }
     }
 
     /// A span of this node that started at `started_at`, with a fresh id, no

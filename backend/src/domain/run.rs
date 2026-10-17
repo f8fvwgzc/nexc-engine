@@ -70,6 +70,9 @@ pub struct Run {
     /// while it runs or when nothing was traced (`GET /runs/{id}/trace/verify`).
     #[schema(required = true)]
     pub trace_hash: Option<String>,
+    /// Actions the runtime reported that the policy minted for the run did
+    /// not allow (each one is a `policy_mismatch` audit entry and a `policy` span).
+    pub policy_mismatches: i32,
     pub node_runs: Vec<NodeRun>,
 }
 

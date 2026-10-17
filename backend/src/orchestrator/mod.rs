@@ -10,6 +10,7 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::agent::{Agent, AgentStatus, DEFAULT_ORG};
+use crate::domain::capabilities::Capabilities;
 use crate::domain::graph::GraphNode;
 use crate::domain::ontology::Ontology;
 use crate::domain::status::{Backends, OrchestratorStatus};
@@ -37,6 +38,10 @@ pub async fn seed_default_org(
             budget_tokens: seed.budget_tokens,
             runtime: seed.runtime,
             status: AgentStatus::Active,
+            owner_user_id: Some(owner),
+            team_id: None,
+            purpose: seed.purpose.into(),
+            capabilities: Capabilities::default(),
         };
         let agent = repo::agents::create(&mut *conn, owner, workspace, &fields).await?;
         ids.insert(seed.role, agent.id);

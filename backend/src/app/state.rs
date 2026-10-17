@@ -17,6 +17,7 @@ use crate::memory::index::MemoryIndex;
 use crate::observability::metrics::Metrics;
 use crate::orchestrator::health::HealthCache;
 use crate::realtime::hub::Hub;
+use crate::security::agent_token::AgentTokenKeys;
 use crate::security::gate::SessionGate;
 use crate::security::jwt::JwtKeys;
 use crate::security::secret_box::SecretBox;
@@ -28,6 +29,8 @@ pub struct AppState {
     pub db: PgPool,
     pub http: reqwest::Client,
     pub jwt: Arc<JwtKeys>,
+    /// Signs the per-run tokens the agent runtime verifies.
+    pub agent_tokens: Arc<AgentTokenKeys>,
     pub secret_box: Arc<SecretBox>,
     pub hub: Arc<Hub>,
     pub llm: Arc<LlmService>,
@@ -74,6 +77,7 @@ impl AppState {
                 settings.jwt_secret.expose(),
                 settings.access_ttl,
             )),
+            agent_tokens: Arc::new(AgentTokenKeys::new(settings.agent_token_key.expose())),
             secret_box: Arc::new(SecretBox::new(settings.master_key.expose())),
             llm: Arc::new(LlmService::new(provider, metrics.clone())),
             limiters: Arc::new(RateLimiters::default()),

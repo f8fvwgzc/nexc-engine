@@ -5,6 +5,7 @@ use sqlx::{FromRow, PgExecutor, Row};
 use uuid::Uuid;
 
 use super::enum_col;
+use crate::domain::capabilities::DataLabel;
 use crate::domain::memory::{Memory, MemoryKind, MemoryScope};
 use crate::kernel::{self, Embedding};
 
@@ -39,11 +40,26 @@ impl FromRow<'_, PgRow> for StoredMemory {
                 topic_id: row.try_get("topic_id")?,
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
+                label: enum_col(row, "label")?,
             },
             owner_id: row.try_get("owner_id")?,
             embedding,
         })
     }
+}
+
+/// Sets a memory's classification; false when the memory is unknown.
+pub async fn set_label(
+    db: impl PgExecutor<'_>,
+    id: Uuid,
+    label: DataLabel,
+) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query("UPDATE memories SET label = $2, updated_at = now() WHERE id = $1")
+        .bind(id)
+        .bind(label.as_str())
+        .execute(db)
+        .await?;
+    Ok(done.rows_affected() == 1)
 }
 
 /// A memory to insert.

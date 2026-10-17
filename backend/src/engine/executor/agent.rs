@@ -13,9 +13,11 @@ use uuid::Uuid;
 
 use super::super::artifacts::MAX_ARTIFACT_BYTES;
 use super::{ExecContext, ExecError, ExecOutput, NodeExecutor};
+use crate::domain::policy::Action;
 use crate::domain::prompt::UpstreamOutput;
 use crate::domain::trace::{self, SPAN_LINE_MAX_BYTES, SpanDraft, SpanKind, SpanStatus};
 use crate::realtime::events::LogLevel;
+use crate::security::agent_token::{AgentGrant, EXPIRY_SLACK};
 
 /// Longest NDJSON line accepted (a base64 artifact of 20 MiB plus envelope).
 const MAX_LINE_BYTES: usize = MAX_ARTIFACT_BYTES / 3 * 4 + 64 * 1024;
@@ -101,6 +103,8 @@ struct Progress {
     ids: HashMap<Uuid, Uuid>,
     /// When the attempt began (span ids must come from about then).
     began: DateTime<Utc>,
+    /// Sub-agents each principal has spawned so far (the fan-out re-check).
+    spawns: HashMap<String, u8>,
 }
 
 impl Progress {
@@ -110,12 +114,26 @@ impl Progress {
             spans: 0,
             ids: HashMap::new(),
             began: Utc::now(),
+            spawns: HashMap::new(),
         }
     }
 }
 
 /// Kinds of span the runtime may report; the others are the backend's to record.
-const RUNTIME_KINDS: [SpanKind; 3] = [SpanKind::LlmCall, SpanKind::ToolCall, SpanKind::Spawn];
+const RUNTIME_KINDS: [SpanKind; 4] = [
+    SpanKind::LlmCall,
+    SpanKind::ToolCall,
+    SpanKind::Spawn,
+    SpanKind::Policy,
+];
+
+/// Whether `reported` is `principal` itself or a sub-agent of it (`{principal}/...`).
+fn is_principal_or_descendant(reported: &str, principal: &str) -> bool {
+    reported == principal
+        || reported
+            .strip_prefix(principal)
+            .is_some_and(|rest| rest.starts_with('/') && rest.len() > 1)
+}
 
 /// Whether a runtime-chosen id is a UUID v7 from about the time of the attempt.
 fn plausible_id(id: Uuid, began: DateTime<Utc>, now: DateTime<Utc>) -> bool {
@@ -180,11 +198,22 @@ fn span_from_wire(
         progress.ids.entry(original).or_insert(id);
     }
     let parent_id = uuid("parent_id").map(|p| progress.ids.get(&p).copied().unwrap_or(p));
+    // The acting principal is the token's, or a sub-agent named under it; anything else
+    // is attributed to the token's principal and flagged by the re-check.
+    let reported = trace::clean_principal(text("agent").unwrap_or(principal));
+    let principal = if is_principal_or_descendant(&reported, principal) {
+        reported
+    } else {
+        if let Value::Object(map) = &mut attributes {
+            map.insert("reported_principal".into(), json!(reported));
+        }
+        principal.to_owned()
+    };
     Ok(SpanDraft {
         id,
         node_id,
         agent_id,
-        principal: trace::clean_principal(text("agent").unwrap_or(principal)),
+        principal,
         parent_id,
         kind,
         name: trace::clean_name(text("name").unwrap_or(kind.as_str())),
@@ -217,16 +246,37 @@ fn context(
     })
 }
 
-fn request_body(ctx: &ExecContext) -> serde_json::Value {
+/// The per-run token: the principal, the run and node, the capabilities
+/// snapshot and the policy version, valid for the node's timeout plus slack.
+fn mint_token(ctx: &ExecContext) -> Result<String, ExecError> {
+    let principal = ctx.principal();
+    let grant = AgentGrant {
+        principal: &principal,
+        run_id: ctx.run_id,
+        node_id: ctx.node.id,
+        agent_id: ctx.agent.as_ref().map(|a| a.id),
+        workspace_id: ctx.workspace_id,
+        policy_version: ctx.policy_version,
+        capabilities: &ctx.capabilities,
+    };
+    ctx.state
+        .agent_tokens
+        .issue(&grant, ctx.state.settings.node_timeout + EXPIRY_SLACK)
+        .map_err(|e| ExecError::fatal(format!("cannot mint the agent token: {e}")))
+}
+
+fn request_body(ctx: &ExecContext, token: &str) -> serde_json::Value {
     let target = ctx.agent_target();
     let agent = ctx.agent.as_ref();
     let settings = &ctx.state.settings;
     json!({
         "run_id": ctx.run_id,
         "node_id": ctx.node.id,
+        "token": token,
         "agent": {
             "name": agent.map_or("assistant", |a| a.name.as_str()),
             "role": agent.map_or("assistant", |a| a.role.as_str()),
+            "principal": ctx.principal(),
             "system_prompt": ctx.system_prompt(),
             "model": target.model,
             "budget_tokens": agent.map_or(0, |a| (a.budget_tokens - a.spent_tokens).max(0)),
@@ -257,12 +307,13 @@ fn request_body(ctx: &ExecContext) -> serde_json::Value {
 async fn run(ctx: &ExecContext) -> Result<ExecOutput, ExecError> {
     let settings = &ctx.state.settings;
     let url = format!("{}/v1/execute", settings.runtime_url.trim_end_matches('/'));
+    let token = mint_token(ctx)?;
     let resp = ctx
         .state
         .http
         .post(&url)
         .bearer_auth(settings.runtime_token.expose())
-        .json(&request_body(ctx))
+        .json(&request_body(ctx, &token))
         .send()
         .await
         .map_err(|e| {
@@ -398,7 +449,12 @@ async fn handle_line(
             ) {
                 Ok(span) => {
                     progress.spans += 1;
+                    let mismatch = recheck(ctx, progress, &span);
+                    let span_id = span.id;
                     ctx.record(span);
+                    if let Some((rule, detail)) = mismatch {
+                        ctx.policy_mismatch(span_id, rule, detail).await;
+                    }
                 }
                 Err(warning) => ctx.log(LogLevel::Warn, warning),
             }
@@ -406,6 +462,92 @@ async fn handle_line(
         RuntimeLine::Unknown => {}
     }
     Ok(None)
+}
+
+/// Re-evaluates what the runtime reported against the capabilities the
+/// backend minted for the node: the rule and the detail of a disagreement.
+fn recheck(
+    ctx: &ExecContext,
+    progress: &mut Progress,
+    span: &SpanDraft,
+) -> Option<(&'static str, String)> {
+    let attrs = &span.attributes;
+    let text = |key: &str| attrs.get(key).and_then(Value::as_str);
+    let small = |key: &str| {
+        attrs
+            .get(key)
+            .and_then(Value::as_u64)
+            .map(|n| n.min(255) as u8)
+    };
+    if let Some(reported) = text("reported_principal") {
+        return Some((
+            "principal",
+            format!(
+                "the runtime acted as `{reported}`, which is not {} or a sub-agent of it",
+                ctx.principal()
+            ),
+        ));
+    }
+    let denied = |action: Action<'_>, what: String| {
+        let decision = ctx.decide(&action);
+        (!decision.allowed).then(|| (decision.rule, format!("{what}; {}", decision.reason)))
+    };
+    match span.kind {
+        SpanKind::ToolCall => {
+            let tool = text("tool").unwrap_or(&span.name);
+            denied(Action::Tool(tool), format!("the runtime ran tool {tool}"))
+        }
+        SpanKind::Spawn => {
+            let role = text("role").unwrap_or_default();
+            let depth = small("depth").unwrap_or(1);
+            let children = progress.spawns.entry(span.principal.clone()).or_default();
+            let action = Action::Spawn {
+                role,
+                depth,
+                children: *children,
+            };
+            *children = children.saturating_add(1);
+            denied(
+                action,
+                format!("the runtime spawned a {role} sub-agent at depth {depth}"),
+            )
+        }
+        SpanKind::LlmCall => text("model").and_then(|model| {
+            denied(
+                Action::Model(model),
+                format!("the runtime called model {model}"),
+            )
+        }),
+        SpanKind::Policy => {
+            // The runtime's own decision must be the one the backend would take.
+            let subject = text("subject").unwrap_or(&span.name);
+            let action = match text("action") {
+                Some("tool_call") => Action::Tool(subject),
+                Some("spawn") => Action::Spawn {
+                    role: subject,
+                    depth: small("depth").unwrap_or(1),
+                    children: small("children").unwrap_or(0),
+                },
+                Some("model") => Action::Model(subject),
+                Some("egress") => Action::Egress(subject),
+                _ => return None,
+            };
+            let ours = ctx.decide(&action);
+            let theirs = text("decision").unwrap_or("deny");
+            (ours.verdict() != theirs).then(|| {
+                (
+                    ours.rule,
+                    format!(
+                        "the runtime decided `{theirs}` on {} {subject}; the policy says `{}` ({})",
+                        action.kind(),
+                        ours.verdict(),
+                        ours.reason
+                    ),
+                )
+            })
+        }
+        SpanKind::DataRead | SpanKind::Egress | SpanKind::Approval => None,
+    }
 }
 
 fn parse_level(level: &str) -> LogLevel {
@@ -459,16 +601,16 @@ mod tests {
         let turn = Uuid::now_v7();
         let wire = |v: Value| v.as_object().unwrap().clone();
         let first = span_from_wire(
-            &wire(json!({"id": turn.to_string(), "kind": "llm_call", "name": "m", "agent": "writer",
+            &wire(json!({"id": turn.to_string(), "kind": "llm_call", "name": "m", "agent": "agent://ws/writer",
                 "started_at": "2026-10-17T12:00:00.123456789Z", "status": "ok", "attributes": {"tokens_in": 3}})),
-            node, agent, "system", 100, &mut progress,
+            node, agent, "agent://ws/writer", 100, &mut progress,
         )
         .unwrap();
         assert_eq!(
             (first.id, first.node_id, first.agent_id),
             (turn, node, agent)
         );
-        assert_eq!(first.principal, "writer");
+        assert_eq!(first.principal, "agent://ws/writer");
         assert_eq!(first.attributes["tokens_in"], 3);
         // A repeated id, a foreign one and garbage all get fresh ids; children follow the first.
         let again = span_from_wire(
@@ -512,7 +654,7 @@ mod tests {
             Some(old.id),
             "a parent's replaced id is followed"
         );
-        for kind in ["teleport", "policy", "approval", "data_read", ""] {
+        for kind in ["teleport", "approval", "data_read", ""] {
             let refused = span_from_wire(
                 &wire(json!({"kind": kind})),
                 node,
@@ -534,6 +676,69 @@ mod tests {
         .unwrap();
         assert_eq!(big.attributes["attributes_dropped"], true);
         assert!(big.attributes.get("x").is_none());
+    }
+
+    #[test]
+    fn spans_are_attributed_to_the_tokens_principal_or_its_sub_agents() {
+        let principal = "agent://ws/Writer";
+        assert!(is_principal_or_descendant(principal, principal));
+        assert!(is_principal_or_descendant(
+            "agent://ws/Writer/researcher-1",
+            principal
+        ));
+        assert!(!is_principal_or_descendant("agent://ws/Writer/", principal));
+        assert!(!is_principal_or_descendant("agent://ws/Writers", principal));
+        assert!(!is_principal_or_descendant(
+            "agent://other/Writer",
+            principal
+        ));
+        let (node, mut progress) = (Uuid::now_v7(), Progress::new());
+        let wire = |v: Value| v.as_object().unwrap().clone();
+        let child = span_from_wire(
+            &wire(json!({"kind": "llm_call", "agent": "agent://ws/Writer/researcher-1"})),
+            node,
+            None,
+            principal,
+            100,
+            &mut progress,
+        )
+        .unwrap();
+        assert_eq!(child.principal, "agent://ws/Writer/researcher-1");
+        assert!(child.attributes.get("reported_principal").is_none());
+        let intruder = span_from_wire(
+            &wire(json!({"kind": "tool_call", "name": "write_file", "agent": "agent://ws/Admin"})),
+            node,
+            None,
+            principal,
+            100,
+            &mut progress,
+        )
+        .unwrap();
+        assert_eq!(
+            intruder.principal, principal,
+            "attributed to the token's principal"
+        );
+        assert_eq!(
+            intruder.attributes["reported_principal"],
+            "agent://ws/Admin"
+        );
+        let policy = span_from_wire(
+            &wire(
+                json!({"kind": "policy", "name": "make_docx", "agent": principal,
+                "attributes": {"decision": "deny", "rule": "tools.allow"}}),
+            ),
+            node,
+            None,
+            principal,
+            100,
+            &mut progress,
+        )
+        .unwrap();
+        assert_eq!(
+            policy.kind,
+            SpanKind::Policy,
+            "the runtime reports its denials"
+        );
     }
 
     #[test]

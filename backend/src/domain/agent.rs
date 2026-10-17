@@ -5,7 +5,9 @@ use serde::Serialize;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use super::capabilities::Capabilities;
 use super::string_enum;
+use super::trace::Span;
 
 /// Maximum agent name length.
 pub const AGENT_NAME_MAX: usize = 64;
@@ -13,6 +15,10 @@ pub const AGENT_NAME_MAX: usize = 64;
 pub const AGENT_TITLE_MAX: usize = 120;
 /// Maximum system prompt length.
 pub const SYSTEM_PROMPT_MAX: usize = 16 * 1024;
+/// Maximum purpose length.
+pub const PURPOSE_MAX: usize = 2_000;
+/// Spans on an agent's card.
+pub const CARD_SPANS: i64 = 20;
 
 string_enum!(
     /// Whether an agent accepts work.
@@ -20,6 +26,8 @@ string_enum!(
         Active => "active",
         Paused => "paused",
         OverBudget => "over_budget",
+        /// Taken out of service by an admin: running nodes were cancelled, new ones are refused.
+        Quarantined => "quarantined",
     }
 );
 
@@ -35,6 +43,8 @@ string_enum!(
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Agent {
     pub id: Uuid,
+    /// The agent's identity across runs and spans: `agent://{workspace}/{name}`.
+    pub principal_id: String,
     pub name: String,
     pub role: String,
     pub title: String,
@@ -49,6 +59,20 @@ pub struct Agent {
     #[schema(required = true)]
     pub heartbeat_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    /// The person answerable for the agent; `null` once their account is gone.
+    #[schema(required = true)]
+    pub owner_user_id: Option<Uuid>,
+    #[schema(required = true)]
+    pub team_id: Option<Uuid>,
+    /// What the agent is for, in a paragraph.
+    pub purpose: String,
+    pub capabilities: Capabilities,
+    /// Raised with every change to the capabilities, quarantine and release;
+    /// the token of every run records the version that governed it.
+    pub policy_version: i32,
+    /// When the agent was quarantined; `null` unless it is.
+    #[schema(required = true)]
+    pub quarantined_at: Option<DateTime<Utc>>,
 }
 
 impl Agent {
@@ -56,6 +80,50 @@ impl Agent {
     pub fn is_over_budget(&self) -> bool {
         self.budget_tokens > 0 && self.spent_tokens >= self.budget_tokens
     }
+
+    /// Tokens left before the budget is reached; `None` without a budget.
+    pub fn budget_left(&self) -> Option<i64> {
+        (self.budget_tokens > 0).then(|| (self.budget_tokens - self.spent_tokens).max(0))
+    }
+}
+
+/// `agent://{workspace}/{name}`; an agent no workspace adopted is named after its creator.
+pub fn principal_id(workspace: Option<Uuid>, owner: Uuid, name: &str) -> String {
+    match workspace {
+        Some(workspace) => format!("agent://{workspace}/{name}"),
+        None => format!("agent://user-{owner}/{name}"),
+    }
+}
+
+/// Who is answerable for an agent, as shown on its card.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AgentOwner {
+    pub id: Uuid,
+    pub name: String,
+}
+
+/// The team an agent belongs to, as shown on its card.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AgentTeam {
+    pub id: Uuid,
+    pub name: String,
+    pub key: String,
+}
+
+/// The agent's ID card: the agent, who answers for it, its team, what it
+/// has left to spend and what it did last.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AgentCard {
+    pub agent: Agent,
+    #[schema(required = true)]
+    pub owner: Option<AgentOwner>,
+    #[schema(required = true)]
+    pub team: Option<AgentTeam>,
+    /// Tokens left before the budget is reached; `null` without a budget.
+    #[schema(required = true)]
+    pub budget_left: Option<i64>,
+    /// The agent's last spans across the runs the caller may open, newest first.
+    pub recent_spans: Vec<Span>,
 }
 
 /// Template for one agent of the default organisation.
@@ -69,6 +137,8 @@ pub struct AgentSeed {
     /// Role of the manager, `None` for the head of the organisation.
     pub reports_to: Option<&'static str>,
     pub system_prompt: &'static str,
+    /// What the agent is for, on its card.
+    pub purpose: &'static str,
 }
 
 /// The organisation every new user starts with.
@@ -82,6 +152,7 @@ pub const DEFAULT_ORG: [AgentSeed; 5] = [
         reports_to: None,
         system_prompt: "You are the chief planner of a small expert team. Break goals into clear, \
             verifiable steps, name assumptions explicitly and keep every step actionable.",
+        purpose: "Plans the work: turns a goal into a graph of verifiable steps.",
     },
     AgentSeed {
         name: "Researcher",
@@ -92,6 +163,7 @@ pub const DEFAULT_ORG: [AgentSeed; 5] = [
         reports_to: Some("planner"),
         system_prompt: "You are a meticulous researcher. Gather facts, compare sources, separate \
             evidence from opinion and summarise findings with their confidence.",
+        purpose: "Gathers and weighs evidence for the other agents to build on.",
     },
     AgentSeed {
         name: "Writer",
@@ -102,6 +174,7 @@ pub const DEFAULT_ORG: [AgentSeed; 5] = [
         reports_to: Some("planner"),
         system_prompt: "You are a precise technical writer. Produce well-structured Markdown with \
             headings, short paragraphs and concrete examples. Build on the upstream results.",
+        purpose: "Writes the deliverables from the upstream results.",
     },
     AgentSeed {
         name: "Engineer",
@@ -112,6 +185,7 @@ pub const DEFAULT_ORG: [AgentSeed; 5] = [
         reports_to: Some("planner"),
         system_prompt: "You are a pragmatic senior engineer. Prefer simple, tested, secure \
             solutions and explain trade-offs briefly.",
+        purpose: "Builds and checks the technical parts of a plan.",
     },
     AgentSeed {
         name: "Reviewer",
@@ -122,6 +196,7 @@ pub const DEFAULT_ORG: [AgentSeed; 5] = [
         reports_to: Some("planner"),
         system_prompt: "You are a demanding reviewer. Check the work against the goal, list \
             concrete problems by severity and propose fixes.",
+        purpose: "Reviews the work against the goal before it ships.",
     },
 ];
 
@@ -158,6 +233,19 @@ mod tests {
                 assert!(roles.contains(&m));
             }
         }
+    }
+
+    #[test]
+    fn principals_name_the_workspace_and_the_agent() {
+        let (ws, owner) = (Uuid::now_v7(), Uuid::now_v7());
+        assert_eq!(
+            principal_id(Some(ws), owner, "Researcher"),
+            format!("agent://{ws}/Researcher")
+        );
+        assert_eq!(
+            principal_id(None, owner, "Researcher"),
+            format!("agent://user-{owner}/Researcher")
+        );
     }
 
     #[test]

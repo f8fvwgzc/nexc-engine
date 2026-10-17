@@ -202,12 +202,16 @@ pub async fn nearest(
             .await?;
     }
     let sql = format!(
-        "SELECT c.id, c.document_id, d.name AS document_name, c.page, c.section_path, c.kind,
-                c.content, c.embedding, c.embedding_model, c.topic_id
-         FROM document_chunks c JOIN documents d ON d.id = c.document_id
+        concat!(
+            "SELECT ",
+            super::knowledge::candidate_columns!(),
+            " FROM document_chunks c JOIN documents d ON d.id = c.document_id
+         LEFT JOIN knowledge_topics t ON t.id = c.topic_id
          WHERE c.workspace_id = $1 AND d.status = 'ready' AND c.embedding_model = $2
            AND vector_dims(c.embedding_vec) = {dims}
          ORDER BY c.embedding_vec::vector({dims}) <=> $3::vector({dims}) LIMIT $4"
+        ),
+        dims = dims
     );
     let rows = sqlx::query_as(AssertSqlSafe(sql))
         .bind(workspace_id)

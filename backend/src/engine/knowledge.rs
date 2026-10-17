@@ -18,6 +18,7 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::config::Secret;
+use crate::domain::capabilities::DataLabel;
 use crate::domain::knowledge::{
     BUILTIN_EMBED_MODEL, Block, BlockKind, Chunk, Document, DocumentStatus, KnowledgeSettings,
     Parsed, Passage, Topic, chunk,
@@ -461,6 +462,8 @@ pub fn fuse(
             kind: c.kind,
             content: c.content,
             topic_id: c.topic_id,
+            label: c.label,
+            topic_label: c.topic_label,
             score: (score * 1000.0).round() / 1000.0,
         })
         .collect()
@@ -568,6 +571,7 @@ pub async fn topics(state: &AppState, workspace: Uuid) -> anyhow::Result<Vec<Top
             label: t.label,
             terms: t.terms,
             chunk_count: t.chunk_count,
+            classification: t.classification.parse().unwrap_or(DataLabel::Internal),
         })
         .collect())
 }
@@ -696,8 +700,21 @@ pub async fn context(
     context_passages(state, workspace, user, query, purpose)
         .await
         .into_iter()
-        .map(|(_, text)| text)
+        .map(|p| p.text)
         .collect()
+}
+
+/// A passage ready to be put before a model, with what the trace and the
+/// policy need to know about it.
+#[derive(Debug, Clone)]
+pub struct ContextPassage {
+    pub chunk_id: Uuid,
+    pub document_id: Uuid,
+    pub topic_id: Option<Uuid>,
+    /// The stricter of the document's and the topic's classification.
+    pub label: DataLabel,
+    /// The passage headed by its citation.
+    pub text: String,
 }
 
 /// The passages to put before a model for `query`, each with its chunk id
@@ -711,7 +728,7 @@ pub async fn context_passages(
     user: Uuid,
     query: &str,
     purpose: Use,
-) -> Vec<(Uuid, String)> {
+) -> Vec<ContextPassage> {
     let resolved = match settings(state, workspace).await {
         Ok(resolved) => resolved,
         Err(err) => {
@@ -742,10 +759,13 @@ pub async fn context_passages(
         }
         let content: String = passage.content.chars().take(left).collect();
         left = left.saturating_sub(content.chars().count());
-        out.push((
-            passage.chunk_id,
-            format!("[{}]\n{}", passage.citation(), content),
-        ));
+        out.push(ContextPassage {
+            chunk_id: passage.chunk_id,
+            document_id: passage.document_id,
+            topic_id: passage.topic_id,
+            label: passage.effective_label(),
+            text: format!("[{}]\n{}", passage.citation(), content),
+        });
     }
     out
 }
@@ -772,6 +792,8 @@ mod tests {
             embedding: vector.map(embeddings::to_bytes),
             embedding_model: Some(model.into()),
             topic_id: None,
+            label: DataLabel::Internal,
+            topic_label: None,
         }
     }
 

@@ -59,6 +59,9 @@ pub struct Settings {
     pub claude_bin: String,
     pub runtime_url: String,
     pub runtime_token: Secret<String>,
+    /// Signs the per-run agent tokens the runtime verifies: `NEXC_AGENT_TOKEN_KEY`,
+    /// or derived from the runtime token when it is unset.
+    pub agent_token_key: Secret<Vec<u8>>,
     pub symphony_enabled: bool,
     pub symphony_url: String,
     pub symphony_workflow: PathBuf,
@@ -138,6 +141,7 @@ impl Settings {
             embed_dims: r.optional("NEXC_EMBED_DIMS").and_then(|d| d.parse().ok()),
             claude_bin: r.string("NEXC_CLAUDE_BIN", "claude"),
             runtime_url: r.string("NEXC_RUNTIME_URL", "http://localhost:8090"),
+            agent_token_key: Secret::new(r.agent_token_key(prod)),
             runtime_token: Secret::new(r.runtime_token(prod)),
             symphony_enabled: r.parse("NEXC_SYMPHONY_ENABLED", false),
             symphony_url: r.string("NEXC_SYMPHONY_URL", "http://localhost:4000"),
@@ -326,6 +330,29 @@ impl Reader<'_> {
                 .push("NEXC_RUNTIME_TOKEN looks weak; generate one with `nexc init`".into());
         }
         token
+    }
+
+    /// The agent token key: `NEXC_AGENT_TOKEN_KEY` when set (≥ 32 characters),
+    /// else derived from `NEXC_RUNTIME_TOKEN`, which the runtime also holds.
+    fn agent_token_key(&mut self, prod: bool) -> Vec<u8> {
+        match self.optional("NEXC_AGENT_TOKEN_KEY") {
+            Some(key) => {
+                if key.chars().count() < 32 {
+                    self.errors
+                        .push("NEXC_AGENT_TOKEN_KEY must be at least 32 characters".into());
+                } else if prod && is_weak(&key) {
+                    self.errors.push(
+                        "NEXC_AGENT_TOKEN_KEY looks weak; generate one with `openssl rand -hex 32`"
+                            .into(),
+                    );
+                }
+                key.into_bytes()
+            }
+            None => {
+                let runtime_token = (self.lookup)("NEXC_RUNTIME_TOKEN").unwrap_or_default();
+                crate::security::agent_token::derive_key(&runtime_token).to_vec()
+            }
+        }
     }
 
     fn cors_origins(&mut self) -> Vec<String> {

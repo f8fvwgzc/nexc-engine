@@ -7,13 +7,19 @@ use serde::Deserialize;
 use utoipa::IntoParams;
 use uuid::Uuid;
 
+use super::workspaces::{audit, member_of, require};
 use crate::app::AppState;
 use crate::domain::AppError;
+use crate::domain::audit::AuditAction;
+use crate::domain::capabilities::DataLabel;
 use crate::domain::memory::{Memory, MemoryTopic};
+use crate::domain::validation::{FieldErrors, Validate};
+use crate::domain::workspace::WorkspaceAction;
 use crate::engine::editor;
-use crate::http::extract::{AuthUser, Path, Query};
+use crate::http::extract::{AuthUser, Path, Query, ValidatedJson};
 use crate::http::problem::Problem;
 use crate::memory::{self, View};
+use crate::repo::audit::Subject;
 use crate::repo::{self, OrNotFound};
 
 /// Query of `GET /memories`.
@@ -185,6 +191,57 @@ pub async fn get(
         .await
         .or_not_found("memory")?;
     let workspace = workspace.ok_or(AppError::NotFound("memory"))?;
+    memory::find(&state.db, auth.id, workspace, id)
+        .await?
+        .map(Json)
+        .ok_or(AppError::NotFound("memory"))
+}
+
+/// `PATCH /memories/{id}` body.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetLabel {
+    /// The classification agents need clearance for to recall the memory.
+    pub label: DataLabel,
+}
+
+impl Validate for SetLabel {
+    fn validate(&self, _: &mut FieldErrors) {}
+}
+
+/// Classifies a memory (admins of its workspace). Audited as `classification_changed`.
+#[utoipa::path(patch, path = "/memories/{id}", tag = "memories", security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Memory id")), request_body = SetLabel,
+    responses((status = 200, body = Memory), (status = 403, body = Problem), (status = 404, body = Problem),
+        (status = 422, body = Problem)))]
+pub async fn set_label(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+    ValidatedJson(req): ValidatedJson<SetLabel>,
+) -> Result<Json<Memory>, AppError> {
+    let (_, workspace, _) = repo::memories::provenance(&state.db, id)
+        .await
+        .or_not_found("memory")?;
+    let workspace = workspace.ok_or(AppError::NotFound("memory"))?;
+    // A memory of a workspace the caller is not in is as good as missing.
+    let membership = member_of(&state, auth, workspace)
+        .await
+        .map_err(|_| AppError::NotFound("memory"))?;
+    require(&membership, WorkspaceAction::UpdateSettings)?;
+    if !repo::memories::set_label(&state.db, id, req.label).await? {
+        return Err(AppError::NotFound("memory"));
+    }
+    state.memories.invalidate(workspace);
+    audit(
+        &state,
+        workspace,
+        auth.id,
+        AuditAction::ClassificationChanged,
+        Subject::Text(&format!("memory {id}")),
+        req.label.as_str(),
+    )
+    .await;
     memory::find(&state.db, auth.id, workspace, id)
         .await?
         .map(Json)

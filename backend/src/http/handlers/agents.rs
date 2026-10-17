@@ -1,4 +1,5 @@
-//! The agent organisation of a workspace.
+//! The agent organisation of a workspace: the agents, their ID cards, and
+//! taking one out of service.
 
 use axum::Json;
 use axum::extract::State;
@@ -7,17 +8,21 @@ use serde::{Deserialize, Deserializer};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
+use super::workspaces::audit;
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::agent::{
-    AGENT_NAME_MAX, AGENT_TITLE_MAX, Agent, AgentRuntime, AgentStatus, SYSTEM_PROMPT_MAX,
-    is_valid_role,
+    AGENT_NAME_MAX, AGENT_TITLE_MAX, Agent, AgentCard, AgentRuntime, AgentStatus, CARD_SPANS,
+    PURPOSE_MAX, SYSTEM_PROMPT_MAX, is_valid_role,
 };
+use crate::domain::audit::AuditAction;
+use crate::domain::capabilities::Capabilities;
 use crate::domain::trace::Span;
 use crate::domain::validation::{FieldErrors, Validate, check_max_len, check_text};
 use crate::http::extract::{AuthUser, Path, Query, ValidatedJson};
 use crate::http::problem::Problem;
 use crate::repo::agents::AgentFields;
+use crate::repo::audit::Subject;
 use crate::repo::{self, OrNotFound};
 
 fn double_option<'de, T: Deserialize<'de>, D: Deserializer<'de>>(
@@ -42,9 +47,18 @@ pub struct CreateAgent {
     pub runtime: Option<AgentRuntime>,
     /// Workspace to add the agent to (default: the caller's first workspace).
     pub workspace_id: Option<Uuid>,
+    /// What the agent is for.
+    #[serde(default)]
+    pub purpose: String,
+    /// The member answerable for the agent (default: the caller).
+    pub owner_user_id: Option<Uuid>,
+    /// A team of the workspace the agent belongs to.
+    pub team_id: Option<Uuid>,
+    /// What the agent may do (default: the unrestricted policy).
+    pub capabilities: Option<Capabilities>,
 }
 
-/// `PATCH /agents/{id}` body (any subset; `reports_to: null` detaches).
+/// `PATCH /agents/{id}` body (any subset; `reports_to: null` and `team_id: null` detach).
 #[derive(Debug, Default, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateAgent {
@@ -58,7 +72,15 @@ pub struct UpdateAgent {
     pub reports_to: Option<Option<Uuid>>,
     pub budget_tokens: Option<i64>,
     pub runtime: Option<AgentRuntime>,
+    /// `active` or `paused`; quarantine has its own routes.
     pub status: Option<AgentStatus>,
+    pub purpose: Option<String>,
+    pub owner_user_id: Option<Uuid>,
+    #[serde(default, deserialize_with = "double_option")]
+    #[schema(value_type = Option<Uuid>, nullable)]
+    pub team_id: Option<Option<Uuid>>,
+    /// Replaces the whole document; raises the policy version when it differs.
+    pub capabilities: Option<Capabilities>,
 }
 
 fn check_name(errors: &mut FieldErrors, name: &str) {
@@ -95,6 +117,10 @@ impl Validate for CreateAgent {
             SYSTEM_PROMPT_MAX,
         );
         check_budget(errors, self.budget_tokens.unwrap_or_default());
+        check_max_len(errors, "purpose", &self.purpose, PURPOSE_MAX);
+        if let Some(capabilities) = &self.capabilities {
+            capabilities.check(errors);
+        }
     }
 }
 
@@ -116,6 +142,15 @@ impl Validate for UpdateAgent {
             check_max_len(errors, "system_prompt", prompt, SYSTEM_PROMPT_MAX);
         }
         check_budget(errors, self.budget_tokens.unwrap_or_default());
+        if let Some(purpose) = &self.purpose {
+            check_max_len(errors, "purpose", purpose, PURPOSE_MAX);
+        }
+        if self.status == Some(AgentStatus::Quarantined) {
+            errors.add("status", "quarantine with POST /agents/{id}/quarantine");
+        }
+        if let Some(capabilities) = &self.capabilities {
+            capabilities.check(errors);
+        }
     }
 }
 
@@ -127,13 +162,24 @@ pub struct AgentQuery {
     pub workspace_id: Option<Uuid>,
 }
 
-/// The workspace the caller is addressing, after checking they belong to it.
-/// Every member may see its agents; changing them takes more than a guest.
+/// What a caller wants to do with a workspace's agents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Access {
+    /// Every member may see the agents.
+    Read,
+    /// Changing them takes more than a guest.
+    Write,
+    /// Taking one out of service takes an admin.
+    Admin,
+}
+
+/// The workspace the caller is addressing, after checking they belong to it
+/// and may do what they are about to.
 async fn workspace_for(
     state: &AppState,
     auth: AuthUser,
     workspace_id: Option<Uuid>,
-    write: bool,
+    access: Access,
 ) -> Result<Uuid, AppError> {
     let workspace_id = match workspace_id {
         Some(id) => id,
@@ -144,22 +190,36 @@ async fn workspace_for(
     let role = repo::workspaces::role_of(&state.db, workspace_id, auth.id)
         .await
         .or_not_found("workspace")?;
-    if write && !role.is_member() {
-        return Err(AppError::Forbidden(
-            "guests cannot change a workspace's agents".into(),
-        ));
+    match access {
+        Access::Read => {}
+        Access::Write if !role.is_member() => {
+            return Err(AppError::Forbidden(
+                "guests cannot change a workspace's agents".into(),
+            ));
+        }
+        Access::Admin if !role.is_admin() => {
+            return Err(AppError::Forbidden(
+                "only a workspace admin quarantines or releases an agent".into(),
+            ));
+        }
+        Access::Write | Access::Admin => {}
     }
     Ok(workspace_id)
 }
 
-/// The workspace of agent `id`, if the caller may change its agents.
-async fn workspace_of_agent(state: &AppState, auth: AuthUser, id: Uuid) -> Result<Uuid, AppError> {
+/// The workspace of agent `id`, if the caller may do `access` with its agents.
+async fn workspace_of_agent(
+    state: &AppState,
+    auth: AuthUser,
+    id: Uuid,
+    access: Access,
+) -> Result<Uuid, AppError> {
     let workspace = repo::agents::workspace_of(&state.db, id)
         .await?
         .flatten()
         .ok_or(AppError::NotFound("agent"))?;
     // An agent of a workspace the caller is not in is as good as missing.
-    workspace_for(state, auth, Some(workspace), true)
+    workspace_for(state, auth, Some(workspace), access)
         .await
         .map_err(|err| match err {
             AppError::NotFound(_) => AppError::NotFound("agent"),
@@ -195,6 +255,31 @@ async fn check_manager(
     Err(AppError::field("reports_to", "reporting chain too deep"))
 }
 
+/// Validates the owner (a member of the workspace) and the team (one of its teams).
+async fn check_owner_and_team(
+    state: &AppState,
+    workspace: Uuid,
+    owner: Option<Uuid>,
+    team: Option<Uuid>,
+) -> Result<(), AppError> {
+    if let Some(owner) = owner
+        && repo::workspaces::role_of(&state.db, workspace, owner)
+            .await?
+            .is_none()
+    {
+        return Err(AppError::field(
+            "owner_user_id",
+            "must be a member of the workspace",
+        ));
+    }
+    if let Some(team) = team
+        && !repo::agents::team_in_workspace(&state.db, workspace, team).await?
+    {
+        return Err(AppError::field("team_id", "unknown team"));
+    }
+    Ok(())
+}
+
 /// Spans in an agent's activity by default.
 pub const ACTIVITY_DEFAULT: i64 = 20;
 /// Most spans in an agent's activity.
@@ -219,17 +304,7 @@ pub async fn activity(
     Path(id): Path<Uuid>,
     Query(query): Query<ActivityQuery>,
 ) -> Result<Json<Vec<Span>>, AppError> {
-    let workspace = repo::agents::workspace_of(&state.db, id)
-        .await?
-        .flatten()
-        .ok_or(AppError::NotFound("agent"))?;
-    // Every member may read; an agent of a workspace the caller is not in is as good as missing.
-    workspace_for(&state, auth, Some(workspace), false)
-        .await
-        .map_err(|err| match err {
-            AppError::NotFound(_) => AppError::NotFound("agent"),
-            other => other,
-        })?;
+    workspace_of_agent(&state, auth, id, Access::Read).await?;
     let limit = query
         .limit
         .unwrap_or(ACTIVITY_DEFAULT)
@@ -247,8 +322,34 @@ pub async fn list(
     auth: AuthUser,
     Query(query): Query<AgentQuery>,
 ) -> Result<Json<Vec<Agent>>, AppError> {
-    let workspace = workspace_for(&state, auth, query.workspace_id, false).await?;
+    let workspace = workspace_for(&state, auth, query.workspace_id, Access::Read).await?;
     Ok(Json(repo::agents::list(&state.db, workspace).await?))
+}
+
+/// An agent's ID card: who it is, who answers for it, what it may do, what
+/// it has left to spend and what it did last (any member of its workspace).
+#[utoipa::path(get, path = "/agents/{id}", tag = "agents", security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Agent id")),
+    responses((status = 200, body = AgentCard), (status = 404, body = Problem)))]
+pub async fn get(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<AgentCard>, AppError> {
+    let workspace = workspace_of_agent(&state, auth, id, Access::Read).await?;
+    let agent = repo::agents::find(&state.db, workspace, id)
+        .await
+        .or_not_found("agent")?;
+    let owner = repo::agents::owner(&state.db, agent.owner_user_id).await?;
+    let team = repo::agents::team(&state.db, agent.team_id).await?;
+    let recent_spans = repo::spans::activity(&state.db, auth.id, id, CARD_SPANS).await?;
+    Ok(Json(AgentCard {
+        budget_left: agent.budget_left(),
+        agent,
+        owner,
+        team,
+        recent_spans,
+    }))
 }
 
 /// Adds an agent to a workspace (members and above).
@@ -260,7 +361,7 @@ pub async fn create(
     auth: AuthUser,
     ValidatedJson(req): ValidatedJson<CreateAgent>,
 ) -> Result<(StatusCode, Json<Agent>), AppError> {
-    let workspace = workspace_for(&state, auth, req.workspace_id, true).await?;
+    let workspace = workspace_for(&state, auth, req.workspace_id, Access::Write).await?;
     let fields = AgentFields {
         name: req.name.trim().to_owned(),
         role: req.role.trim().to_owned(),
@@ -273,15 +374,21 @@ pub async fn create(
         budget_tokens: req.budget_tokens.unwrap_or(1_000_000),
         runtime: req.runtime.unwrap_or(AgentRuntime::Builtin),
         status: AgentStatus::Active,
+        owner_user_id: Some(req.owner_user_id.unwrap_or(auth.id)),
+        team_id: req.team_id,
+        purpose: req.purpose.trim().to_owned(),
+        capabilities: req.capabilities.unwrap_or_default(),
     };
     check_manager(&state, workspace, None, fields.reports_to).await?;
+    check_owner_and_team(&state, workspace, fields.owner_user_id, fields.team_id).await?;
     Ok((
         StatusCode::CREATED,
         Json(repo::agents::create(&state.db, auth.id, workspace, &fields).await?),
     ))
 }
 
-/// Updates an agent (members of its workspace and above).
+/// Updates an agent (members of its workspace and above). A change of
+/// capabilities raises its policy version and is audited (`policy_changed`).
 #[utoipa::path(patch, path = "/agents/{id}", tag = "agents", security(("bearer" = [])),
     params(("id" = Uuid, Path, description = "Agent id")), request_body = UpdateAgent,
     responses((status = 200, body = Agent), (status = 403, body = Problem), (status = 404, body = Problem),
@@ -292,10 +399,22 @@ pub async fn update(
     Path(id): Path<Uuid>,
     ValidatedJson(req): ValidatedJson<UpdateAgent>,
 ) -> Result<Json<Agent>, AppError> {
-    let workspace = workspace_of_agent(&state, auth, id).await?;
+    let workspace = workspace_of_agent(&state, auth, id, Access::Write).await?;
     let current = repo::agents::find(&state.db, workspace, id)
         .await
         .or_not_found("agent")?;
+    if current.status == AgentStatus::Quarantined
+        && req.status.is_some_and(|s| s != AgentStatus::Quarantined)
+    {
+        return Err(AppError::field(
+            "status",
+            "the agent is quarantined; release it with POST /agents/{id}/release",
+        ));
+    }
+    let policy_changed = req
+        .capabilities
+        .as_ref()
+        .is_some_and(|c| *c != current.capabilities);
     let fields = AgentFields {
         name: req.name.map_or(current.name, |n| n.trim().to_owned()),
         role: req.role.map_or(current.role, |r| r.trim().to_owned()),
@@ -306,13 +425,89 @@ pub async fn update(
         budget_tokens: req.budget_tokens.unwrap_or(current.budget_tokens),
         runtime: req.runtime.unwrap_or(current.runtime),
         status: req.status.unwrap_or(current.status),
+        owner_user_id: req.owner_user_id.or(current.owner_user_id),
+        team_id: req.team_id.unwrap_or(current.team_id),
+        purpose: req.purpose.map_or(current.purpose, |p| p.trim().to_owned()),
+        capabilities: req.capabilities.unwrap_or(current.capabilities),
     };
     check_manager(&state, workspace, Some(id), fields.reports_to).await?;
-    Ok(Json(
-        repo::agents::update(&state.db, workspace, id, &fields)
-            .await
-            .or_not_found("agent")?,
-    ))
+    check_owner_and_team(&state, workspace, fields.owner_user_id, fields.team_id).await?;
+    let agent = repo::agents::update(&state.db, workspace, id, &fields)
+        .await
+        .or_not_found("agent")?;
+    if policy_changed {
+        audit(
+            &state,
+            workspace,
+            auth.id,
+            AuditAction::PolicyChanged,
+            Subject::Text(&agent.principal_id),
+            &format!("policy version {}", agent.policy_version),
+        )
+        .await;
+    }
+    Ok(Json(agent))
+}
+
+/// Takes an agent out of service (workspace admins): its running nodes are
+/// cancelled, new ones are refused, and its policy version is raised so
+/// that no token minted before is honoured again.
+#[utoipa::path(post, path = "/agents/{id}/quarantine", tag = "agents", security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Agent id")),
+    responses((status = 200, body = Agent), (status = 403, body = Problem), (status = 404, body = Problem),
+        (status = 409, description = "Already quarantined", body = Problem)))]
+pub async fn quarantine(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Agent>, AppError> {
+    let workspace = workspace_of_agent(&state, auth, id, Access::Admin).await?;
+    let agent = repo::agents::quarantine(&state.db, workspace, id)
+        .await?
+        .ok_or(AppError::Conflict(
+            "the agent is already quarantined".into(),
+        ))?;
+    // Nodes running on this instance stop now; other instances notice within a second.
+    let cancelled = state.engine.quarantine_local(id);
+    audit(
+        &state,
+        workspace,
+        auth.id,
+        AuditAction::AgentQuarantined,
+        Subject::Text(&agent.principal_id),
+        &format!(
+            "policy version {}; {cancelled} running node(s) cancelled here",
+            agent.policy_version
+        ),
+    )
+    .await;
+    Ok(Json(agent))
+}
+
+/// Puts a quarantined agent back in service (workspace admins).
+#[utoipa::path(post, path = "/agents/{id}/release", tag = "agents", security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Agent id")),
+    responses((status = 200, body = Agent), (status = 403, body = Problem), (status = 404, body = Problem),
+        (status = 409, description = "Not quarantined", body = Problem)))]
+pub async fn release(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Agent>, AppError> {
+    let workspace = workspace_of_agent(&state, auth, id, Access::Admin).await?;
+    let agent = repo::agents::release(&state.db, workspace, id)
+        .await?
+        .ok_or(AppError::Conflict("the agent is not quarantined".into()))?;
+    audit(
+        &state,
+        workspace,
+        auth.id,
+        AuditAction::AgentReleased,
+        Subject::Text(&agent.principal_id),
+        &format!("policy version {}", agent.policy_version),
+    )
+    .await;
+    Ok(Json(agent))
 }
 
 /// Removes an agent (its reports no longer report to anyone).
@@ -324,7 +519,7 @@ pub async fn delete(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
-    let workspace = workspace_of_agent(&state, auth, id).await?;
+    let workspace = workspace_of_agent(&state, auth, id, Access::Write).await?;
     if repo::agents::delete(&state.db, workspace, id).await? {
         Ok(StatusCode::NO_CONTENT)
     } else {

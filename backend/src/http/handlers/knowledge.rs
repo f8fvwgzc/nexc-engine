@@ -14,6 +14,7 @@ use super::workspaces::{audit, member_of, require};
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::audit::AuditAction;
+use crate::domain::capabilities::DataLabel;
 use crate::domain::knowledge::{
     DOCUMENT_MAX_BYTES, DOCUMENT_NAME_MAX, DOCUMENTS_MAX, Document, KnowledgeSettings, Passage,
     Topic,
@@ -175,6 +176,100 @@ pub async fn get(
             .await
             .or_not_found("document")?,
     ))
+}
+
+/// `PATCH /workspaces/{wid}/documents/{did}` body.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetLabel {
+    /// The classification agents need clearance for to be given the document's passages.
+    pub label: DataLabel,
+}
+
+impl Validate for SetLabel {
+    fn validate(&self, _: &mut FieldErrors) {}
+}
+
+/// Classifies a document (workspace admins). Audited as `classification_changed`.
+#[utoipa::path(patch, path = "/workspaces/{wid}/documents/{did}", tag = "knowledge", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id"), ("did" = Uuid, Path, description = "Document id")),
+    request_body = SetLabel,
+    responses((status = 200, body = Document), (status = 403, body = Problem), (status = 404, body = Problem),
+        (status = 422, body = Problem)))]
+pub async fn set_label(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((wid, did)): Path<(Uuid, Uuid)>,
+    ValidatedJson(req): ValidatedJson<SetLabel>,
+) -> Result<Json<Document>, AppError> {
+    require(
+        &member_of(&state, auth, wid).await?,
+        WorkspaceAction::UpdateSettings,
+    )?;
+    if !repo::knowledge::set_label(&state.db, wid, did, req.label).await? {
+        return Err(AppError::NotFound("document"));
+    }
+    let document = repo::knowledge::find(&state.db, wid, did)
+        .await
+        .or_not_found("document")?;
+    audit(
+        &state,
+        wid,
+        auth.id,
+        AuditAction::ClassificationChanged,
+        Subject::Text(&format!("document {}", document.name)),
+        req.label.as_str(),
+    )
+    .await;
+    Ok(Json(document))
+}
+
+/// `PATCH /workspaces/{wid}/knowledge/topics/{tid}` body.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetClassification {
+    /// The classification of every passage under the topic, on top of its document's.
+    pub classification: DataLabel,
+}
+
+impl Validate for SetClassification {
+    fn validate(&self, _: &mut FieldErrors) {}
+}
+
+/// Classifies a topic (workspace admins). Audited as `classification_changed`.
+#[utoipa::path(patch, path = "/workspaces/{wid}/knowledge/topics/{tid}", tag = "knowledge", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id"), ("tid" = Uuid, Path, description = "Topic id")),
+    request_body = SetClassification,
+    responses((status = 200, body = Topic), (status = 403, body = Problem), (status = 404, body = Problem),
+        (status = 422, body = Problem)))]
+pub async fn set_topic_classification(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((wid, tid)): Path<(Uuid, Uuid)>,
+    ValidatedJson(req): ValidatedJson<SetClassification>,
+) -> Result<Json<Topic>, AppError> {
+    require(
+        &member_of(&state, auth, wid).await?,
+        WorkspaceAction::UpdateSettings,
+    )?;
+    if !repo::knowledge::set_topic_classification(&state.db, wid, tid, req.classification).await? {
+        return Err(AppError::NotFound("topic"));
+    }
+    let topic = knowledge::topics(&state, wid)
+        .await?
+        .into_iter()
+        .find(|t| t.id == tid)
+        .ok_or(AppError::NotFound("topic"))?;
+    audit(
+        &state,
+        wid,
+        auth.id,
+        AuditAction::ClassificationChanged,
+        Subject::Text(&format!("topic {}", topic.label)),
+        req.classification.as_str(),
+    )
+    .await;
+    Ok(Json(topic))
 }
 
 /// Removes a document and its passages: whoever uploaded it, or an admin.

@@ -6,6 +6,7 @@ use serde::Serialize;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use super::capabilities::DataLabel;
 use super::string_enum;
 
 /// Name of the structured-output schema used for memory extraction.
@@ -60,6 +61,8 @@ pub struct Memory {
     pub topic_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// Classification: only agents cleared for it recall the memory.
+    pub label: DataLabel,
 }
 
 /// What to do with a newly extracted memory candidate.

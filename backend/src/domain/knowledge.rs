@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use super::capabilities::DataLabel;
 use super::string_enum;
 
 pub const DOCUMENT_NAME_MAX: usize = 255;
@@ -57,6 +58,8 @@ pub struct Document {
     pub uploaded_by: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// Classification: only agents cleared for it receive its passages.
+    pub label: DataLabel,
 }
 
 /// A passage found by a search, with where it comes from.
@@ -73,6 +76,11 @@ pub struct Passage {
     /// The topic the passage was grouped under, once topics exist.
     #[schema(required = true)]
     pub topic_id: Option<Uuid>,
+    /// The document's classification.
+    pub label: DataLabel,
+    /// The topic's classification, when the passage has a topic.
+    #[schema(required = true)]
+    pub topic_label: Option<DataLabel>,
     /// 0-1, higher is better; comparable within one search only.
     pub score: f64,
 }
@@ -86,9 +94,18 @@ pub struct Topic {
     pub terms: Vec<String>,
     /// Passages grouped under it.
     pub chunk_count: i32,
+    /// Classification of every passage under the topic, on top of its document's.
+    pub classification: DataLabel,
 }
 
 impl Passage {
+    /// The stricter of the document's and the topic's classification: what
+    /// an agent needs clearance for to be given the passage.
+    pub fn effective_label(&self) -> DataLabel {
+        self.topic_label
+            .map_or(self.label, |t| self.label.stricter(t))
+    }
+
     /// "Report.pdf, p. 12 › Revenue › By region": where a reader finds the passage.
     pub fn citation(&self) -> String {
         let mut out = self.document_name.clone();

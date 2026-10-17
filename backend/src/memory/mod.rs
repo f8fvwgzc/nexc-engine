@@ -21,6 +21,7 @@ use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::domain::capabilities::DataLabel;
 use crate::domain::graph::GraphNode;
 use crate::domain::memory::{
     Consolidation, MEMORY_MAX_CHARS, MEMORY_SCHEMA_NAME, Memory, MemoryKind, MemoryScope,
@@ -480,6 +481,7 @@ pub async fn store(
                         topic_id: None,
                         created_at: now,
                         updated_at: now,
+                        label: DataLabel::Internal,
                     },
                     owner_id: owner,
                     embedding,
@@ -520,6 +522,7 @@ mod tests {
                 topic_id: None,
                 created_at: at,
                 updated_at: at,
+                label: DataLabel::Internal,
             },
             owner_id: Uuid::nil(),
             embedding: kernel::embed(content),

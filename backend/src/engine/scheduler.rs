@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
-use serde_json::json;
+use serde_json::{Value, json};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
@@ -26,10 +26,12 @@ use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::agent::{Agent, AgentStatus};
 use crate::domain::audit::AuditAction;
+use crate::domain::capabilities::Capabilities;
 use crate::domain::context;
 use crate::domain::graph::{Executor, GraphEdge, GraphNode, NodeStatus};
 use crate::domain::guardrails::Guardrails;
 use crate::domain::ontology::Ontology;
+use crate::domain::policy::{self, Action, Decision};
 use crate::domain::prompt::{AGENT_UPSTREAM_CHARS, UPSTREAM_CHARS, UpstreamOutput};
 use crate::domain::run::{Run, RunStatus, final_status};
 use crate::domain::settings::{ConfigScope, LlmProviderKind};
@@ -533,6 +535,12 @@ fn spawn_cancel_watcher(
                 token.cancel();
                 return;
             }
+            // An agent quarantined on another instance: its nodes here stop too.
+            if let Ok(agents) = repo::runs::quarantined_agents_running(&state.db, run_id).await {
+                for agent in agents {
+                    state.engine.quarantine_local(agent);
+                }
+            }
         }
     });
     done
@@ -712,6 +720,67 @@ async fn run_node(
     }
 }
 
+/// What the context builder kept from an agent, and why.
+#[derive(Default)]
+struct Withheld {
+    chunk_ids: Vec<Uuid>,
+    memory_ids: Vec<Uuid>,
+    by_labels: usize,
+    by_topics: usize,
+    by_namespaces: usize,
+    first_rule: Option<&'static str>,
+}
+
+impl Withheld {
+    /// Whether `action` is allowed; records the id when it is not.
+    fn admits(&mut self, caps: &Capabilities, action: Action<'_>, id: Uuid, passage: bool) -> bool {
+        let decision = policy::decide(caps, &action);
+        if decision.allowed {
+            return true;
+        }
+        if passage {
+            self.chunk_ids.push(id);
+        } else {
+            self.memory_ids.push(id);
+        }
+        match decision.rule {
+            "data.labels" => self.by_labels += 1,
+            "data.topics" => self.by_topics += 1,
+            _ => self.by_namespaces += 1,
+        }
+        self.first_rule.get_or_insert(decision.rule);
+        false
+    }
+
+    /// The attributes of the `policy` span listing what was withheld, if anything was.
+    fn attributes(&self, policy_version: i32) -> Option<Value> {
+        let rule = self.first_rule?;
+        let count = self.chunk_ids.len() + self.memory_ids.len();
+        Some(json!({
+            "decision": "deny",
+            "rule": rule,
+            "action": "data_read",
+            "reason": format!("{count} item(s) outside the agent's data scopes were withheld"),
+            "policy_version": policy_version,
+            "withheld_document_chunk_ids": self.chunk_ids,
+            "withheld_memory_ids": self.memory_ids,
+            "withheld_by_labels": self.by_labels,
+            "withheld_by_topics": self.by_topics,
+            "withheld_by_namespaces": self.by_namespaces,
+        }))
+    }
+}
+
+/// How one attempt of a node ended.
+enum Attempt {
+    /// The run was cancelled.
+    Cancelled,
+    /// The node's agent was quarantined.
+    Quarantined,
+    /// The executor answered, or the attempt timed out.
+    Done(Result<Result<ExecOutput, ExecError>, tokio::time::error::Elapsed>),
+}
+
 /// One node's execution: cache lookup, budget check, attempts with retries.
 struct NodeTask {
     ctx: ExecContext,
@@ -748,11 +817,6 @@ impl NodeTask {
             .unwrap_or_default(),
             None => Vec::new(),
         };
-        let memory_ids: Vec<Uuid> = recalled.iter().map(|m| m.id).collect();
-        let memories = recalled
-            .into_iter()
-            .map(|m| data.policy.scrub(m.content))
-            .collect();
         let passages = match data.workspace_id {
             Some(workspace) => {
                 knowledge::context_passages(
@@ -766,11 +830,74 @@ impl NodeTask {
             }
             None => Vec::new(),
         };
-        let chunk_ids: Vec<Uuid> = passages.iter().map(|(id, _)| *id).collect();
+        // The agent's data scopes decide what reaches it; a node without an agent reads as the
+        // system does. What was withheld is on the record before the node runs, ids only.
+        let capabilities = agent
+            .as_ref()
+            .map(|a| a.capabilities.clone())
+            .unwrap_or_default();
+        let policy_version = agent.as_ref().map_or(0, |a| a.policy_version);
+        let mut withheld = Withheld::default();
+        let recalled: Vec<_> = recalled
+            .into_iter()
+            .filter(|m| {
+                agent.is_none()
+                    || withheld.admits(
+                        &capabilities,
+                        Action::Read {
+                            label: m.label,
+                            topic: None,
+                            namespace: Some(m.scope),
+                        },
+                        m.id,
+                        false,
+                    )
+            })
+            .collect();
+        let passages: Vec<_> = passages
+            .into_iter()
+            .filter(|p| {
+                agent.is_none()
+                    || withheld.admits(
+                        &capabilities,
+                        Action::Read {
+                            label: p.label,
+                            topic: p.topic_id,
+                            namespace: None,
+                        },
+                        p.chunk_id,
+                        true,
+                    )
+            })
+            .collect();
+        let memory_ids: Vec<Uuid> = recalled.iter().map(|m| m.id).collect();
+        let memories = recalled
+            .into_iter()
+            .map(|m| data.policy.scrub(m.content))
+            .collect();
+        let chunk_ids: Vec<Uuid> = passages.iter().map(|p| p.chunk_id).collect();
         let documents: Vec<String> = passages
             .into_iter()
-            .map(|(_, d)| data.policy.scrub(d))
+            .map(|p| data.policy.scrub(p.text))
             .collect();
+        let principal = agent
+            .as_ref()
+            .map_or_else(|| SYSTEM_PRINCIPAL.to_owned(), |a| a.principal_id.clone());
+        if let Some(attributes) = withheld.attributes(policy_version) {
+            data.trace.emit(SpanDraft {
+                id: Uuid::now_v7(),
+                node_id: node.id,
+                agent_id: agent.as_ref().map(|a| a.id),
+                principal: principal.clone(),
+                parent_id: None,
+                kind: SpanKind::Policy,
+                name: "context".into(),
+                started_at: began,
+                ended_at: Some(Utc::now()),
+                status: SpanStatus::Error,
+                attributes,
+            });
+        }
         // An agent works over several turns and takes more context than one LLM call.
         let budget = match node.executor {
             Executor::Agent => AGENT_UPSTREAM_CHARS,
@@ -811,9 +938,7 @@ impl NodeTask {
             id: Uuid::now_v7(),
             node_id: node.id,
             agent_id: agent.as_ref().map(|a| a.id),
-            principal: agent
-                .as_ref()
-                .map_or_else(|| SYSTEM_PRINCIPAL.to_owned(), |a| a.name.clone()),
+            principal,
             parent_id: None,
             kind: SpanKind::DataRead,
             name: "context".into(),
@@ -833,6 +958,8 @@ impl NodeTask {
             state,
             run_id: data.run_id,
             graph_id: data.graph_id,
+            workspace_id: data.workspace_id,
+            owner: data.owner,
             goal: data.goal.clone(),
             node_type: data.ontology.node_type(&node.kind).cloned(),
             code_exec_allowed: data.policy.allow_code_exec,
@@ -841,6 +968,8 @@ impl NodeTask {
             memories,
             documents,
             agent,
+            capabilities,
+            policy_version,
             target: data.target.clone(),
             force: data.force,
             trace: data.trace.clone(),
@@ -924,6 +1053,7 @@ impl NodeTask {
                 Some(format!("agent {} is over its token budget", agent.name))
             }
             AgentStatus::Paused => Some(format!("agent {} is paused", agent.name)),
+            AgentStatus::Quarantined => Some(format!("agent {} is quarantined", agent.name)),
             AgentStatus::Active if agent.is_over_budget() => {
                 Some(format!("agent {} is over its token budget", agent.name))
             }
@@ -935,10 +1065,20 @@ impl NodeTask {
         if let Some(reason) = self.budget_error() {
             return self.finish(NodeStatus::Failed, 0, None, Some(reason)).await;
         }
+        // The model allow-list is enforced here, before anything is dispatched.
+        let model = self.ctx.agent_target().model;
+        let decision = self.ctx.decide(&Action::Model(&model));
+        if !decision.allowed {
+            self.ctx
+                .policy_span(&model, &decision, json!({"action": "model"}));
+            let reason = format!("policy: {}", decision.reason);
+            return self.finish(NodeStatus::Failed, 0, None, Some(reason)).await;
+        }
         let state = &self.ctx.state;
         let settings = state.settings.clone();
         let executor = executor::for_kind(self.ctx.node.executor);
         let agent_id = self.ctx.agent.as_ref().map(|a| a.id);
+        let node_id = self.ctx.node.id;
         let max_attempts = settings.max_attempts as i32;
         for attempt in 1..=max_attempts {
             if let Err(err) = self.mark_running(attempt, agent_id).await {
@@ -946,29 +1086,50 @@ impl NodeTask {
                     .finish(NodeStatus::Failed, attempt, None, Some(err.to_string()))
                     .await;
             }
+            // Quarantining the agent ends the attempt without ending the run.
+            let stop = CancellationToken::new();
             if let Some(id) = agent_id {
-                state.engine.agent_started(id);
+                state.engine.agent_started(id, node_id, stop.clone());
             }
             let result = tokio::select! {
-                _ = self.token.cancelled() => None,
-                r = tokio::time::timeout(settings.node_timeout, executor.execute(&self.ctx)) => Some(r),
+                _ = self.token.cancelled() => Attempt::Cancelled,
+                _ = stop.cancelled() => Attempt::Quarantined,
+                r = tokio::time::timeout(settings.node_timeout, executor.execute(&self.ctx)) => Attempt::Done(r),
             };
             if let Some(id) = agent_id {
-                state.engine.agent_finished(id);
+                state.engine.agent_finished(id, node_id);
             }
             let error = match result {
-                None => {
+                Attempt::Cancelled => {
                     return self
                         .finish(NodeStatus::Cancelled, attempt, None, None)
                         .await;
                 }
-                Some(Ok(Ok(out))) => {
+                Attempt::Quarantined => {
+                    let reason = format!(
+                        "agent {} was quarantined while the node ran",
+                        self.ctx.principal()
+                    );
+                    self.ctx.policy_span(
+                        "quarantine",
+                        &Decision {
+                            allowed: false,
+                            rule: "quarantine",
+                            reason: reason.clone(),
+                        },
+                        json!({"action": "node"}),
+                    );
+                    return self
+                        .finish(NodeStatus::Failed, attempt, None, Some(reason))
+                        .await;
+                }
+                Attempt::Done(Ok(Ok(out))) => {
                     return self
                         .finish(NodeStatus::Succeeded, attempt, Some(out), None)
                         .await;
                 }
-                Some(Ok(Err(e))) => e,
-                Some(Err(_)) => ExecError::transient(format!(
+                Attempt::Done(Ok(Err(e))) => e,
+                Attempt::Done(Err(_)) => ExecError::transient(format!(
                     "timed out after {}s",
                     settings.node_timeout.as_secs()
                 )),

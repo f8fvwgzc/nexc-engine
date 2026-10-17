@@ -113,7 +113,11 @@ async fn tracing_runtime() -> String {
             return StatusCode::UNAUTHORIZED.into_response();
         }
         let title = req["task"]["title"].as_str().unwrap_or("node").to_owned();
-        let agent = req["agent"]["name"].as_str().unwrap_or("agent").to_owned();
+        // A well-behaved runtime acts as the principal its token names.
+        let agent = req["agent"]["principal"]
+            .as_str()
+            .unwrap_or("agent")
+            .to_owned();
         let mut lines = vec![json!({"type": "delta", "text": format!("[runtime] {title}")})];
         if title.contains("HOSTILE") {
             let repeated = Uuid::now_v7();
@@ -354,7 +358,11 @@ async fn a_twelve_turn_agent_run_produces_a_verifiable_chain(pool: PgPool) {
     );
     let child = runtime_turns
         .iter()
-        .find(|s| s["principal"] == "Researcher/researcher-1")
+        .find(|s| {
+            s["principal"].as_str().is_some_and(|p| {
+                p.starts_with("agent://") && p.ends_with("/Researcher/researcher-1")
+            })
+        })
         .unwrap();
     assert_eq!(
         child["parent_id"], spawn["id"],
@@ -379,7 +387,13 @@ async fn a_twelve_turn_agent_run_produces_a_verifiable_chain(pool: PgPool) {
     );
     assert_eq!(builtin[0]["attributes"]["tokens_in"], 100);
     assert_eq!(builtin[0]["attributes"]["stop_reason"], "end_turn");
-    assert_eq!(builtin[0]["principal"], "Writer");
+    assert!(
+        builtin[0]["principal"]
+            .as_str()
+            .is_some_and(|p| p.starts_with("agent://") && p.ends_with("/Writer")),
+        "the built-in executor records the agent's principal: {}",
+        builtin[0]["principal"]
+    );
     for node in [&t.llm_node, &t.agent_node] {
         let reads = of(node, "data_read");
         assert_eq!(
@@ -564,8 +578,15 @@ async fn hostile_span_lines_are_contained(pool: PgPool) {
     // An oversized line keeps its span but not its attributes.
     assert_eq!(runtime[2]["attributes"]["attributes_dropped"], true);
     assert!(runtime[2]["attributes"].get("padding").is_none());
-    // A span without an id, times or agent still gets all of them from the backend.
-    assert_eq!(runtime[3]["principal"], "Researcher");
+    // A span without an id, times or agent still gets all of them from the backend: the
+    // agent's principal, `agent://{workspace}/{name}`.
+    assert!(
+        runtime[3]["principal"]
+            .as_str()
+            .is_some_and(|p| p.starts_with("agent://") && p.ends_with("/Researcher")),
+        "{}",
+        runtime[3]["principal"]
+    );
     assert!(runtime[3]["started_at"].is_string());
     // Unknown kinds and kinds only the backend may record are refused with a warning.
     let warnings: Vec<&str> = t

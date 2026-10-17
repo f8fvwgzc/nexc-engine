@@ -5,12 +5,20 @@ use sqlx::{FromRow, PgExecutor, Row};
 use uuid::Uuid;
 
 use super::enum_col;
-use crate::domain::agent::{Agent, AgentRuntime, AgentStatus};
+use crate::domain::agent::{Agent, AgentOwner, AgentRuntime, AgentStatus, AgentTeam, principal_id};
+use crate::domain::capabilities::Capabilities;
 
 impl FromRow<'_, PgRow> for Agent {
     fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
+        let capabilities: serde_json::Value = row.try_get("capabilities")?;
+        let capabilities =
+            serde_json::from_value(capabilities).map_err(|e| sqlx::Error::ColumnDecode {
+                index: "capabilities".into(),
+                source: Box::new(e),
+            })?;
         Ok(Agent {
             id: row.try_get("id")?,
+            principal_id: row.try_get("principal_id")?,
             name: row.try_get("name")?,
             role: row.try_get("role")?,
             title: row.try_get("title")?,
@@ -23,6 +31,12 @@ impl FromRow<'_, PgRow> for Agent {
             runtime: enum_col(row, "runtime")?,
             heartbeat_at: row.try_get("heartbeat_at")?,
             created_at: row.try_get("created_at")?,
+            owner_user_id: row.try_get("owner_user_id")?,
+            team_id: row.try_get("team_id")?,
+            purpose: row.try_get("purpose")?,
+            capabilities,
+            policy_version: row.try_get("policy_version")?,
+            quarantined_at: row.try_get("quarantined_at")?,
         })
     }
 }
@@ -39,6 +53,31 @@ pub struct AgentFields {
     pub budget_tokens: i64,
     pub runtime: AgentRuntime,
     pub status: AgentStatus,
+    pub owner_user_id: Option<Uuid>,
+    pub team_id: Option<Uuid>,
+    pub purpose: String,
+    pub capabilities: Capabilities,
+}
+
+impl AgentFields {
+    /// The fields of `agent` as they are.
+    pub fn of(agent: &Agent) -> Self {
+        AgentFields {
+            name: agent.name.clone(),
+            role: agent.role.clone(),
+            title: agent.title.clone(),
+            model: agent.model.clone(),
+            system_prompt: agent.system_prompt.clone(),
+            reports_to: agent.reports_to,
+            budget_tokens: agent.budget_tokens,
+            runtime: agent.runtime,
+            status: agent.status,
+            owner_user_id: agent.owner_user_id,
+            team_id: agent.team_id,
+            purpose: agent.purpose.clone(),
+            capabilities: agent.capabilities.clone(),
+        }
+    }
 }
 
 /// Agents of a workspace, in creation order.
@@ -85,10 +124,12 @@ pub async fn create(
     workspace_id: Uuid,
     f: &AgentFields,
 ) -> Result<Agent, sqlx::Error> {
+    let capabilities = serde_json::to_value(&f.capabilities).expect("capabilities serialise");
     sqlx::query_as(
         "INSERT INTO agents (id, owner_id, name, role, title, model, system_prompt, reports_to, budget_tokens,
-                             runtime, status, workspace_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *",
+                             runtime, status, workspace_id, principal_id, owner_user_id, team_id, purpose,
+                             capabilities)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING *",
     )
     .bind(Uuid::now_v7())
     .bind(owner_id)
@@ -102,20 +143,31 @@ pub async fn create(
     .bind(f.runtime.as_str())
     .bind(f.status.as_str())
     .bind(workspace_id)
+    .bind(principal_id(Some(workspace_id), owner_id, &f.name))
+    .bind(f.owner_user_id.or(Some(owner_id)))
+    .bind(f.team_id)
+    .bind(&f.purpose)
+    .bind(capabilities)
     .fetch_one(db)
     .await
 }
 
-/// Replaces the editable fields of an agent.
+/// Replaces the editable fields of an agent. The principal follows the
+/// name; a change of capabilities raises the policy version.
 pub async fn update(
     db: impl PgExecutor<'_>,
     workspace_id: Uuid,
     id: Uuid,
     f: &AgentFields,
 ) -> Result<Option<Agent>, sqlx::Error> {
+    let capabilities = serde_json::to_value(&f.capabilities).expect("capabilities serialise");
     sqlx::query_as(
         "UPDATE agents SET name = $3, role = $4, title = $5, model = $6, system_prompt = $7, reports_to = $8,
-                budget_tokens = $9, runtime = $10, status = $11, updated_at = now()
+                budget_tokens = $9, runtime = $10, status = $11, updated_at = now(),
+                principal_id = 'agent://' || workspace_id::text || '/' || $3,
+                owner_user_id = $12, team_id = $13, purpose = $14,
+                policy_version = policy_version + CASE WHEN capabilities = $15::jsonb THEN 0 ELSE 1 END,
+                capabilities = $15
          WHERE workspace_id = $1 AND id = $2 RETURNING *",
     )
     .bind(workspace_id)
@@ -129,8 +181,93 @@ pub async fn update(
     .bind(f.budget_tokens)
     .bind(f.runtime.as_str())
     .bind(f.status.as_str())
+    .bind(f.owner_user_id)
+    .bind(f.team_id)
+    .bind(&f.purpose)
+    .bind(capabilities)
     .fetch_optional(db)
     .await
+}
+
+/// Takes an agent out of service: status `quarantined`, the policy version
+/// raised. `None` when it is already quarantined or unknown.
+pub async fn quarantine(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    id: Uuid,
+) -> Result<Option<Agent>, sqlx::Error> {
+    sqlx::query_as(
+        "UPDATE agents SET status = 'quarantined', quarantined_at = now(),
+                policy_version = policy_version + 1, updated_at = now()
+         WHERE workspace_id = $1 AND id = $2 AND status <> 'quarantined' RETURNING *",
+    )
+    .bind(workspace_id)
+    .bind(id)
+    .fetch_optional(db)
+    .await
+}
+
+/// Puts a quarantined agent back in service (active, or over budget when
+/// its budget is spent). `None` when it is not quarantined or unknown.
+pub async fn release(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    id: Uuid,
+) -> Result<Option<Agent>, sqlx::Error> {
+    sqlx::query_as(
+        "UPDATE agents SET status = CASE WHEN budget_tokens > 0 AND spent_tokens >= budget_tokens
+                                         THEN 'over_budget' ELSE 'active' END,
+                quarantined_at = NULL, policy_version = policy_version + 1, updated_at = now()
+         WHERE workspace_id = $1 AND id = $2 AND status = 'quarantined' RETURNING *",
+    )
+    .bind(workspace_id)
+    .bind(id)
+    .fetch_optional(db)
+    .await
+}
+
+/// Who answers for an agent, if their account still exists.
+pub async fn owner(
+    db: impl PgExecutor<'_>,
+    user_id: Option<Uuid>,
+) -> Result<Option<AgentOwner>, sqlx::Error> {
+    let Some(user_id) = user_id else {
+        return Ok(None);
+    };
+    let row: Option<(Uuid, String)> = sqlx::query_as("SELECT id, name FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_optional(db)
+        .await?;
+    Ok(row.map(|(id, name)| AgentOwner { id, name }))
+}
+
+/// The team an agent belongs to, if it still exists.
+pub async fn team(
+    db: impl PgExecutor<'_>,
+    team_id: Option<Uuid>,
+) -> Result<Option<AgentTeam>, sqlx::Error> {
+    let Some(team_id) = team_id else {
+        return Ok(None);
+    };
+    let row: Option<(Uuid, String, String)> =
+        sqlx::query_as("SELECT id, name, key FROM teams WHERE id = $1")
+            .bind(team_id)
+            .fetch_optional(db)
+            .await?;
+    Ok(row.map(|(id, name, key)| AgentTeam { id, name, key }))
+}
+
+/// Whether `team_id` is a team of `workspace_id`.
+pub async fn team_in_workspace(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    team_id: Uuid,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM teams WHERE id = $1 AND workspace_id = $2)")
+        .bind(team_id)
+        .bind(workspace_id)
+        .fetch_one(db)
+        .await
 }
 
 /// Deletes an agent (reports re-parent to nobody). Returns false if absent.
@@ -233,9 +370,11 @@ pub async fn orphan_owners(db: impl PgExecutor<'_>) -> Result<Vec<Uuid>, sqlx::E
 
 /// Moves the legacy agents of `owner_id` into their first workspace, except
 /// those whose name is already taken there (they stay unassigned and unused).
+/// Their principal is renamed after the workspace.
 pub async fn adopt_orphans_of(db: impl PgExecutor<'_>, owner_id: Uuid) -> Result<u64, sqlx::Error> {
     let done = sqlx::query(
-        "UPDATE agents a SET workspace_id = w.workspace_id
+        "UPDATE agents a SET workspace_id = w.workspace_id,
+                principal_id = 'agent://' || w.workspace_id::text || '/' || a.name
          FROM (SELECT workspace_id FROM workspace_members
                WHERE user_id = $1 AND role <> 'guest'
                ORDER BY created_at, workspace_id LIMIT 1) w

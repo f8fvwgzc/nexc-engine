@@ -111,6 +111,8 @@ pub struct Metrics {
     pub llm_cache_misses: Counter,
     pub node_runs: LabeledCounter,
     pub node_cache_hits: Counter,
+    /// Actions the agent runtime reported that the policy minted for the run did not allow.
+    pub policy_mismatches: Counter,
     pub runs: LabeledCounter,
     pub run_duration: Histogram,
     /// Trace spans recorded, by kind.
@@ -129,6 +131,7 @@ impl Default for Metrics {
             llm_cache_misses: Counter::default(),
             node_runs: LabeledCounter::default(),
             node_cache_hits: Counter::default(),
+            policy_mismatches: Counter::default(),
             runs: LabeledCounter::default(),
             run_duration: Histogram::new(&RUN_BUCKETS),
             spans: LabeledCounter::default(),
@@ -206,6 +209,17 @@ impl Metrics {
             out,
             "nexc_node_cache_hits_total {}",
             self.node_cache_hits.get()
+        );
+        header(
+            &mut out,
+            "nexc_policy_mismatches_total",
+            "counter",
+            "Actions reported by the agent runtime that the run's policy did not allow.",
+        );
+        let _ = writeln!(
+            out,
+            "nexc_policy_mismatches_total {}",
+            self.policy_mismatches.get()
         );
         header(
             &mut out,

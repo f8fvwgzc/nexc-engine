@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use super::enum_col;
 use super::settings::KeyUpdate;
+use crate::domain::capabilities::DataLabel;
 use crate::domain::knowledge::{Chunk, ChunkKind, Document, DocumentStatus};
 
 impl FromRow<'_, PgRow> for Document {
@@ -22,8 +23,45 @@ impl FromRow<'_, PgRow> for Document {
             uploaded_by: row.try_get("uploaded_by")?,
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,
+            label: enum_col(row, "label")?,
         })
     }
+}
+
+/// Sets a document's classification; false when the document is unknown.
+pub async fn set_label(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    id: Uuid,
+    label: DataLabel,
+) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query(
+        "UPDATE documents SET label = $3, updated_at = now() WHERE workspace_id = $1 AND id = $2",
+    )
+    .bind(workspace_id)
+    .bind(id)
+    .bind(label.as_str())
+    .execute(db)
+    .await?;
+    Ok(done.rows_affected() == 1)
+}
+
+/// Sets a topic's classification; false when the topic is unknown.
+pub async fn set_topic_classification(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    id: Uuid,
+    label: DataLabel,
+) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query(
+        "UPDATE knowledge_topics SET classification = $3 WHERE workspace_id = $1 AND id = $2",
+    )
+    .bind(workspace_id)
+    .bind(id)
+    .bind(label.as_str())
+    .execute(db)
+    .await?;
+    Ok(done.rows_affected() == 1)
 }
 
 // ---------- documents ----------
@@ -285,7 +323,21 @@ pub struct Candidate {
     pub embedding: Option<Vec<u8>>,
     pub embedding_model: Option<String>,
     pub topic_id: Option<Uuid>,
+    /// The document's classification.
+    pub label: DataLabel,
+    /// The topic's classification, when the passage has a topic.
+    pub topic_label: Option<DataLabel>,
 }
+
+/// The columns of a candidate passage, from `document_chunks c`, its
+/// document `d` and (left-joined) its topic `t`.
+macro_rules! candidate_columns {
+    () => {
+        "c.id, c.document_id, d.name AS document_name, c.page, c.section_path, c.kind,
+         c.content, c.embedding, c.embedding_model, c.topic_id, d.label, t.classification AS topic_label"
+    };
+}
+pub(crate) use candidate_columns;
 
 impl FromRow<'_, PgRow> for Candidate {
     fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
@@ -300,6 +352,14 @@ impl FromRow<'_, PgRow> for Candidate {
             embedding: row.try_get("embedding")?,
             embedding_model: row.try_get("embedding_model")?,
             topic_id: row.try_get("topic_id")?,
+            label: enum_col(row, "label")?,
+            topic_label: match row.try_get::<Option<String>, _>("topic_label")? {
+                Some(raw) => Some(raw.parse().map_err(|e| sqlx::Error::ColumnDecode {
+                    index: "topic_label".into(),
+                    source: Box::new(e),
+                })?),
+                None => None,
+            },
         })
     }
 }
@@ -314,15 +374,16 @@ pub async fn keyword_candidates(
     topic_id: Option<Uuid>,
     limit: i64,
 ) -> Result<Vec<Candidate>, sqlx::Error> {
-    sqlx::query_as(
-        "SELECT c.id, c.document_id, d.name AS document_name, c.page, c.section_path, c.kind,
-                c.content, c.embedding, c.embedding_model, c.topic_id
-         FROM document_chunks c JOIN documents d ON d.id = c.document_id
+    sqlx::query_as(concat!(
+        "SELECT ",
+        candidate_columns!(),
+        " FROM document_chunks c JOIN documents d ON d.id = c.document_id
+         LEFT JOIN knowledge_topics t ON t.id = c.topic_id
          WHERE c.workspace_id = $1 AND d.status = 'ready' AND $2 <> ''
            AND c.content_tsv @@ to_tsquery('simple', $2)
            AND ($4::uuid IS NULL OR c.topic_id = $4)
-         ORDER BY ts_rank(c.content_tsv, to_tsquery('simple', $2)) DESC, c.id LIMIT $3",
-    )
+         ORDER BY ts_rank(c.content_tsv, to_tsquery('simple', $2)) DESC, c.id LIMIT $3"
+    ))
     .bind(workspace_id)
     .bind(tsquery)
     .bind(limit)
@@ -463,6 +524,7 @@ pub struct StoredTopic {
     pub centroid: Vec<u8>,
     pub embedding_model: String,
     pub chunk_count: i32,
+    pub classification: String,
 }
 
 /// The topics of a workspace, largest first.
@@ -471,7 +533,7 @@ pub async fn topics(
     workspace_id: Uuid,
 ) -> Result<Vec<StoredTopic>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT id, label, terms, centroid, embedding_model, chunk_count
+        "SELECT id, label, terms, centroid, embedding_model, chunk_count, classification
          FROM knowledge_topics WHERE workspace_id = $1 ORDER BY chunk_count DESC, label",
     )
     .bind(workspace_id)

@@ -28,6 +28,7 @@ pub struct RunRow {
     pub created_at: DateTime<Utc>,
     /// The final hash of the run's trace chain, once sealed.
     pub trace_hash: Option<Vec<u8>>,
+    pub policy_mismatches: i32,
 }
 
 impl RunRow {
@@ -44,6 +45,7 @@ impl RunRow {
             finished_at: self.finished_at,
             created_at: self.created_at,
             trace_hash: self.trace_hash.as_deref().map(hex::encode),
+            policy_mismatches: self.policy_mismatches,
             node_runs,
         }
     }
@@ -65,6 +67,7 @@ impl FromRow<'_, PgRow> for RunRow {
             finished_at: row.try_get("finished_at")?,
             created_at: row.try_get("created_at")?,
             trace_hash: row.try_get("trace_hash")?,
+            policy_mismatches: row.try_get("policy_mismatches")?,
         })
     }
 }
@@ -247,6 +250,29 @@ pub async fn close_unfinished_nodes(
     )
     .bind(run_id)
     .bind(status.as_str())
+    .fetch_all(db)
+    .await
+}
+
+/// Counts one more action of the run that its policy did not allow.
+pub async fn add_policy_mismatch(db: impl PgExecutor<'_>, id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE runs SET policy_mismatches = policy_mismatches + 1 WHERE id = $1")
+        .bind(id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// Agents that were quarantined while a node of the run was running on them.
+pub async fn quarantined_agents_running(
+    db: impl PgExecutor<'_>,
+    run_id: Uuid,
+) -> Result<Vec<Uuid>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT DISTINCT a.id FROM node_runs nr JOIN agents a ON a.id = nr.agent_id
+         WHERE nr.run_id = $1 AND nr.status = 'running' AND a.status = 'quarantined'",
+    )
+    .bind(run_id)
     .fetch_all(db)
     .await
 }
