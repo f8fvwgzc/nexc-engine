@@ -14,6 +14,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `tool_call`, `spawn`, `data_read`, `egress`, `policy` or `approval`). The spans of a run form a
   hash chain, `SHA-256(prev_hash || canonical JSON of the span)` from 32 zero bytes, and the
   audit log gains the action `trace_sealed`.
+- The agent runtime reports every model turn (`llm_call`), tool call (`tool_call`: the tool, a
+  SHA-256 of its arguments, the result size, the error flag and the duration) and sub-agent birth
+  (`spawn`) as a `{"type":"span"}` NDJSON line with a UUID v7 id, its parent and nanosecond
+  times (contract §8). Spans never carry arguments, contents or credentials.
 - Data transfer moves everything: the workspace's files on disk travel inside the target
   database (`workspace_files`) and are written out by the server that owns it at its next start;
   an optional Redis receives the handover record; **Test connection**

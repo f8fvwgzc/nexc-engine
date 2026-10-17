@@ -75,9 +75,17 @@ def test_demo_other_kinds(
 
 
 def _comparable(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Events with .docx bytes replaced by their text: the files embed creation timestamps."""
+    """Events with .docx bytes replaced by their text (the files embed creation timestamps) and
+    span ids, clocks and durations left out (they are what make each run its own)."""
     out = []
     for event in events:
+        if event["type"] == "span":
+            attributes = {k: v for k, v in event["attributes"].items() if k != "duration_ns"}
+            clocks = ("id", "parent_id", "started_at", "ended_at")
+            kept = {k: v for k, v in event.items() if k not in clocks}
+            linked = event["parent_id"] is not None
+            out.append({**kept, "attributes": attributes, "has_parent": linked})
+            continue
         if event["type"] == "artifact" and event["path"].endswith(".docx"):
             document = docx.Document(io.BytesIO(base64.b64decode(event["content_b64"])))
             text = [p.text for p in document.paragraphs]

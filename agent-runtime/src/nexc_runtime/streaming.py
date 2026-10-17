@@ -17,6 +17,9 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 LogLevel = Literal["debug", "info", "warning", "error"]
+# Kinds the runtime reports; data reads, egress, policy and approvals are recorded by the backend.
+SpanKind = Literal["llm_call", "tool_call", "spawn"]
+SpanStatus = Literal["ok", "error"]
 
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 _EXTRA_MIME = {
@@ -70,6 +73,35 @@ class EventStream:
 
     def spawn(self, name: str, role: str) -> None:
         self._emit({"type": "spawn", "agent": {"name": name, "role": role}})
+
+    def span(
+        self,
+        *,
+        span_id: str,
+        parent_id: str | None,
+        kind: SpanKind,
+        name: str,
+        agent: str,
+        started_at: str,
+        ended_at: str | None,
+        status: SpanStatus,
+        attributes: dict[str, Any],
+    ) -> None:
+        """One action of an agent. `attributes` hold digests, sizes and counts, never arguments."""
+        self._emit(
+            {
+                "type": "span",
+                "id": span_id,
+                "parent_id": parent_id,
+                "kind": kind,
+                "name": name,
+                "agent": agent,
+                "started_at": started_at,
+                "ended_at": ended_at,
+                "status": status,
+                "attributes": attributes,
+            }
+        )
 
     def artifact(self, path: str, mime: str, content: bytes) -> None:
         self._emit(

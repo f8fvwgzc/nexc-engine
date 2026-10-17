@@ -687,10 +687,56 @@ Auth: `Authorization: Bearer $NEXC_RUNTIME_TOKEN` (constant-time compare). Bind 
 
 Stream lines (one JSON object per line):
 `{"type":"log","level":"info","message":"…"}` · `{"type":"delta","text":"…"}` ·
-`{"type":"tokens","input":123,"output":45}` · `{"type":"spawn","agent":{"name":"…","role":"…"}}` ·
+`{"type":"tokens","input":123,"output":45}` · `{"type":"spawn","agent":{"name":"…","role":"…"}}` · `{"type":"span", …}` (below) ·
 `{"type":"artifact","path":"report.docx","mime":"application/vnd.openxmlformats-officedocument.wordprocessingml.document","content_b64":"…"}` ·
 `{"type":"result","output":"…","tokens_in":0,"tokens_out":0}` · `{"type":"error","message":"…","retryable":true}`.
 The stream always ends with exactly one `result` or `error`. Artifact paths are relative, no `..`, ≤ 20 MiB each.
+
+**Spans.** Every action of an agent is also reported as a span line, emitted when the action ends:
+
+```json
+{
+  "type": "span",
+  "id": "0199f3a0-6b1e-7c2d-9e4f-1a2b3c4d5e6f",
+  "parent_id": "0199f3a0-6a00-7000-8000-000000000000",
+  "kind": "tool_call",
+  "name": "write_file",
+  "agent": "writer/researcher-1",
+  "started_at": "2026-10-17T12:00:00.123456789Z",
+  "ended_at": "2026-10-17T12:00:00.125000000Z",
+  "status": "ok",
+  "attributes": {
+    "tool": "write_file",
+    "args_sha256": "…",
+    "args_bytes": 812,
+    "result_bytes": 24,
+    "is_error": false,
+    "duration_ns": 1876543
+  }
+}
+```
+
+| `kind`      | emitted for                                                          | `name`     | `parent_id`                          | `attributes`                                                                          |
+| ----------- | -------------------------------------------------------------------- | ---------- | ------------------------------------ | ------------------------------------------------------------------------------------- |
+| `llm_call`  | every model turn of every agent; a failed call has `status: "error"` | the model  | the agent's `spawn` span (root: null) | `provider, model, turn, tokens_in, tokens_out, tokens_cached, stop_reason, tool_calls` |
+| `tool_call` | every tool call that runs (`Tool.invoke`), `spawn_subagent` included | the tool   | the turn that asked for it           | `tool, args_sha256, args_bytes, result_bytes, is_error, duration_ns`                  |
+| `spawn`     | a sub-agent's birth, an instant (`started_at == ended_at`)           | the child  | the parent agent's current turn      | `child, role, depth, budget_tokens`                                                   |
+
+`args_sha256` is the SHA-256 of the arguments as JSON with sorted keys and no whitespace. Ids are
+UUID v7 made by the runtime; times are RFC 3339 UTC with nanoseconds; `agent` is the acting
+agent's name (sub-agents are `parent/role-n`). Spans never carry tool arguments, file contents,
+prompts or credentials: only digests, sizes, counts and names.
+
+The runtime is not trusted with the trace. The backend reads span lines field by field and
+decides the run, the node and the workspace agent itself. It keeps a reported id only when it is
+a UUID v7 from about the time of the attempt and not used before; otherwise the span gets a fresh
+id, the reported one is kept as `attributes.runtime_id`, and `parent_id`s naming it follow. It
+accepts only the three kinds above (`data_read`, `egress`, `policy` and `approval` are the
+backend's to record) and ignores any other kind with a warning. It keeps only scalar attributes
+and arrays of scalars (strings ≤ 1024 characters, ≤ 64 attributes), and drops the attributes of a
+span line over 64 KiB (`attributes_dropped: true`). Spans are hashed into the run's chain in the
+order the backend receives them; lines after the terminal event are never read, and more than
+20,000 spans from one attempt are ignored.
 
 ## 9. texc-symphony bridge
 

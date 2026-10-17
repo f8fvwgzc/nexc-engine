@@ -10,10 +10,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..config import Settings
-from ..llm import LLMProvider, ToolCall, ToolResult
+from ..llm import LLMProvider, ToolCall, ToolResult, Turn
 from ..prompts import build_subagent_prompt, build_system_prompt
 from ..streaming import EventStream
 from ..tools import Tool, ToolContext, ToolError, Workspace, build_toolset
+from ..trace import new_span_id, now_ns, rfc3339_ns
 from .registry import AgentRecord, AgentRegistry, Budget, SpawnRefused
 
 log = logging.getLogger(__name__)
@@ -89,11 +90,16 @@ class Agent:
         budget: Budget,
         system_prompt: str = "",
         stream_text: bool = False,
+        parent_span_id: str | None = None,
     ) -> None:
         self.scope = scope
         self.record = record
         self.budget = budget
         self.stream_text = stream_text
+        # The spawn span this agent was born in (None for the root): its turns' parent.
+        self.parent_span_id = parent_span_id
+        # The turn in progress, the parent of whatever this agent spawns during it.
+        self._turn_span_id: str | None = None
         can_spawn = AgentRegistry.can_spawn(record)
         self.tools: dict[str, Tool[Any]] = build_toolset(
             can_spawn=can_spawn, allow_code_exec=scope.allow_code_exec
@@ -125,20 +131,29 @@ class Agent:
         )
         last_text = ""
 
-        for _ in range(scope.max_turns):
+        for number in range(1, scope.max_turns + 1):
             if self.budget.exhausted:
                 return self._give_up(last_text, "token budget exhausted")
             max_tokens = max(MIN_OUTPUT_TOKENS, min(MAX_OUTPUT_TOKENS, self.budget.remaining))
-            turn = await with_heartbeat(
-                provider.next_turn(
-                    conversation,
-                    specs,
-                    max_tokens=max_tokens,
-                    on_text=scope.events.delta if self.stream_text else None,
-                ),
-                scope.events,
-                label=self.record.name,
-            )
+            turn_id = new_span_id()
+            started = now_ns()
+            try:
+                turn = await with_heartbeat(
+                    provider.next_turn(
+                        conversation,
+                        specs,
+                        max_tokens=max_tokens,
+                        on_text=scope.events.delta if self.stream_text else None,
+                    ),
+                    scope.events,
+                    label=self.record.name,
+                )
+            except Exception:
+                self._turn_span(turn_id, started, number, None)
+                raise
+            self._turn_span(turn_id, started, number, turn)
+            self._turn_span_id = turn_id
+            ctx.turn_span_id = turn_id
             self._account(turn.input_tokens, turn.output_tokens, turn.cached_tokens)
             if turn.text.strip():
                 last_text = turn.text
@@ -168,6 +183,34 @@ class Agent:
         return self._give_up(last_text, f"reached the limit of {scope.max_turns} turns")
 
     # --- internals --------------------------------------------------------------------------
+    def _turn_span(self, span_id: str, started: int, number: int, turn: Turn | None) -> None:
+        """Reports one model turn as an `llm_call` span (`turn` is None when the call failed)."""
+        provider = self.scope.provider
+        attributes: dict[str, Any] = {
+            "provider": provider.name,
+            "model": provider.model,
+            "turn": number,
+        }
+        if turn is not None:
+            attributes.update(
+                tokens_in=turn.input_tokens,
+                tokens_out=turn.output_tokens,
+                tokens_cached=turn.cached_tokens,
+                stop_reason=turn.stop,
+                tool_calls=len(turn.tool_calls),
+            )
+        self.scope.events.span(
+            span_id=span_id,
+            parent_id=self.parent_span_id,
+            kind="llm_call",
+            name=provider.model,
+            agent=self.record.name,
+            started_at=rfc3339_ns(started),
+            ended_at=rfc3339_ns(now_ns()),
+            status="ok" if turn is not None else "error",
+            attributes=attributes,
+        )
+
     def _account(self, tokens_in: int, tokens_out: int, tokens_cached: int = 0) -> None:
         self.budget.spend(tokens_in + tokens_out)
         self.scope.meter.tokens_in += tokens_in
@@ -209,8 +252,27 @@ class Agent:
             raise ToolError(str(exc)) from None
 
         scope.events.spawn(name, role)
+        # The birth is an instant: the child's turns hang under it as they happen.
+        spawn_id = new_span_id()
+        born = rfc3339_ns(now_ns())
+        scope.events.span(
+            span_id=spawn_id,
+            parent_id=self._turn_span_id,
+            kind="spawn",
+            name=name,
+            agent=self.record.name,
+            started_at=born,
+            ended_at=born,
+            status="ok",
+            attributes={
+                "child": name,
+                "role": role,
+                "depth": record.depth,
+                "budget_tokens": budget.limit,
+            },
+        )
         scope.events.log("info", f"{name} born with a budget of {budget.limit} tokens")
-        child = Agent(scope=scope, record=record, budget=budget)
+        child = Agent(scope=scope, record=record, budget=budget, parent_span_id=spawn_id)
         try:
             answer = await child.run(build_subagent_prompt(parent_role=self.record.role, task=task))
         except AgentFailure as exc:
