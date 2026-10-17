@@ -14,7 +14,7 @@ BACKEND_MANIFEST := backend/Cargo.toml
 LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a;
 
 .PHONY: help init setup dev dev-backend dev-frontend dev-runtime db-up db-down db-shell \
-        backup backup-check restore prove test-worst-case \
+        backup backup-check restore prove prove-trace test-worst-case \
         build test test-backend test-frontend test-runtime lint fmt check \
         docker-build docker-up docker-down docker-logs demo seed-demo \
         minikube-up minikube-down k8s-render openapi doctor clean
@@ -117,6 +117,11 @@ seed-demo: ## Fill the running app with a demo workspace, five accounts and thei
 
 prove: ## Run real issues through plan, agents and result with the configured model: make prove ISSUES="ENG-7 DES-2" (needs NEXC_PROVE_EMAIL/PASSWORD)
 	@python3 scripts/prove-loop.py $(ISSUES)
+
+prove-trace: ## Span emit -> fan-out, durable write and verify latency for a 10,000-span run (needs PostgreSQL: make db-up)
+	@$(LOAD_ENV) export DATABASE_URL="$${DATABASE_URL:-$$NEXC_DATABASE_URL}"; \
+	  $(CARGO) test --release --locked --manifest-path $(BACKEND_MANIFEST) --test trace prove_trace -- --ignored --nocapture 2>&1 \
+	  | sed -n '/^prove-trace:/,$$p' | grep -v '^test \|^$$\|test result'
 
 test-worst-case: ## Every documented route against missing/forged tokens, outsiders, hostile input, races and a 20,000-issue workspace
 	cd backend && cargo test --test worst_case

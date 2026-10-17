@@ -32,6 +32,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   in live from `trace.span` while the run executes, with the chain's verification next to it
   ("Chain intact" or the first span that does not fit). Each agent card on the Agents page lists
   the agent's last actions.
+- Trace tests (`backend/tests/trace.rs`): a 12-turn agent run with 40 tool calls and a sub-agent
+  yields a chain that verifies and is sealed in the run and the audit log; changing one byte of a
+  stored span makes `verify` name that span; oversized span lines, unknown kinds, kinds only the
+  backend may record, repeated ids and spans after the result are contained; the trace is private
+  and paged. `make prove-trace` pushes 10,000 spans through one run's chain and prints the
+  latencies. Three runs on an Apple M2 Pro (10 cores), release build, PostgreSQL 17 in Docker:
+  - span emitted → `trace.span` fan-out: p50 9 µs, p99 28–41 µs, max 0.4–0.9 ms;
+  - last span emitted → all 10,000 durable in PostgreSQL: 23–111 ms;
+  - `GET /runs/{rid}/trace/verify` on 10,000 spans, loading included: 42–45 ms;
+  - recomputing the chain alone (C SHA-256 kernel, hashes checked across cores): 7–12 ms.
 - Data transfer moves everything: the workspace's files on disk travel inside the target
   database (`workspace_files`) and are written out by the server that owns it at its next start;
   an optional Redis receives the handover record; **Test connection**
