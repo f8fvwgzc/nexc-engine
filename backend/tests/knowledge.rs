@@ -177,30 +177,10 @@ async fn documents_are_ingested_searched_and_cited(pool: PgPool) {
         "{context:?}"
     );
 
-    // The owner downloads the workspace's files, laid out like the server's data folder.
-    let archive = format!("{ws}/files.zip");
-    let (status, _) = call(&app, Method::GET, &archive, &member, None).await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "only the owner");
-    let zip = app
-        .request(
-            Method::GET,
-            &format!("/api/v1{archive}"),
-            Some(&owner),
-            None,
-        )
-        .await;
-    assert_eq!(zip.status, StatusCode::OK);
-    assert_eq!(zip.headers["content-type"], "application/zip");
-    let bytes = zip.body.as_str().unwrap();
-    assert!(bytes.starts_with("PK"), "a zip archive");
-    assert!(
-        bytes.contains(&format!("documents/{did}")),
-        "named by document id"
-    );
-    assert!(
-        bytes.contains("Warehouse handbook"),
-        "stored as it was uploaded"
-    );
+    // The separate download of a workspace's files is gone: a transfer carries them now.
+    let archive = format!("/api/v1{ws}/files.zip");
+    let gone = app.request(Method::GET, &archive, Some(&owner), None).await;
+    assert_eq!(gone.status, StatusCode::NOT_FOUND);
 
     // Settings: the built-in embedding by default; only admins change them.
     let settings = format!("{ws}/knowledge/settings");
