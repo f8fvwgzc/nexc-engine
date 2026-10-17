@@ -30,6 +30,8 @@ string_enum!(
         WorkspaceTransferred => "workspace_transferred",
         /// A platform administrator made someone an owner, from outside the workspace.
         PlatformOwnerAssigned => "platform_owner_assigned",
+        /// A run ended and the final hash of its trace chain was recorded (subject: the run id).
+        TraceSealed => "trace_sealed",
     }
 );
 

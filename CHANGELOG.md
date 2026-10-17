@@ -9,6 +9,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Agent trace spine (AgentSecOps phase 0, `docs/AGENTSECOPS.md`): every action an agent takes in a
+  run is an append-only span in `agent_spans` (UUID v7 ids, parent links, kind `llm_call`,
+  `tool_call`, `spawn`, `data_read`, `egress`, `policy` or `approval`). The spans of a run form a
+  hash chain, `SHA-256(prev_hash || canonical JSON of the span)` from 32 zero bytes, and the
+  audit log gains the action `trace_sealed`.
 - Data transfer moves everything: the workspace's files on disk travel inside the target
   database (`workspace_files`) and are written out by the server that owns it at its next start;
   an optional Redis receives the handover record; **Test connection**
