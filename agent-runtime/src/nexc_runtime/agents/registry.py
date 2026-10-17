@@ -71,6 +71,13 @@ class AgentRecord:
     children: int = 0
     alive: bool = True
     lineage: list[str] = field(default_factory=list)
+    # The principal the agent's spans are attributed to: the token's for the root,
+    # `{parent principal}/{role}-{n}` for a sub-agent. Defaults to the name.
+    principal: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.principal:
+            self.principal = self.name
 
 
 class AgentRegistry:
@@ -81,7 +88,14 @@ class AgentRegistry:
         self._ids = itertools.count(1)
         self.records: list[AgentRecord] = []
 
-    def birth(self, name: str, role: str, parent: AgentRecord | None = None) -> AgentRecord:
+    def birth(
+        self,
+        name: str,
+        role: str,
+        parent: AgentRecord | None = None,
+        *,
+        principal: str = "",
+    ) -> AgentRecord:
         if parent is not None:
             if parent.depth >= MAX_DEPTH:
                 raise SpawnRefused(f"maximum agent depth ({MAX_DEPTH}) reached")
@@ -95,6 +109,7 @@ class AgentRegistry:
             depth=0 if parent is None else parent.depth + 1,
             parent=parent,
             lineage=[*parent.lineage, parent.name] if parent else [],
+            principal=principal,
         )
         self.records.append(record)
         self._census.agents_live += 1

@@ -77,4 +77,6 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "-q"
+# `prove` tests are measurements (`make prove-identity`), not part of the suite.
+addopts = "-q -m 'not prove'"
+markers = ["prove: a measurement printed by a make prove-* target"]

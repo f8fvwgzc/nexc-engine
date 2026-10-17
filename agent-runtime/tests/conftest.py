@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,9 +17,44 @@ from nexc_runtime.api.schemas import ExecuteRequest
 from nexc_runtime.config import Settings
 from nexc_runtime.llm import Conversation, LLMError, ToolCall, ToolResult, ToolSpec, Turn
 from nexc_runtime.llm.base import StopKind, TextSink
+from nexc_runtime.policy import derive_key, encode_token
 
 TOKEN = "t" * 40
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
+# The agent-token key the test settings end up with (no NEXC_AGENT_TOKEN_KEY: derived).
+AGENT_KEY = derive_key(TOKEN)
+
+
+def mint_token(
+    *,
+    run_id: str = "run-1",
+    node_id: str = "node-1",
+    principal: str = "writer",
+    capabilities: dict[str, Any] | None = None,
+    policy_version: int = 1,
+    key: bytes = AGENT_KEY,
+    now: int | None = None,
+    ttl_s: int = 660,
+) -> str:
+    """A per-run agent token as the backend mints it (`security/agent_token.rs`)."""
+    now = int(time.time()) if now is None else now
+    claims = {
+        "iss": "nexc-engine",
+        "aud": "nexc-runtime",
+        "sub": principal,
+        "jti": "0199bc0e-0000-7000-8000-000000000001",
+        "iat": now,
+        "nbf": now,
+        "exp": now + ttl_s,
+        "run_id": run_id,
+        "node_id": node_id,
+        "agent_id": None,
+        "workspace_id": None,
+        "depth": 0,
+        "policy_version": policy_version,
+        "capabilities": capabilities or {},
+    }
+    return encode_token(claims, key)
 
 
 @dataclass
@@ -128,10 +164,13 @@ def client_for(
         client.close()
 
 
-def execute_body(**overrides: Any) -> dict[str, Any]:
+def execute_body(capabilities: dict[str, Any] | None = None, **overrides: Any) -> dict[str, Any]:
+    """A request as the backend sends it, with a valid token for `capabilities` (default: the
+    unrestricted policy). Pass `token=...` to send another token, `token=None` for none."""
     body: dict[str, Any] = {
         "run_id": "run-1",
         "node_id": "node-1",
+        "token": mint_token(capabilities=capabilities),
         "agent": {"name": "writer", "role": "writer", "budget_tokens": 200_000},
         "task": {"title": "Quarterly report", "content": "Summarise Q3.", "kind": "document"},
         "context": {"goal": "Inform the board", "upstream": [], "memories": []},

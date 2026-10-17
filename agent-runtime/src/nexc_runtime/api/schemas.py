@@ -58,6 +58,10 @@ class LimitsIn(_Model):
 class ExecuteRequest(_Model):
     run_id: str = Field(min_length=1, max_length=64)
     node_id: str = Field(min_length=1, max_length=64)
+    # The per-run agent token the backend signed (`nexc_runtime.policy`); nothing starts
+    # without a valid one. Optional in the schema so that the refusal is a terminal event
+    # with its reason, not a validation error.
+    token: str | None = Field(default=None, max_length=64 * 1024)
     agent: AgentSpec = Field(default_factory=AgentSpec)
     task: TaskIn
     context: ContextIn = Field(default_factory=ContextIn)

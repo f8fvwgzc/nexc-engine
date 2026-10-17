@@ -11,9 +11,11 @@ from typing import Any
 
 from ..config import Settings
 from ..llm import LLMProvider, ToolCall, ToolResult, Turn
+from ..policy import AgentToken, decide_spawn
 from ..prompts import build_subagent_prompt, build_system_prompt
 from ..streaming import EventStream
 from ..tools import Tool, ToolContext, ToolError, Workspace, build_toolset
+from ..tools.base import refuse
 from ..trace import new_span_id, now_ns, rfc3339_ns
 from .registry import AgentRecord, AgentRegistry, Budget, SpawnRefused
 
@@ -77,6 +79,8 @@ class RunScope:
     kind: str
     max_turns: int
     allow_code_exec: bool
+    # Signs the narrowed tokens sub-agents are born with.
+    token_key: bytes
     kind_description: str = ""
     produces_artifact: bool = False
 
@@ -88,6 +92,7 @@ class Agent:
         scope: RunScope,
         record: AgentRecord,
         budget: Budget,
+        token: AgentToken,
         system_prompt: str = "",
         stream_text: bool = False,
         parent_span_id: str | None = None,
@@ -95,12 +100,16 @@ class Agent:
         self.scope = scope
         self.record = record
         self.budget = budget
+        # What this agent may do, signed by the backend (narrowed by the parent for a sub-agent).
+        self.token = token
         self.stream_text = stream_text
         # The spawn span this agent was born in (None for the root): its turns' parent.
         self.parent_span_id = parent_span_id
         # The turn in progress, the parent of whatever this agent spawns during it.
         self._turn_span_id: str | None = None
-        can_spawn = AgentRegistry.can_spawn(record)
+        # The tool is offered where the token still allows a level below; a token that
+        # forbids the tool itself leaves it visible and refuses it when called.
+        can_spawn = AgentRegistry.can_spawn(record) and record.depth < token.capabilities.max_depth
         self.tools: dict[str, Tool[Any]] = build_toolset(
             can_spawn=can_spawn, allow_code_exec=scope.allow_code_exec
         )
@@ -128,7 +137,10 @@ class Agent:
             agent_name=self.record.name,
             spawn=self._spawn if "spawn_subagent" in self.tools else None,
             produces_artifact=scope.produces_artifact,
+            token=self.token,
+            principal=self.record.principal,
         )
+        self._ctx = ctx
         last_text = ""
 
         for number in range(1, scope.max_turns + 1):
@@ -190,6 +202,7 @@ class Agent:
             "provider": provider.name,
             "model": provider.model,
             "turn": number,
+            "policy_version": self.token.policy_version,
         }
         if turn is not None:
             attributes.update(
@@ -204,7 +217,7 @@ class Agent:
             parent_id=self.parent_span_id,
             kind="llm_call",
             name=provider.model,
-            agent=self.record.name,
+            agent=self.record.principal,
             started_at=rfc3339_ns(started),
             ended_at=rfc3339_ns(now_ns()),
             status="ok" if turn is not None else "error",
@@ -243,13 +256,29 @@ class Agent:
 
     async def _spawn(self, role: str, task: str) -> str:
         scope = self.scope
+        # The token decides first: depth, fan-out and the roles this agent may delegate to.
+        depth = self.record.depth + 1
+        decision = decide_spawn(
+            self.token.capabilities, role, depth=depth, children=self._child_seq
+        )
+        if not decision.allowed:
+            refuse(
+                self._ctx,
+                action="spawn",
+                subject=role,
+                decision=decision,
+                extra={"depth": depth, "children": self._child_seq},
+            )
         try:
             budget = self.budget.allocate_child()
             self._child_seq += 1
             name = f"{self.record.name}/{role}-{self._child_seq}"
-            record = scope.registry.birth(name, role, parent=self.record)
+            principal = f"{self.record.principal}/{role}-{self._child_seq}"
+            record = scope.registry.birth(name, role, parent=self.record, principal=principal)
         except SpawnRefused as exc:
             raise ToolError(str(exc)) from None
+        # The child is born with a narrowed copy of this token: never wider than this one.
+        child_token = self.token.child(principal, scope.token_key)
 
         scope.events.spawn(name, role)
         # The birth is an instant: the child's turns hang under it as they happen.
@@ -259,20 +288,27 @@ class Agent:
             span_id=spawn_id,
             parent_id=self._turn_span_id,
             kind="spawn",
-            name=name,
-            agent=self.record.name,
+            name=principal,
+            agent=self.record.principal,
             started_at=born,
             ended_at=born,
             status="ok",
             attributes={
-                "child": name,
+                "child": principal,
                 "role": role,
                 "depth": record.depth,
                 "budget_tokens": budget.limit,
+                "policy_version": child_token.policy_version,
             },
         )
         scope.events.log("info", f"{name} born with a budget of {budget.limit} tokens")
-        child = Agent(scope=scope, record=record, budget=budget, parent_span_id=spawn_id)
+        child = Agent(
+            scope=scope,
+            record=record,
+            budget=budget,
+            token=child_token,
+            parent_span_id=spawn_id,
+        )
         try:
             answer = await child.run(build_subagent_prompt(parent_role=self.record.role, task=task))
         except AgentFailure as exc:

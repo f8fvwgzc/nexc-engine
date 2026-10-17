@@ -17,8 +17,9 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 LogLevel = Literal["debug", "info", "warning", "error"]
-# Kinds the runtime reports; data reads, egress, policy and approvals are recorded by the backend.
-SpanKind = Literal["llm_call", "tool_call", "spawn"]
+# Kinds the runtime reports: its agents' turns, tool calls, spawns and the policy decisions
+# that refused one of them. Data reads, egress and approvals are recorded by the backend.
+SpanKind = Literal["llm_call", "tool_call", "spawn", "policy"]
 SpanStatus = Literal["ok", "error"]
 
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"

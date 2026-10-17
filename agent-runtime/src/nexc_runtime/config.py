@@ -9,6 +9,8 @@ from typing import Literal
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .policy import derive_key
+
 MIN_TOKEN_LENGTH = 32
 
 
@@ -18,7 +20,10 @@ class Settings(BaseSettings):
     Field names map to upper-case environment variables (`runtime_port` -> `RUNTIME_PORT`).
     """
 
-    model_config = SettingsConfigDict(case_sensitive=False, extra="ignore", frozen=True)
+    # An empty variable (`NEXC_AGENT_TOKEN_KEY=` in `.env`) counts as unset.
+    model_config = SettingsConfigDict(
+        case_sensitive=False, extra="ignore", frozen=True, env_ignore_empty=True
+    )
 
     # --- network -----------------------------------------------------------------------------
     runtime_host: str = "0.0.0.0"  # noqa: S104 - the container binds every interface on purpose
@@ -27,6 +32,12 @@ class Settings(BaseSettings):
     # --- security ----------------------------------------------------------------------------
     nexc_runtime_token: SecretStr = Field(
         description="Shared bearer secret between the backend and this runtime (>= 32 chars).",
+    )
+    # Verifies the per-run agent tokens the backend signs; derived from the runtime token
+    # when unset (the backend derives it the same way).
+    nexc_agent_token_key: SecretStr | None = Field(
+        default=None,
+        description="Key of the per-run agent tokens (>= 32 chars); derived when unset.",
     )
     runtime_max_request_bytes: int = Field(default=4 * 1024 * 1024, ge=1024)
     # /v1/parse takes a whole uploaded file as its body, so it has its own, larger limit.
@@ -55,14 +66,20 @@ class Settings(BaseSettings):
     # --- logging -----------------------------------------------------------------------------
     runtime_log_level: Literal["debug", "info", "warning", "error"] = "info"
 
-    @field_validator("nexc_runtime_token")
+    @field_validator("nexc_runtime_token", "nexc_agent_token_key")
     @classmethod
-    def _token_strength(cls, value: SecretStr) -> SecretStr:
-        if len(value.get_secret_value()) < MIN_TOKEN_LENGTH:
+    def _token_strength(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is not None and len(value.get_secret_value()) < MIN_TOKEN_LENGTH:
             raise ValueError(
                 f"must be at least {MIN_TOKEN_LENGTH} characters (generate one with `make init`)"
             )
         return value
+
+    def agent_token_key(self) -> bytes:
+        """The HMAC key of the per-run agent tokens."""
+        if self.nexc_agent_token_key is not None:
+            return self.nexc_agent_token_key.get_secret_value().encode("utf-8")
+        return derive_key(self.nexc_runtime_token.get_secret_value())
 
 
 @lru_cache(maxsize=1)

@@ -15,6 +15,7 @@ from .agents import Agent, AgentFailure, AgentRegistry, Budget, Census, Meter, R
 from .api.schemas import ExecuteRequest
 from .config import Settings
 from .llm import DemoBrief, LLMError, LLMProvider, build_provider, redact
+from .policy import AgentToken, TokenError, decide_model, decide_tool, verify_token
 from .prompts import Upstream, build_task_prompt
 from .streaming import EventStream, collect_artifacts
 from .tools import Workspace
@@ -61,6 +62,17 @@ async def execute(
     provider_factory: ProviderFactory = default_provider_factory,
 ) -> None:
     """Run the request to completion. Always ends the stream with exactly one terminal event."""
+    # Nothing starts without the backend's token: no workspace, no provider, no agent.
+    try:
+        token = verify_token(
+            request.token,
+            settings.agent_token_key(),
+            run_id=request.run_id,
+            node_id=request.node_id,
+        )
+    except TokenError as exc:
+        events.error(f"agent token refused: {exc}", retryable=False)
+        return
     secret = request.llm.api_key.get_secret_value() if request.llm.api_key else None
     timeout = min(request.limits.timeout_s, settings.runtime_timeout_cap_s)
     registry = AgentRegistry(census)
@@ -77,6 +89,7 @@ async def execute(
                 provider=provider,
                 workspace_dir=workspace_dir,
                 events=events,
+                token=token,
             )
     except TimeoutError:
         events.error(f"run exceeded its time limit of {timeout}s", retryable=False)
@@ -110,7 +123,13 @@ async def _run(
     provider: LLMProvider,
     workspace_dir: Path,
     events: EventStream,
+    token: AgentToken,
 ) -> None:
+    # The backend refuses a model outside the allow-list before dispatch; this is the same
+    # rule applied to the model the provider really resolved.
+    verdict = decide_model(token.capabilities, provider.model)
+    if not verdict.allowed:
+        raise AgentFailure(f"policy: {verdict.reason}", retryable=False)
     allow_code_exec = settings.runtime_allow_code_exec and request.limits.allow_code_exec
     if request.limits.allow_code_exec and not settings.runtime_allow_code_exec:
         events.log("warning", "code execution requested but disabled on this runtime")
@@ -130,18 +149,21 @@ async def _run(
         produces_artifact=_produces_artifact(request),
         max_turns=min(request.limits.max_turns, settings.runtime_max_turns_cap),
         allow_code_exec=allow_code_exec,
+        token_key=settings.agent_token_key(),
     )
     spec = request.agent
-    record = registry.birth(spec.name, spec.role)
+    record = registry.birth(spec.name, spec.role, principal=token.principal)
     events.log(
         "info",
         f"agent {spec.name!r} ({spec.role}) born on {provider.name}/{provider.model} "
-        f"with a budget of {spec.budget_tokens} tokens",
+        f"with a budget of {spec.budget_tokens} tokens, as {token.principal} "
+        f"under policy version {token.policy_version}",
     )
     root = Agent(
         scope=scope,
         record=record,
         budget=Budget(spec.budget_tokens),
+        token=token,
         system_prompt=spec.system_prompt,
         stream_text=True,
     )
@@ -154,7 +176,7 @@ async def _run(
         documents=request.context.documents,
     )
     output = await root.run(prompt)
-    _ensure_document(request, scope.workspace, output, events)
+    _ensure_document(request, scope.workspace, output, events, token)
 
     artifacts, warnings = collect_artifacts(
         workspace_dir,
@@ -186,13 +208,25 @@ def _loggable(value: str) -> str:
 
 
 def _ensure_document(
-    request: ExecuteRequest, workspace: Workspace, output: str, events: EventStream
+    request: ExecuteRequest,
+    workspace: Workspace,
+    output: str,
+    events: EventStream,
+    token: AgentToken,
 ) -> None:
     """Nodes whose type produces an artifact always deliver a .docx: when the agent answered in
-    text without calling make_docx, its final Markdown answer is converted."""
+    text without calling make_docx, its final Markdown answer is converted. Not for an agent
+    whose policy forbids `make_docx`: the runtime makes nothing the agent may not."""
     if not _produces_artifact(request) or not output.strip():
         return
     if any(p.suffix.lower() == ".docx" for p in workspace.root.rglob("*") if p.is_file()):
+        return
+    if not decide_tool(token.capabilities, "make_docx").allowed:
+        events.log(
+            "warning",
+            "no .docx was produced and the agent's policy does not allow make_docx; "
+            "only its final answer is delivered",
+        )
         return
     filename = f"{_slug(request.task.title)}.docx"
     # The answer may claim a file that was never written; say what this file is instead.

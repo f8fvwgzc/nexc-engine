@@ -6,12 +6,13 @@ import copy
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NoReturn
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from ..config import Settings
 from ..llm.base import ToolSpec
+from ..policy import AgentToken, Decision, decide_tool
 from ..streaming import EventStream
 from ..trace import args_digest, new_span_id, now_ns, rfc3339_ns
 from .workspace import PathError, Workspace
@@ -42,6 +43,15 @@ class ToolContext:
     produces_artifact: bool = False
     # The `llm_call` span of the turn whose tool calls are running: their spans' parent.
     turn_span_id: str | None = None
+    # The per-run token of the acting agent: every call is decided against its capabilities.
+    # None only in unit tests of single tools; a run always has one.
+    token: AgentToken | None = None
+    # The principal the agent's spans are attributed to (defaults to the name).
+    principal: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.principal:
+            self.principal = self.agent_name
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,11 +65,18 @@ class Tool[A: BaseModel]:
         return ToolSpec(self.name, self.description, strict_schema(self.args))
 
     async def invoke(self, ctx: ToolContext, raw: dict[str, Any]) -> str:
-        """Validate `raw` against the argument model, then run the handler.
+        """Decide the call against the agent's token, validate `raw` against the argument model,
+        then run the handler.
 
-        Every call is reported as a `tool_call` span: the tool, a digest of the arguments (never
-        the arguments), the size of the result, whether it failed, and how long it took.
+        A call the policy refuses never runs: it is reported as a `policy` span (the rule and
+        the reason) and the model sees the refusal as a tool error. Every call that runs is
+        reported as a `tool_call` span: the tool, a digest of the arguments (never the
+        arguments), the size of the result, whether it failed, and how long it took.
         """
+        if ctx.token is not None:
+            decision = decide_tool(ctx.token.capabilities, self.name)
+            if not decision.allowed:
+                refuse(ctx, action="tool_call", subject=self.name, decision=decision)
         span_id = new_span_id()
         started = now_ns()
         clock = time.perf_counter_ns()
@@ -69,23 +86,26 @@ class Tool[A: BaseModel]:
             output = await self._run(ctx, raw)
             return output
         finally:
+            attributes: dict[str, Any] = {
+                "tool": self.name,
+                "args_sha256": digest,
+                "args_bytes": size,
+                "result_bytes": len(output.encode("utf-8")) if output is not None else 0,
+                "is_error": output is None,
+                "duration_ns": time.perf_counter_ns() - clock,
+            }
+            if ctx.token is not None:
+                attributes["policy_version"] = ctx.token.policy_version
             ctx.events.span(
                 span_id=span_id,
                 parent_id=ctx.turn_span_id,
                 kind="tool_call",
                 name=self.name,
-                agent=ctx.agent_name,
+                agent=ctx.principal,
                 started_at=rfc3339_ns(started),
                 ended_at=rfc3339_ns(now_ns()),
                 status="ok" if output is not None else "error",
-                attributes={
-                    "tool": self.name,
-                    "args_sha256": digest,
-                    "args_bytes": size,
-                    "result_bytes": len(output.encode("utf-8")) if output is not None else 0,
-                    "is_error": output is None,
-                    "duration_ns": time.perf_counter_ns() - clock,
-                },
+                attributes=attributes,
             )
 
     async def _run(self, ctx: ToolContext, raw: dict[str, Any]) -> str:
@@ -101,6 +121,43 @@ class Tool[A: BaseModel]:
             return await self.handler(ctx, args)
         except PathError as exc:
             raise ToolError(str(exc)) from None
+
+
+def refuse(
+    ctx: ToolContext,
+    *,
+    action: str,
+    subject: str,
+    decision: Decision,
+    extra: dict[str, Any] | None = None,
+) -> NoReturn:
+    """Puts a refusal on the record as a `policy` span and raises it for the model to see."""
+    now = rfc3339_ns(now_ns())
+    attributes: dict[str, Any] = {
+        "decision": decision.verdict,
+        "rule": decision.rule,
+        "reason": decision.reason,
+        "action": action,
+        "subject": subject,
+        "policy_version": ctx.token.policy_version if ctx.token is not None else 0,
+    }
+    if extra:
+        attributes.update(extra)
+    ctx.events.span(
+        span_id=new_span_id(),
+        parent_id=ctx.turn_span_id,
+        kind="policy",
+        name=subject,
+        agent=ctx.principal,
+        started_at=now,
+        ended_at=now,
+        status="error",
+        attributes=attributes,
+    )
+    ctx.events.log(
+        "warning", f"{ctx.agent_name}: {action} {subject} refused by policy ({decision.rule})"
+    )
+    raise ToolError(f"not allowed by this agent's policy ({decision.rule}): {decision.reason}")
 
 
 def strict_schema(model: type[BaseModel]) -> dict[str, Any]:

@@ -78,6 +78,7 @@ def test_turns_and_tool_calls_are_spans(client_for: ClientFactory) -> None:
         "tokens_cached": 0,
         "stop_reason": "tool_use",
         "tool_calls": 2,
+        "policy_version": 1,
     }
     assert write["status"] == "ok" and write["attributes"]["result_bytes"] > 0
     assert (
@@ -136,6 +137,7 @@ def test_a_spawn_hangs_under_its_turn_and_the_child_under_the_spawn(
         "role": "researcher",
         "depth": 1,
         "budget_tokens": 50_000,
+        "policy_version": 1,
     }
     assert child_turn["parent_id"] == child_last["parent_id"] == spawn["id"]
     assert child_tool["parent_id"] == child_turn["id"]
