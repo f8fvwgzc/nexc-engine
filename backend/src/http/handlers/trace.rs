@@ -74,5 +74,9 @@ pub async fn verify(
         .as_deref()
         .and_then(|bytes| bytes.try_into().ok());
     let spans = repo::spans::chain(&state.db, rid).await?;
-    Ok(Json(trace::verify(&spans, sealed)))
+    // Hashing a long chain is CPU work: keep it off the request threads.
+    let verified = tokio::task::spawn_blocking(move || trace::verify(&spans, sealed))
+        .await
+        .map_err(|err| AppError::Internal(err.into()))?;
+    Ok(Json(verified))
 }

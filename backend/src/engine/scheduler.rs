@@ -260,8 +260,8 @@ async fn finish_run(
 /// log (`trace_sealed`, subject: the run id). A graph outside any workspace
 /// has no audit log; its seal lives on the run alone.
 async fn seal_audit(state: &AppState, row: &RunRow, hash: [u8; 32], spans: i64) {
-    let workspace = match repo::graphs::find(&state.db, row.owner_id, row.graph_id).await {
-        Ok(graph) => graph.and_then(|g| g.workspace_id),
+    let workspace = match repo::graphs::workspace_of(&state.db, row.graph_id).await {
+        Ok(workspace) => workspace,
         Err(err) => {
             tracing::error!(run_id = %row.id, error = %err, "cannot find the run's workspace");
             None

@@ -27,11 +27,18 @@ struct Pending {
     emitted: Instant,
 }
 
+/// What travels to a run's chain: a span, or the order to close it.
+enum Message {
+    Span(Pending),
+    /// Everything sent before this is chained; nothing after it is.
+    Seal,
+}
+
 /// Emits spans into one run's chain. Cheap to clone. Emitting never blocks
 /// and never fails the work being traced.
 #[derive(Clone)]
 pub struct TraceHandle {
-    tx: mpsc::UnboundedSender<Pending>,
+    tx: mpsc::UnboundedSender<Message>,
 }
 
 impl TraceHandle {
@@ -41,7 +48,7 @@ impl TraceHandle {
             draft,
             emitted: Instant::now(),
         };
-        if self.tx.send(pending).is_err() {
+        if self.tx.send(Message::Span(pending)).is_err() {
             tracing::debug!("span emitted after the run's trace was sealed; dropped");
         }
     }
@@ -87,9 +94,12 @@ impl TraceSink {
     }
 
     /// Closes the chain: every span emitted so far is hashed and written
-    /// before this returns. Spans emitted afterwards are dropped.
+    /// before this returns. Spans emitted afterwards are dropped, and
+    /// handles still held elsewhere (a background task) do not hold it open.
     pub async fn seal(self) -> Sealed {
-        drop(self.handle);
+        if self.handle.tx.send(Message::Seal).is_err() {
+            tracing::error!("trace writer stopped before the run was sealed");
+        }
         match self.chain.await {
             Ok(sealed) => sealed,
             Err(err) => {
@@ -108,14 +118,14 @@ async fn chain(
     state: AppState,
     run_id: Uuid,
     graph_id: Uuid,
-    mut rx: mpsc::UnboundedReceiver<Pending>,
+    mut rx: mpsc::UnboundedReceiver<Message>,
     persist_tx: mpsc::UnboundedSender<Span>,
     persister: JoinHandle<()>,
 ) -> Sealed {
     let mut prev = GENESIS;
     let mut seq: i32 = 0;
     let mut seen: HashSet<Uuid> = HashSet::new();
-    while let Some(Pending { mut draft, emitted }) = rx.recv().await {
+    while let Some(Message::Span(Pending { mut draft, emitted })) = rx.recv().await {
         if !seen.insert(draft.id) {
             // A runtime that repeats an id gets a fresh one; the repeat is on record.
             let original = draft.id;
@@ -137,6 +147,8 @@ async fn chain(
             tracing::error!(%run_id, "trace persister stopped; spans are no longer written");
         }
     }
+    // Later spans find the channel closed and are dropped.
+    rx.close();
     drop(persist_tx);
     if let Err(err) = persister.await {
         tracing::error!(%run_id, error = %err, "trace persister failed");

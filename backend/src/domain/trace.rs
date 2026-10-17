@@ -10,7 +10,7 @@
 
 use chrono::{DateTime, SecondsFormat, Timelike, Utc};
 use serde::Serialize;
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -129,26 +129,51 @@ fn canonical_time(at: DateTime<Utc>) -> String {
     at.to_rfc3339_opts(SecondsFormat::Micros, true)
 }
 
+/// The fields a span's hash covers, declared in sorted key order so that
+/// serialising it gives the canonical JSON without building a map.
+/// `attributes` is a `serde_json::Value`, whose objects are sorted maps.
+#[derive(Serialize)]
+struct Canonical<'a> {
+    agent_id: Option<Uuid>,
+    attributes: &'a Value,
+    ended_at: Option<String>,
+    id: Uuid,
+    kind: SpanKind,
+    name: &'a str,
+    node_id: Uuid,
+    parent_id: Option<Uuid>,
+    principal: &'a str,
+    run_id: Uuid,
+    seq: i32,
+    started_at: String,
+    status: SpanStatus,
+}
+
+fn canonical_into(span: &Span, out: &mut Vec<u8>) {
+    let fields = Canonical {
+        agent_id: span.agent_id,
+        attributes: &span.attributes,
+        ended_at: span.ended_at.map(canonical_time),
+        id: span.id,
+        kind: span.kind,
+        name: &span.name,
+        node_id: span.node_id,
+        parent_id: span.parent_id,
+        principal: &span.principal,
+        run_id: span.run_id,
+        seq: span.seq,
+        started_at: canonical_time(span.started_at),
+        status: span.status,
+    };
+    serde_json::to_writer(out, &fields).expect("a span serialises");
+}
+
 /// The bytes a span's hash covers: every stored field but the hashes, as
 /// JSON with keys in sorted order and no whitespace.
 pub fn canonical(span: &Span) -> Vec<u8> {
-    let value = json!({
-        "id": span.id,
-        "run_id": span.run_id,
-        "node_id": span.node_id,
-        "agent_id": span.agent_id,
-        "principal": span.principal,
-        "parent_id": span.parent_id,
-        "kind": span.kind,
-        "name": span.name,
-        "started_at": canonical_time(span.started_at),
-        "ended_at": span.ended_at.map(canonical_time),
-        "status": span.status,
-        "attributes": span.attributes,
-        "seq": span.seq,
-    });
-    // `serde_json::Value` objects are ordered maps, so the output is canonical.
-    serde_json::to_vec(&value).expect("a span serialises")
+    let mut out = Vec::with_capacity(512);
+    canonical_into(span, &mut out);
+    out
 }
 
 /// `SHA-256(prev || canonical)`.
@@ -157,6 +182,42 @@ pub fn chain_hash(prev: &[u8; 32], canonical: &[u8]) -> [u8; 32] {
     material.extend_from_slice(prev);
     material.extend_from_slice(canonical);
     kernel::sha256(&material)
+}
+
+/// `SHA-256(prev || canonical(span))`, with `buf` as scratch space.
+fn hash_with(prev: &[u8; 32], span: &Span, buf: &mut Vec<u8>) -> [u8; 32] {
+    buf.clear();
+    buf.extend_from_slice(prev);
+    canonical_into(span, buf);
+    kernel::sha256(buf)
+}
+
+/// Spans below this many are checked on the calling thread.
+const PARALLEL_FROM: usize = 1024;
+
+/// Whether each span hashes to its stored `hash` from its stored
+/// `prev_hash`. Each span's check stands alone, so large chains are split
+/// across the machine's cores; the links between spans are checked after.
+fn contents_match(spans: &[Span]) -> Vec<bool> {
+    let check = |chunk: &[Span], out: &mut [bool]| {
+        let mut buf = Vec::with_capacity(1024);
+        for (span, ok) in chunk.iter().zip(out.iter_mut()) {
+            *ok = hash_with(&span.prev_hash, span, &mut buf) == span.hash;
+        }
+    };
+    let mut out = vec![false; spans.len()];
+    let threads = std::thread::available_parallelism().map_or(1, usize::from);
+    if spans.len() < PARALLEL_FROM || threads == 1 {
+        check(spans, &mut out);
+        return out;
+    }
+    let size = spans.len().div_ceil(threads);
+    std::thread::scope(|scope| {
+        for (chunk, part) in spans.chunks(size).zip(out.chunks_mut(size)) {
+            scope.spawn(move || check(chunk, part));
+        }
+    });
+    out
 }
 
 /// Appends a draft to a chain whose last hash is `prev`, as position `seq`.
@@ -178,7 +239,7 @@ pub fn link(draft: SpanDraft, run_id: Uuid, seq: i32, prev: [u8; 32]) -> Span {
         prev_hash: prev,
         hash: GENESIS,
     };
-    span.hash = chain_hash(&prev, &canonical(&span));
+    span.hash = hash_with(&prev, &span, &mut Vec::with_capacity(1024));
     span
 }
 
@@ -213,6 +274,7 @@ pub struct TraceVerification {
 /// Recomputes the chain over `spans` (in `seq` order) and compares it with
 /// what is stored, and with `sealed` when the run has been sealed.
 pub fn verify(spans: &[Span], sealed: Option<[u8; 32]>) -> TraceVerification {
+    let contents = contents_match(spans);
     let mut prev = GENESIS;
     let mut broken = None;
     for (position, span) in spans.iter().enumerate() {
@@ -221,7 +283,7 @@ pub fn verify(spans: &[Span], sealed: Option<[u8; 32]>) -> TraceVerification {
             Some(format!("span {expected_seq} is missing from the chain"))
         } else if span.prev_hash != prev {
             Some("prev_hash does not link to the previous span".to_owned())
-        } else if chain_hash(&prev, &canonical(span)) != span.hash {
+        } else if !contents[position] {
             Some("hash does not match the span's content".to_owned())
         } else {
             None
@@ -337,6 +399,8 @@ pub fn clean_attributes(value: &Value) -> Value {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     fn draft(name: &str) -> SpanDraft {
@@ -398,6 +462,33 @@ mod tests {
 
         let empty = verify(&[], None);
         assert!(empty.ok && empty.hash.is_none() && empty.spans == 0);
+    }
+
+    #[test]
+    fn large_chains_verify_in_parallel_and_still_name_the_first_break() {
+        let mut spans = chain(PARALLEL_FROM * 3 + 7);
+        let last = spans.last().unwrap().hash;
+        assert!(verify(&spans, Some(last)).ok);
+        let late = spans.len() - 5;
+        spans[late].name.push('x');
+        spans[PARALLEL_FROM + 1].name.push('x');
+        let result = verify(&spans, Some(last));
+        assert_eq!(result.broken.unwrap().seq, PARALLEL_FROM as i32 + 1);
+    }
+
+    #[test]
+    fn canonical_json_is_the_sorted_map_of_the_fields() {
+        let span = chain(1).remove(0);
+        let by_map = serde_json::to_vec(&json!({
+            "id": span.id, "run_id": span.run_id, "node_id": span.node_id,
+            "agent_id": span.agent_id, "principal": span.principal, "parent_id": span.parent_id,
+            "kind": span.kind, "name": span.name, "started_at": canonical_time(span.started_at),
+            "ended_at": span.ended_at.map(canonical_time), "status": span.status,
+            "attributes": span.attributes, "seq": span.seq,
+        }))
+        .unwrap();
+        assert_eq!(canonical(&span), by_map);
+        assert_eq!(span.hash, chain_hash(&span.prev_hash, &by_map));
     }
 
     #[test]

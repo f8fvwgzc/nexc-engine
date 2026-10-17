@@ -289,3 +289,12 @@ pub async fn delete(
     .await?;
     Ok(done.rows_affected() == 1)
 }
+
+/// The workspace a graph belongs to (no access check; engine use only).
+pub async fn workspace_of(db: impl PgExecutor<'_>, id: Uuid) -> Result<Option<Uuid>, sqlx::Error> {
+    sqlx::query_scalar("SELECT workspace_id FROM graphs WHERE id = $1")
+        .bind(id)
+        .fetch_optional(db)
+        .await
+        .map(Option::flatten)
+}
