@@ -81,6 +81,7 @@ pub mod platform;
 pub mod resets;
 pub mod runs;
 pub mod settings;
+pub mod spans;
 pub mod teams;
 pub mod tickets;
 pub mod tokens;

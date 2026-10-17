@@ -132,6 +132,9 @@ pub async fn write(
             tokens_out: done.usage.output_tokens as i64,
             cost_usd: cost,
             context_chars_saved: 0,
+            agent_id: None,
+            node_id: None,
+            span_id: None,
         },
     )
     .await;

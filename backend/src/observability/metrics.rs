@@ -9,6 +9,9 @@ use std::time::Duration;
 
 const LATENCY_BUCKETS: [f64; 10] = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 10.0];
 const RUN_BUCKETS: [f64; 9] = [1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 900.0, 3600.0];
+const SPAN_BUCKETS: [f64; 10] = [
+    0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.05, 0.1, 1.0,
+];
 
 /// Monotonic counter.
 #[derive(Debug, Default)]
@@ -110,6 +113,10 @@ pub struct Metrics {
     pub node_cache_hits: Counter,
     pub runs: LabeledCounter,
     pub run_duration: Histogram,
+    /// Trace spans recorded, by kind.
+    pub spans: LabeledCounter,
+    /// From a span being emitted by an executor to its `trace.span` fan-out.
+    pub span_fanout: Histogram,
 }
 
 impl Default for Metrics {
@@ -124,6 +131,8 @@ impl Default for Metrics {
             node_cache_hits: Counter::default(),
             runs: LabeledCounter::default(),
             run_duration: Histogram::new(&RUN_BUCKETS),
+            spans: LabeledCounter::default(),
+            span_fanout: Histogram::new(&SPAN_BUCKETS),
         }
     }
 }
@@ -213,6 +222,21 @@ impl Metrics {
         );
         self.run_duration
             .render(&mut out, "nexc_run_duration_seconds");
+        header(
+            &mut out,
+            "nexc_trace_spans_total",
+            "counter",
+            "Trace spans recorded, by kind.",
+        );
+        self.spans.render(&mut out, "nexc_trace_spans_total");
+        header(
+            &mut out,
+            "nexc_trace_span_fanout_seconds",
+            "histogram",
+            "Span emitted by an executor to its trace.span fan-out.",
+        );
+        self.span_fanout
+            .render(&mut out, "nexc_trace_span_fanout_seconds");
         out
     }
 }

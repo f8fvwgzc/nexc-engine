@@ -17,6 +17,7 @@ pub mod planner;
 pub mod scheduler;
 pub mod summary;
 pub mod templates;
+pub mod trace;
 pub mod transfer;
 pub mod two_factor;
 pub mod usage;

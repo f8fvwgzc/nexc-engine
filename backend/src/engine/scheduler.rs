@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use chrono::Utc;
 use serde_json::json;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
@@ -19,10 +20,12 @@ use uuid::Uuid;
 
 use super::analysis::dependency_graph;
 use super::executor::{self, ExecContext, ExecError, ExecOutput};
+use super::trace::{self, Sealed, TraceHandle};
 use super::{artifacts, credentials, editor, guardrails, knowledge, usage};
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::agent::{Agent, AgentStatus};
+use crate::domain::audit::AuditAction;
 use crate::domain::context;
 use crate::domain::graph::{Executor, GraphEdge, GraphNode, NodeStatus};
 use crate::domain::guardrails::Guardrails;
@@ -30,12 +33,14 @@ use crate::domain::ontology::Ontology;
 use crate::domain::prompt::{AGENT_UPSTREAM_CHARS, UPSTREAM_CHARS, UpstreamOutput};
 use crate::domain::run::{Run, RunStatus, final_status};
 use crate::domain::settings::{ConfigScope, LlmProviderKind};
+use crate::domain::trace::{SYSTEM_PRINCIPAL, SpanDraft, SpanKind, SpanStatus};
 use crate::domain::usage::{UsageEvent, UsagePurpose};
 use crate::dsa::priority::ReadyQueue;
 use crate::llm::LlmTarget;
 use crate::llm::pricing::{cost_usd, cost_usd_cached};
 use crate::llm::retry::full_jitter;
 use crate::realtime::events::{LogLevel, NodeStatusEvent, SseEvent};
+use crate::repo::audit::Subject;
 use crate::repo::runs::{NodeOutcome, RunRow};
 use crate::repo::{self, OrNotFound};
 use crate::{kernel, memory, orchestrator};
@@ -192,7 +197,9 @@ async fn execute_run(state: AppState, row: RunRow) {
             .hub
             .publish(row.graph_id, SseEvent::RunStarted { run });
     }
-    let outcome = Execution::prepare(&state, &row, token.clone()).await;
+    // Every span of the run goes through one chain, in order of receipt.
+    let sink = trace::start(state.clone(), row.id, row.graph_id);
+    let outcome = Execution::prepare(&state, &row, token.clone(), sink.handle()).await;
     let statuses = match outcome {
         Ok(execution) => execution.drive().await,
         Err(err) => {
@@ -206,7 +213,8 @@ async fn execute_run(state: AppState, row: RunRow) {
     } else {
         final_status(&statuses, cancelled)
     };
-    if let Err(err) = finish_run(&state, row.id, status, cancelled).await {
+    let sealed = sink.seal().await;
+    if let Err(err) = finish_run(&state, row.id, status, cancelled, sealed).await {
         tracing::error!(run_id = %row.id, error = %err, "cannot finish run");
     }
     state.metrics.runs.add(&[("status", status.as_str())], 1);
@@ -214,11 +222,14 @@ async fn execute_run(state: AppState, row: RunRow) {
     state.engine.unregister_run(row.id);
 }
 
+/// Closes the run: leftover nodes, the final status, the seal of its trace
+/// (on the run and in the audit log), and `run.finished`.
 async fn finish_run(
     state: &AppState,
     run_id: Uuid,
     status: RunStatus,
     cancelled: bool,
+    sealed: Sealed,
 ) -> anyhow::Result<()> {
     let leftover = if cancelled {
         NodeStatus::Cancelled
@@ -228,11 +239,50 @@ async fn finish_run(
     for node_id in repo::runs::close_unfinished_nodes(&state.db, run_id, leftover).await? {
         repo::nodes::set_status(&state.db, node_id, leftover, None).await?;
     }
-    let row = repo::runs::finish(&state.db, run_id, status).await?;
+    let hash = sealed.hash;
+    let row = repo::runs::finish(
+        &state.db,
+        run_id,
+        status,
+        hash.as_ref().map(|h| h.as_slice()),
+    )
+    .await?;
+    if let Some(hash) = hash {
+        seal_audit(state, &row, hash, sealed.spans).await;
+    }
     let graph_id = row.graph_id;
     let run = row.into_run(repo::runs::node_runs(&state.db, run_id).await?);
     state.hub.publish(graph_id, SseEvent::RunFinished { run });
     Ok(())
+}
+
+/// Writes the final hash of a run's trace chain to its workspace's audit
+/// log (`trace_sealed`, subject: the run id). A graph outside any workspace
+/// has no audit log; its seal lives on the run alone.
+async fn seal_audit(state: &AppState, row: &RunRow, hash: [u8; 32], spans: i64) {
+    let workspace = match repo::graphs::find(&state.db, row.owner_id, row.graph_id).await {
+        Ok(graph) => graph.and_then(|g| g.workspace_id),
+        Err(err) => {
+            tracing::error!(run_id = %row.id, error = %err, "cannot find the run's workspace");
+            None
+        }
+    };
+    let Some(workspace) = workspace else {
+        return;
+    };
+    let detail = format!("{spans} span(s), sha256 {}", hex::encode(hash));
+    if let Err(err) = repo::audit::record(
+        &state.db,
+        workspace,
+        row.owner_id,
+        AuditAction::TraceSealed,
+        Subject::Text(&row.id.to_string()),
+        &detail,
+    )
+    .await
+    {
+        tracing::error!(run_id = %row.id, error = %err, "trace seal was not written to the audit log");
+    }
 }
 
 /// Shared, immutable data of one run execution.
@@ -250,6 +300,8 @@ struct RunData {
     workspace_id: Option<Uuid>,
     ontology: Ontology,
     edges: Vec<GraphEdge>,
+    /// The run's trace chain.
+    trace: TraceHandle,
 }
 
 impl RunData {
@@ -276,6 +328,9 @@ impl RunData {
             tokens_out,
             cost_usd,
             context_chars_saved,
+            agent_id: None,
+            node_id: None,
+            span_id: None,
         }
     }
 }
@@ -301,6 +356,7 @@ impl Execution {
         state: &AppState,
         row: &RunRow,
         token: CancellationToken,
+        trace: TraceHandle,
     ) -> anyhow::Result<Self> {
         let graph = repo::graphs::find(&state.db, row.owner_id, row.graph_id)
             .await?
@@ -330,6 +386,7 @@ impl Execution {
             workspace_id: graph.workspace_id,
             ontology: graph.ontology,
             edges,
+            trace,
         };
         Ok(Execution {
             state: state.clone(),
@@ -516,7 +573,7 @@ async fn skip_node(state: &AppState, data: &RunData, node_id: Uuid) {
         output: None,
         content_hash: None,
     };
-    if let Err(err) = record(state, data, node_id, &outcome, None, 0).await {
+    if let Err(err) = record(state, data, node_id, &outcome, None, 0, None).await {
         tracing::error!(%node_id, error = %err, "cannot record skipped node");
     }
     publish_status(
@@ -538,6 +595,7 @@ async fn record(
     outcome: &NodeOutcome<'_>,
     agent: Option<&Agent>,
     context_chars_saved: i64,
+    span_id: Option<Uuid>,
 ) -> anyhow::Result<()> {
     let mut tx = state.db.begin().await?;
     repo::runs::finish_node(&mut tx, data.run_id, node_id, outcome).await?;
@@ -555,7 +613,7 @@ async fn record(
                 data.target.provider == LlmProviderKind::Anthropic && a.model.starts_with("claude-")
             })
             .map_or(data.target.model.as_str(), |a| a.model.as_str());
-        let event = data.usage_event(
+        let mut event = data.usage_event(
             UsagePurpose::Node,
             model,
             outcome.tokens_in,
@@ -563,6 +621,9 @@ async fn record(
             outcome.cost_usd,
             context_chars_saved,
         );
+        event.agent_id = agent.map(|a| a.id);
+        event.node_id = Some(node_id);
+        event.span_id = span_id;
         usage::record(state, event).await;
     }
     state
@@ -630,7 +691,7 @@ async fn run_node(
                 output: None,
                 content_hash: None,
             };
-            if let Err(e) = record(&state, &data, node_id, &outcome, None, 0).await {
+            if let Err(e) = record(&state, &data, node_id, &outcome, None, 0, None).await {
                 tracing::error!(%node_id, error = %e, "cannot record node failure");
             }
             publish_status(
@@ -669,6 +730,7 @@ impl NodeTask {
         node: GraphNode,
         upstream: Vec<(Uuid, String)>,
     ) -> anyhow::Result<Self> {
+        let began = Utc::now();
         let hash = content_hash(&data, &node, &upstream);
         let agent = orchestrator::assign(&state, data.workspace_id, &node, &data.ontology).await?;
         let query = format!("{} {}", node.title, node.content);
@@ -686,20 +748,29 @@ impl NodeTask {
             .unwrap_or_default(),
             None => Vec::new(),
         };
+        let memory_ids: Vec<Uuid> = recalled.iter().map(|m| m.id).collect();
         let memories = recalled
             .into_iter()
             .map(|m| data.policy.scrub(m.content))
             .collect();
-        let documents = match data.workspace_id {
+        let passages = match data.workspace_id {
             Some(workspace) => {
-                knowledge::context(&state, workspace, data.owner, &query, knowledge::Use::Node)
-                    .await
-                    .into_iter()
-                    .map(|d| data.policy.scrub(d))
-                    .collect()
+                knowledge::context_passages(
+                    &state,
+                    workspace,
+                    data.owner,
+                    &query,
+                    knowledge::Use::Node,
+                )
+                .await
             }
             None => Vec::new(),
         };
+        let chunk_ids: Vec<Uuid> = passages.iter().map(|(id, _)| *id).collect();
+        let documents: Vec<String> = passages
+            .into_iter()
+            .map(|(_, d)| data.policy.scrub(d))
+            .collect();
         // An agent works over several turns and takes more context than one LLM call.
         let budget = match node.executor {
             Executor::Agent => AGENT_UPSTREAM_CHARS,
@@ -735,6 +806,29 @@ impl NodeTask {
                 reason: edge.map(|e| e.reason.clone()).unwrap_or_default(),
             });
         }
+        // What the node was given to read is on the record before it runs.
+        data.trace.emit(SpanDraft {
+            id: Uuid::now_v7(),
+            node_id: node.id,
+            agent_id: agent.as_ref().map(|a| a.id),
+            principal: agent
+                .as_ref()
+                .map_or_else(|| SYSTEM_PRINCIPAL.to_owned(), |a| a.name.clone()),
+            parent_id: None,
+            kind: SpanKind::DataRead,
+            name: "context".into(),
+            started_at: began,
+            ended_at: Some(Utc::now()),
+            status: SpanStatus::Ok,
+            attributes: json!({
+                "document_chunk_ids": chunk_ids,
+                "memory_ids": memory_ids,
+                "upstream_node_ids": upstream_ids,
+                "documents": chunk_ids.len(),
+                "memories": memory_ids.len(),
+                "chars_saved": context_saved,
+            }),
+        });
         let ctx = ExecContext {
             state,
             run_id: data.run_id,
@@ -749,6 +843,7 @@ impl NodeTask {
             agent,
             target: data.target.clone(),
             force: data.force,
+            trace: data.trace.clone(),
         };
         Ok(NodeTask {
             ctx,
@@ -791,7 +886,7 @@ impl NodeTask {
             output: Some(&hit.output),
             content_hash: Some(&self.hash),
         };
-        record(state, &self.data, node_id, &outcome, None, 0)
+        record(state, &self.data, node_id, &outcome, None, 0, None)
             .await
             .ok()?;
         if let Err(err) = artifacts::copy_from_run(
@@ -961,6 +1056,7 @@ impl NodeTask {
             &outcome,
             self.ctx.agent.as_ref(),
             self.context_saved,
+            out.as_ref().and_then(|o| o.span_id),
         )
         .await
         {
@@ -999,7 +1095,7 @@ impl NodeTask {
                     LlmProviderKind::Demo => 0.0,
                     _ => cost_usd(&model, spent.input_tokens, spent.output_tokens),
                 };
-                let event = data.usage_event(
+                let mut event = data.usage_event(
                     UsagePurpose::Memory,
                     &model,
                     spent.input_tokens as i64,
@@ -1007,6 +1103,7 @@ impl NodeTask {
                     cost,
                     0,
                 );
+                event.node_id = Some(node.id);
                 usage::record(&state, event).await;
                 memory::store(
                     &state.memories,

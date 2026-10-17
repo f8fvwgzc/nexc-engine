@@ -43,6 +43,12 @@ pub struct UsageEvent {
     pub cost_usd: f64,
     /// Characters of upstream context left out of the prompt (see `domain::context`).
     pub context_chars_saved: i64,
+    /// The workspace agent the call was made for, when a node of a run had one.
+    pub agent_id: Option<Uuid>,
+    /// The node of the run the call served, if any.
+    pub node_id: Option<Uuid>,
+    /// The trace span that spent the tokens, when one call made one span.
+    pub span_id: Option<Uuid>,
 }
 
 /// Sums over a set of calls.

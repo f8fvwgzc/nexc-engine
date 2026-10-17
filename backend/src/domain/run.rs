@@ -66,6 +66,10 @@ pub struct Run {
     #[schema(required = true)]
     pub finished_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    /// Hex SHA-256 sealing the run's trace chain once it finished; `null`
+    /// while it runs or when nothing was traced (`GET /runs/{id}/trace/verify`).
+    #[schema(required = true)]
+    pub trace_hash: Option<String>,
     pub node_runs: Vec<NodeRun>,
 }
 

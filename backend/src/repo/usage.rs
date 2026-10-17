@@ -14,8 +14,9 @@ use crate::domain::usage::{
 pub async fn insert(db: impl PgExecutor<'_>, e: &UsageEvent) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO llm_usage (id, workspace_id, user_id, graph_id, run_id, purpose, provider, model,
-                                credential, tokens_in, tokens_out, cost_usd, context_chars_saved)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+                                credential, tokens_in, tokens_out, cost_usd, context_chars_saved,
+                                agent_id, node_id, span_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
     )
     .bind(Uuid::now_v7())
     .bind(e.workspace_id)
@@ -30,6 +31,9 @@ pub async fn insert(db: impl PgExecutor<'_>, e: &UsageEvent) -> Result<(), sqlx:
     .bind(e.tokens_out.max(0))
     .bind(e.cost_usd)
     .bind(e.context_chars_saved.max(0))
+    .bind(e.agent_id)
+    .bind(e.node_id)
+    .bind(e.span_id)
     .execute(db)
     .await?;
     Ok(())

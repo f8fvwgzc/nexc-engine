@@ -18,6 +18,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   SHA-256 of its arguments, the result size, the error flag and the duration) and sub-agent birth
   (`spawn`) as a `{"type":"span"}` NDJSON line with a UUID v7 id, its parent and nanosecond
   times (contract §8). Spans never carry arguments, contents or credentials.
+- The backend owns the chain: it reads span lines field by field (the runtime is not trusted),
+  assigns the run, node and workspace agent, records its own spans for the built-in LLM executor
+  (`llm_call`) and for the context given to every node (`data_read`: document chunk ids, memory
+  ids, upstream nodes), hashes them in order of receipt with the C SHA-256 kernel, fans each out
+  at once as the SSE event `trace.span` and writes them in batches. When a run ends its final
+  hash is stored on the run (`trace_hash`) and in the audit log (`trace_sealed`). `llm_usage`
+  rows carry the agent, the node and, for the built-in executor, the span that spent the tokens.
+- `GET /runs/{rid}/trace` (paged, id order), `GET /runs/{rid}/trace/verify` (recomputes the chain
+  and names the first span that does not fit) and `GET /agents/{id}/activity` (an agent's latest
+  spans across the runs the caller may open).
 - Data transfer moves everything: the workspace's files on disk travel inside the target
   database (`workspace_files`) and are written out by the server that owns it at its next start;
   an optional Redis receives the handover record; **Test connection**

@@ -257,6 +257,26 @@ export interface paths {
         patch: operations["update"];
         trace?: never;
     };
+    "/api/v1/agents/{id}/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What an agent did last, across runs: its most recent spans, newest
+         *     first. Only spans of runs whose graph the caller may open are listed.
+         */
+        get: operations["activity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/artifacts/{aid}/download": {
         parameters: {
             query?: never;
@@ -1177,6 +1197,43 @@ export interface paths {
         put?: never;
         /** Cancels a queued or running run. */
         post: operations["cancel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{rid}/trace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The spans of a run in id order (UUID v7: the order they started), paged. */
+        get: operations["trace"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{rid}/trace/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recomputes the run's hash chain from the stored spans and compares it
+         *     with what is stored and with the hash sealed when the run finished.
+         */
+        get: operations["verify"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2273,7 +2330,7 @@ export interface components {
          * @description What an audit entry records.
          * @enum {string}
          */
-        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned";
+        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned" | "trace_sealed";
         /** @description One entry of a workspace's audit log. */
         AuditEntry: {
             action: components["schemas"]["AuditAction"];
@@ -2317,6 +2374,17 @@ export interface components {
             agent_runtime: components["schemas"]["BackendHealth"];
             llm: components["schemas"]["BackendHealth"];
             symphony: components["schemas"]["BackendHealth"];
+        };
+        /** @description Why a chain does not verify. */
+        BrokenLink: {
+            reason: string;
+            /** Format: int32 */
+            seq: number;
+            /**
+             * Format: uuid
+             * @description The first span that does not fit the chain.
+             */
+            span_id: string;
         };
         /** @description `POST /auth/password` body. */
         ChangePassword: {
@@ -3681,6 +3749,11 @@ export interface components {
             tokens_in: number;
             /** Format: int64 */
             tokens_out: number;
+            /**
+             * @description Hex SHA-256 sealing the run's trace chain once it finished; `null`
+             *     while it runs or when nothing was traced (`GET /runs/{id}/trace/verify`).
+             */
+            trace_hash: string | null;
         };
         /**
          * @description Lifecycle of a run.
@@ -3721,6 +3794,53 @@ export interface components {
             /** @description The `otpauth://` address the app adds the account from. */
             uri: string;
         };
+        /** @description One span of a run's trace, as stored and as served. */
+        Span: {
+            /** Format: uuid */
+            agent_id: string | null;
+            /** @description Digests, sizes, counts and ids. Never tool arguments, never secrets. */
+            attributes: Record<string, never>;
+            /** Format: date-time */
+            ended_at: string | null;
+            /** @description Hex SHA-256 of `prev_hash` and this span's canonical JSON. */
+            hash: string;
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["SpanKind"];
+            /** @description The tool, the model, or what was read. */
+            name: string;
+            /** Format: uuid */
+            node_id: string;
+            /**
+             * Format: uuid
+             * @description The turn a tool call belongs to; the spawn a sub-agent's turns belong to.
+             */
+            parent_id: string | null;
+            /** @description Hex SHA-256 of the previous span in the chain (zeros for the first). */
+            prev_hash: string;
+            /** @description Who acted: the agent's name as the runtime reports it, `system` for the backend. */
+            principal: string;
+            /** Format: uuid */
+            run_id: string;
+            /**
+             * Format: int32
+             * @description Position in the run's chain (order of receipt).
+             */
+            seq: number;
+            /** Format: date-time */
+            started_at: string;
+            status: components["schemas"]["SpanStatus"];
+        };
+        /**
+         * @description What kind of action a span records.
+         * @enum {string}
+         */
+        SpanKind: "llm_call" | "tool_call" | "spawn" | "data_read" | "egress" | "policy" | "approval";
+        /**
+         * @description How a span ended.
+         * @enum {string}
+         */
+        SpanStatus: "ok" | "error";
         /** @description One server-sent event (`data:` payload). The variant determines the SSE `event:` name. */
         SseEvent: {
             /** Format: uuid */
@@ -3765,6 +3885,8 @@ export interface components {
             tokens_out: number;
         } | {
             artifact: components["schemas"]["Artifact"];
+        } | {
+            span: components["schemas"]["Span"];
         } | {
             run: components["schemas"]["Run"];
         };
@@ -3904,6 +4026,34 @@ export interface components {
             /** @description The words that set the topic apart: "customs · invoices · port". */
             label: string;
             terms: string[];
+        };
+        /** @description A page of a run's trace. */
+        TracePage: {
+            /**
+             * Format: uuid
+             * @description Pass as `after` to get the next page; `null` on the last page.
+             */
+            next: string | null;
+            /** @description Spans in id order (UUID v7: the order they started). */
+            spans: components["schemas"]["Span"][];
+        };
+        /** @description Result of recomputing a run's chain. */
+        TraceVerification: {
+            broken: components["schemas"]["BrokenLink"] | null;
+            /** @description Hex hash of the last span, `null` for an empty chain. */
+            hash: string | null;
+            /**
+             * @description True when every span hashes as stored, every link holds, and the
+             *     sealed hash (if the run is finished) is the chain's last hash.
+             */
+            ok: boolean;
+            /** @description Hex hash written when the run finished, `null` while it runs or if nothing was traced. */
+            sealed_hash: string | null;
+            /**
+             * Format: int64
+             * @description Spans in the chain.
+             */
+            spans: number;
         };
         /** @description A transfer of a workspace and how it went. */
         Transfer: {
@@ -4969,6 +5119,39 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    activity: {
+        parameters: {
+            query?: {
+                /** @description Spans to return, 1–200 (default 20). */
+                limit?: number | null;
+            };
+            header?: never;
+            path: {
+                /** @description Agent id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Span"][];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7233,6 +7416,71 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Run"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    trace: {
+        parameters: {
+            query?: {
+                /** @description Return spans whose id is greater than this one (the `next` of the previous page). */
+                after?: string | null;
+                /** @description Spans per page, 1–1000 (default 200). */
+                limit?: number | null;
+            };
+            header?: never;
+            path: {
+                /** @description Run id */
+                rid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TracePage"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    verify: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Run id */
+                rid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TraceVerification"];
                 };
             };
             404: {

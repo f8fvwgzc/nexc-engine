@@ -24,5 +24,6 @@ pub mod search;
 pub mod settings;
 pub mod teams;
 pub mod templates;
+pub mod trace;
 pub mod transfer;
 pub mod workspaces;

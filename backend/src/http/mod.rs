@@ -180,11 +180,14 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(runs::create, runs::list))
         .routes(routes!(runs::get))
         .routes(routes!(runs::cancel))
+        .routes(routes!(trace::trace))
+        .routes(routes!(trace::verify))
         .routes(routes!(artifacts::list))
         .routes(routes!(artifacts::zip))
         .routes(routes!(artifacts::download))
         .routes(routes!(agents::list, agents::create))
         .routes(routes!(agents::update, agents::delete))
+        .routes(routes!(agents::activity))
         .routes(
             routes!(knowledge::upload)
                 .layer(DefaultBodyLimit::max(DOCUMENT_MAX_BYTES + UPLOAD_SLACK)),
@@ -232,6 +235,9 @@ mod tests {
             "/api/v1/runs/{rid}/artifacts.zip",
             "/api/v1/graphs/from-template",
             "/api/v1/graphs/{gid}/events",
+            "/api/v1/runs/{rid}/trace",
+            "/api/v1/runs/{rid}/trace/verify",
+            "/api/v1/agents/{id}/activity",
             "/metrics",
         ] {
             assert!(paths.contains_key(p), "missing {p}");
@@ -281,7 +287,7 @@ mod tests {
     fn spec_enum_values_match_the_wire_format() {
         use crate::domain::{
             account, agent, audit, cycle, graph, insight, issue, knowledge, memory, plan, platform,
-            run, search, settings, usage, user, workspace,
+            run, search, settings, trace, usage, user, workspace,
         };
         use serde_json::Value;
 
@@ -331,10 +337,12 @@ mod tests {
                 "MapKind" => check::<insight::MapKind>(values),
                 "SearchKind" => check::<search::SearchKind>(values),
                 "AccountEventKind" => check::<account::AccountEventKind>(values),
+                "SpanKind" => check::<trace::SpanKind>(values),
+                "SpanStatus" => check::<trace::SpanStatus>(values),
                 _ => continue,
             }
             checked += 1;
         }
-        assert_eq!(checked, 29, "every string enum schema is covered");
+        assert_eq!(checked, 31, "every string enum schema is covered");
     }
 }

@@ -6,7 +6,9 @@ pub mod agent;
 pub mod llm;
 pub mod symphony;
 
+use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
+use serde_json::json;
 use uuid::Uuid;
 
 use crate::app::AppState;
@@ -16,6 +18,8 @@ use crate::domain::ontology::NodeType;
 use crate::domain::prompt::UpstreamOutput;
 use crate::domain::run::Artifact;
 use crate::domain::settings::LlmProviderKind;
+use crate::domain::trace::{SYSTEM_PRINCIPAL, SpanDraft, SpanKind, SpanStatus};
+use crate::engine::trace::TraceHandle;
 use crate::llm::{LlmError, LlmTarget};
 use crate::realtime::events::{LogLevel, SseEvent};
 
@@ -38,9 +42,46 @@ pub struct ExecContext {
     pub target: LlmTarget,
     /// When true, cached LLM responses must not be reused.
     pub force: bool,
+    /// The run's trace: every span of this node goes through it.
+    pub trace: TraceHandle,
 }
 
 impl ExecContext {
+    /// Who this node's actions are attributed to: its agent, or the system.
+    pub fn principal(&self) -> String {
+        self.agent
+            .as_ref()
+            .map_or_else(|| SYSTEM_PRINCIPAL.to_owned(), |a| a.name.clone())
+    }
+
+    /// A span of this node that started at `started_at`, with a fresh id, no
+    /// parent, status `ok` and no attributes; fill it in and [`ExecContext::record`] it.
+    pub fn draft(
+        &self,
+        kind: SpanKind,
+        name: impl Into<String>,
+        started_at: DateTime<Utc>,
+    ) -> SpanDraft {
+        SpanDraft {
+            id: Uuid::now_v7(),
+            node_id: self.node.id,
+            agent_id: self.agent.as_ref().map(|a| a.id),
+            principal: self.principal(),
+            parent_id: None,
+            kind,
+            name: name.into(),
+            started_at,
+            ended_at: None,
+            status: SpanStatus::Ok,
+            attributes: json!({}),
+        }
+    }
+
+    /// Appends a span to the run's trace (`trace.span`).
+    pub fn record(&self, span: SpanDraft) {
+        self.trace.emit(span);
+    }
+
     /// Streams output text to the UI (`node.output`).
     pub fn output(&self, delta: &str) {
         let (run_id, node_id) = (self.run_id, self.node.id);
@@ -132,6 +173,9 @@ pub struct ExecOutput {
     pub tokens_out: i64,
     /// Of `tokens_in`, the ones read from the provider's prompt cache.
     pub tokens_cached: i64,
+    /// The `llm_call` span of the node, when it made exactly one call (the
+    /// built-in executor); usage is booked to it.
+    pub span_id: Option<Uuid>,
 }
 
 /// A failed node attempt.

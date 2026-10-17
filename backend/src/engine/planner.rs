@@ -342,6 +342,9 @@ async fn generate(
         tokens_out: spent.output_tokens as i64,
         cost_usd: cost,
         context_chars_saved: 0,
+        agent_id: None,
+        node_id: None,
+        span_id: None,
     };
     usage::record(state, event).await;
     let text = streamed?;

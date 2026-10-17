@@ -13,6 +13,7 @@ use crate::domain::agent::{
     AGENT_NAME_MAX, AGENT_TITLE_MAX, Agent, AgentRuntime, AgentStatus, SYSTEM_PROMPT_MAX,
     is_valid_role,
 };
+use crate::domain::trace::Span;
 use crate::domain::validation::{FieldErrors, Validate, check_max_len, check_text};
 use crate::http::extract::{AuthUser, Path, Query, ValidatedJson};
 use crate::http::problem::Problem;
@@ -192,6 +193,50 @@ async fn check_manager(
         }
     }
     Err(AppError::field("reports_to", "reporting chain too deep"))
+}
+
+/// Spans in an agent's activity by default.
+pub const ACTIVITY_DEFAULT: i64 = 20;
+/// Most spans in an agent's activity.
+pub const ACTIVITY_MAX: i64 = 200;
+
+/// Query of `GET /agents/{id}/activity`.
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+pub struct ActivityQuery {
+    /// Spans to return, 1–200 (default 20).
+    pub limit: Option<i64>,
+}
+
+/// What an agent did last, across runs: its most recent spans, newest
+/// first. Only spans of runs whose graph the caller may open are listed.
+#[utoipa::path(get, path = "/agents/{id}/activity", tag = "agents", security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Agent id"), ActivityQuery),
+    responses((status = 200, body = [Span]), (status = 404, body = Problem)))]
+pub async fn activity(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+    Query(query): Query<ActivityQuery>,
+) -> Result<Json<Vec<Span>>, AppError> {
+    let workspace = repo::agents::workspace_of(&state.db, id)
+        .await?
+        .flatten()
+        .ok_or(AppError::NotFound("agent"))?;
+    // Every member may read; an agent of a workspace the caller is not in is as good as missing.
+    workspace_for(&state, auth, Some(workspace), false)
+        .await
+        .map_err(|err| match err {
+            AppError::NotFound(_) => AppError::NotFound("agent"),
+            other => other,
+        })?;
+    let limit = query
+        .limit
+        .unwrap_or(ACTIVITY_DEFAULT)
+        .clamp(1, ACTIVITY_MAX);
+    Ok(Json(
+        repo::spans::activity(&state.db, auth.id, id, limit).await?,
+    ))
 }
 
 /// The agents of a workspace.

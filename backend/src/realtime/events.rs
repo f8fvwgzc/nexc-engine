@@ -9,6 +9,7 @@ use crate::domain::graph::{EdgeSuggestion, GraphEdge, GraphNode, GraphSummary, N
 use crate::domain::ontology::Ontology;
 use crate::domain::plan::{Plan, ProposedEdge, ProposedNode};
 use crate::domain::run::{Artifact, Run};
+use crate::domain::trace::Span;
 
 /// `node.status` payload.
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -77,6 +78,10 @@ pub enum SseEvent {
     ArtifactCreated {
         artifact: Artifact,
     },
+    /// One span appended to a run's trace chain (contract §6).
+    TraceSpan {
+        span: Span,
+    },
     RunFinished {
         run: Run,
     },
@@ -97,6 +102,7 @@ impl SseEvent {
             SseEvent::NodeLog { .. } => "node.log",
             SseEvent::NodeTokens { .. } => "node.tokens",
             SseEvent::ArtifactCreated { .. } => "artifact.created",
+            SseEvent::TraceSpan { .. } => "trace.span",
             SseEvent::RunFinished { .. } => "run.finished",
         }
     }

@@ -169,6 +169,9 @@ async fn book(
         tokens_out: 0,
         cost_usd: 0.0,
         context_chars_saved: 0,
+        agent_id: None,
+        node_id: None,
+        span_id: None,
     };
     super::usage::record(state, event).await;
 }
@@ -682,10 +685,7 @@ pub enum Use {
     Plan,
 }
 
-/// The passages to put before a model for `query`, each with its citation,
-/// within the workspace's passage count and character budget. Empty when the
-/// workspace turned documents off for this use, or has none that match;
-/// never an error: a prompt is built with or without documents.
+/// The passages to put before a model for `query` as text ([`context_passages`]).
 pub async fn context(
     state: &AppState,
     workspace: Uuid,
@@ -693,6 +693,25 @@ pub async fn context(
     query: &str,
     purpose: Use,
 ) -> Vec<String> {
+    context_passages(state, workspace, user, query, purpose)
+        .await
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect()
+}
+
+/// The passages to put before a model for `query`, each with its chunk id
+/// (for the trace) and its citation,
+/// within the workspace's passage count and character budget. Empty when the
+/// workspace turned documents off for this use, or has none that match;
+/// never an error: a prompt is built with or without documents.
+pub async fn context_passages(
+    state: &AppState,
+    workspace: Uuid,
+    user: Uuid,
+    query: &str,
+    purpose: Use,
+) -> Vec<(Uuid, String)> {
     let resolved = match settings(state, workspace).await {
         Ok(resolved) => resolved,
         Err(err) => {
@@ -723,7 +742,10 @@ pub async fn context(
         }
         let content: String = passage.content.chars().take(left).collect();
         left = left.saturating_sub(content.chars().count());
-        out.push(format!("[{}]\n{}", passage.citation(), content));
+        out.push((
+            passage.chunk_id,
+            format!("[{}]\n{}", passage.citation(), content),
+        ));
     }
     out
 }

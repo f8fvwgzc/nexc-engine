@@ -26,6 +26,8 @@ pub struct RunRow {
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    /// The final hash of the run's trace chain, once sealed.
+    pub trace_hash: Option<Vec<u8>>,
 }
 
 impl RunRow {
@@ -41,6 +43,7 @@ impl RunRow {
             started_at: self.started_at,
             finished_at: self.finished_at,
             created_at: self.created_at,
+            trace_hash: self.trace_hash.as_deref().map(hex::encode),
             node_runs,
         }
     }
@@ -61,6 +64,7 @@ impl FromRow<'_, PgRow> for RunRow {
             started_at: row.try_get("started_at")?,
             finished_at: row.try_get("finished_at")?,
             created_at: row.try_get("created_at")?,
+            trace_hash: row.try_get("trace_hash")?,
         })
     }
 }
@@ -276,17 +280,21 @@ pub async fn request_cancel(
     .await
 }
 
-/// Sets the final status of a run.
+/// Sets the final status of a run and seals its trace with `trace_hash`.
 pub async fn finish(
     db: impl PgExecutor<'_>,
     id: Uuid,
     status: RunStatus,
+    trace_hash: Option<&[u8]>,
 ) -> Result<RunRow, sqlx::Error> {
-    sqlx::query_as("UPDATE runs SET status = $2, finished_at = now() WHERE id = $1 RETURNING *")
-        .bind(id)
-        .bind(status.as_str())
-        .fetch_one(db)
-        .await
+    sqlx::query_as(
+        "UPDATE runs SET status = $2, finished_at = now(), trace_hash = $3 WHERE id = $1 RETURNING *",
+    )
+    .bind(id)
+    .bind(status.as_str())
+    .bind(trace_hash)
+    .fetch_one(db)
+    .await
 }
 
 /// Marks a node result as running attempt `attempt`.
