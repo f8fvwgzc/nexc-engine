@@ -77,6 +77,7 @@ export const qk = {
     all: ['agents'] as const,
     list: (workspaceId?: string) => ['agents', workspaceId ?? 'default'] as const,
     activity: (agentId: string) => ['agents', 'activity', agentId] as const,
+    card: (agentId: string) => ['agents', 'card', agentId] as const,
   },
   memories: {
     all: ['memories'] as const,

@@ -3,7 +3,7 @@ import type { z } from 'zod';
 
 import * as f from '@/test/fixtures';
 
-import { agentSchema } from './agent';
+import { agentCardSchema, agentSchema } from './agent';
 import { authResponseSchema, registerInputSchema, userSchema } from './auth';
 import { graphSchema, graphSummarySchema, nodeFormSchema, parseTags } from './graph';
 import { memorySchema } from './memory';
@@ -25,6 +25,7 @@ describe('contract schemas (CONTRACT §4)', () => {
     ['Run', runSchema, f.run],
     ['Artifact', artifactSchema, f.artifact],
     ['Agent', agentSchema, f.agent],
+    ['AgentCard', agentCardSchema, f.agentCard],
     ['Memory', memorySchema, f.memory],
     ['OrchestratorStatus', orchestratorStatusSchema, f.orchestratorStatus],
     ['GraphTemplate', graphTemplateSchema, f.template],

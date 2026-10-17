@@ -1,4 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
+import { useQuery } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
@@ -18,14 +19,22 @@ import {
 import { FieldGroup } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { teamsQuery } from '@/features/workspaces/api';
+import { useWorkspaceId } from '@/features/workspaces/use-current-workspace';
 import { errorMessage } from '@/lib/api/errors';
 import { applyProblemToForm } from '@/lib/api/form-errors';
-import { agentInputSchema, type Agent, type AgentInput } from '@/schemas/agent';
+import {
+  DEFAULT_CAPABILITIES,
+  agentInputSchema,
+  type Agent,
+  type AgentInput,
+} from '@/schemas/agent';
 
 import { managerCandidates } from '../agent-tree';
 import { useSaveAgent } from '../hooks/use-agent-mutations';
+import { CapabilitiesEditor } from './capabilities-editor';
 
-const NO_MANAGER = '__none__';
+const NONE = '__none__';
 
 const EMPTY: AgentInput = {
   name: '',
@@ -36,11 +45,38 @@ const EMPTY: AgentInput = {
   reports_to: null,
   budget_tokens: 200_000,
   runtime: 'python',
+  purpose: '',
+  team_id: null,
+  capabilities: DEFAULT_CAPABILITIES,
 };
 
 function toInput(agent: Agent): AgentInput {
-  const { name, role, title, model, system_prompt, reports_to, budget_tokens, runtime } = agent;
-  return { name, role, title, model, system_prompt, reports_to, budget_tokens, runtime };
+  const {
+    name,
+    role,
+    title,
+    model,
+    system_prompt,
+    reports_to,
+    budget_tokens,
+    runtime,
+    purpose,
+    team_id,
+    capabilities,
+  } = agent;
+  return {
+    name,
+    role,
+    title,
+    model,
+    system_prompt,
+    reports_to,
+    budget_tokens,
+    runtime,
+    purpose,
+    team_id,
+    capabilities,
+  };
 }
 
 const FIELDS = [
@@ -52,6 +88,9 @@ const FIELDS = [
   'reports_to',
   'budget_tokens',
   'runtime',
+  'purpose',
+  'team_id',
+  'capabilities',
 ] as const;
 
 interface AgentFormDialogProps {
@@ -64,6 +103,11 @@ interface AgentFormDialogProps {
 
 export function AgentFormDialog({ open, onOpenChange, agent, agents }: AgentFormDialogProps) {
   const saveAgent = useSaveAgent();
+  const workspaceId = useWorkspaceId();
+  const { data: teams = [] } = useQuery({
+    ...teamsQuery(workspaceId ?? ''),
+    enabled: open && workspaceId !== undefined,
+  });
   const form = useForm<AgentInput>({
     resolver: zodResolver(agentInputSchema),
     defaultValues: EMPTY,
@@ -74,11 +118,15 @@ export function AgentFormDialog({ open, onOpenChange, agent, agents }: AgentForm
   }, [open, agent, form]);
 
   const managers = [
-    { value: NO_MANAGER, label: 'Nobody (top level)' },
+    { value: NONE, label: 'Nobody (top level)' },
     ...managerCandidates(agents, agent?.id ?? null).map((a) => ({
       value: a.id,
       label: `${a.name} · ${a.role}`,
     })),
+  ];
+  const teamOptions = [
+    { value: NONE, label: 'No team' },
+    ...teams.map((t) => ({ value: t.id, label: `${t.name} (${t.key})` })),
   ];
 
   const submit = form.handleSubmit((body) =>
@@ -98,13 +146,14 @@ export function AgentFormDialog({ open, onOpenChange, agent, agents }: AgentForm
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-xl">
+      <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-2xl">
         <form noValidate onSubmit={(e) => void submit(e)} className="space-y-6">
           <DialogHeader>
             <DialogTitle>{agent ? `Edit ${agent.name}` : 'New agent'}</DialogTitle>
             <DialogDescription>
               Agents execute nodes whose <code>agent_role</code> matches their role, within a token
-              budget.
+              budget and the capabilities below. Every change to the capabilities raises the
+              agent&apos;s policy version.
             </DialogDescription>
           </DialogHeader>
           <FieldGroup className="gap-4">
@@ -130,9 +179,19 @@ export function AgentFormDialog({ open, onOpenChange, agent, agents }: AgentForm
                 {({ value, onChange, ...field }) => (
                   <OptionSelect
                     {...field}
-                    value={value ?? NO_MANAGER}
-                    onValueChange={(v) => onChange(v === NO_MANAGER ? null : v)}
+                    value={value ?? NONE}
+                    onValueChange={(v) => onChange(v === NONE ? null : v)}
                     options={managers}
+                  />
+                )}
+              </FormField>
+              <FormField control={form.control} name="team_id" label="Team">
+                {({ value, onChange, ...field }) => (
+                  <OptionSelect
+                    {...field}
+                    value={value ?? NONE}
+                    onValueChange={(v) => onChange(v === NONE ? null : v)}
+                    options={teamOptions}
                   />
                 )}
               </FormField>
@@ -154,7 +213,6 @@ export function AgentFormDialog({ open, onOpenChange, agent, agents }: AgentForm
                 name="budget_tokens"
                 label="Token budget"
                 description="0 = no limit."
-                className="sm:col-span-2"
               >
                 {({ value, onChange, ...field }) => (
                   <Input
@@ -169,13 +227,41 @@ export function AgentFormDialog({ open, onOpenChange, agent, agents }: AgentForm
                 )}
               </FormField>
             </div>
+            <FormField
+              control={form.control}
+              name="purpose"
+              label="Purpose"
+              description="What the agent is for, as shown on its card."
+            >
+              {(field) => (
+                <Textarea
+                  {...field}
+                  rows={2}
+                  placeholder="Gathers and weighs evidence for the other agents to build on."
+                />
+              )}
+            </FormField>
             <FormField control={form.control} name="system_prompt" label="System prompt">
               {(field) => (
                 <Textarea
                   {...field}
-                  rows={6}
+                  rows={5}
                   className="font-mono text-[13px]"
                   placeholder="You are a meticulous researcher…"
+                />
+              )}
+            </FormField>
+            <FormField
+              control={form.control}
+              name="capabilities"
+              label="Capabilities"
+              description="What the agent may do; its per-run token carries a copy, and the runtime and the backend both enforce it."
+            >
+              {({ value, onChange }) => (
+                <CapabilitiesEditor
+                  value={value}
+                  onChange={onChange}
+                  className="rounded-lg border p-3"
                 />
               )}
             </FormField>

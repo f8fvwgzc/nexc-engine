@@ -1,4 +1,4 @@
-import { PencilIcon, Trash2Icon } from 'lucide-react';
+import { IdCardIcon, PencilIcon, Trash2Icon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -17,11 +17,12 @@ import { BudgetProgress } from './budget-progress';
 
 interface AgentsTableProps {
   agents: Agent[];
+  onOpen: (agent: Agent) => void;
   onEdit: (agent: Agent) => void;
   onDelete: (agent: Agent) => void;
 }
 
-export function AgentsTable({ agents, onEdit, onDelete }: AgentsTableProps) {
+export function AgentsTable({ agents, onOpen, onEdit, onDelete }: AgentsTableProps) {
   const names = new Map(agents.map((a) => [a.id, a.name]));
   return (
     <div className="overflow-x-auto rounded-xl border">
@@ -35,7 +36,7 @@ export function AgentsTable({ agents, onEdit, onDelete }: AgentsTableProps) {
             <TableHead>Status</TableHead>
             <TableHead>Budget</TableHead>
             <TableHead>Heartbeat</TableHead>
-            <TableHead className="w-20">
+            <TableHead className="w-28">
               <span className="sr-only">Actions</span>
             </TableHead>
           </TableRow>
@@ -44,8 +45,17 @@ export function AgentsTable({ agents, onEdit, onDelete }: AgentsTableProps) {
           {agents.map((agent) => (
             <TableRow key={agent.id}>
               <TableCell>
-                <p className="font-medium">{agent.name}</p>
-                <p className="text-xs text-muted-foreground">{agent.title}</p>
+                <button
+                  type="button"
+                  className="text-left font-medium hover:underline"
+                  onClick={() => onOpen(agent)}
+                >
+                  {agent.name}
+                </button>
+                <p className="text-xs text-muted-foreground">
+                  {agent.title}
+                  {agent.title ? ' · ' : ''}policy v{agent.policy_version}
+                </p>
               </TableCell>
               <TableCell>
                 <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{agent.role}</code>
@@ -67,6 +77,14 @@ export function AgentsTable({ agents, onEdit, onDelete }: AgentsTableProps) {
               </TableCell>
               <TableCell>
                 <div className="flex justify-end gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={`Open the card of ${agent.name}`}
+                    onClick={() => onOpen(agent)}
+                  >
+                    <IdCardIcon />
+                  </Button>
                   <Button
                     variant="ghost"
                     size="icon-sm"

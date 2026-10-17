@@ -246,14 +246,21 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * An agent's ID card: who it is, who answers for it, what it may do, what
+         *     it has left to spend and what it did last (any member of its workspace).
+         */
+        get: operations["get"];
         put?: never;
         post?: never;
         /** Removes an agent (its reports no longer report to anyone). */
         delete: operations["delete"];
         options?: never;
         head?: never;
-        /** Updates an agent (members of its workspace and above). */
+        /**
+         * Updates an agent (members of its workspace and above). A change of
+         *     capabilities raises its policy version and is audited (`policy_changed`).
+         */
         patch: operations["update"];
         trace?: never;
     };
@@ -271,6 +278,44 @@ export interface paths {
         get: operations["activity"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/{id}/quarantine": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Takes an agent out of service (workspace admins): its running nodes are
+         *     cancelled, new ones are refused, and its policy version is raised so
+         *     that no token minted before is honoured again.
+         */
+        post: operations["quarantine"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/{id}/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Puts a quarantined agent back in service (workspace admins). */
+        post: operations["release"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1081,7 +1126,8 @@ export interface paths {
         delete: operations["delete"];
         options?: never;
         head?: never;
-        patch?: never;
+        /** Classifies a memory (admins of its workspace). Audited as `classification_changed`. */
+        patch: operations["set_label"];
         trace?: never;
     };
     "/api/v1/orchestrator/status": {
@@ -1463,7 +1509,8 @@ export interface paths {
         delete: operations["delete"];
         options?: never;
         head?: never;
-        patch?: never;
+        /** Classifies a document (workspace admins). Audited as `classification_changed`. */
+        patch: operations["set_label"];
         trace?: never;
     };
     "/api/v1/workspaces/{wid}/guardrails": {
@@ -1660,6 +1707,23 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/knowledge/topics/{tid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Classifies a topic (workspace admins). Audited as `classification_changed`. */
+        patch: operations["set_topic_classification"];
         trace?: never;
     };
     "/api/v1/workspaces/{wid}/labels": {
@@ -2245,6 +2309,7 @@ export interface components {
         Agent: {
             /** Format: int64 */
             budget_tokens: number;
+            capabilities: components["schemas"]["Capabilities"];
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -2253,6 +2318,26 @@ export interface components {
             id: string;
             model: string;
             name: string;
+            /**
+             * Format: uuid
+             * @description The person answerable for the agent; `null` once their account is gone.
+             */
+            owner_user_id: string | null;
+            /**
+             * Format: int32
+             * @description Raised with every change to the capabilities, quarantine and release;
+             *     the token of every run records the version that governed it.
+             */
+            policy_version: number;
+            /** @description The agent's identity across runs and spans: `agent://{workspace}/{name}`. */
+            principal_id: string;
+            /** @description What the agent is for, in a paragraph. */
+            purpose: string;
+            /**
+             * Format: date-time
+             * @description When the agent was quarantined; `null` unless it is.
+             */
+            quarantined_at: string | null;
             /** Format: uuid */
             reports_to: string | null;
             role: string;
@@ -2261,7 +2346,31 @@ export interface components {
             spent_tokens: number;
             status: components["schemas"]["AgentStatus"];
             system_prompt: string;
+            /** Format: uuid */
+            team_id: string | null;
             title: string;
+        };
+        /**
+         * @description The agent's ID card: the agent, who answers for it, its team, what it
+         *     has left to spend and what it did last.
+         */
+        AgentCard: {
+            agent: components["schemas"]["Agent"];
+            /**
+             * Format: int64
+             * @description Tokens left before the budget is reached; `null` without a budget.
+             */
+            budget_left: number | null;
+            owner: components["schemas"]["AgentOwner"] | null;
+            /** @description The agent's last spans across the runs the caller may open, newest first. */
+            recent_spans: components["schemas"]["Span"][];
+            team: components["schemas"]["AgentTeam"] | null;
+        };
+        /** @description Who is answerable for an agent, as shown on its card. */
+        AgentOwner: {
+            /** Format: uuid */
+            id: string;
+            name: string;
         };
         /**
          * @description Where an agent runs: the Python agent runtime or the built-in LLM executor.
@@ -2272,7 +2381,14 @@ export interface components {
          * @description Whether an agent accepts work.
          * @enum {string}
          */
-        AgentStatus: "active" | "paused" | "over_budget";
+        AgentStatus: "active" | "paused" | "over_budget" | "quarantined";
+        /** @description The team an agent belongs to, as shown on its card. */
+        AgentTeam: {
+            /** Format: uuid */
+            id: string;
+            key: string;
+            name: string;
+        };
         /** @description A file produced by a node during a run. */
         Artifact: {
             /** Format: date-time */
@@ -2330,7 +2446,7 @@ export interface components {
          * @description What an audit entry records.
          * @enum {string}
          */
-        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned" | "trace_sealed";
+        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned" | "trace_sealed" | "policy_changed" | "policy_mismatch" | "agent_quarantined" | "agent_released" | "classification_changed";
         /** @description One entry of a workspace's audit log. */
         AuditEntry: {
             action: components["schemas"]["AuditAction"];
@@ -2385,6 +2501,29 @@ export interface components {
              * @description The first span that does not fit the chain.
              */
             span_id: string;
+        };
+        /**
+         * @description An agent's capabilities. `{}` is the default: every tool, every topic,
+         *     `public` and `internal` data, every memory namespace, every host, any
+         *     sub-agent role, two levels of delegation with four children each, any model.
+         */
+        Capabilities: {
+            /**
+             * @description Roles of the sub-agents the agent may spawn (and, later, the
+             *     principals it may address); `null` allows any.
+             */
+            counterparts: string[] | null;
+            data: components["schemas"]["DataScopes"];
+            delegation: components["schemas"]["Delegation"];
+            /**
+             * @description Hosts the agent may call out to (`api.example.com`, `*.example.com`);
+             *     `null` allows any, `[]` none.
+             */
+            egress_hosts: string[] | null;
+            /** @description Models the agent may run on; `null` allows any. */
+            models: string[] | null;
+            /** @description Tools the agent may call; `null` allows every tool the runtime offers. */
+            tools: string[] | null;
         };
         /** @description `POST /auth/password` body. */
         ChangePassword: {
@@ -2472,13 +2611,26 @@ export interface components {
         CreateAgent: {
             /** Format: int64 */
             budget_tokens?: number | null;
+            capabilities?: components["schemas"]["Capabilities"] | null;
             model?: string | null;
             name: string;
+            /**
+             * Format: uuid
+             * @description The member answerable for the agent (default: the caller).
+             */
+            owner_user_id?: string | null;
+            /** @description What the agent is for. */
+            purpose?: string;
             /** Format: uuid */
             reports_to?: string | null;
             role: string;
             runtime?: components["schemas"]["AgentRuntime"] | null;
             system_prompt?: string;
+            /**
+             * Format: uuid
+             * @description A team of the workspace the agent belongs to.
+             */
+            team_id?: string | null;
             title?: string;
             /**
              * Format: uuid
@@ -2683,6 +2835,25 @@ export interface components {
          * @enum {string}
          */
         CycleStatus: "upcoming" | "active" | "completed";
+        /**
+         * @description Classification of a document, a topic or a memory, and the clearance
+         *     an agent holds: an agent only receives data whose label is in its
+         *     clearance.
+         * @enum {string}
+         */
+        DataLabel: "public" | "internal" | "confidential" | "restricted";
+        /** @description What an agent may read. */
+        DataScopes: {
+            /** @description The classifications the agent may read: its clearance. */
+            labels: components["schemas"]["DataLabel"][];
+            /**
+             * @description Memory namespaces (the scope a memory was learned in) the agent may
+             *     recall from; `null` allows all of them.
+             */
+            memory_namespaces: components["schemas"]["MemoryScope"][] | null;
+            /** @description Knowledge topics whose passages the agent may read; `null` allows every topic. */
+            topics: string[] | null;
+        };
         /** @description The database the server is connected to. */
         DatabaseStatus: {
             /** @description Where it is, without credentials. */
@@ -2727,6 +2898,19 @@ export interface components {
             /** @description Whether more has happened on the day since it was written. */
             stale: boolean;
         };
+        /** @description How far an agent may delegate. */
+        Delegation: {
+            /**
+             * Format: int32
+             * @description Levels of sub-agents that may hang below the agent (0: it may not spawn).
+             */
+            max_depth: number;
+            /**
+             * Format: int32
+             * @description Sub-agents one agent may spawn during a run.
+             */
+            max_fan_out: number;
+        };
         /** @description `POST /auth/me/delete` body. */
         DeleteAccount: {
             /** @description The caller's password: deleting cannot be undone. */
@@ -2756,6 +2940,8 @@ export interface components {
             error: string;
             /** Format: uuid */
             id: string;
+            /** @description Classification: only agents cleared for it receive its passages. */
+            label: components["schemas"]["DataLabel"];
             name: string;
             /**
              * Format: int32
@@ -3305,6 +3491,8 @@ export interface components {
              */
             importance: number;
             kind: components["schemas"]["MemoryKind"];
+            /** @description Classification: only agents cleared for it recall the memory. */
+            label: components["schemas"]["DataLabel"];
             /** Format: uuid */
             node_id: string | null;
             scope: components["schemas"]["MemoryScope"];
@@ -3498,6 +3686,8 @@ export interface components {
             document_id: string;
             document_name: string;
             kind: components["schemas"]["ChunkKind"];
+            /** @description The document's classification. */
+            label: components["schemas"]["DataLabel"];
             /** Format: int32 */
             page: number | null;
             /**
@@ -3511,6 +3701,7 @@ export interface components {
              * @description The topic the passage was grouped under, once topics exist.
              */
             topic_id: string | null;
+            topic_label: components["schemas"]["DataLabel"] | null;
         };
         /** @description A plan as returned by the API. */
         Plan: {
@@ -3742,6 +3933,12 @@ export interface components {
             /** Format: uuid */
             id: string;
             node_runs: components["schemas"]["NodeRun"][];
+            /**
+             * Format: int32
+             * @description Actions the runtime reported that the policy minted for the run did
+             *     not allow (each one is a `policy_mismatch` audit entry and a `policy` span).
+             */
+            policy_mismatches: number;
             /** Format: date-time */
             started_at: string | null;
             status: components["schemas"]["RunStatus"];
@@ -3782,6 +3979,16 @@ export interface components {
              * @description Sign-ins that are still alive, this one included.
              */
             active: number;
+        };
+        /** @description `PATCH /workspaces/{wid}/knowledge/topics/{tid}` body. */
+        SetClassification: {
+            /** @description The classification of every passage under the topic, on top of its document's. */
+            classification: components["schemas"]["DataLabel"];
+        };
+        /** @description `PATCH /memories/{id}` body. */
+        SetLabel: {
+            /** @description The classification agents need clearance for to recall the memory. */
+            label: components["schemas"]["DataLabel"];
         };
         /** @description `PUT /workspaces/{wid}/teams/{tid}/members/{uid}` body. */
         SetTeamMember: {
@@ -4021,6 +4228,8 @@ export interface components {
              * @description Passages grouped under it.
              */
             chunk_count: number;
+            /** @description Classification of every passage under the topic, on top of its document's. */
+            classification: components["schemas"]["DataLabel"];
             /** Format: uuid */
             id: string;
             /** @description The words that set the topic apart: "customs · invoices · port". */
@@ -4102,18 +4311,24 @@ export interface components {
         TwoFactorCode: {
             code: string;
         };
-        /** @description `PATCH /agents/{id}` body (any subset; `reports_to: null` detaches). */
+        /** @description `PATCH /agents/{id}` body (any subset; `reports_to: null` and `team_id: null` detach). */
         UpdateAgent: {
             /** Format: int64 */
             budget_tokens?: number | null;
+            capabilities?: components["schemas"]["Capabilities"] | null;
             model?: string | null;
             name?: string | null;
+            /** Format: uuid */
+            owner_user_id?: string | null;
+            purpose?: string | null;
             /** Format: uuid */
             reports_to?: string | null;
             role?: string | null;
             runtime?: components["schemas"]["AgentRuntime"] | null;
             status?: components["schemas"]["AgentStatus"] | null;
             system_prompt?: string | null;
+            /** Format: uuid */
+            team_id?: string | null;
             title?: string | null;
         };
         /** @description `PATCH /workspaces/{wid}/teams/{tid}/cycles/{cid}` body: any subset. */
@@ -5041,6 +5256,36 @@ export interface operations {
             };
         };
     };
+    get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentCard"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     delete: {
         parameters: {
             query?: never;
@@ -5152,6 +5397,100 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    quarantine: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Agent"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Already quarantined */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    release: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Agent"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not quarantined */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7212,6 +7551,56 @@ export interface operations {
             };
         };
     };
+    set_label: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Memory id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetLabel"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Memory"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     status: {
         parameters: {
             query?: never;
@@ -8206,6 +8595,58 @@ export interface operations {
             };
         };
     };
+    set_label: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Document id */
+                did: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetLabel"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Document"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     guardrails: {
         parameters: {
             query?: never;
@@ -8681,6 +9122,58 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    set_topic_classification: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Topic id */
+                tid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetClassification"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Topic"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

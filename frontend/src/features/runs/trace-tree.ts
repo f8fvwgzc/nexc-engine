@@ -144,6 +144,15 @@ export function describeSpan(span: Span): string {
       const count = (key: string) => (Array.isArray(a[key]) ? (a[key] as unknown[]).length : 0);
       return `${count('document_chunk_ids')} passages · ${count('memory_ids')} memories · ${count('upstream_node_ids')} upstream`;
     }
+    case 'policy': {
+      const text = (key: string) => (typeof a[key] === 'string' ? a[key] : '');
+      const withheld = Array.isArray(a.withheld_document_chunk_ids)
+        ? (a.withheld_document_chunk_ids as unknown[]).length +
+          (Array.isArray(a.withheld_memory_ids) ? (a.withheld_memory_ids as unknown[]).length : 0)
+        : 0;
+      const what = withheld > 0 ? `${withheld} withheld` : text('reason');
+      return [text('decision'), text('rule'), what].filter(Boolean).join(' · ');
+    }
     default:
       return '';
   }

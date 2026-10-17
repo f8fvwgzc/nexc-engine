@@ -9,6 +9,7 @@ import { PageSkeleton } from '@/components/layout/page-skeleton';
 import { StatTile } from '@/components/custom-ui/stat-tile';
 import { StatusBadge } from '@/components/custom-ui/status-badge';
 import { Seo } from '@/components/seo/seo';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { graphQuery } from '@/features/graphs/api';
@@ -107,8 +108,16 @@ function RunDetail({ runId }: { runId: string }) {
       </section>
       <section className="space-y-3" aria-labelledby="trace">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 id="trace" className="text-sm font-medium">
+          <h2 id="trace" className="flex items-center gap-2 text-sm font-medium">
             Trace
+            {run.policy_mismatches > 0 && (
+              <Badge
+                variant="destructive"
+                title="Actions the runtime reported that the run's policy did not allow; each is a policy span and an audit entry"
+              >
+                {run.policy_mismatches} policy mismatch{run.policy_mismatches === 1 ? '' : 'es'}
+              </Badge>
+            )}
           </h2>
           <TraceVerification runId={run.id} active={active} />
         </div>

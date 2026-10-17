@@ -5,6 +5,7 @@ const META: Record<AgentStatus, { label: string; color: string }> = {
   active: { label: 'Active', color: 'var(--status-succeeded)' },
   paused: { label: 'Paused', color: 'var(--status-idle)' },
   over_budget: { label: 'Over budget', color: 'var(--status-failed)' },
+  quarantined: { label: 'Quarantined', color: 'var(--status-failed)' },
 };
 
 export function AgentStatusBadge({

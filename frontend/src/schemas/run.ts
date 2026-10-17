@@ -34,6 +34,8 @@ export const runSchema = z.object({
   created_at: timestampSchema,
   /** Hex SHA-256 sealing the run's trace once it finished; null while it runs. */
   trace_hash: z.string().nullable(),
+  /** Actions the runtime reported that the run's policy did not allow. */
+  policy_mismatches: z.number().int().nonnegative(),
   node_runs: z.array(nodeRunSchema),
 });
 export type Run = z.infer<typeof runSchema>;

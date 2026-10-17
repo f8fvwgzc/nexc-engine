@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { apiRequest, apiSend } from '@/lib/api/client';
 import { qk } from '@/lib/query-keys';
+import type { DataLabel } from '@/schemas/agent';
 import {
   documentSchema,
   knowledgeSettingsSchema,
@@ -40,6 +41,14 @@ export function uploadDocument(workspaceId: string, file: File) {
     method: 'POST',
     query: { name: file.name },
     body: file,
+  });
+}
+
+/** Classifies a document (admins): only agents cleared for the label receive its passages. */
+export function setDocumentLabel(workspaceId: string, documentId: string, label: DataLabel) {
+  return apiRequest(`/workspaces/${workspaceId}/documents/${documentId}`, documentSchema, {
+    method: 'PATCH',
+    body: { label },
   });
 }
 

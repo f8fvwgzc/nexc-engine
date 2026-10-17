@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { apiRequest, apiSend } from '@/lib/api/client';
 import { qk } from '@/lib/query-keys';
-import { agentSchema, type AgentInput } from '@/schemas/agent';
+import { agentCardSchema, agentSchema, type AgentInput } from '@/schemas/agent';
 import { spanSchema } from '@/schemas/trace';
 
 /** The agents of a workspace (the caller's first workspace when none is given). */
@@ -29,6 +29,24 @@ export const agentActivityQuery = (agentId: string, limit = 5) =>
       }),
     staleTime: 15_000,
   });
+
+/** The agent's ID card: identity, owner, team, scopes, budget left and its last twenty spans. */
+export const agentCardQuery = (agentId: string) =>
+  queryOptions({
+    queryKey: qk.agents.card(agentId),
+    queryFn: ({ signal }) => apiRequest(`/agents/${agentId}`, agentCardSchema, { signal }),
+    staleTime: 10_000,
+  });
+
+/** Takes the agent out of service: running nodes are cancelled, new ones refused (admins). */
+export function quarantineAgent(agentId: string) {
+  return apiRequest(`/agents/${agentId}/quarantine`, agentSchema, { method: 'POST' });
+}
+
+/** Puts a quarantined agent back in service (admins). */
+export function releaseAgent(agentId: string) {
+  return apiRequest(`/agents/${agentId}/release`, agentSchema, { method: 'POST' });
+}
 
 export function createAgent(body: AgentInput & { workspace_id?: string }) {
   return apiRequest('/agents', agentSchema, { method: 'POST', body });

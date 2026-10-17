@@ -6,7 +6,7 @@
  * While `schema.d.ts` is the empty placeholder every check resolves to `true`; once real types are
  * generated, a mismatch makes `pnpm typecheck` fail on the offending line.
  */
-import type { Agent } from '@/schemas/agent';
+import type { Agent, AgentCard, Capabilities } from '@/schemas/agent';
 import type { AuthResponse, User } from '@/schemas/auth';
 import type {
   EdgeSuggestion,
@@ -16,6 +16,7 @@ import type {
   GraphNode,
   GraphSummary,
 } from '@/schemas/graph';
+import type { KnowledgeDocument } from '@/schemas/knowledge';
 import type { Memory } from '@/schemas/memory';
 import type { OrchestratorStatus } from '@/schemas/orchestrator';
 import type { Plan } from '@/schemas/plan';
@@ -52,6 +53,9 @@ export type ContractDrift = [
   Assert<Matches<'Run', Run>>,
   Assert<Matches<'Artifact', Artifact>>,
   Assert<Matches<'Agent', Agent>>,
+  Assert<Matches<'AgentCard', AgentCard>>,
+  Assert<Matches<'Capabilities', Capabilities>>,
+  Assert<Matches<'Document', KnowledgeDocument>>,
   Assert<Matches<'Memory', Memory>>,
   Assert<Matches<'OrchestratorStatus', OrchestratorStatus>>,
   Assert<Matches<'TraceVerification', TraceVerification>>,

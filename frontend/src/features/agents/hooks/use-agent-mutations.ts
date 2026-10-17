@@ -4,7 +4,7 @@ import { useWorkspaceId } from '@/features/workspaces/use-current-workspace';
 import { qk } from '@/lib/query-keys';
 import type { Agent, AgentInput } from '@/schemas/agent';
 
-import { createAgent, deleteAgent, updateAgent } from '../api';
+import { createAgent, deleteAgent, quarantineAgent, releaseAgent, updateAgent } from '../api';
 
 export function useSaveAgent() {
   const queryClient = useQueryClient();
@@ -30,5 +30,20 @@ export function useDeleteAgent() {
     mutationFn: deleteAgent,
     meta: { successMessage: 'Agent deleted' },
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: qk.agents.all }),
+  });
+}
+
+/** Quarantines or releases an agent; the list and its card are refreshed. */
+export function useQuarantineAgent() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, release }: { id: string; release: boolean }) =>
+      release ? releaseAgent(id) : quarantineAgent(id),
+    onSuccess: (agent) => {
+      queryClient.setQueriesData<Agent[]>({ queryKey: qk.agents.all }, (list) =>
+        list?.map((a) => (a.id === agent.id ? agent : a)),
+      );
+      void queryClient.invalidateQueries({ queryKey: qk.agents.card(agent.id) });
+    },
   });
 }

@@ -12,6 +12,7 @@ import { useRef, useState } from 'react';
 
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { OptionSelect } from '@/components/custom-ui/option-select';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { PageSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
@@ -27,6 +28,7 @@ import {
   knowledgeSettingsQuery,
   rebuildTopics,
   saveKnowledgeSettings,
+  setDocumentLabel,
   topicsQuery,
   uploadDocument,
 } from '@/features/knowledge/api';
@@ -35,6 +37,7 @@ import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { errorMessage } from '@/lib/api/errors';
 import { formatBytes, formatRelative } from '@/lib/format';
 import { qk } from '@/lib/query-keys';
+import { DATA_LABELS, type DataLabel } from '@/schemas/agent';
 import type {
   DocumentStatus,
   KnowledgeDocument,
@@ -132,14 +135,22 @@ function Uploader({ workspace, onDone }: { workspace: Workspace; onDone: () => v
   );
 }
 
+const LABEL_OPTIONS = DATA_LABELS.map((label) => ({
+  value: label,
+  label: label.charAt(0).toUpperCase() + label.slice(1),
+}));
+
 function DocumentRow({
   document,
   canDelete,
   onDelete,
+  onLabel,
 }: {
   document: KnowledgeDocument;
   canDelete: boolean;
   onDelete: () => void;
+  /** Set for admins: classifies the document. */
+  onLabel?: (label: DataLabel) => void;
 }) {
   const working = document.status !== 'ready' && document.status !== 'failed';
   return (
@@ -170,6 +181,19 @@ function DocumentRow({
       >
         {STATUS_LABEL[document.status]}
       </Badge>
+      {onLabel ? (
+        <OptionSelect
+          value={document.label}
+          onValueChange={onLabel}
+          options={LABEL_OPTIONS}
+          className="h-7 w-32 text-xs"
+          aria-label={`Classification of ${document.name}`}
+        />
+      ) : (
+        <Badge variant="outline" className="w-24 justify-center capitalize">
+          {document.label}
+        </Badge>
+      )}
       <span className="hidden w-24 text-right text-xs text-muted-foreground sm:block">
         {formatRelative(document.created_at)}
       </span>
@@ -215,6 +239,12 @@ function Documents({ workspace }: { workspace: Workspace }) {
     meta: { successMessage: 'Document removed' },
     onSuccess: reload,
   });
+  const relabel = useMutation({
+    mutationFn: ({ id, label }: { id: string; label: DataLabel }) =>
+      setDocumentLabel(workspace.id, id, label),
+    meta: { successMessage: 'Classification saved' },
+    onSuccess: reload,
+  });
   const admin = isWorkspaceAdmin(workspace.role);
 
   return (
@@ -252,6 +282,7 @@ function Documents({ workspace }: { workspace: Workspace }) {
               document={document}
               canDelete={admin || document.uploaded_by === me}
               onDelete={() => setRemoving(document)}
+              onLabel={admin ? (label) => relabel.mutate({ id: document.id, label }) : undefined}
             />
           ))}
         </ul>

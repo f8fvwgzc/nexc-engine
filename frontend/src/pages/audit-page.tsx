@@ -37,6 +37,11 @@ const VERB: Record<AuditAction, string> = {
   workspace_transferred: 'started copying the',
   platform_owner_assigned: 'gave ownership of the workspace to',
   trace_sealed: 'sealed the trace of run',
+  policy_changed: 'changed the capabilities of',
+  policy_mismatch: 'saw the runtime overstep the policy of',
+  agent_quarantined: 'quarantined',
+  agent_released: 'released',
+  classification_changed: 'classified',
 };
 
 /** Actions whose subject is a thing of the workspace, not a name: it reads on in lower case. */

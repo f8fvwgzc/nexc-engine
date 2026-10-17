@@ -4,6 +4,7 @@ import { EmptyState } from '@/components/custom-ui/empty-state';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { formatDuration } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { displayPrincipal } from '@/schemas/agent';
 import type { Span } from '@/schemas/trace';
 
 import { SPAN_KIND_META } from '../span-kinds';
@@ -122,7 +123,7 @@ export function TraceWaterfall({ spans, titles, live }: TraceWaterfallProps) {
               <div key={agent.principal} className="border-t border-dashed">
                 <p className="flex items-center gap-1.5 px-3 pt-2 text-xs font-medium text-muted-foreground">
                   <BotIcon className="size-3.5" aria-hidden />
-                  {agent.principal}
+                  <span title={agent.principal}>{displayPrincipal(agent.principal)}</span>
                 </p>
                 <ul className="pb-1">
                   <Rows rows={agent.rows} window={window} depth={0} />

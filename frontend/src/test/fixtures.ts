@@ -1,4 +1,4 @@
-import type { Agent } from '@/schemas/agent';
+import type { Agent, AgentCard } from '@/schemas/agent';
 import type { AuthResponse, User } from '@/schemas/auth';
 import type { Graph, GraphEdge, GraphNode, Ontology } from '@/schemas/graph';
 import type { Memory } from '@/schemas/memory';
@@ -143,6 +143,7 @@ export const run: Run = {
   finished_at: null,
   created_at: at,
   trace_hash: null,
+  policy_mismatches: 0,
   node_runs: [
     nodeRun,
     {
@@ -218,6 +219,7 @@ export const artifact: Artifact = {
 
 export const agent: Agent = {
   id: ids.agent,
+  principal_id: `agent://${ids.workspace}/Ada`,
   name: 'Ada',
   role: 'researcher',
   title: 'Head of Research',
@@ -230,6 +232,19 @@ export const agent: Agent = {
   runtime: 'python',
   heartbeat_at: null,
   created_at: at,
+  owner_user_id: ids.user,
+  team_id: null,
+  purpose: 'Gathers and weighs evidence.',
+  capabilities: {
+    tools: ['write_file', 'read_file', 'finish'],
+    data: { topics: null, labels: ['public', 'internal'], memory_namespaces: null },
+    egress_hosts: [],
+    counterparts: ['researcher'],
+    delegation: { max_depth: 1, max_fan_out: 2 },
+    models: null,
+  },
+  policy_version: 3,
+  quarantined_at: null,
 };
 
 export const memory: Memory = {
@@ -245,6 +260,7 @@ export const memory: Memory = {
   score: 0.91,
   created_at: at,
   updated_at: at,
+  label: 'internal',
 };
 
 const health = { enabled: true, ok: true, url: 'http://localhost:8090', detail: null };
@@ -279,4 +295,12 @@ export const llmSettings: LlmSettings = {
   key_hint: null,
   source: 'none',
   scope: 'server',
+};
+
+export const agentCard: AgentCard = {
+  agent,
+  owner: { id: ids.user, name: 'Ada Lovelace' },
+  team: null,
+  budget_left: 198460,
+  recent_spans: [span],
 };

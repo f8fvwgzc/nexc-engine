@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { dataLabelSchema } from './agent';
 import { idSchema, timestampSchema } from './common';
 
 export const documentStatusSchema = z.enum(['pending', 'parsing', 'embedding', 'ready', 'failed']);
@@ -19,6 +20,8 @@ export const documentSchema = z.object({
   uploaded_by: idSchema.nullable(),
   created_at: timestampSchema,
   updated_at: timestampSchema,
+  /** Classification: only agents cleared for it receive the document's passages. */
+  label: dataLabelSchema,
 });
 export type KnowledgeDocument = z.infer<typeof documentSchema>;
 
@@ -32,6 +35,9 @@ export const passageSchema = z.object({
   kind: z.enum(['text', 'table']),
   content: z.string(),
   topic_id: idSchema.nullable(),
+  /** The document's classification, and the topic's when the passage has one. */
+  label: dataLabelSchema,
+  topic_label: dataLabelSchema.nullable(),
   score: z.number(),
 });
 export type Passage = z.infer<typeof passageSchema>;
@@ -43,6 +49,8 @@ export const topicSchema = z.object({
   label: z.string(),
   terms: z.array(z.string()),
   chunk_count: z.number().int().nonnegative(),
+  /** Classification of every passage under the topic, on top of its document's. */
+  classification: dataLabelSchema,
 });
 export type Topic = z.infer<typeof topicSchema>;
 

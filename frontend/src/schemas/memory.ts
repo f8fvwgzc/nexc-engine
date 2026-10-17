@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { dataLabelSchema } from './agent';
 import { idSchema, timestampSchema } from './common';
 
 export const MEMORY_KINDS = ['fact', 'experience', 'observation', 'preference'] as const;
@@ -19,6 +20,8 @@ export const memorySchema = z.object({
   topic_id: idSchema.nullable(),
   created_at: timestampSchema,
   updated_at: timestampSchema,
+  /** Classification: only agents cleared for it recall the memory. */
+  label: dataLabelSchema,
 });
 export type Memory = z.infer<typeof memorySchema>;
 

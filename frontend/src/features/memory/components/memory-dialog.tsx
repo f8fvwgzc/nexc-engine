@@ -43,6 +43,13 @@ export function MemoryDialog({
             <Badge variant="secondary" className="capitalize">
               {shown.kind}
             </Badge>
+            <Badge
+              variant="outline"
+              className="capitalize"
+              title="Classification: only agents cleared for it recall this memory"
+            >
+              {shown.label}
+            </Badge>
             Memory
           </DialogTitle>
           <DialogDescription>

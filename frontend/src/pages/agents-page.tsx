@@ -9,19 +9,24 @@ import { PageSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Button } from '@/components/ui/button';
 import { agentsQuery } from '@/features/agents/api';
+import { AgentCardSheet } from '@/features/agents/components/agent-card-sheet';
 import { AgentFormDialog } from '@/features/agents/components/agent-form-dialog';
 import { AgentOrgChart } from '@/features/agents/components/agent-org-chart';
 import { AgentsTable } from '@/features/agents/components/agents-table';
 import { useDeleteAgent } from '@/features/agents/hooks/use-agent-mutations';
-import { useWorkspaceId } from '@/features/workspaces/use-current-workspace';
+import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import type { Agent } from '@/schemas/agent';
+import { isWorkspaceAdmin } from '@/schemas/workspace';
 
 type Editing = { agent: Agent | null } | null;
 
 function Agents() {
-  const workspaceId = useWorkspaceId();
+  const { current } = useCurrentWorkspace();
+  const workspaceId = current?.id;
+  const admin = current !== undefined && isWorkspaceAdmin(current.role);
   const { data: agents } = useSuspenseQuery(agentsQuery(workspaceId));
   const [editing, setEditing] = useState<Editing>(null);
+  const [card, setCard] = useState<Agent | null>(null);
   const [deleting, setDeleting] = useState<Agent | null>(null);
   const deleteAgent = useDeleteAgent();
   const create = () => setEditing({ agent: null });
@@ -30,7 +35,7 @@ function Agents() {
     <div className="mx-auto w-full max-w-6xl space-y-8 p-4 sm:p-6">
       <PageHeader
         title="Agents"
-        description="This workspace’s AI org chart: who reports to whom, which roles execute which nodes, and how much budget each has left."
+        description="This workspace’s AI org chart: who reports to whom, which roles execute which nodes, what each may do, and how much budget each has left."
         actions={
           <Button onClick={create}>
             <PlusIcon />
@@ -59,12 +64,22 @@ function Agents() {
             </h2>
             <AgentsTable
               agents={agents}
+              onOpen={setCard}
               onEdit={(agent) => setEditing({ agent })}
               onDelete={setDeleting}
             />
           </section>
         </>
       )}
+      <AgentCardSheet
+        agent={card}
+        admin={admin}
+        onOpenChange={(open) => !open && setCard(null)}
+        onEdit={(agent) => {
+          setCard(null);
+          setEditing({ agent });
+        }}
+      />
       <AgentFormDialog
         open={editing !== null}
         onOpenChange={(open) => !open && setEditing(null)}
