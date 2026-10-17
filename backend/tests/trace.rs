@@ -876,3 +876,46 @@ async fn sealing_does_not_wait_for_handles_still_held(pool: PgPool) {
         .unwrap();
     assert_eq!(stored, 3, "nothing is chained after the seal");
 }
+
+/// A workspace transfer takes the trace with it as it was chained: on the
+/// owner's database the run's spans still verify against its seal.
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_transferred_trace_still_verifies(pool: PgPool) {
+    let t = traced_run(pool.clone(), "Research").await;
+    let (_, workspaces) = get(&t.app, &t.token, "/workspaces").await;
+    let workspace: Uuid = workspaces[0]["id"].as_str().unwrap().parse().unwrap();
+    let name = format!("nexc_trace_{}", Uuid::now_v7().simple());
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let base = std::env::var("DATABASE_URL").unwrap();
+    let url = format!("{}/{name}", base.rsplit_once('/').unwrap().0);
+    let report = nexc::engine::transfer::copy_workspace(&pool, &url, workspace)
+        .await
+        .unwrap();
+    let spans = report.iter().find(|r| r.table == "agent_spans").unwrap();
+    assert!(
+        spans.read > 50 && spans.written == spans.read,
+        "{} of {}",
+        spans.written,
+        spans.read
+    );
+
+    let target = PgPool::connect(&url).await.unwrap();
+    let run: Uuid = t.rid.parse().unwrap();
+    let sealed: Vec<u8> = sqlx::query_scalar("SELECT trace_hash FROM runs WHERE id = $1")
+        .bind(run)
+        .fetch_one(&target)
+        .await
+        .unwrap();
+    let chain = nexc::repo::spans::chain(&target, run).await.unwrap();
+    let verified = nexc::domain::trace::verify(&chain, Some(sealed.try_into().unwrap()));
+    assert!(verified.ok, "{:?}", verified.broken);
+    assert_eq!(verified.spans, spans.read);
+    target.close().await;
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP DATABASE {name}")))
+        .execute(&pool)
+        .await
+        .unwrap();
+}

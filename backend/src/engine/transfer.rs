@@ -152,6 +152,8 @@ const TABLES: &[Table] = &[
         overlay: None,
     },
     table("artifacts", OF_ITS_RUNS, true),
+    // The trace travels as it was chained: its hashes still verify on the target.
+    table("agent_spans", OF_ITS_RUNS, true),
     // One statement for all issues: a sub-issue and its parent arrive together.
     table("issues", IN_WORKSPACE, false),
     table("issue_labels", OF_ITS_ISSUES, false),
@@ -633,6 +635,7 @@ mod tests {
             ("issues", "agents"),
             ("edges", "nodes"),
             ("node_runs", "runs"),
+            ("agent_spans", "runs"),
             ("document_chunks", "documents"),
             ("document_chunks", "knowledge_topics"),
             ("memories", "memory_topics"),
