@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { apiRequest, apiSend } from '@/lib/api/client';
 import { qk } from '@/lib/query-keys';
 import { agentSchema, type AgentInput } from '@/schemas/agent';
+import { spanSchema } from '@/schemas/trace';
 
 /** The agents of a workspace (the caller's first workspace when none is given). */
 export const agentsQuery = (workspaceId?: string) =>
@@ -15,6 +16,18 @@ export const agentsQuery = (workspaceId?: string) =>
         z.array(agentSchema),
         { signal },
       ),
+  });
+
+/** What an agent did last, across runs the caller may open: newest first. */
+export const agentActivityQuery = (agentId: string, limit = 5) =>
+  queryOptions({
+    queryKey: [...qk.agents.activity(agentId), limit],
+    queryFn: ({ signal }) =>
+      apiRequest(`/agents/${agentId}/activity`, z.array(spanSchema), {
+        signal,
+        query: { limit },
+      }),
+    staleTime: 15_000,
   });
 
 export function createAgent(body: AgentInput & { workspace_id?: string }) {

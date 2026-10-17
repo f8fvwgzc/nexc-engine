@@ -7,6 +7,7 @@ import type { Plan } from '@/schemas/plan';
 import type { Artifact, NodeRun, Run } from '@/schemas/run';
 import type { LlmSettings } from '@/schemas/settings';
 import type { GraphTemplate } from '@/schemas/template';
+import type { Span } from '@/schemas/trace';
 
 /** Contract fixtures (CONTRACT §4) shared by schema and store tests. UUID v7 ids, RFC 3339 times. */
 export const ids = {
@@ -141,6 +142,7 @@ export const run: Run = {
   started_at: at,
   finished_at: null,
   created_at: at,
+  trace_hash: null,
   node_runs: [
     nodeRun,
     {
@@ -154,6 +156,24 @@ export const run: Run = {
       output_preview: null,
     },
   ],
+};
+
+export const span: Span = {
+  id: '0190a1b2-c3d4-7e5f-8a9b-ac1d2e3f4a5b',
+  run_id: ids.run,
+  node_id: ids.nodeA,
+  agent_id: ids.agent,
+  principal: 'Researcher',
+  parent_id: null,
+  kind: 'tool_call',
+  name: 'write_file',
+  started_at: '2026-10-03T12:00:01.123456Z',
+  ended_at: '2026-10-03T12:00:01.125Z',
+  status: 'ok',
+  attributes: { tool: 'write_file', args_sha256: 'ab', result_bytes: 24 },
+  seq: 0,
+  prev_hash: '0'.repeat(64),
+  hash: 'f'.repeat(64),
 };
 
 export const plan: Plan = {

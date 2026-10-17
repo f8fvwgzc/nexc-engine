@@ -28,6 +28,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `GET /runs/{rid}/trace` (paged, id order), `GET /runs/{rid}/trace/verify` (recomputes the chain
   and names the first span that does not fit) and `GET /agents/{id}/activity` (an agent's latest
   spans across the runs the caller may open).
+- The run page shows the trace as a waterfall, grouped node → agent → turn → tool call, filling
+  in live from `trace.span` while the run executes, with the chain's verification next to it
+  ("Chain intact" or the first span that does not fit). Each agent card on the Agents page lists
+  the agent's last actions.
 - Data transfer moves everything: the workspace's files on disk travel inside the target
   database (`workspace_files`) and are written out by the server that owns it at its next start;
   an optional Redis receives the handover record; **Test connection**

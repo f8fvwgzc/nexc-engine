@@ -20,6 +20,7 @@ import type { Memory } from '@/schemas/memory';
 import type { OrchestratorStatus } from '@/schemas/orchestrator';
 import type { Plan } from '@/schemas/plan';
 import type { Artifact, NodeRun, Run } from '@/schemas/run';
+import type { TraceVerification } from '@/schemas/trace';
 import type { LlmSettings } from '@/schemas/settings';
 import type { GraphTemplate } from '@/schemas/template';
 
@@ -53,4 +54,5 @@ export type ContractDrift = [
   Assert<Matches<'Agent', Agent>>,
   Assert<Matches<'Memory', Memory>>,
   Assert<Matches<'OrchestratorStatus', OrchestratorStatus>>,
+  Assert<Matches<'TraceVerification', TraceVerification>>,
 ];

@@ -44,6 +44,8 @@ export const qk = {
     all: ['runs'] as const,
     detail: (runId: string) => [...qk.runs.all, runId] as const,
     artifacts: (runId: string) => [...qk.runs.all, runId, 'artifacts'] as const,
+    trace: (runId: string) => [...qk.runs.all, runId, 'trace'] as const,
+    verify: (runId: string) => [...qk.runs.all, runId, 'trace', 'verify'] as const,
   },
   issues: {
     all: ['issues'] as const,
@@ -74,6 +76,7 @@ export const qk = {
   agents: {
     all: ['agents'] as const,
     list: (workspaceId?: string) => ['agents', workspaceId ?? 'default'] as const,
+    activity: (agentId: string) => ['agents', 'activity', agentId] as const,
   },
   memories: {
     all: ['memories'] as const,

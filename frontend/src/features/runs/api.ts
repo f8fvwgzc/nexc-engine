@@ -5,6 +5,49 @@ import { apiRequest } from '@/lib/api/client';
 import { saveDownload } from '@/lib/api/download';
 import { qk } from '@/lib/query-keys';
 import { artifactSchema, isRunActive, runSchema, type Artifact } from '@/schemas/run';
+import { tracePageSchema, traceVerificationSchema, type Span } from '@/schemas/trace';
+
+/** Spans fetched per request, and the most pages read for one run (20,000 spans). */
+const TRACE_PAGE = 1000;
+const TRACE_MAX_PAGES = 20;
+
+async function fetchTrace(runId: string, signal: AbortSignal): Promise<Span[]> {
+  const spans: Span[] = [];
+  let after: string | undefined;
+  for (let page = 0; page < TRACE_MAX_PAGES; page += 1) {
+    const res = await apiRequest(`/runs/${runId}/trace`, tracePageSchema, {
+      signal,
+      query: { limit: TRACE_PAGE, after },
+    });
+    spans.push(...res.spans);
+    if (!res.next) break;
+    after = res.next;
+  }
+  return spans;
+}
+
+/** Every span of a run, in id order. Live runs add to it from `trace.span` events. */
+export const runTraceQuery = (runId: string) =>
+  queryOptions({
+    queryKey: qk.runs.trace(runId),
+    queryFn: ({ signal }) => fetchTrace(runId, signal),
+  });
+
+/** The run's hash chain, recomputed by the server. */
+export const traceVerifyQuery = (runId: string) =>
+  queryOptions({
+    queryKey: qk.runs.verify(runId),
+    queryFn: ({ signal }) =>
+      apiRequest(`/runs/${runId}/trace/verify`, traceVerificationSchema, { signal }),
+  });
+
+/** `spans` with `span` added (or replaced), kept in id order. */
+export function mergeSpan(spans: Span[] | undefined, span: Span): Span[] | undefined {
+  if (!spans) return spans;
+  const rest = spans.filter((s) => s.id !== span.id);
+  rest.push(span);
+  return rest.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
 
 export const graphRunsQuery = (graphId: string) =>
   queryOptions({

@@ -32,6 +32,8 @@ export const runSchema = z.object({
   started_at: nullableTimestampSchema,
   finished_at: nullableTimestampSchema,
   created_at: timestampSchema,
+  /** Hex SHA-256 sealing the run's trace once it finished; null while it runs. */
+  trace_hash: z.string().nullable(),
   node_runs: z.array(nodeRunSchema),
 });
 export type Run = z.infer<typeof runSchema>;

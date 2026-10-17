@@ -10,11 +10,15 @@ import { StatTile } from '@/components/custom-ui/stat-tile';
 import { StatusBadge } from '@/components/custom-ui/status-badge';
 import { Seo } from '@/components/seo/seo';
 import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { graphQuery } from '@/features/graphs/api';
-import { runQuery } from '@/features/runs/api';
+import { runQuery, runTraceQuery } from '@/features/runs/api';
 import { ArtifactsList } from '@/features/runs/components/artifacts-list';
 import { NodeRunsTable } from '@/features/runs/components/node-runs-table';
+import { TraceVerification } from '@/features/runs/components/trace-verification';
+import { TraceWaterfall } from '@/features/runs/components/trace-waterfall';
 import { useCancelRun } from '@/features/runs/hooks/use-cancel-run';
+import { useLiveTrace } from '@/features/runs/hooks/use-live-trace';
 import {
   durationBetween,
   formatCost,
@@ -34,6 +38,8 @@ function RunDetail({ runId }: { runId: string }) {
     (nr) => !['queued', 'running', 'idle'].includes(nr.status),
   ).length;
   const active = isRunActive(run.status);
+  const trace = useQuery(runTraceQuery(run.id));
+  useLiveTrace(run);
 
   return (
     <div className="mx-auto w-full max-w-6xl space-y-8 p-4 sm:p-6">
@@ -98,6 +104,19 @@ function RunDetail({ runId }: { runId: string }) {
           Node runs
         </h2>
         <NodeRunsTable graphId={run.graph_id} nodeRuns={run.node_runs} titles={titles} />
+      </section>
+      <section className="space-y-3" aria-labelledby="trace">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 id="trace" className="text-sm font-medium">
+            Trace
+          </h2>
+          <TraceVerification runId={run.id} active={active} />
+        </div>
+        {trace.data ? (
+          <TraceWaterfall spans={trace.data} titles={titles} live={active} />
+        ) : (
+          <Skeleton className="h-24 rounded-xl" />
+        )}
       </section>
       <section className="space-y-3" aria-labelledby="artifacts">
         <h2 id="artifacts" className="text-sm font-medium">

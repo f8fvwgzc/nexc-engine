@@ -11,6 +11,7 @@ import {
 } from './graph';
 import { planSchema, proposedEdgeSchema, proposedNodeSchema } from './plan';
 import { artifactSchema, runSchema } from './run';
+import { spanSchema } from './trace';
 
 export const realtimeTicketSchema = z.object({
   ticket: z.string().min(1),
@@ -49,6 +50,7 @@ export const sseEventSchemas = {
     tokens_out: z.number().int().nonnegative(),
   }),
   'artifact.created': z.object({ artifact: artifactSchema }),
+  'trace.span': z.object({ span: spanSchema }),
   'run.finished': z.object({ run: runSchema }),
   heartbeat: z.object({ at: z.string() }),
 } as const;

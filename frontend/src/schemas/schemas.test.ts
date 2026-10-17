@@ -14,6 +14,7 @@ import { wsServerMessageSchema } from './realtime';
 import { artifactSchema, runSchema } from './run';
 import { llmSettingsSchema } from './settings';
 import { graphTemplateSchema } from './template';
+import { spanSchema, tracePageSchema, traceVerificationSchema } from './trace';
 
 describe('contract schemas (CONTRACT §4)', () => {
   it.each([
@@ -28,6 +29,19 @@ describe('contract schemas (CONTRACT §4)', () => {
     ['OrchestratorStatus', orchestratorStatusSchema, f.orchestratorStatus],
     ['GraphTemplate', graphTemplateSchema, f.template],
     ['LlmSettings', llmSettingsSchema, f.llmSettings],
+    ['Span', spanSchema, f.span],
+    ['TracePage', tracePageSchema, { spans: [f.span], next: f.span.id }],
+    [
+      'TraceVerification',
+      traceVerificationSchema,
+      {
+        ok: false,
+        spans: 1,
+        hash: f.span.hash,
+        sealed_hash: null,
+        broken: { span_id: f.span.id, seq: 0, reason: "hash does not match the span's content" },
+      },
+    ],
   ] as const)('parses a valid %s', (_name, schema: z.ZodType, fixture) => {
     expect(schema.parse(fixture)).toEqual(fixture);
   });
@@ -50,6 +64,14 @@ describe('contract schemas (CONTRACT §4)', () => {
     expect(
       graphSchema.safeParse({ ...f.graph, nodes: [{ ...f.node, status: 'cached' }] }).success,
     ).toBe(false);
+  });
+
+  it('rejects spans of unknown kinds or with malformed hashes', () => {
+    expect(spanSchema.safeParse({ ...f.span, kind: 'teleport' }).success).toBe(false);
+    expect(spanSchema.safeParse({ ...f.span, hash: 'ABC' }).success).toBe(false);
+    expect(spanSchema.safeParse({ ...f.span, parent_id: 'reported-by-the-runtime' }).success).toBe(
+      true,
+    );
   });
 
   it('rejects non-UUID ids and missing fields', () => {

@@ -4,6 +4,7 @@ import { GlassCard } from '@/components/custom-ui/glass-card';
 import type { Agent } from '@/schemas/agent';
 
 import { buildAgentTree, type AgentTreeNode } from '../agent-tree';
+import { AgentActivity } from './agent-activity';
 import { AgentStatusBadge } from './agent-status-badge';
 import { BudgetProgress } from './budget-progress';
 
@@ -31,6 +32,9 @@ function AgentCard({ agent, onEdit }: { agent: Agent; onEdit: (agent: Agent) => 
         </div>
         <BudgetProgress spent={agent.spent_tokens} budget={agent.budget_tokens} />
       </button>
+      <div className="border-t border-white/10 px-3 py-2">
+        <AgentActivity agentId={agent.id} />
+      </div>
     </GlassCard>
   );
 }

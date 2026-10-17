@@ -2,11 +2,13 @@ import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
+import { mergeSpan } from '@/features/runs/api';
 import { qk } from '@/lib/query-keys';
 import type { ConnectionState } from '@/lib/realtime/connection-state';
 import { GraphEventStream } from '@/lib/realtime/sse';
 import type { SseEvent } from '@/schemas/realtime';
 import type { Artifact, Run } from '@/schemas/run';
+import type { Span } from '@/schemas/trace';
 import { useGraphStore } from '@/stores/graph-store';
 
 import { fetchPlan } from '../api';
@@ -71,6 +73,13 @@ function handleEvent(
         list ? [...list.filter((a) => a.id !== artifact.id), artifact] : list,
       );
       toast.success('Artifact ready', { description: artifact.path });
+      break;
+    }
+    case 'trace.span': {
+      const { span } = event.data;
+      queryClient.setQueryData<Span[]>(qk.runs.trace(span.run_id), (spans) =>
+        mergeSpan(spans, span),
+      );
       break;
     }
     case 'run.finished': {
