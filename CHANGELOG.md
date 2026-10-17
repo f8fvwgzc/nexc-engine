@@ -9,6 +9,61 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Agent identity and scopes (AgentSecOps phase 1, `docs/AGENTSECOPS.md` §4.1): every agent is a
+  principal, `agent://{workspace}/{name}` (`principal_id`, unique, following the name), with an
+  owner (`owner_user_id`), a team, a `purpose` and a `capabilities` document: the tools it may
+  call, its data scopes (knowledge topics, the classifications it is cleared for, memory
+  namespaces), egress hosts, counterpart roles, delegation depth and fan-out, and a model
+  allow-list. `null` on a list means no restriction; `{}` is the default policy (every tool,
+  `public` and `internal` data, two levels of delegation with four children each, any model).
+  Every change to the capabilities raises the agent's `policy_version` and is audited
+  (`policy_changed`). A capability set is a lattice: narrowing can only remove, never add.
+- A per-run agent token: for every node it dispatches to the Python runtime the backend mints an
+  HS256 token (its own key, `NEXC_AGENT_TOKEN_KEY`, derived from `NEXC_RUNTIME_TOKEN` when unset,
+  audience `nexc-runtime`) carrying the principal, the run and node, the capabilities snapshot and
+  the policy version, valid for the node's timeout plus a minute (contract §8, `token`). The
+  runtime refuses to start without a valid one (signature checked in constant time, expiry,
+  audience, run and node), decides every tool call and spawn from it in-process, refuses what
+  the policy forbids with a `policy` span naming the rule (the model sees the refusal as a tool
+  error and goes on), and gives sub-agents a narrowed copy that is never wider than the parent's.
+  The built-in executor and the runtime attribute every span to the principal.
+- Data scopes in the backend: documents, knowledge topics and memories carry a classification
+  (`label`; `classification` on topics: `public`, `internal`, `confidential`, `restricted`;
+  `PATCH /workspaces/{wid}/documents/{did}`, `PATCH /workspaces/{wid}/knowledge/topics/{tid}`,
+  `PATCH /memories/{id}`, admins, audited as `classification_changed`). The context builder
+  gives an agent only what its clearance, topic scope and memory namespaces allow, before
+  anything reaches the runtime; the `data_read` span lists what was given and a `policy` span
+  named `context` lists what was withheld (ids only). The model allow-list is enforced before
+  dispatch: a node whose model the agent may not use fails without a call, with the reason.
+- The backend re-checks every span the runtime reports against the capabilities it minted: a tool
+  outside the allow-list, a spawn the delegation rules refuse, a decision the backend would not
+  take, a span acting as a principal other than the token's (attributed to the token's, the
+  reported one kept as `reported_principal`). Each disagreement is a `policy` span named
+  `policy_mismatch`, a `policy_mismatch` entry in the workspace's audit log, a count on the run
+  (`Run.policy_mismatches`) and the metric `nexc_policy_mismatches_total`.
+- Quarantine: `POST /agents/{id}/quarantine` and `POST /agents/{id}/release` (workspace admins,
+  audited as `agent_quarantined` and `agent_released`). A quarantined agent's running nodes are
+  cancelled at once on the instance that quarantined it and within a second elsewhere (the node
+  fails with a `policy` span, rule `quarantine`), new dispatches are refused, and its policy
+  version is raised so no token minted before is honoured. `status` gains `quarantined`.
+- `GET /agents/{id}`: the agent card: the agent with its principal, purpose, capabilities and
+  policy version, who answers for it, its team, the budget left and its last twenty spans. The
+  Agents page opens it in a side panel with quarantine and release for admins; the agent form
+  has a capabilities editor; the run page shows a run's policy mismatches next to its trace and
+  the waterfall names agents by their principal.
+- Tests (`backend/tests/identity.rs`, `agent-runtime/tests/test_policy.py`): the token verifies
+  and carries the capabilities, tampered, foreign, expired and misdirected tokens are refused and
+  the runtime starts nothing without one; a tool outside the allow-list is refused and recorded;
+  a sub-agent cannot exceed its parent's scopes; the backend re-check audits and counts every
+  disagreement; a `restricted` document never reaches an `internal` agent and the withheld span
+  says so; the model allow-list stops a node before dispatch; quarantine cancels a running node
+  and refuses new ones; capabilities that do not fit are refused. `make prove-identity` prints the
+  in-process decision latency over 100,000 decisions (target p99 < 100 µs). Apple M2 Pro,
+  release build:
+  - backend (Rust, `domain::policy::decide`, 28,571 of them denials): p50 0.04 µs, p99 0.12 µs,
+    max 38.7 µs;
+  - runtime (Python, `decide_tool` + `decide_spawn` per sample): p50 0.88 µs, p99 1.0 µs,
+    max 21.3 µs.
 - Agent trace spine (AgentSecOps phase 0, `docs/AGENTSECOPS.md`): every action an agent takes in a
   run is an append-only span in `agent_spans` (UUID v7 ids, parent links, kind `llm_call`,
   `tool_call`, `spawn`, `data_read`, `egress`, `policy` or `approval`). The spans of a run form a

@@ -14,7 +14,7 @@ BACKEND_MANIFEST := backend/Cargo.toml
 LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a;
 
 .PHONY: help init setup dev dev-backend dev-frontend dev-runtime db-up db-down db-shell \
-        backup backup-check restore prove prove-trace test-worst-case \
+        backup backup-check restore prove prove-trace prove-identity test-worst-case \
         build test test-backend test-frontend test-runtime lint fmt check \
         docker-build docker-up docker-down docker-logs demo seed-demo \
         minikube-up minikube-down k8s-render openapi doctor clean
@@ -122,6 +122,12 @@ prove-trace: ## Span emit -> fan-out, durable write and verify latency for a 10,
 	@$(LOAD_ENV) export DATABASE_URL="$${DATABASE_URL:-$$NEXC_DATABASE_URL}"; \
 	  $(CARGO) test --release --locked --manifest-path $(BACKEND_MANIFEST) --test trace prove_trace -- --ignored --nocapture 2>&1 \
 	  | sed -n '/^prove-trace:/,$$p' | grep -v '^test \|^$$\|test result'
+
+prove-identity: ## In-process policy decision latency over 100,000 decisions, in the backend and in the runtime (target p99 < 100 µs)
+	@$(LOAD_ENV) export DATABASE_URL="$${DATABASE_URL:-$$NEXC_DATABASE_URL}"; \
+	  $(CARGO) test --release --locked --manifest-path $(BACKEND_MANIFEST) --test identity prove_identity -- --ignored --nocapture 2>&1 \
+	  | sed -n '/^prove-identity/,$$p' | grep -v '^test \|^$$\|test result'
+	cd agent-runtime && $(UV) run pytest -q -m prove -s tests/test_policy.py 2>&1 | grep '^prove-identity'
 
 test-worst-case: ## Every documented route against missing/forged tokens, outsiders, hostile input, races and a 20,000-issue workspace
 	cd backend && cargo test --test worst_case

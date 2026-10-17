@@ -47,6 +47,10 @@ spec:
           env:
             - name: NEXC_RUNTIME_TOKEN
               valueFrom: { secretKeyRef: { name: nexc-secrets, key: NEXC_RUNTIME_TOKEN } }
+            # Signs the per-run agent tokens; derived from NEXC_RUNTIME_TOKEN on both sides when absent.
+            - name: NEXC_AGENT_TOKEN_KEY
+              valueFrom:
+                secretKeyRef: { name: nexc-secrets, key: NEXC_AGENT_TOKEN_KEY, optional: true }
             - name: NEXC_LLM_MODEL
               valueFrom: { configMapKeyRef: { name: nexc-config, key: NEXC_LLM_MODEL } }
             - name: RUNTIME_HOST

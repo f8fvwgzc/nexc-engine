@@ -89,6 +89,8 @@ services:
     # LLM API keys arrive per request from the backend and are never stored.
     environment:
       NEXC_RUNTIME_TOKEN: ${NEXC_RUNTIME_TOKEN:?NEXC_RUNTIME_TOKEN is empty - run `make init`}
+      # Signs the per-run agent tokens; both sides derive it from NEXC_RUNTIME_TOKEN when empty.
+      NEXC_AGENT_TOKEN_KEY: ${NEXC_AGENT_TOKEN_KEY:-}
       NEXC_LLM_MODEL: ${NEXC_LLM_MODEL:-claude-opus-5}
       RUNTIME_HOST: 0.0.0.0
       RUNTIME_PORT: "8090"
