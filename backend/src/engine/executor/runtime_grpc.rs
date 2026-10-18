@@ -370,6 +370,11 @@ pub async fn run(ctx: &ExecContext, token: String) -> Result<ExecOutput, ExecErr
                         message: error.message,
                         retryable: error.retryable,
                     },
+                    Some(runtime_event::Event::Payload(payload)) => Event::Payload {
+                        span_id: payload.span_id,
+                        kind: payload.kind,
+                        content: payload.content,
+                    },
                     Some(
                         runtime_event::Event::ToolRequest(_)
                         | runtime_event::Event::ApprovalRequest(_),

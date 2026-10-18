@@ -16,6 +16,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use base64::Engine as _;
 use chrono::Utc;
 use futures::Stream;
 use nexc::ontology::json;
@@ -69,6 +70,23 @@ pub fn span(kind: &str, name: &str, agent: &str, parent: &str, attrs: Value) -> 
         status: "ok".into(),
         attributes: Some(json::to_struct(&attrs)),
     }
+}
+
+/// The `recording` claim of the per-run token, as the Python runtime reads it:
+/// `(prompts, completions, tool_io)`.
+fn recording_of(token: &str) -> (bool, bool, bool) {
+    let claims = token
+        .split('.')
+        .nth(1)
+        .and_then(|part| {
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(part)
+                .ok()
+        })
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .unwrap_or(Value::Null);
+    let wants = |kind: &str| claims["recording"][kind].as_bool() == Some(true);
+    (wants("prompts"), wants("completions"), wants("tool_io"))
 }
 
 fn request_json(req: &pb::ExecuteRequest) -> Value {
@@ -578,6 +596,59 @@ impl AgentRuntime for Stub {
                 send(result).await;
                 return;
             }
+            // What the turn was given and answered, and what the tool call got and gave: sent
+            // for the kinds the token asks for, as the Python runtime does; a `LEAKY` node sends
+            // them whatever the token says, and the backend must drop what is off.
+            let (prompts, completions, tool_io) = if title.contains("LEAKY") {
+                (true, true, true)
+            } else {
+                recording_of(&req.token)
+            };
+            let context = req.context.clone().unwrap_or_default();
+            let mut prompt = format!(
+                "[system]\n{}\n\n[user]\n{}",
+                req.agent
+                    .as_ref()
+                    .map(|a| a.system_prompt.clone())
+                    .unwrap_or_default(),
+                req.task
+                    .as_ref()
+                    .map(|t| t.content.clone())
+                    .unwrap_or_default()
+            );
+            for document in &context.documents {
+                prompt.push_str("\n\n<document>\n");
+                prompt.push_str(document);
+                prompt.push_str("\n</document>");
+            }
+            for memory in &context.memories {
+                prompt.push_str("\n\n<memory>\n");
+                prompt.push_str(memory);
+                prompt.push_str("\n</memory>");
+            }
+            if title.contains("RECORD") {
+                prompt.push_str(
+                    "\n\nANTHROPIC_API_KEY=sk-ant-api03-AbCdEf0123456789xyz_-Q must never be kept",
+                );
+            }
+            if prompts {
+                send(runtime_event::Event::Payload(pb::Payload {
+                    span_id: turn_id.clone(),
+                    kind: "prompt".into(),
+                    content: prompt,
+                }))
+                .await;
+            }
+            if completions {
+                send(runtime_event::Event::Payload(pb::Payload {
+                    span_id: turn_id.clone(),
+                    kind: "completion".into(),
+                    content: format!(
+                        "Working on {title}.\n\n[tool call write_file]\n{{\n  \"path\": \"deliverable.md\"\n}}"
+                    ),
+                }))
+                .await;
+            }
             send(runtime_event::Event::Delta(pb::Delta {
                 text: format!("[runtime] {title}"),
             }))
@@ -588,15 +659,32 @@ impl AgentRuntime for Stub {
                 cached: 0,
             }))
             .await;
-            send(runtime_event::Event::Span(span(
+            let tool = span(
                 "tool_call",
                 "write_file",
                 &agent,
                 &turn_id,
                 json!({"tool": "write_file", "args_sha256": "ab".repeat(32), "args_bytes": 12,
                     "result_bytes": 4, "is_error": false, "duration_ns": 1000}),
-            )))
-            .await;
+            );
+            let tool_id = tool.id.clone();
+            if tool_io {
+                send(runtime_event::Event::Payload(pb::Payload {
+                    span_id: tool_id.clone(),
+                    kind: "tool_input".into(),
+                    content: format!(
+                        "{{\n  \"content\": \"# {title}\\n\",\n  \"path\": \"deliverable.md\"\n}}"
+                    ),
+                }))
+                .await;
+                send(runtime_event::Event::Payload(pb::Payload {
+                    span_id: tool_id,
+                    kind: "tool_output".into(),
+                    content: "wrote deliverable.md (12 bytes)".into(),
+                }))
+                .await;
+            }
+            send(runtime_event::Event::Span(tool)).await;
             send(runtime_event::Event::Artifact(pb::Artifact {
                 path: "deliverable.md".into(),
                 mime: "text/markdown".into(),

@@ -1074,6 +1074,9 @@ async fn prove_gateway(pool: PgPool) {
         force: false,
         trace: sink.handle(),
         attempt: std::sync::atomic::AtomicI32::new(1),
+        recording: Default::default(),
+        scrub_secrets: true,
+        redactions: Vec::new(),
     };
     let _ = Capabilities::default();
     let granted = Granted::default();

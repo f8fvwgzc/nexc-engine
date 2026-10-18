@@ -117,6 +117,10 @@ async fn housekeeping(state: &AppState) -> anyhow::Result<()> {
     repo::account_events::purge(&state.db).await?;
     repo::outbox::purge(&state.db).await?;
     repo::plans::fail_stale(&state.db).await?;
+    let purged = repo::span_payloads::purge_expired(&state.db).await?;
+    if purged > 0 {
+        tracing::info!(purged, "recorded payloads past their retention deleted");
+    }
     export::purge_when_off(state).await?;
     state
         .firewall_sessions

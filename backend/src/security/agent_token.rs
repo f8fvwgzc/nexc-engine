@@ -14,6 +14,18 @@ use uuid::Uuid;
 use crate::domain::capabilities::{Capabilities, DataLabel};
 use crate::domain::policy::Rules;
 
+/// What the runtime sends up of what its agents say and hear: the kinds the
+/// workspace records. Nothing travels for a kind that is off.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RecordingClaim {
+    #[serde(default)]
+    pub prompts: bool,
+    #[serde(default)]
+    pub completions: bool,
+    #[serde(default)]
+    pub tool_io: bool,
+}
+
 const ISSUER: &str = "nexc-engine";
 const AUDIENCE: &str = "nexc-runtime";
 /// Grace on top of the node's timeout before its token expires.
@@ -52,6 +64,9 @@ pub struct AgentClaims {
     /// The classifications of the data the node was given.
     #[serde(default)]
     pub labels: Vec<DataLabel>,
+    /// What the runtime sends up of what its agents say and hear.
+    #[serde(default)]
+    pub recording: RecordingClaim,
 }
 
 /// What a token grants: everything but the times and the id.
@@ -66,6 +81,7 @@ pub struct AgentGrant<'a> {
     pub capabilities: &'a Capabilities,
     pub rules: &'a Rules,
     pub labels: &'a [DataLabel],
+    pub recording: RecordingClaim,
 }
 
 /// Signing and verification keys of agent tokens.
@@ -127,6 +143,7 @@ impl AgentTokenKeys {
             capabilities: grant.capabilities.clone(),
             rules: grant.rules.clone(),
             labels: grant.labels.to_vec(),
+            recording: grant.recording,
         };
         Ok(encode(
             &Header::new(Algorithm::HS256),
@@ -162,6 +179,10 @@ mod tests {
             capabilities: caps,
             rules: &RULES,
             labels: &[DataLabel::Internal],
+            recording: RecordingClaim {
+                prompts: true,
+                ..RecordingClaim::default()
+            },
         }
     }
 
@@ -184,6 +205,7 @@ mod tests {
         assert_eq!(claims.capabilities, caps);
         assert_eq!(claims.rules, Rules::default());
         assert_eq!(claims.labels, vec![DataLabel::Internal]);
+        assert!(claims.recording.prompts && !claims.recording.tool_io);
         assert_eq!((claims.policy_version, claims.depth), (3, 0));
         assert_eq!(claims.exp - claims.iat, 660);
         assert_eq!(derive_key("abc").len(), 32);
@@ -237,6 +259,7 @@ mod tests {
             capabilities: caps.clone(),
             rules: Rules::default(),
             labels: Vec::new(),
+            recording: RecordingClaim::default(),
         };
         let token = encode(
             &Header::new(Algorithm::HS256),

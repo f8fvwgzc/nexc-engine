@@ -39,6 +39,7 @@ use crate::domain::policy::{self, Action, Decision};
 use crate::domain::policy_document::Policy;
 use crate::domain::policy_document::{InjectionAction, Severity};
 use crate::domain::prompt::{AGENT_UPSTREAM_CHARS, UPSTREAM_CHARS, UpstreamOutput};
+use crate::domain::recording::Redaction;
 use crate::domain::run::{Run, RunStatus, final_status};
 use crate::domain::settings::{ConfigScope, LlmProviderKind};
 use crate::domain::trace::{SYSTEM_PRINCIPAL, SpanDraft, SpanKind, SpanStatus};
@@ -980,14 +981,30 @@ impl NodeTask {
             .collect();
         labels_given.sort_by_key(|l| l.rank());
         labels_given.dedup();
-        let memories = recalled
+        // What the recording replaces by its citation: the passages and memories of the
+        // labels the workspace redacts, as the agent is given them.
+        let redact = &data.policy.recording.redact_labels;
+        let mut redactions: Vec<Redaction> = Vec::new();
+        let memories: Vec<String> = recalled
             .into_iter()
-            .map(|m| data.policy.scrub(m.content))
+            .map(|m| {
+                let text = data.policy.scrub(m.content);
+                if redact.contains(&m.label) {
+                    redactions.push(Redaction::memory(m.id, m.label, text.clone()));
+                }
+                text
+            })
             .collect();
         let chunk_ids: Vec<Uuid> = passages.iter().map(|p| p.chunk_id).collect();
         let documents: Vec<String> = passages
             .into_iter()
-            .map(|p| data.policy.scrub(p.text))
+            .map(|p| {
+                let text = data.policy.scrub(p.text);
+                if redact.contains(&p.label) {
+                    redactions.push(Redaction::passage(p.chunk_id, p.label, text.clone()));
+                }
+                text
+            })
             .collect();
         let principal = agent
             .as_ref()
@@ -1168,6 +1185,9 @@ impl NodeTask {
                 "chars_saved": context_saved,
                 "labels": labels_given,
                 "policy_versions": rules.versions,
+                "recording": data.policy.recording.is_on(),
+                "recording_kinds": data.policy.recording.kinds(),
+                "recording_redact_labels": data.policy.recording.redact_labels,
             }),
         });
         let ctx = ExecContext {
@@ -1192,6 +1212,9 @@ impl NodeTask {
             force: data.force,
             trace: data.trace.clone(),
             attempt: std::sync::atomic::AtomicI32::new(0),
+            recording: data.policy.recording.clone(),
+            scrub_secrets: data.policy.redact_secrets,
+            redactions,
         };
         Ok(NodeTask {
             ctx,

@@ -97,6 +97,7 @@ pub mod runs;
 pub mod secops;
 pub mod sessions;
 pub mod settings;
+pub mod span_payloads;
 pub mod spans;
 pub mod teams;
 pub mod tickets;

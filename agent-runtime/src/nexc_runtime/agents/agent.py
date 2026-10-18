@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import Awaitable
@@ -52,6 +53,19 @@ async def with_heartbeat[T](work: Awaitable[T], events: EventStream, label: str)
     except asyncio.CancelledError:
         task.cancel()
         raise
+
+
+def completion_text(turn: Turn) -> str:
+    """What the model answered, as the recording keeps it: its text and the tool calls it asked
+    for, each with its arguments as JSON."""
+    parts = [turn.text] if turn.text.strip() else []
+    for call in turn.tool_calls:
+        try:
+            arguments = json.dumps(call.input, ensure_ascii=False, sort_keys=True, indent=2)
+        except (TypeError, ValueError):
+            arguments = repr(call.input)
+        parts.append(f"[tool call {call.name}]\n{arguments}")
+    return "\n\n".join(parts)
 
 
 class AgentFailure(Exception):
@@ -155,6 +169,9 @@ class Agent:
         )
         self._ctx = ctx
         last_text = ""
+        # What the next turn is given, as the recording keeps it: the system prompt and the
+        # task first, then whatever was added since the last turn (tool results, nudges).
+        pending_input: list[str] = [f"[system]\n{self.system}", f"[user]\n{prompt}"]
 
         for number in range(1, scope.max_turns + 1):
             if self.budget.exhausted:
@@ -163,6 +180,11 @@ class Agent:
             max_tokens = max(MIN_OUTPUT_TOKENS, min(MAX_OUTPUT_TOKENS, self.budget.remaining))
             turn_id = new_span_id()
             started = now_ns()
+            if self.token.recording.prompts:
+                scope.events.payload(
+                    span_id=turn_id, kind="prompt", content="\n\n".join(pending_input)
+                )
+            pending_input = []
             try:
                 turn = await with_heartbeat(
                     provider.next_turn(
@@ -178,6 +200,10 @@ class Agent:
                 self._turn_span(turn_id, started, number, None)
                 raise
             self._turn_span(turn_id, started, number, turn)
+            if self.token.recording.completions:
+                scope.events.payload(
+                    span_id=turn_id, kind="completion", content=completion_text(turn)
+                )
             self._turn_span_id = turn_id
             ctx.turn_span_id = turn_id
             self._account(turn.input_tokens, turn.output_tokens, turn.cached_tokens)
@@ -196,6 +222,11 @@ class Agent:
                 else:
                     results = [await self._call_tool(ctx, call) for call in turn.tool_calls]
                 provider.add_tool_results(conversation, results)
+                pending_input.extend(
+                    f"[tool result {call.name}{' (error)' if result.is_error else ''}]\n"
+                    f"{result.content}"
+                    for call, result in zip(turn.tool_calls, results, strict=False)
+                )
                 if ctx.final_answer is not None:
                     return ctx.final_answer
                 continue

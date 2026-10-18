@@ -25,6 +25,7 @@ pub mod mcp_servers;
 pub mod memories;
 pub mod nodes;
 pub mod orchestrator;
+pub mod payloads;
 pub mod plans;
 pub mod platform;
 pub mod policies;

@@ -209,6 +209,31 @@ class Rules:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class Recording:
+    """What the backend asked this runtime to send up of what its agents say and hear
+    (the workspace's recording setting). Nothing travels for a kind that is off."""
+
+    prompts: bool = False
+    completions: bool = False
+    tool_io: bool = False
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any] | None) -> Recording:
+        raw = raw or {}
+        if not isinstance(raw, Mapping):
+            raise TokenError("recording is not an object")
+        return cls(
+            prompts=bool(raw.get("prompts", False)),
+            completions=bool(raw.get("completions", False)),
+            tool_io=bool(raw.get("tool_io", False)),
+        )
+
+    @property
+    def on(self) -> bool:
+        return self.prompts or self.completions or self.tool_io
+
+
 # --- decisions ----------------------------------------------------------------------------------
 
 
@@ -367,6 +392,8 @@ class AgentToken:
     # The resolved rules beside the capabilities, and the labels of the data the node was given.
     rules: Rules = Rules()
     labels: tuple[str, ...] = ()
+    # What is sent up of what the agents say and hear.
+    recording: Recording = Recording()
 
     def child(self, principal: str, key: bytes, *, now: float | None = None) -> AgentToken:
         """A token for a sub-agent: the same run and node, one level deeper, and never wider
@@ -394,6 +421,7 @@ class AgentToken:
             raw=encode_token(claims, key),
             rules=self.rules,
             labels=self.labels,
+            recording=self.recording,
         )
 
 
@@ -464,4 +492,5 @@ def verify_token(
         raw=token,
         rules=Rules.from_dict(claims.get("rules")),
         labels=tuple(labels),
+        recording=Recording.from_dict(claims.get("recording")),
     )

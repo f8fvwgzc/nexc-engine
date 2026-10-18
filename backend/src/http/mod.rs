@@ -223,6 +223,7 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(trace::verify))
         .routes(routes!(sessions::tree))
         .routes(routes!(sessions::list))
+        .routes(routes!(payloads::payload))
         .routes(routes!(artifacts::list))
         .routes(routes!(artifacts::zip))
         .routes(routes!(artifacts::download))
@@ -308,6 +309,7 @@ mod tests {
             "/api/v1/runs/{rid}/trace/verify",
             "/api/v1/runs/{rid}/sessions",
             "/api/v1/runs/{rid}/agents/{sid}/cancel",
+            "/api/v1/spans/{sid}/payload",
             "/api/v1/workspaces/{wid}/sessions",
             "/api/v1/agents/{id}/activity",
             "/api/v1/agents/{id}/quarantine",
@@ -392,8 +394,8 @@ mod tests {
     fn spec_enum_values_match_the_wire_format() {
         use crate::domain::{
             account, agent, alert, alert_routing, approval, audit, capabilities, cycle, graph,
-            insight, issue, knowledge, memory, plan, platform, policy_document, run, search,
-            session, settings, trace, usage, user, workspace,
+            insight, issue, knowledge, memory, plan, platform, policy_document, recording, run,
+            search, session, settings, trace, usage, user, workspace,
         };
         use serde_json::Value;
 
@@ -446,6 +448,7 @@ mod tests {
                 "SpanKind" => check::<trace::SpanKind>(values),
                 "SpanStatus" => check::<trace::SpanStatus>(values),
                 "SessionStatus" => check::<session::SessionStatus>(values),
+                "PayloadKind" => check::<recording::PayloadKind>(values),
                 "DataLabel" => check::<capabilities::DataLabel>(values),
                 "AnswerMode" => check::<crate::ontology::ask::AnswerMode>(values),
                 "PolicyScope" => check::<policy_document::PolicyScope>(values),
@@ -464,6 +467,6 @@ mod tests {
             }
             checked += 1;
         }
-        assert_eq!(checked, 46, "every string enum schema is covered");
+        assert_eq!(checked, 47, "every string enum schema is covered");
     }
 }

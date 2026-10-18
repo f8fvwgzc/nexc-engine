@@ -18,6 +18,7 @@ pub mod json_stream;
 pub mod knowledge;
 pub mod planner;
 pub mod policy;
+pub mod recording;
 pub mod risk;
 pub mod scheduler;
 pub mod summary;

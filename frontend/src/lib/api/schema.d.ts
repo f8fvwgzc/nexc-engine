@@ -1660,6 +1660,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/spans/{sid}/payload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The recorded payloads of a span (the run's owner and the workspace's
+         *     admins; other members 403; outsiders 404). Reading is audited as
+         *     `payload_viewed` when there was something to read; a span recorded
+         *     nothing answers with no payloads.
+         */
+        get: operations["payload"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/templates": {
         parameters: {
             query?: never;
@@ -2134,7 +2156,9 @@ export interface paths {
         get: operations["guardrails"];
         /**
          * Sets the guardrails of a workspace (admins and owners): monthly token
-         *     budgets, allowed providers, code execution and secret redaction.
+         *     budgets, allowed providers, code execution, secret redaction and what is
+         *     recorded of what agents say and hear (a change of the recording is audited
+         *     as `recording_changed` on top of `guardrails_changed`).
          */
         put: operations["put_guardrails"];
         post?: never;
@@ -3753,7 +3777,7 @@ export interface components {
          * @description What an audit entry records.
          * @enum {string}
          */
-        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned" | "trace_sealed" | "policy_changed" | "policy_mismatch" | "agent_quarantined" | "agent_released" | "agent_cancelled" | "approval_granted" | "approval_denied" | "artifact_quarantined" | "artifact_released" | "alert_raised" | "alert_destination_changed" | "classification_changed" | "mcp_server_added" | "mcp_server_removed" | "agent_token_issued" | "agent_token_revoked" | "agent_a2a_changed" | "a2a_counterpart_added" | "a2a_counterpart_removed";
+        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned" | "trace_sealed" | "policy_changed" | "policy_mismatch" | "agent_quarantined" | "agent_released" | "recording_changed" | "payload_viewed" | "agent_cancelled" | "approval_granted" | "approval_denied" | "artifact_quarantined" | "artifact_released" | "alert_raised" | "alert_destination_changed" | "classification_changed" | "mcp_server_added" | "mcp_server_removed" | "agent_token_issued" | "agent_token_revoked" | "agent_a2a_changed" | "a2a_counterpart_added" | "a2a_counterpart_removed";
         /** @description An answer from the audit. */
         AuditAnswer: {
             answer: string;
@@ -4684,6 +4708,8 @@ export interface components {
              *     once it is reached; work already running finishes.
              */
             monthly_token_budget: number | null;
+            /** @description What is kept of what agents say and hear; off by default. */
+            recording: components["schemas"]["Recording"];
             /**
              * @description Whether API keys, tokens and private keys are removed from the context
              *     (upstream outputs, memories) a node sends to a model.
@@ -5497,6 +5523,11 @@ export interface components {
             topic_label: components["schemas"]["DataLabel"] | null;
         };
         /**
+         * @description What a payload holds.
+         * @enum {string}
+         */
+        PayloadKind: "prompt" | "completion" | "tool_input" | "tool_output";
+        /**
          * @description A shape of personal data the DLP classifier looks for.
          * @enum {string}
          */
@@ -5779,6 +5810,25 @@ export interface components {
             ref: string;
             tags: string[];
             title: string;
+        };
+        /**
+         * @description What is kept of what agents say and hear, off by default: the prompt and
+         *     the completion of every model turn, the input and output of every tool
+         *     call, each for `retention_days`, with the passages and memories of the
+         *     labels in `redact_labels` replaced by their citation before anything is
+         *     written (`domain::recording`).
+         */
+        Recording: {
+            completions: boolean;
+            prompts: boolean;
+            /** @description Labels whose passages and memories are replaced by their citation id in every payload. */
+            redact_labels: components["schemas"]["DataLabel"][];
+            /**
+             * Format: int64
+             * @description Days a payload is kept (1–3650; default 30); a worker deletes older ones.
+             */
+            retention_days: number;
+            tool_io: boolean;
         };
         /** @description Recovery codes, shown once. */
         RecoveryCodes: {
@@ -6384,6 +6434,40 @@ export interface components {
          * @enum {string}
          */
         SpanKind: "llm_call" | "tool_call" | "spawn" | "data_read" | "egress" | "policy" | "approval";
+        /** @description One recorded payload of a span, decrypted. */
+        SpanPayload: {
+            content: string;
+            /** Format: date-time */
+            created_at: string;
+            kind: components["schemas"]["PayloadKind"];
+            /**
+             * Format: int64
+             * @description Passages and memories replaced by their citation, plus credentials scrubbed.
+             */
+            redactions: number;
+            /**
+             * Format: int64
+             * @description Bytes of the content as kept.
+             */
+            size: number;
+        };
+        /**
+         * @description What `GET /spans/{id}/payload` answers: the span's payloads with the
+         *     classifications of the data its node was given, for the banner.
+         */
+        SpanPayloads: {
+            kind: components["schemas"]["SpanKind"];
+            /** @description The classifications of the data the node was given: what the content may be derived from. */
+            labels: components["schemas"]["DataLabel"][];
+            /** Format: uuid */
+            node_id: string;
+            /** @description Whether anything was recorded for the span; empty when recording was off. */
+            payloads: components["schemas"]["SpanPayload"][];
+            /** Format: uuid */
+            run_id: string;
+            /** Format: uuid */
+            span_id: string;
+        };
         /**
          * @description How a span ended.
          * @enum {string}
@@ -11107,6 +11191,44 @@ export interface operations {
             };
             /** @description The provider could not be asked */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    payload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Span id */
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpanPayloads"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

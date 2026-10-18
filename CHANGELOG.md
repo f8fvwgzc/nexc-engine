@@ -9,6 +9,34 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Opt-in recording of prompts, completions and tool calls (`docs/CONTRACT.md` §4, §5, §8). The
+  guardrails gain `recording` `{prompts, completions, tool_io, retention_days, redact_labels}`,
+  off by default (Settings → Guardrails has the switches, the retention and the labels; every
+  change is audited as `recording_changed` with the setting in words). When a kind is on, the
+  per-run token tells the runtime (`recording` claim) and the runtime sends what each span said
+  up the stream as `payload` events: every turn's prompt (the system prompt and the task first,
+  then what was added since the last turn) and completion (the text and the tool calls with
+  their arguments), every tool call's input and output; the built-in executor records its one
+  call, and the gateway records what its calls got and gave. The backend keeps only the kinds
+  the workspace asked for, whatever a runtime sends, after the guardrails' secret scrubber and
+  the label redaction (passages and memories of a label in `redact_labels` are replaced by their
+  citation id: `[redacted restricted passage <chunk>]`), AES-256-GCM under the master key bound
+  to the span id, in the new `span_payloads` table; spans themselves still carry digests only.
+  The `data_read` span of every node notes `recording`, `recording_kinds` and
+  `recording_redact_labels`; `Session.recording` says whether a run was recorded. A worker
+  deletes payloads past the workspace's `retention_days` (1–3650, default 30) every minute;
+  a transfer leaves payloads behind (documented and exempted in the coverage test); the account
+  export is unchanged. `GET /spans/{id}/payload` answers the decrypted payloads of a span with the
+  classifications of the data its node was given for the viewer's banner (the run's owner and
+  the workspace's admins; audited as `payload_viewed`). `make proto-runtime` and `make openapi`
+  regenerated the stubs and the frontend types. Tests (`backend/tests/recording.rs`,
+  `agent-runtime/tests/test_trace.py`, `test_policy.py`): nothing travels or is kept unless the
+  token asks, payloads a leaky runtime sends anyway are dropped, the kinds asked for and only
+  those are kept and read back (sealed on disk), a restricted passage is replaced by its citation
+  and a credential scrubbed, the gateway's calls are recorded, a bad retention is refused, the
+  change is audited, reading is audited, members are refused, retention deletes old rows under
+  the workspace's and the default retention, and the runtime's turns, tool calls and sub-agent
+  tokens carry the claim.
 - Stop one subtree: `POST /runs/{id}/agents/{span_id}/cancel` `{reason?}` stops the sub-agent
   born in that `spawn` span while the run goes on (whoever may cancel the run; 202 with
   `AgentCancel`; 404 for a span that is no spawn, 409 for a run that is not running). The

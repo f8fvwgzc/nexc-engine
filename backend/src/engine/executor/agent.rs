@@ -22,9 +22,11 @@ use crate::config::RuntimeProtocol;
 use crate::domain::mcp::GatewayTool;
 use crate::domain::policy::{Action, Effect};
 use crate::domain::prompt::UpstreamOutput;
+use crate::domain::recording::PayloadKind;
 use crate::domain::trace::{self, SPAN_LINE_MAX_BYTES, SpanDraft, SpanKind, SpanStatus};
+use crate::engine::recording::{self, Capture};
 use crate::realtime::events::LogLevel;
-use crate::security::agent_token::{AgentGrant, EXPIRY_SLACK};
+use crate::security::agent_token::{AgentGrant, EXPIRY_SLACK, RecordingClaim};
 
 /// Longest NDJSON line accepted (a base64 artifact of 20 MiB plus envelope).
 const MAX_LINE_BYTES: usize = MAX_ARTIFACT_BYTES / 3 * 4 + 64 * 1024;
@@ -96,6 +98,12 @@ enum RuntimeLine {
     /// One action of an agent (contract §8). Read field by field: a span
     /// that cannot be used is dropped with a warning, never fatal.
     Span(Map<String, Value>),
+    /// What a span said, sent only while the token says recording is on.
+    Payload {
+        span_id: String,
+        kind: String,
+        content: String,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -137,6 +145,12 @@ pub(super) enum Event {
     Span(Map<String, Value>, usize),
     /// A tool call the policy holds (gRPC); the NDJSON wire asks through its `policy` span.
     ApprovalRequest(approvals::Request),
+    /// What a span said: the runtime's span id, the kind of payload, the content.
+    Payload {
+        span_id: String,
+        kind: String,
+        content: String,
+    },
     Unknown,
 }
 
@@ -182,6 +196,15 @@ impl From<RuntimeLine> for Event {
             },
             RuntimeLine::Error { message, retryable } => Event::Error { message, retryable },
             RuntimeLine::Span(wire) => Event::Span(wire, 0),
+            RuntimeLine::Payload {
+                span_id,
+                kind,
+                content,
+            } => Event::Payload {
+                span_id,
+                kind,
+                content,
+            },
             RuntimeLine::Unknown => Event::Unknown,
         }
     }
@@ -394,6 +417,11 @@ pub(super) fn mint_token(ctx: &ExecContext) -> Result<String, ExecError> {
         capabilities: &ctx.capabilities,
         rules: &ctx.rules,
         labels: &ctx.labels_given,
+        recording: RecordingClaim {
+            prompts: ctx.recording.prompts,
+            completions: ctx.recording.completions,
+            tool_io: ctx.recording.tool_io,
+        },
     };
     ctx.state
         .agent_tokens
@@ -705,6 +733,32 @@ pub(super) async fn handle_event(
                 .parent_id
                 .map(|p| progress.ids.get(&p).copied().unwrap_or(p));
             open_approval(ctx, request, progress).await;
+        }
+        Event::Payload {
+            span_id,
+            kind,
+            content,
+        } => {
+            // Only what the token asked for is kept; a runtime that sends more is ignored.
+            let Ok(kind) = kind.parse::<PayloadKind>() else {
+                return Ok(None);
+            };
+            if !ctx.recording.wants(kind) {
+                return Ok(None);
+            }
+            let Ok(reported) = span_id.parse::<Uuid>() else {
+                return Ok(None);
+            };
+            let span_id = progress.ids.get(&reported).copied().unwrap_or(reported);
+            recording::store(
+                ctx,
+                Capture {
+                    span_id,
+                    kind,
+                    content,
+                },
+            )
+            .await;
         }
         Event::Unknown => {}
     }

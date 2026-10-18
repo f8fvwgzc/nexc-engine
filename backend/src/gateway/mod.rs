@@ -13,7 +13,7 @@ mod a2a;
 pub mod fetch;
 pub mod mcp;
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
@@ -346,7 +346,11 @@ struct Call<'a> {
     started_at: chrono::DateTime<Utc>,
     args_sha256: String,
     args_bytes: usize,
+    /// The arguments as canonical JSON: what the recording keeps.
+    args_text: String,
     server: Option<String>,
+    /// The `tool_call` span once the call was recorded (a refusal records none).
+    tool_span: OnceLock<Uuid>,
 }
 
 impl Call<'_> {
@@ -447,6 +451,7 @@ impl Call<'_> {
         }
         tool.attributes = attributes;
         let tool_span_id = tool.id;
+        let _ = self.tool_span.set(tool_span_id);
         ctx.record(tool);
         if let Some(egress) = egress {
             let mut span = ctx.draft(SpanKind::Egress, egress.host.to_owned(), self.started_at);
@@ -537,8 +542,32 @@ fn screen_arguments(ctx: &ExecContext, text: &str, host: &str) -> Decision {
 /// records it. Never fails the node; the model sees an error instead.
 pub async fn perform(ctx: &ExecContext, req: &ToolRequest, granted: &Granted) -> ToolOutcome {
     let mut overhead = Overhead::new();
-    let mut outcome = perform_timed(ctx, req, granted, &mut overhead).await;
+    let (args_sha256, args_bytes, args_text) = args_digest(&req.arguments);
+    let own = ctx.principal();
+    let principal = if is_principal_or_descendant(&req.agent, &own) {
+        req.agent.clone()
+    } else {
+        own.clone()
+    };
+    let call = Call {
+        ctx,
+        req,
+        principal,
+        started: Instant::now(),
+        started_at: Utc::now(),
+        args_sha256,
+        args_bytes,
+        args_text,
+        server: split_tool_name(&req.tool).map(|(server, _)| server.to_owned()),
+        tool_span: OnceLock::new(),
+    };
+    let mut outcome = perform_timed(ctx, req, granted, &mut overhead, &call, &own).await;
     outcome.overhead_ns = overhead.ns();
+    // What went out and what came back, when the workspace records tool calls.
+    if let Some(span_id) = call.tool_span.get().copied() {
+        crate::engine::recording::store_tool_io(ctx, span_id, &call.args_text, &outcome.output)
+            .await;
+    }
     let kind = if req.tool == FETCH_URL {
         "fetch_url"
     } else if req.tool.starts_with(crate::domain::a2a::TOOL_PREFIX) {
@@ -561,26 +590,12 @@ async fn perform_timed(
     req: &ToolRequest,
     granted: &Granted,
     overhead: &mut Overhead,
+    call: &Call<'_>,
+    own: &str,
 ) -> ToolOutcome {
-    let (args_sha256, args_bytes, args_text) = args_digest(&req.arguments);
-    let own = ctx.principal();
-    let principal = if is_principal_or_descendant(&req.agent, &own) {
-        req.agent.clone()
-    } else {
-        own.clone()
-    };
-    let call = Call {
-        ctx,
-        req,
-        principal: principal.clone(),
-        started: Instant::now(),
-        started_at: Utc::now(),
-        args_sha256,
-        args_bytes,
-        server: split_tool_name(&req.tool).map(|(server, _)| server.to_owned()),
-    };
+    let args_text = &call.args_text;
     // The agent's pace, with the process-wide bucket.
-    if let Err(err) = ctx.state.limiters.check_gateway(&own) {
+    if let Err(err) = ctx.state.limiters.check_gateway(own) {
         let wait = match err {
             crate::domain::AppError::RateLimited { retry_after_secs } => retry_after_secs,
             _ => 0,
@@ -639,6 +654,7 @@ async fn perform_timed(
         if !screened.allowed {
             return call.refuse("egress", &host, &screened, false).await;
         }
+        let _ = args_text;
         let allow = |candidate: &str| -> Result<(), (&'static str, String)> {
             let decision = decide_host(ctx, candidate);
             if decision.allowed {
@@ -702,7 +718,7 @@ async fn perform_timed(
     }
 
     if let Some(name) = crate::domain::a2a::counterpart_of_tool(&req.tool) {
-        return a2a::perform(ctx, &call, name, overhead).await;
+        return a2a::perform(ctx, call, name, overhead).await;
     }
     let Some((server_name, tool_name)) = split_tool_name(&req.tool) else {
         let decision = Decision::deny("tools.allow", format!("{} is not a gateway tool", req.tool));
@@ -770,7 +786,7 @@ async fn perform_timed(
             return call.refuse("egress", &host, &labels, false).await;
         }
     }
-    let screened = screen_arguments(ctx, &args_text, &host);
+    let screened = screen_arguments(ctx, args_text, &host);
     if !screened.allowed {
         return call.refuse("egress", &host, &screened, false).await;
     }

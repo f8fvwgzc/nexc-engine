@@ -39,6 +39,10 @@ string_enum!(
         PolicyMismatch => "policy_mismatch",
         AgentQuarantined => "agent_quarantined",
         AgentReleased => "agent_released",
+        /// The workspace's recording setting changed (subject `Recording`; detail: the setting in words).
+        RecordingChanged => "recording_changed",
+        /// Someone read what a span said (subject: the span id; detail: the run and the kinds).
+        PayloadViewed => "payload_viewed",
         /// An operator stopped one sub-agent of a run while the run went on
         /// (subject: the sub-agent's principal; detail: the run, the node, the spawn and the reason).
         AgentCancelled => "agent_cancelled",

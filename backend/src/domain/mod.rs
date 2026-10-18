@@ -32,6 +32,7 @@ pub mod platform;
 pub mod policy;
 pub mod policy_document;
 pub mod prompt;
+pub mod recording;
 pub mod risk;
 pub mod run;
 pub mod search;

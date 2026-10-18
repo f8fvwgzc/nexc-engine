@@ -563,6 +563,9 @@ impl Validate for Guardrails {
         if self.memory_forget_after_days.is_some_and(|d| d < 7) {
             errors.add("memory_forget_after_days", "must be at least 7");
         }
+        if !(1..=3650).contains(&self.recording.retention_days) {
+            errors.add("recording.retention_days", "must be between 1 and 3650");
+        }
     }
 }
 
@@ -584,7 +587,9 @@ pub async fn guardrails(
 }
 
 /// Sets the guardrails of a workspace (admins and owners): monthly token
-/// budgets, allowed providers, code execution and secret redaction.
+/// budgets, allowed providers, code execution, secret redaction and what is
+/// recorded of what agents say and hear (a change of the recording is audited
+/// as `recording_changed` on top of `guardrails_changed`).
 #[utoipa::path(put, path = "/workspaces/{wid}/guardrails", tag = "workspaces", security(("bearer" = [])),
     params(("wid" = Uuid, Path, description = "Workspace id")), request_body = Guardrails,
     responses((status = 200, body = Guardrails), (status = 403, body = Problem), (status = 404, body = Problem),
@@ -599,6 +604,9 @@ pub async fn put_guardrails(
         &member_of(&state, auth, wid).await?,
         WorkspaceAction::UpdateSettings,
     )?;
+    let before = repo::workspaces::guardrails(&state.db, wid)
+        .await?
+        .unwrap_or_default();
     repo::workspaces::set_guardrails(&state.db, wid, auth.id, &req).await?;
     let subject = Subject::Text("Guardrails");
     audit(
@@ -610,6 +618,21 @@ pub async fn put_guardrails(
         "",
     )
     .await;
+    if before.recording != req.recording {
+        audit(
+            &state,
+            wid,
+            auth.id,
+            AuditAction::RecordingChanged,
+            Subject::Text("Recording"),
+            &format!(
+                "{} -> {}",
+                before.recording.describe(),
+                req.recording.describe()
+            ),
+        )
+        .await;
+    }
     Ok(Json(req))
 }
 
