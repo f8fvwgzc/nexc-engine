@@ -22,6 +22,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   memory and node ids it already listed. Tests: the ids are rendered in both prompts and never
   leak into the upstream titles the demo provider reads back (`backend/src/domain/prompt.rs`,
   `agent-runtime/tests/test_prompts.py`).
+- Evidence-bound outputs, tests and docs: the worst-case suite checks the trace explorer's new
+  `decision=evidence` filter like the four decisions before it (a bounded page across the
+  20,000-issue workspace, 422 for anything that only looks like the value, nothing for
+  outsiders; `backend/tests/worst_case.rs`), and `docs/AGENTSECOPS.md` §2's evidence-bound
+  paragraph now says the promise holds for every agent, and how.
 - The demo providers cite what they were given, so the feature shows without an API key:
   the built-in demo provider reads the passages, memories and upstream results back out of
   the prompt by their ids and answers with an **Evidence** section quoting each with its id,

@@ -491,6 +491,62 @@ async fn no_route_fails_on_hostile_input(pool: PgPool) {
     assert_eq!(status, StatusCode::OK, "{list}");
 }
 
+/// The trace explorer's `decision=evidence` filter (CONTRACT §5) answers like the four
+/// decisions before it: a page, bounded, and 422 for anything that only looks like it.
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn the_evidence_filter_is_bounded_and_strict(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let w = world(&app).await;
+    let spans = format!("/workspaces/{}/secops/spans", w.wid);
+    let (status, page) = call(
+        &app,
+        Method::GET,
+        &format!("{spans}?decision=evidence&limit=100000"),
+        &w.owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let rows = page["spans"].as_array().unwrap();
+    assert!(rows.len() <= 500, "{} rows", rows.len());
+    assert!(
+        rows.iter().all(|s| s["evidence"].is_string()),
+        "only spans carrying a verdict: {page}"
+    );
+    for bad in [
+        "evidence%27",
+        "EVIDENCE",
+        "evidence%20",
+        "verified",
+        "evidence%00",
+        "%27%3B%20DROP%20TABLE%20agent_spans%3B--",
+    ] {
+        let (status, body) = call(
+            &app,
+            Method::GET,
+            &format!("{spans}?decision={bad}"),
+            &w.owner,
+            None,
+        )
+        .await;
+        assert!(
+            status == StatusCode::UNPROCESSABLE_ENTITY || status == StatusCode::BAD_REQUEST,
+            "{bad}: {status} {body}"
+        );
+    }
+    // Outsiders find nothing, guests may not look.
+    let (outsider, _) = app.register("outsider-evidence@example.com").await;
+    let (status, _) = call(
+        &app,
+        Method::GET,
+        &format!("{spans}?decision=evidence"),
+        &outsider,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
 async fn races_have_one_winner(pool: PgPool) {
     let app = TestApp::new(pool.clone(), &[]).await;
@@ -693,6 +749,11 @@ async fn a_large_workspace_stays_bounded_and_fast(pool: PgPool) {
         (format!("{ws}/audit?limit=100000"), 200),
         (format!("{ws}/inbox"), 1_000),
         (format!("{ws}/projects"), 1_000),
+        // The trace explorer's evidence filter: the spans carrying a verdict, one page at most.
+        (
+            format!("{ws}/secops/spans?decision=evidence&limit=100000"),
+            500,
+        ),
     ];
     for (path, most) in &reads {
         let started = Instant::now();
