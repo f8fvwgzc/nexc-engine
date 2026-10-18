@@ -7,6 +7,7 @@
  * generated, a mismatch makes `pnpm typecheck` fail on the offending line.
  */
 import type { Agent, AgentCard, Capabilities } from '@/schemas/agent';
+import type { AuditAnswer, AuditFact, CannedQuestion } from '@/schemas/audit';
 import type { AuthResponse, User } from '@/schemas/auth';
 import type {
   EdgeSuggestion,
@@ -59,4 +60,7 @@ export type ContractDrift = [
   Assert<Matches<'Memory', Memory>>,
   Assert<Matches<'OrchestratorStatus', OrchestratorStatus>>,
   Assert<Matches<'TraceVerification', TraceVerification>>,
+  Assert<Matches<'AuditAnswer', AuditAnswer>>,
+  Assert<Matches<'AuditFact', AuditFact>>,
+  Assert<Matches<'CannedQuestion', CannedQuestion>>,
 ];

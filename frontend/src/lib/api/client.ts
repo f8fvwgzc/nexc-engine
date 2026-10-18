@@ -82,6 +82,13 @@ export async function apiRequest<S extends z.ZodType>(
   return parseBody(schema, await res.json(), path);
 }
 
+/** An authenticated request whose body the caller reads itself (a stream of events). */
+export async function apiFetch(path: string, opts: RequestOptions = {}): Promise<Response> {
+  const res = await fetchWithAuth(path, opts);
+  if (!res.ok) throw await ApiError.fromResponse(res);
+  return res;
+}
+
 /** Request that answers 204 / an ignored body. */
 export async function apiSend(path: string, opts: RequestOptions = {}): Promise<void> {
   const res = await fetchWithAuth(path, opts);

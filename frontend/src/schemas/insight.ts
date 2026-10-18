@@ -90,6 +90,13 @@ export const infrastructureSchema = z.object({
   runtime_url: z.string(),
   runtime_reachable: z.boolean(),
   embedding_model: z.string(),
+  /** The onto-intelli the audit's facts go to; disabled when none is configured. */
+  ontology: z.object({
+    enabled: z.boolean(),
+    ok: z.boolean(),
+    url: z.string().nullable(),
+    detail: z.string().nullable(),
+  }),
   queue: z.string(),
   cache: z.string(),
 });

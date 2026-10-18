@@ -1,6 +1,7 @@
 import { useSuspenseQuery } from '@tanstack/react-query';
 import { BotIcon, PlusIcon } from 'lucide-react';
 import { Suspense, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
 import { EmptyState } from '@/components/custom-ui/empty-state';
@@ -20,13 +21,16 @@ import { isWorkspaceAdmin } from '@/schemas/workspace';
 
 type Editing = { agent: Agent | null } | null;
 
-function Agents() {
+function Agents({ open }: { open: string | null }) {
   const { current } = useCurrentWorkspace();
   const workspaceId = current?.id;
   const admin = current !== undefined && isWorkspaceAdmin(current.role);
   const { data: agents } = useSuspenseQuery(agentsQuery(workspaceId));
   const [editing, setEditing] = useState<Editing>(null);
-  const [card, setCard] = useState<Agent | null>(null);
+  // `?agent=` opens that agent's card: the audit's answers link to it.
+  const [card, setCard] = useState<Agent | null>(
+    () => agents.find((agent) => agent.id === open) ?? null,
+  );
   const [deleting, setDeleting] = useState<Agent | null>(null);
   const deleteAgent = useDeleteAgent();
   const create = () => setEditing({ agent: null });
@@ -100,11 +104,13 @@ function Agents() {
 }
 
 export default function AgentsPage() {
+  const [params] = useSearchParams();
+  const open = params.get('agent');
   return (
     <>
       <Seo title="Agents" noIndex />
       <Suspense fallback={<PageSkeleton />}>
-        <Agents />
+        <Agents key={open ?? ''} open={open} />
       </Suspense>
     </>
   );
