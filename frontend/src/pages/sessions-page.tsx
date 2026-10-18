@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { ListTreeIcon, NetworkIcon, RefreshCwIcon } from 'lucide-react';
-import { useId, useState } from 'react';
+import { ListTreeIcon, NetworkIcon, RefreshCwIcon, XIcon } from 'lucide-react';
+import { useId, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { EmptyState } from '@/components/custom-ui/empty-state';
@@ -25,6 +25,13 @@ import type { Workspace } from '@/schemas/workspace';
 function SessionList({ workspace }: { workspace: Workspace }) {
   const ids = { from: useId(), to: useId() };
   const [filter, setFilter] = useState<SessionFilter>({});
+  const form = useRef<HTMLFormElement>(null);
+  const filtered = Object.values(filter).some((value) => value !== undefined);
+  // The dates are uncontrolled inputs: the form's own reset empties them.
+  const clearFilters = () => {
+    form.current?.reset();
+    setFilter({});
+  };
   const { data: agents = [] } = useQuery(agentsQuery(workspace.id));
   const params = sessionFilterParams(filter);
   const query = useInfiniteQuery({
@@ -40,6 +47,7 @@ function SessionList({ workspace }: { workspace: Workspace }) {
   return (
     <div className="space-y-4">
       <form
+        ref={form}
         className="grid gap-2 rounded-xl border bg-card p-3 text-xs sm:grid-cols-2 lg:grid-cols-5"
         aria-label="Filters"
         onSubmit={(e) => e.preventDefault()}
@@ -115,6 +123,18 @@ function SessionList({ workspace }: { workspace: Workspace }) {
         />
       ) : query.isPending ? (
         <TableSkeleton />
+      ) : rows.length === 0 && filtered ? (
+        <EmptyState
+          icon={ListTreeIcon}
+          title="No matching sessions"
+          description="No session matches these filters. Widen the dates or pick another agent or status."
+          action={
+            <Button variant="outline" onClick={clearFilters}>
+              <XIcon />
+              Clear the filters
+            </Button>
+          }
+        />
       ) : rows.length === 0 ? (
         <EmptyState
           icon={ListTreeIcon}

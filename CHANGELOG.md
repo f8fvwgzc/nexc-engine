@@ -1217,7 +1217,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   away (the SecOps risk panel), or, worse, an empty state that
   told the reader to create what may exist (Issues, Sessions, Knowledge, Memory, Project,
   Policies); a list that was read stays on screen when a later refetch fails (Issues, a
-  project, Data transfer's earlier transfers, which also have a placeholder while they load). The
+  project, Data transfer's earlier transfers, which also have a placeholder while they load);
+  Sessions tells a filter that matches nothing ("No matching sessions", **Clear the filters**)
+  from a workspace with no runs yet. The
   primary action of A2A counterparts, MCP servers and Alert destinations moved into the page
   header, as on the other pages, and My issues has its **New issue** there too (it was only in
   the toolbar, under the tabs); the graph canvas and the project page have an `h1`.
