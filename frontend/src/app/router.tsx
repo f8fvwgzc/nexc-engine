@@ -139,6 +139,7 @@ export const routes: RouteObject[] = [
                 ...page(routeModules.settingsAlertDestinations),
               },
               { path: 'mcp-servers', ...page(routeModules.settingsMcpServers) },
+              { path: 'a2a-counterparts', ...page(routeModules.settingsA2aCounterparts) },
               { path: 'memory', ...page(routeModules.memory) },
               { path: 'knowledge', ...page(routeModules.settingsKnowledge) },
               { path: 'usage', ...page(routeModules.usage) },

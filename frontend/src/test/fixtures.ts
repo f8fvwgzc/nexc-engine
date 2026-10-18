@@ -254,6 +254,7 @@ export const agent: Agent = {
   risk_score: 0,
   risk_reasons: [],
   risk_updated_at: null,
+  a2a_exposed: false,
 };
 
 export const memory: Memory = {

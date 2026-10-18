@@ -283,6 +283,8 @@ pub async fn risk_history(
 pub struct SpanFilter<'a> {
     pub agent_id: Option<Uuid>,
     pub kind: Option<&'a str>,
+    /// Only tool calls marked `inbound` (tasks received over A2A).
+    pub inbound: bool,
     pub tool: Option<&'a str>,
     pub host: Option<&'a str>,
     pub run_id: Option<Uuid>,
@@ -325,6 +327,7 @@ pub async fn search_spans(
            AND ($9::timestamptz IS NULL OR s.started_at < $9)
            AND ($10::text IS NULL OR s.attributes->>'decision' = $10)
            AND ($11::uuid IS NULL OR s.id < $11)
+           AND (NOT $13::bool OR s.attributes->>'inbound' = 'true')
          ORDER BY s.id DESC LIMIT $12"
     ))
     .bind(user)
@@ -339,6 +342,7 @@ pub async fn search_spans(
     .bind(filter.decision)
     .bind(filter.before)
     .bind(limit)
+    .bind(filter.inbound)
     .fetch_all(db)
     .await?;
     rows.iter()
@@ -368,6 +372,10 @@ pub async fn search_spans(
                 model: text(&attributes, "model"),
                 tokens_in: number(&attributes, "tokens_in"),
                 tokens_out: number(&attributes, "tokens_out"),
+                inbound: attributes
+                    .get("inbound")
+                    .and_then(serde_json::Value::as_bool)
+                    == Some(true),
             })
         })
         .collect()

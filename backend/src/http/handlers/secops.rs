@@ -121,8 +121,9 @@ pub async fn overview(
 pub struct SpanQuery {
     /// Only spans of this agent.
     pub agent: Option<Uuid>,
-    /// Only spans of this kind.
-    pub kind: Option<SpanKind>,
+    /// Only spans of this kind (a `SpanKind`), or `inbound`: the tool calls that are tasks
+    /// received over A2A.
+    pub kind: Option<String>,
     /// Only tool calls of this tool, and policy decisions about it.
     pub tool: Option<String>,
     /// Only tool calls that reached this host.
@@ -142,9 +143,26 @@ pub struct SpanQuery {
 }
 
 const DECISIONS: [&str; 4] = ["allow", "deny", "require_approval", "alert"];
+/// The pseudo-kind of the explorer: tool calls marked `inbound` (A2A tasks received).
+const INBOUND: &str = "inbound";
 
 impl SpanQuery {
+    /// The kind asked for: a span kind, or the inbound pseudo-kind.
+    fn kind(&self) -> Result<(Option<SpanKind>, bool), AppError> {
+        match self.kind.as_deref() {
+            None => Ok((None, false)),
+            Some(INBOUND) => Ok((Some(SpanKind::ToolCall), true)),
+            Some(raw) => raw.parse::<SpanKind>().map(|k| (Some(k), false)).map_err(|_| {
+                AppError::field(
+                    "kind",
+                    "one of llm_call, tool_call, spawn, data_read, egress, policy, approval, inbound",
+                )
+            }),
+        }
+    }
+
     fn check(&self) -> Result<(), AppError> {
+        self.kind()?;
         for (field, value) in [("tool", &self.tool), ("host", &self.host)] {
             if let Some(value) = value
                 && (value.trim().is_empty() || value.len() > FILTER_MAX)
@@ -190,10 +208,12 @@ pub async fn spans(
         WorkspaceAction::ViewMembers,
     )?;
     query.check()?;
+    let (kind, inbound) = query.kind()?;
     let limit = query.limit.unwrap_or(SPANS_DEFAULT).clamp(1, SPANS_MAX);
     let filter = SpanFilter {
         agent_id: query.agent,
-        kind: query.kind.map(SpanKind::as_str),
+        kind: kind.map(SpanKind::as_str),
+        inbound,
         tool: query.tool.as_deref().map(str::trim),
         host: query.host.as_deref().map(str::trim),
         run_id: query.run,
@@ -326,6 +346,25 @@ mod tests {
             before: None,
         };
         assert!(ok.check().is_ok());
+        let inbound = SpanQuery {
+            kind: Some("inbound".into()),
+            tool: None,
+            decision: None,
+            ..ok
+        };
+        assert_eq!(inbound.kind().unwrap(), (Some(SpanKind::ToolCall), true));
+        let bad_kind = SpanQuery {
+            kind: Some("teleport".into()),
+            ..inbound
+        };
+        assert!(bad_kind.check().is_err());
+        let ok = SpanQuery {
+            kind: Some("policy".into()),
+            tool: Some("write_file".into()),
+            decision: Some("deny".into()),
+            ..bad_kind
+        };
+        assert_eq!(ok.kind().unwrap(), (Some(SpanKind::Policy), false));
         let bad_decision = SpanQuery {
             decision: Some("maybe".into()),
             ..ok

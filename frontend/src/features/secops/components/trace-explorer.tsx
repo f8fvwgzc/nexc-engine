@@ -22,14 +22,22 @@ import { durationBetween, formatDateTime, formatDuration } from '@/lib/format';
 import { qk } from '@/lib/query-keys';
 import { cn } from '@/lib/utils';
 import { displayPrincipal, type Agent } from '@/schemas/agent';
-import { DECISIONS, type Decision, type SecopsSpan, type SpanFilter } from '@/schemas/secops';
-import { SPAN_KINDS, type SpanKind } from '@/schemas/trace';
+import {
+  DECISIONS,
+  INBOUND_KIND,
+  type Decision,
+  type ExplorerKind,
+  type SecopsSpan,
+  type SpanFilter,
+} from '@/schemas/secops';
+import { SPAN_KINDS } from '@/schemas/trace';
 
 import { SPANS_PAGE_SIZE, secopsSpansPage, spanFilterParams } from '../api';
 import { localToIso, spanHref } from '../explorer';
 
 function What({ span }: { span: SecopsSpan }) {
   const parts: string[] = [];
+  if (span.inbound) parts.push('inbound A2A task');
   if (span.tool && span.tool !== span.name) parts.push(span.tool);
   if (span.host) parts.push(`→ ${span.host}`);
   if (span.model && span.kind === 'llm_call') parts.push(span.model);
@@ -96,7 +104,7 @@ export function TraceExplorer({ workspaceId, agents }: TraceExplorerProps) {
             size="sm"
             className="w-full"
             value={draft.kind ?? ''}
-            onChange={(e) => set('kind', (e.target.value || undefined) as SpanKind | undefined)}
+            onChange={(e) => set('kind', (e.target.value || undefined) as ExplorerKind | undefined)}
           >
             <NativeSelectOption value="">any</NativeSelectOption>
             {SPAN_KINDS.map((k) => (
@@ -104,6 +112,7 @@ export function TraceExplorer({ workspaceId, agents }: TraceExplorerProps) {
                 {SPAN_KIND_META[k].label}
               </NativeSelectOption>
             ))}
+            <NativeSelectOption value={INBOUND_KIND}>Inbound A2A task</NativeSelectOption>
           </NativeSelect>
         </label>
         <label className="space-y-1">

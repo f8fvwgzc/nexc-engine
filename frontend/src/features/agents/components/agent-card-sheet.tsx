@@ -34,6 +34,7 @@ import type { Span } from '@/schemas/trace';
 import { agentCardQuery } from '../api';
 import { summarizeCapabilities } from '../capabilities';
 import { useQuarantineAgent } from '../hooks/use-agent-mutations';
+import { AgentA2a } from './agent-a2a';
 import { AgentStatusBadge } from './agent-status-badge';
 import { AgentTokens } from './agent-tokens';
 import { BudgetProgress } from './budget-progress';
@@ -334,9 +335,9 @@ interface AgentCardSheetProps {
 /**
  * The agent's ID card, in tabs: who it is and what it may do (Overview; for an external agent
  * also its API tokens, issued and revoked there by admins), its last twenty actions
- * (Activity), the policy that governs it rule by rule (Policy), its held calls and alerts, and
- * the audit's questions with the agent filled in (Ask). Admins quarantine and release from the
- * footer.
+ * (Activity), the policy that governs it rule by rule (Policy), its held calls and alerts, its
+ * A2A exposure with the card's addresses and the tasks it received (A2A), and the audit's
+ * questions with the agent filled in (Ask). Admins quarantine and release from the footer.
  */
 export function AgentCardSheet({ agent, admin, onOpenChange, onEdit }: AgentCardSheetProps) {
   const {
@@ -414,6 +415,7 @@ export function AgentCardSheet({ agent, admin, onOpenChange, onEdit }: AgentCard
                   <TabsTrigger value="policy">Policy</TabsTrigger>
                   <TabsTrigger value="approvals">Approvals</TabsTrigger>
                   <TabsTrigger value="alerts">Alerts</TabsTrigger>
+                  <TabsTrigger value="a2a">A2A</TabsTrigger>
                   <TabsTrigger value="ask">Ask</TabsTrigger>
                 </TabsList>
                 <TabsContent value="overview">
@@ -438,6 +440,9 @@ export function AgentCardSheet({ agent, admin, onOpenChange, onEdit }: AgentCard
                   {workspaceId && (
                     <AgentAlerts workspaceId={workspaceId} agentId={shown.id} admin={admin} />
                   )}
+                </TabsContent>
+                <TabsContent value="a2a">
+                  <AgentA2a agent={shown} admin={admin} />
                 </TabsContent>
                 <TabsContent value="ask">
                   {workspaceId && (

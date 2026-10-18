@@ -31,6 +31,7 @@ export const routeModules = {
   settingsAlerts: () => import('@/pages/settings/alerts-page'),
   settingsAlertDestinations: () => import('@/pages/settings/alert-destinations-page'),
   settingsMcpServers: () => import('@/pages/settings/mcp-servers-page'),
+  settingsA2aCounterparts: () => import('@/pages/settings/a2a-counterparts-page'),
   settingsKnowledge: () => import('@/pages/settings/knowledge-page'),
   settingsActivity: () => import('@/pages/settings/activity-page'),
   settingsMap: () => import('@/pages/settings/map-page'),

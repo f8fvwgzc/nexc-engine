@@ -72,8 +72,38 @@ export const agentSchema = z.object({
   risk_score: z.number().min(0),
   risk_reasons: z.array(z.string()),
   risk_updated_at: nullableTimestampSchema,
+  /** Published as an A2A agent (CONTRACT §10): its card is served, counterparts may send it tasks. */
+  a2a_exposed: z.boolean(),
 });
 export type Agent = z.infer<typeof agentSchema>;
+
+/** The states of an A2A task, from the run that answers it. */
+export const A2A_TASK_STATES = ['submitted', 'working', 'completed', 'canceled', 'failed'] as const;
+export const a2aTaskStateSchema = z.enum(A2A_TASK_STATES);
+export type A2aTaskState = z.infer<typeof a2aTaskStateSchema>;
+
+/** A task an exposed agent received over A2A, as the console lists it (CONTRACT §4). */
+export const a2aTaskSchema = z.object({
+  id: idSchema,
+  workspace_id: idSchema,
+  agent_id: idSchema,
+  caller_agent_id: idSchema.nullable(),
+  caller_principal: z.string(),
+  run_id: idSchema,
+  node_id: idSchema,
+  session_id: z.string().nullable(),
+  /** A2A hops before the task (0 for a counterpart's own call). */
+  hop: z.number().int().nonnegative(),
+  chain: z.array(z.string()),
+  /** The rule that refused it, when the firewall did. */
+  refused_rule: z.string().nullable(),
+  refused_reason: z.string().nullable(),
+  title: z.string(),
+  /** One of `A2A_TASK_STATES` (kept open: the server may add one). */
+  state: z.string(),
+  created_at: timestampSchema,
+});
+export type A2aTask = z.infer<typeof a2aTaskSchema>;
 
 /** An API token of an external agent (CONTRACT §8): what is kept of it, never its value. */
 export const agentApiTokenSchema = z.object({

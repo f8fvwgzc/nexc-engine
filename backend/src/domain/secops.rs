@@ -181,6 +181,8 @@ pub struct SecopsSpan {
     pub tokens_in: Option<i64>,
     #[schema(required = true)]
     pub tokens_out: Option<i64>,
+    /// `attributes.inbound`: a tool call that is a task received over A2A.
+    pub inbound: bool,
 }
 
 /// A page of the trace explorer, newest first.

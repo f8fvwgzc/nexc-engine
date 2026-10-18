@@ -604,6 +604,41 @@ async fn a_counterpart_sends_a_task_and_gets_the_artifacts_back(pool: PgPool) {
     assert_eq!(tasks[0]["run_id"], run_id);
     assert!(tasks[0]["refused_rule"].is_null());
 
+    // The trace explorer narrows to inbound tasks (and refuses a kind it does not know).
+    let (status, page) = call(
+        &app,
+        Method::GET,
+        &format!("/workspaces/{wid}/secops/spans?kind=inbound"),
+        &owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let listed = page["spans"].as_array().unwrap();
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    assert_eq!(listed[0]["id"], spans[0]["id"]);
+    assert_eq!(listed[0]["inbound"], true);
+    assert_eq!(listed[0]["kind"], "tool_call");
+    let (status, page) = call(
+        &app,
+        Method::GET,
+        &format!("/workspaces/{wid}/secops/spans?kind=tool_call"),
+        &owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(page["spans"].as_array().unwrap().len() > 1);
+    let (status, _) = call(
+        &app,
+        Method::GET,
+        &format!("/workspaces/{wid}/secops/spans?kind=teleport"),
+        &owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
     // tasks/get says the same; the artifact is also fetched by URI with the token.
     let (status, got) = rpc(
         &app,

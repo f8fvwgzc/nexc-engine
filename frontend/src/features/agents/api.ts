@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { apiRequest, apiSend } from '@/lib/api/client';
 import { qk } from '@/lib/query-keys';
 import {
+  a2aTaskSchema,
   agentApiTokenSchema,
   agentCardSchema,
   agentSchema,
@@ -86,4 +87,24 @@ export function issueAgentToken(agentId: string, name: string) {
 /** Revokes an API token (admins); the agent's calls with it are refused at once. */
 export function revokeAgentToken(agentId: string, tokenId: string) {
   return apiSend(`/agents/${agentId}/tokens/${tokenId}`, { method: 'DELETE' });
+}
+
+/** The tasks an exposed agent received over A2A, newest first (CONTRACT §10). */
+export const agentA2aTasksQuery = (agentId: string, limit = 50) =>
+  queryOptions({
+    queryKey: qk.agents.a2aTasks(agentId),
+    queryFn: ({ signal }) =>
+      apiRequest(`/agents/${agentId}/a2a/tasks`, z.array(a2aTaskSchema), {
+        signal,
+        query: { limit },
+      }),
+    refetchInterval: 15_000,
+  });
+
+/** Publishes an agent over A2A, or withdraws it (admins; audited). */
+export function setAgentA2aExposed(agentId: string, exposed: boolean) {
+  return apiRequest(`/agents/${agentId}`, agentSchema, {
+    method: 'PATCH',
+    body: { a2a_exposed: exposed },
+  });
 }

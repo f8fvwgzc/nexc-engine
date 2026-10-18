@@ -9,6 +9,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A2A adapter, the console: the agent card gets an **A2A** tab with the switch that publishes
+  the agent (admins; disabled for an external agent, with the reason), the addresses of its card,
+  its well-known card and its JSON-RPC endpoint under the console's origin with a copy each, and
+  the tasks it received (the title, who called, the hop with the chain on hover, the state or the
+  rule that refused it, each opening the run that answered); **Settings → A2A counterparts**
+  mirrors the MCP servers page: the list with the remote's name from its card, whether it
+  streams, the clearance, which agents may call it and the principal its calls act as, a Check
+  that fetches the card again and a Remove behind a confirmation, and a Register dialog (name,
+  card URL, header, the agents ticked, the clearance) that shows the counterpart's token once
+  with a copy; the trace explorer's Kind filter gains **Inbound A2A task** (`kind=inbound`,
+  tool calls marked inbound; `SecopsSpan.inbound` marks the rows). `make openapi` regenerated
+  the frontend types; the drift check covers `A2aTask` and `A2aCounterpart`. Tests
+  (`frontend/src/features/agents/components/agent-a2a.test.tsx`): the switch publishes, the
+  addresses carry the principal percent-encoded, the task list shows the caller, the hop and
+  the refusal, members and external agents get the switch disabled with the reason.
 - A2A adapter, delegation bounds across hops (`docs/CONTRACT.md` §10): a task carries in its
   A2A `metadata` the number of nexc-mediated hops before it (`nexc.hop`, 0 for a counterpart's
   own call) and the principals it passed through (`nexc.chain`); every outbound call made while

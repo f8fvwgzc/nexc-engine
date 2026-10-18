@@ -98,6 +98,8 @@ export const secopsSpanSchema = z.object({
   model: z.string().nullable(),
   tokens_in: z.number().int().nullable(),
   tokens_out: z.number().int().nullable(),
+  /** A tool call that is a task received over A2A (CONTRACT §10). */
+  inbound: z.boolean().optional(),
 });
 export type SecopsSpan = z.infer<typeof secopsSpanSchema>;
 
@@ -110,10 +112,14 @@ export type SecopsSpanPage = z.infer<typeof secopsSpanPageSchema>;
 export const DECISIONS = ['allow', 'deny', 'require_approval', 'alert'] as const;
 export type Decision = (typeof DECISIONS)[number];
 
+/** The explorer's kinds: every span kind, plus the inbound A2A tasks (tool calls marked inbound). */
+export const INBOUND_KIND = 'inbound';
+export type ExplorerKind = z.infer<typeof spanKindSchema> | typeof INBOUND_KIND;
+
 /** What the explorer narrows by; every field optional. */
 export interface SpanFilter {
   agent?: string;
-  kind?: z.infer<typeof spanKindSchema>;
+  kind?: ExplorerKind;
   tool?: string;
   host?: string;
   run?: string;

@@ -4,6 +4,93 @@
  */
 
 export interface paths {
+    "/.well-known/agent.json": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The agent card of an exposed agent, at the well-known address. Public:
+         *     an agent that is not exposed is not found.
+         */
+        get: operations["well_known"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/a2a/agents/{principal}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The JSON-RPC endpoint of an exposed agent (A2A): `tasks/send` runs the
+         *     task as a one-node run of the agent and answers once it ended or after
+         *     25 s with it still working; `tasks/sendSubscribe` streams its status and
+         *     artifacts as server-sent events; `tasks/get`, `tasks/cancel` and
+         *     `tasks/resubscribe` take the task's id. The caller is a registered
+         *     counterpart presenting an agent API token; every task is a `tool_call`
+         *     span marked inbound and a `policy` span on the run's trace, and a loop or
+         *     a hop past the delegation depth is refused.
+         */
+        post: operations["rpc"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/a2a/agents/{principal}/card": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The agent card of an exposed agent, under its principal (percent-encoded)
+         *     or its id. Public: an agent that is not exposed is not found.
+         */
+        get: operations["card"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/a2a/tasks/{tid}/artifacts/{aid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * An artifact of a task, for the counterpart that sent it (bearer agent
+         *     API token): the file, with `Content-Disposition: attachment`. A file the
+         *     DLP classifier kept in is not found until an admin releases it.
+         */
+        get: operations["artifact"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/events": {
         parameters: {
             query?: never;
@@ -304,6 +391,27 @@ export interface paths {
          *     capabilities raises its policy version and is audited (`policy_changed`).
          */
         patch: operations["update"];
+        trace?: never;
+    };
+    "/api/v1/agents/{id}/a2a/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The tasks an exposed agent received over A2A, newest first (members of
+         *     its workspace): who called, the run that answered, the hop and the chain,
+         *     and the rule that refused it when the firewall did.
+         */
+        get: operations["tasks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/agents/{id}/activity": {
@@ -1563,6 +1671,69 @@ export interface paths {
         head?: never;
         /** Renames a workspace (admins and owners). */
         patch: operations["update"];
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/a2a-counterparts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The A2A counterparts of a workspace (members and above). */
+        get: operations["list"];
+        put?: never;
+        /**
+         * Registers a remote A2A agent (admins): its card is fetched and validated
+         *     at once (a card that does not answer is still registered, with the
+         *     failure on it), an external agent principal `a2a:<name>` is made for its
+         *     inbound calls, and the first API token of that principal is in the answer
+         *     once. Audited as `a2a_counterpart_added`.
+         */
+        post: operations["create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/a2a-counterparts/{cid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One counterpart of the workspace. */
+        get: operations["get"];
+        put?: never;
+        post?: never;
+        /**
+         * Removes a counterpart with its principal (admins): its tool stops being
+         *     offered at the next run and its tokens stop working at once. Audited as
+         *     `a2a_counterpart_removed`.
+         */
+        delete: operations["delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/a2a-counterparts/{cid}/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Fetches the counterpart's card again and records what it says (admins). */
+        post: operations["check"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/workspaces/{wid}/alert-destinations": {
@@ -2830,6 +3001,107 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description What fetching a counterpart's card found. */
+        A2aCheck: {
+            /** @description The card, when one was read. */
+            card: Record<string, never>;
+            detail: string;
+            /** Format: int64 */
+            latency_ms: number;
+            ok: boolean;
+        };
+        /** @description A remote A2A agent the workspace registered, as shown (the header never). */
+        A2aCounterpart: {
+            /**
+             * Format: uuid
+             * @description The external agent principal its inbound calls act as; API tokens are issued to it.
+             */
+            agent_id: string;
+            /** @description Local agents that may call it; empty: any agent the policy allows. */
+            allowed_agents: string[];
+            /** @description The agent card as last fetched; `{}` until one was. */
+            card: Record<string, never>;
+            card_url: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            created_by: string | null;
+            /** @description Whether an `Authorization` header is kept for it. */
+            has_auth_header: boolean;
+            /** @description The host the card URL names (what the egress rules decide on). */
+            host: string;
+            /** Format: uuid */
+            id: string;
+            last_check_detail: string;
+            last_check_ok: boolean | null;
+            /** Format: date-time */
+            last_checked_at: string | null;
+            /** @description The strictest classification of data that may be sent to it. */
+            max_label: components["schemas"]["DataLabel"];
+            /** @description `[a-z0-9_-]{1,64}`; the tool agents call it by is `a2a:<name>`. */
+            name: string;
+            principal_id: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: uuid */
+            workspace_id: string;
+        };
+        /** @description What a counterpart is registered with. */
+        A2aCounterpartInput: {
+            /** @description Local agents that may call it; empty: any agent the policy allows. */
+            allowed_agents?: string[];
+            /** @description An `Authorization` header value sent with every task, kept encrypted and never shown again. */
+            auth_header?: string | null;
+            /** @description Where its agent card is (`https://host/.well-known/agent.json`). */
+            card_url: string;
+            max_label?: components["schemas"]["DataLabel"];
+            name: string;
+        };
+        /** @description A task an exposed agent received over A2A. */
+        A2aTask: {
+            /**
+             * Format: uuid
+             * @description The exposed agent.
+             */
+            agent_id: string;
+            /**
+             * Format: uuid
+             * @description The counterpart that called, as the principal its token names.
+             */
+            caller_agent_id: string | null;
+            caller_principal: string;
+            /** @description The principals the task passed through before. */
+            chain: string[];
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: int32
+             * @description A2A hops before the task (0 for a counterpart's own call).
+             */
+            hop: number;
+            /**
+             * Format: uuid
+             * @description The A2A task id (UUID v7).
+             */
+            id: string;
+            /** Format: uuid */
+            node_id: string;
+            refused_reason: string | null;
+            /** @description The rule that refused the task, when the firewall did. */
+            refused_rule: string | null;
+            /**
+             * Format: uuid
+             * @description The one-node run that answers it.
+             */
+            run_id: string;
+            session_id: string | null;
+            /** @description The A2A state: `submitted`, `working`, `completed`, `canceled` or `failed`. */
+            state: string;
+            /** @description The task's title (the first line of the message). */
+            title: string;
+            /** Format: uuid */
+            workspace_id: string;
+        };
         /** @description One entry of an account's security activity. */
         AccountEvent: {
             /** Format: date-time */
@@ -2866,6 +3138,11 @@ export interface components {
         };
         /** @description An agent in the user's organisation. */
         Agent: {
+            /**
+             * @description Whether the agent is published as an A2A agent: its card is served
+             *     and registered counterparts may send it tasks (admins set it; audited).
+             */
+            a2a_exposed: boolean;
             /** Format: int64 */
             budget_tokens: number;
             capabilities: components["schemas"]["Capabilities"];
@@ -2953,6 +3230,22 @@ export interface components {
             /** @description The agent's last spans across the runs the caller may open, newest first. */
             recent_spans: components["schemas"]["Span"][];
             team: components["schemas"]["AgentTeam"] | null;
+        };
+        /** @description The A2A agent card (`AgentCard` of the A2A specification), as served to anyone. */
+        AgentCardDocument: {
+            authentication: Record<string, never>;
+            capabilities: Record<string, never>;
+            default_input_modes: string[];
+            default_output_modes: string[];
+            description: string;
+            name: string;
+            /** @description The agent's principal in nexc. */
+            principal: string;
+            provider: Record<string, never>;
+            skills: Record<string, never>[];
+            /** @description The JSON-RPC endpoint tasks are sent to. */
+            url: string;
+            version: string;
         };
         /** @description Agents in the workspace, by status. */
         AgentCounts: {
@@ -3375,7 +3668,7 @@ export interface components {
          * @description What an audit entry records.
          * @enum {string}
          */
-        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned" | "trace_sealed" | "policy_changed" | "policy_mismatch" | "agent_quarantined" | "agent_released" | "approval_granted" | "approval_denied" | "artifact_quarantined" | "artifact_released" | "alert_raised" | "alert_destination_changed" | "classification_changed" | "mcp_server_added" | "mcp_server_removed" | "agent_token_issued" | "agent_token_revoked";
+        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned" | "trace_sealed" | "policy_changed" | "policy_mismatch" | "agent_quarantined" | "agent_released" | "approval_granted" | "approval_denied" | "artifact_quarantined" | "artifact_released" | "alert_raised" | "alert_destination_changed" | "classification_changed" | "mcp_server_added" | "mcp_server_removed" | "agent_token_issued" | "agent_token_revoked" | "agent_a2a_changed" | "a2a_counterpart_added" | "a2a_counterpart_removed";
         /** @description An answer from the audit. */
         AuditAnswer: {
             answer: string;
@@ -5394,6 +5687,12 @@ export interface components {
             /** @description 12–128 characters. */
             password: string;
         };
+        /** @description A counterpart just registered, with the token its inbound calls present. */
+        RegisteredA2aCounterpart: {
+            counterpart: components["schemas"]["A2aCounterpart"];
+            /** @description The API token issued to the counterpart's principal: `nexc_agt_…`, shown once. */
+            token: components["schemas"]["IssuedAgentApiToken"];
+        };
         /** @description A type of relation between two nodes. */
         RelationType: {
             /**
@@ -5456,6 +5755,22 @@ export interface components {
          * @enum {string}
          */
         Role: "admin" | "user";
+        /** @description A JSON-RPC request as the endpoint reads it. */
+        RpcRequest: {
+            id: Record<string, never>;
+            /** @description Always `"2.0"`. */
+            jsonrpc: string;
+            /** @description `tasks/send`, `tasks/sendSubscribe`, `tasks/get`, `tasks/cancel`, `tasks/resubscribe`. */
+            method: string;
+            params: Record<string, never>;
+        };
+        /** @description A JSON-RPC response: `result` on success, `error` otherwise. */
+        RpcResponse: {
+            error: Record<string, never>;
+            id: Record<string, never>;
+            jsonrpc: string;
+            result: Record<string, never>;
+        };
         /**
          * @description What a finding leads to: a word in the inbox, or a refusal.
          * @enum {string}
@@ -5691,6 +6006,8 @@ export interface components {
             host: string | null;
             /** Format: uuid */
             id: string;
+            /** @description `attributes.inbound`: a tool call that is a task received over A2A. */
+            inbound: boolean;
             kind: components["schemas"]["SpanKind"];
             /** @description `attributes.model` of a model call. */
             model: string | null;
@@ -6094,6 +6411,11 @@ export interface components {
         };
         /** @description `PATCH /agents/{id}` body (any subset; `reports_to: null` and `team_id: null` detach). */
         UpdateAgent: {
+            /**
+             * @description Publishes the agent as an A2A agent, or withdraws it (workspace admins;
+             *     audited as `agent_a2a_changed`; not for an `external` agent).
+             */
+            a2a_exposed?: boolean | null;
             /** Format: int64 */
             budget_tokens?: number | null;
             capabilities?: components["schemas"]["Capabilities"] | null;
@@ -6483,6 +6805,169 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    well_known: {
+        parameters: {
+            query: {
+                /** @description The exposed agent: its principal (`agent://{workspace}/{name}`) or its id. */
+                agent: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentCardDocument"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    rpc: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The agent's principal, percent-encoded, or its id */
+                principal: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RpcRequest"];
+            };
+        };
+        responses: {
+            /** @description A JSON-RPC response (or an event stream for tasks/sendSubscribe) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RpcResponse"];
+                };
+            };
+            /** @description No usable agent API token (a JSON-RPC error) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RpcResponse"];
+                };
+            };
+            /** @description The token's agent is not a counterpart, or is out of service */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RpcResponse"];
+                };
+            };
+            /** @description No exposed agent at that address */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RpcResponse"];
+                };
+            };
+        };
+    };
+    card: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The agent's principal, percent-encoded, or its id */
+                principal: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentCardDocument"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    artifact: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Task id */
+                tid: string;
+                /** @description Artifact id */
+                aid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The file */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": number[];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RpcResponse"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RpcResponse"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RpcResponse"];
+                };
+            };
+        };
+    };
     events: {
         parameters: {
             query?: {
@@ -7230,6 +7715,39 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    tasks: {
+        parameters: {
+            query?: {
+                /** @description Tasks to return, 1–200 (default 50). */
+                limit?: number | null;
+            };
+            header?: never;
+            path: {
+                /** @description Agent id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["A2aTask"][];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10469,6 +10987,205 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    "application/json": components["schemas"]["A2aCounterpart"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["A2aCounterpartInput"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegisteredA2aCounterpart"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Counterpart id */
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["A2aCounterpart"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Counterpart id */
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    check: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Counterpart id */
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["A2aCheck"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/json": components["schemas"]["AlertDestination"][];
                 };
             };
@@ -13337,8 +14054,11 @@ export interface operations {
             query?: {
                 /** @description Only spans of this agent. */
                 agent?: string | null;
-                /** @description Only spans of this kind. */
-                kind?: components["schemas"]["SpanKind"] | null;
+                /**
+                 * @description Only spans of this kind (a `SpanKind`), or `inbound`: the tool calls that are tasks
+                 *     received over A2A.
+                 */
+                kind?: string | null;
                 /** @description Only tool calls of this tool, and policy decisions about it. */
                 tool?: string | null;
                 /** @description Only tool calls that reached this host. */

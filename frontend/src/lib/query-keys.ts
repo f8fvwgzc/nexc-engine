@@ -107,6 +107,12 @@ export const qk = {
     card: (agentId: string) => ['agents', 'card', agentId] as const,
     /** The API tokens of an external agent: never copied to browser storage. */
     tokens: (agentId: string) => ['agents', 'tokens', agentId] as const,
+    /** The tasks an exposed agent received over A2A. */
+    a2aTasks: (agentId: string) => ['agents', 'a2a-tasks', agentId] as const,
+  },
+  a2a: {
+    all: ['a2a'] as const,
+    list: (workspaceId: string) => ['a2a', workspaceId] as const,
   },
   memories: {
     all: ['memories'] as const,
