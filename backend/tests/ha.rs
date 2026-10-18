@@ -1037,3 +1037,113 @@ async fn a_replica_that_shuts_down_hands_its_runs_to_a_peer_at_once(pool: PgPool
     );
     until_finished(&b, &token, &next).await;
 }
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn hand_offs_on_shutdown_do_not_use_up_a_nodes_attempts(pool: PgPool) {
+    // Two attempts per node (the harness's NEXC_MAX_ATTEMPTS) and two hand-offs in a row, as a
+    // rolling update over three replicas does: the node still gets its third attempt.
+    let (url, seen) = fake_grpc_runtime().await;
+    let a = instance_with_lease(&pool, &url, 30).await;
+    let (token, _) = a.register("owner@example.com").await;
+    scribe(&a, &token).await;
+    let (gid, nodes) = chain_of(&a, &token, &["NAP 4000 Draft"]).await;
+    let mut on_a = a.events(&gid);
+    let rid = start_run(&a, &token, &gid).await;
+    until_status(&mut on_a, &nodes[0], "running").await;
+    collect_until(&mut on_a, "node.output").await;
+
+    let b = instance_with_lease(&pool, &url, 30).await;
+    let mut on_b = b.events(&gid);
+    assert_eq!(
+        nexc::engine::scheduler::hand_off(&a.state, Duration::from_secs(10)).await,
+        1
+    );
+    until_held_by(
+        &pool,
+        &rid,
+        b.state.engine.instance(),
+        Duration::from_secs(5),
+    )
+    .await;
+    until_status(&mut on_b, &nodes[0], "running").await;
+    collect_until(&mut on_b, "node.output").await;
+
+    let c = instance_with_lease(&pool, &url, 30).await;
+    assert_eq!(
+        nexc::engine::scheduler::hand_off(&b.state, Duration::from_secs(10)).await,
+        1
+    );
+    until_held_by(
+        &pool,
+        &rid,
+        c.state.engine.instance(),
+        Duration::from_secs(5),
+    )
+    .await;
+    let run = until_finished(&c, &token, &rid).await;
+    assert_eq!(run["status"], "succeeded", "{run}");
+    assert_eq!(run["node_runs"][0]["attempt"], 3);
+    assert_eq!(executed(&seen)["NAP 4000 Draft"], 3);
+    let spans = spans_of(&c, &token, &rid).await;
+    let interrupted: Vec<&Value> = spans
+        .iter()
+        .filter(|s| s["attributes"]["decision"] == "interrupted")
+        .collect();
+    assert_eq!(interrupted.len(), 2, "{interrupted:?}");
+    assert!(
+        interrupted
+            .iter()
+            .all(|s| s["attributes"]["released"] == true)
+    );
+    let last = interrupted
+        .iter()
+        .find(|s| s["attributes"]["attempt"] == 2)
+        .expect("the second hand-off");
+    assert_eq!(last["attributes"]["next_attempt"], 3);
+    assert_eq!(last["attributes"]["max_attempts"], 4);
+    assert_eq!(last["attributes"]["handoffs"], 2);
+    assert_eq!(verified(&c, &token, &rid).await["ok"], true);
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_node_queued_again_by_a_holder_that_died_resumes_at_its_next_attempt(pool: PgPool) {
+    let (url, seen) = fake_grpc_runtime().await;
+    let a = instance(&pool, &url).await;
+    let (token, _) = a.register("owner@example.com").await;
+    scribe(&a, &token).await;
+    let (gid, nodes) = chain_of(&a, &token, &["NAP 3000 Draft"]).await;
+    let mut on_a = a.events(&gid);
+    let rid = start_run(&a, &token, &gid).await;
+    until_status(&mut on_a, &nodes[0], "running").await;
+    collect_until(&mut on_a, "node.output").await;
+    a.crash();
+    // Another instance took the run over, queued the interrupted node again, and died before it
+    // started its next attempt.
+    let run_id: Uuid = rid.parse().unwrap();
+    sqlx::query("UPDATE node_runs SET status = 'queued' WHERE run_id = $1")
+        .bind(run_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE runs SET claimed_by = $2, lease_epoch = lease_epoch + 1, lease_expires_at = now()
+         WHERE id = $1",
+    )
+    .bind(run_id)
+    .bind(Uuid::now_v7())
+    .execute(&pool)
+    .await
+    .unwrap();
+    let b = instance(&pool, &url).await;
+    until_held_by(
+        &pool,
+        &rid,
+        b.state.engine.instance(),
+        Duration::from_secs(LEASE_SECS + 5),
+    )
+    .await;
+    let run = until_finished(&b, &token, &rid).await;
+    assert_eq!(run["status"], "succeeded", "{run}");
+    assert_eq!(run["node_runs"][0]["attempt"], 2, "attempt 1 stays counted");
+    assert_eq!(executed(&seen)["NAP 3000 Draft"], 2);
+}

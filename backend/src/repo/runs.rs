@@ -427,6 +427,9 @@ pub struct StoredNode {
     pub attempt: i32,
     pub agent_id: Option<Uuid>,
     pub output: Option<String>,
+    /// Attempts cut short by a hand-off on shutdown, which do not count
+    /// against the node's attempts.
+    pub handoffs: i32,
 }
 
 impl FromRow<'_, PgRow> for StoredNode {
@@ -437,6 +440,7 @@ impl FromRow<'_, PgRow> for StoredNode {
             attempt: row.try_get("attempt")?,
             agent_id: row.try_get("agent_id")?,
             output: row.try_get("output")?,
+            handoffs: row.try_get("handoffs")?,
         })
     }
 }
@@ -447,12 +451,31 @@ pub async fn stored_nodes(
     run_id: Uuid,
 ) -> Result<Vec<StoredNode>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT node_id, status, attempt, agent_id, output FROM node_runs
+        "SELECT node_id, status, attempt, agent_id, output, handoffs FROM node_runs
          WHERE run_id = $1 ORDER BY position",
     )
     .bind(run_id)
     .fetch_all(db)
     .await
+}
+
+/// Counts a hand-off against every node of a run whose attempt it cut short
+/// (running, or waiting for an approval): the run's holder shut down and
+/// released it. An attempt is counted once, however many hand-offs it waited
+/// through. Returns how many nodes it counted.
+pub async fn count_handoffs(
+    conn: &mut sqlx::PgConnection,
+    run_id: Uuid,
+) -> Result<u64, sqlx::Error> {
+    let done = sqlx::query(
+        "UPDATE node_runs SET handoffs = handoffs + 1, handed_off_attempt = attempt
+         WHERE run_id = $1 AND status IN ('running', 'waiting_approval')
+           AND attempt > handed_off_attempt",
+    )
+    .bind(run_id)
+    .execute(conn)
+    .await?;
+    Ok(done.rows_affected())
 }
 
 /// Queues a node again whose attempt was interrupted (the node run and the

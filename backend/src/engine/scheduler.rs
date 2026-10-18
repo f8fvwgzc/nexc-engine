@@ -557,6 +557,13 @@ async fn work(
             // Commands the former holder never took are this instance's now, before any node
             // starts again: a cancel of a sub-agent waits for the attempt that replaces its own.
             super::commands::deliver(state, row.id).await;
+            // The holder shut down and handed the run over: the attempts it cut short are run
+            // again without counting against the nodes' attempts.
+            if released && let Err(err) = count_handoffs(state, lease, row.id).await {
+                tracing::error!(run_id = %row.id, error = %err, "hand-off not counted; not resumed");
+                lease.lose();
+                return Vec::new();
+            }
             match repo::runs::stored_nodes(&state.db, row.id).await {
                 Ok(stored) => Some(Resume {
                     stored: stored.into_iter().map(|n| (n.node_id, n)).collect(),
@@ -579,6 +586,14 @@ async fn work(
             Vec::new()
         }
     }
+}
+
+/// Counts the hand-off of a released run against the nodes it cut short, under the lease.
+async fn count_handoffs(state: &AppState, lease: &Lease, run_id: Uuid) -> Result<(), WriteError> {
+    let mut tx = lease::begin(state, lease, "hand-off count").await?;
+    repo::runs::count_handoffs(&mut tx, run_id).await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 /// The run stops here without finishing. When this instance hands it to a
@@ -805,15 +820,17 @@ struct Resume {
     released: bool,
 }
 
-/// How a node of a resumed run is picked up.
+/// How a node of a resumed run is picked up. `budget` is how many attempts
+/// it may make: `NEXC_MAX_ATTEMPTS` plus those cut short by a hand-off.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Pickup {
     /// From its first attempt (a fresh run, or a node that had not started).
     Fresh,
-    /// It was running: the attempt after `attempt` runs.
-    Interrupted { attempt: i32 },
+    /// It was running, or was queued again after that: the attempt after
+    /// `attempt` runs.
+    Interrupted { attempt: i32, budget: i32 },
     /// It waited for an approval during `attempt`: it waits here for the decision.
-    Waiting { attempt: i32 },
+    Waiting { attempt: i32, budget: i32 },
 }
 
 impl Execution {
@@ -928,17 +945,28 @@ impl Execution {
                             statuses[v] = stored.status;
                         }
                         NodeStatus::Running => {
+                            let budget = max_attempts + stored.handoffs;
                             pickups[v] = Pickup::Interrupted {
                                 attempt: stored.attempt,
+                                budget,
                             };
-                            statuses[v] = self.interrupted(resume, stored, max_attempts).await;
+                            statuses[v] = self.interrupted(resume, stored, budget).await;
                         }
                         NodeStatus::WaitingApproval => {
                             pickups[v] = Pickup::Waiting {
                                 attempt: stored.attempt,
+                                budget: max_attempts + stored.handoffs,
                             };
                             statuses[v] = NodeStatus::WaitingApproval;
                             self.reattached(resume, stored);
+                        }
+                        // Queued again by a holder that stopped before it started the node: the
+                        // attempt after the one interrupted runs, as that holder would have.
+                        NodeStatus::Queued | NodeStatus::Idle if stored.attempt > 0 => {
+                            pickups[v] = Pickup::Interrupted {
+                                attempt: stored.attempt,
+                                budget: max_attempts + stored.handoffs,
+                            };
                         }
                         NodeStatus::Queued | NodeStatus::Idle => {}
                     }
@@ -959,7 +987,7 @@ impl Execution {
                 }
                 // A node that waited for an approval waits here, for the decision on it.
                 for v in 0..dag.len() {
-                    if let (NodeStatus::WaitingApproval, Pickup::Waiting { attempt }) =
+                    if let (NodeStatus::WaitingApproval, Pickup::Waiting { attempt, budget }) =
                         (statuses[v], pickups[v])
                     {
                         tasks.spawn(resume_waiting(
@@ -971,7 +999,7 @@ impl Execution {
                             self.nodes[v].clone(),
                             upstream_of(&self.nodes[v], &self.data.edges, &outputs),
                             attempt,
-                            max_attempts,
+                            budget,
                         ));
                     }
                 }
@@ -995,9 +1023,9 @@ impl Execution {
                 && let Some(v) = ready.pop()
             {
                 statuses[v] = NodeStatus::Running;
-                let first_attempt = match pickups[v] {
-                    Pickup::Interrupted { attempt } => attempt + 1,
-                    _ => 1,
+                let (first_attempt, budget) = match pickups[v] {
+                    Pickup::Interrupted { attempt, budget } => (attempt + 1, budget),
+                    _ => (1, max_attempts),
                 };
                 tasks.spawn(run_node(
                     self.state.clone(),
@@ -1008,6 +1036,7 @@ impl Execution {
                     self.nodes[v].clone(),
                     upstream_of(&self.nodes[v], &self.data.edges, &outputs),
                     first_attempt,
+                    budget,
                     None,
                 ));
             }
@@ -1053,24 +1082,19 @@ impl Execution {
 
     /// A node whose attempt the takeover interrupted: queued again for its
     /// next attempt, with an `interrupted` span on the trace, or failed when
-    /// that was its last attempt. In a run cancelled meanwhile it is left for
-    /// the run's end to cancel. Returns its status now.
-    async fn interrupted(
-        &self,
-        resume: &Resume,
-        stored: &StoredNode,
-        max_attempts: i32,
-    ) -> NodeStatus {
+    /// that was the last of its `budget`. In a run cancelled meanwhile it is
+    /// left for the run's end to cancel. Returns its status now.
+    async fn interrupted(&self, resume: &Resume, stored: &StoredNode, budget: i32) -> NodeStatus {
         let attempt = stored.attempt;
         let cancelled = self.token.is_cancelled();
-        let last = attempt >= max_attempts;
+        let last = attempt >= budget;
         let reason = if cancelled {
             format!(
                 "attempt {attempt} was interrupted when the instance executing it stopped; the run was cancelled meanwhile"
             )
         } else if last {
             format!(
-                "attempt {attempt} was interrupted when the instance executing it stopped; it was the last of {max_attempts}"
+                "attempt {attempt} was interrupted when the instance executing it stopped; it was the last of {budget}"
             )
         } else {
             format!(
@@ -1084,7 +1108,12 @@ impl Execution {
             INTERRUPTED_DECISION,
             "interrupted",
             &reason,
-            json!({"attempt": attempt, "next_attempt": (!last && !cancelled).then_some(attempt + 1)}),
+            json!({
+                "attempt": attempt,
+                "next_attempt": (!last && !cancelled).then_some(attempt + 1),
+                "max_attempts": budget,
+                "handoffs": stored.handoffs,
+            }),
         );
         if cancelled {
             return NodeStatus::Queued;
@@ -1453,8 +1482,9 @@ fn content_hash(data: &RunData, node: &GraphNode, upstream: &[(Uuid, String)]) -
     kernel::sha256_hex(material.to_string().as_bytes())
 }
 
-/// Runs one node from `first_attempt` on; `carried` is the decision taken
-/// on an approval the node waited for when its run was taken over.
+/// Runs one node from `first_attempt` on, up to its `budget`th attempt;
+/// `carried` is the decision taken on an approval the node waited for when
+/// its run was taken over.
 #[allow(clippy::too_many_arguments)]
 async fn run_node(
     state: AppState,
@@ -1465,6 +1495,7 @@ async fn run_node(
     node: GraphNode,
     upstream: Vec<(Uuid, String)>,
     first_attempt: i32,
+    budget: i32,
     carried: Option<Approval>,
 ) -> NodeResult {
     let permit = tokio::select! {
@@ -1480,7 +1511,7 @@ async fn run_node(
     };
     let node_id = node.id;
     match NodeTask::new(state.clone(), data.clone(), token, node, upstream, carried).await {
-        Ok(task) => task.run(index, first_attempt).await,
+        Ok(task) => task.run(index, first_attempt, budget).await,
         Err(err) => {
             let message = err.to_string();
             let attempt = first_attempt - 1;
@@ -1531,7 +1562,7 @@ async fn resume_waiting(
     node: GraphNode,
     upstream: Vec<(Uuid, String)>,
     attempt: i32,
-    max_attempts: i32,
+    budget: i32,
 ) -> NodeResult {
     let node_id = node.id;
     let reattached = approvals::reattach(
@@ -1598,9 +1629,9 @@ async fn resume_waiting(
             };
         }
     };
-    if attempt >= max_attempts {
+    if attempt >= budget {
         let reason = format!(
-            "attempt {attempt} was interrupted while it waited for an approval; it was the last of {max_attempts}"
+            "attempt {attempt} was interrupted while it waited for an approval; it was the last of {budget}"
         );
         fail_node(&state, &data, node_id, attempt, reason).await;
         return NodeResult {
@@ -1618,6 +1649,7 @@ async fn resume_waiting(
         node,
         upstream,
         attempt + 1,
+        budget,
         carried,
     )
     .await
@@ -2070,11 +2102,12 @@ impl NodeTask {
     }
 
     /// Runs the node from `first_attempt` on (later than 1 when an earlier
-    /// attempt was interrupted by a takeover).
-    async fn run(self, index: usize, first_attempt: i32) -> NodeResult {
+    /// attempt was interrupted by a takeover), up to its `budget`th attempt
+    /// (`NEXC_MAX_ATTEMPTS`, plus the attempts a hand-off cut short).
+    async fn run(self, index: usize, first_attempt: i32, budget: i32) -> NodeResult {
         let status_and_output = match self.serve_cached().await {
             Some(output) => (NodeStatus::Succeeded, Some(output)),
-            None => self.attempts(first_attempt).await,
+            None => self.attempts(first_attempt, budget).await,
         };
         NodeResult {
             index,
@@ -2152,10 +2185,10 @@ impl NodeTask {
         }
     }
 
-    async fn attempts(&self, first_attempt: i32) -> (NodeStatus, Option<String>) {
+    async fn attempts(&self, first_attempt: i32, budget: i32) -> (NodeStatus, Option<String>) {
         let state = &self.ctx.state;
         let settings = state.settings.clone();
-        let max_attempts = settings.max_attempts as i32;
+        let max_attempts = budget.max(1);
         let first_attempt = first_attempt.clamp(1, max_attempts);
         // What failed before an attempt started counts the attempts already made.
         let before = first_attempt - 1;

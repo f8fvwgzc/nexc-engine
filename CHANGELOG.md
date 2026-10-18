@@ -35,7 +35,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   under the fence, so a former holder's late artifact replaces neither the record nor the bytes,
   and a DLP quarantine applies only to the bytes it screened. The new holder resumes the
   run from what was written: succeeded nodes keep their outputs; a running node is queued again
-  with `attempt + 1` and an `interrupted` policy span; a node waiting for an approval stays
+  with `attempt + 1` and an `interrupted` policy span (an attempt cut short by a release on
+  shutdown does not count against `NEXC_MAX_ATTEMPTS`, so a rolling update over several replicas
+  does not fail nodes: `node_runs.handoffs`, migration `20261006000072_node_run_handoffs`; a node
+  queued again by a holder that died before starting it resumes at the attempt after the
+  interrupted one); a node waiting for an approval stays
   waiting, is re-attached, and runs again once someone decides, its new request answered at once
   with the decision already taken (`approval` spans with `reattached` and `carried_from`); the
   trace chain continues from the last span written, so `GET /runs/{id}/trace/verify` stays `ok`;
