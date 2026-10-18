@@ -228,6 +228,24 @@ impl TestApp {
         Self::start(state, fake)
     }
 
+    /// App with the fake LLM and `ontology` as its onto-intelli ("ask the audit" on).
+    pub async fn with_ontology(
+        pool: PgPool,
+        overrides: &[(&str, &str)],
+        ontology: Arc<dyn nexc::ontology::OntologyBackend>,
+    ) -> Self {
+        let fake = Arc::new(FakeLlm::default());
+        let state = AppState::with_provider(
+            settings(overrides),
+            pool,
+            http_client().unwrap(),
+            fake.clone(),
+        )
+        .unwrap()
+        .with_ontology(ontology);
+        Self::start(state, fake)
+    }
+
     /// App using the production provider router (for demo mode).
     pub async fn with_real_providers(pool: PgPool, overrides: &[(&str, &str)]) -> Self {
         let state = AppState::new(settings(overrides), pool).unwrap();
