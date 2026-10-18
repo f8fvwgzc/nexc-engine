@@ -2630,11 +2630,183 @@ export interface components {
             key: string;
             name: string;
         };
+        /** @description One alert. */
+        Alert: {
+            /** Format: date-time */
+            acknowledged_at: string | null;
+            /** Format: uuid */
+            acknowledged_by: string | null;
+            /** Format: uuid */
+            agent_id: string | null;
+            /** Format: date-time */
+            created_at: string;
+            detail: string;
+            /** Format: uuid */
+            graph_id: string | null;
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["AlertKind"];
+            /** Format: uuid */
+            node_id: string | null;
+            principal: string;
+            /** @description The rule that raised it. */
+            rule: string;
+            /** Format: uuid */
+            run_id: string | null;
+            severity: components["schemas"]["Severity"];
+            /**
+             * Format: uuid
+             * @description The policy span that recorded the finding, if any.
+             */
+            span_id: string | null;
+            title: string;
+            /** Format: uuid */
+            workspace_id: string;
+        };
+        /**
+         * @description What raised the alert.
+         * @enum {string}
+         */
+        AlertKind: "dlp" | "risk" | "injection" | "policy";
+        /** @description Thresholds that raise an alert, or quarantine the agent. */
+        AlertRule: {
+            /**
+             * Format: int32
+             * @description Policy denials in one run at and above which an alert is raised.
+             */
+            denials_per_run: number | null;
+            /**
+             * Format: double
+             * @description Novelty (1 - similarity to every earlier run) at and above which an alert is raised.
+             */
+            novelty: number | null;
+            /**
+             * Format: double
+             * @description Risk score at and above which the agent is quarantined.
+             */
+            quarantine_risk_score: number | null;
+            /**
+             * Format: double
+             * @description Risk score at and above which an alert is raised.
+             */
+            risk_score: number | null;
+        };
+        /** @description Alert thresholds, once resolved (the lowest of every level). */
+        AlertRules: {
+            /**
+             * Format: int32
+             * @default null
+             */
+            denials_per_run: number | null;
+            /**
+             * Format: double
+             * @default null
+             */
+            novelty: number | null;
+            /**
+             * Format: double
+             * @default null
+             */
+            quarantine_risk_score: number | null;
+            /**
+             * Format: double
+             * @default null
+             */
+            risk_score: number | null;
+        };
         /**
          * @description How an answer was produced.
          * @enum {string}
          */
         AnswerMode: "deterministic" | "llm";
+        /** @description One approval, asked for by a tool call under a policy. */
+        Approval: {
+            /** Format: uuid */
+            agent_id: string | null;
+            /** @description Members who may decide; empty: every admin of the workspace. */
+            approver_ids: string[];
+            args_sha256: string | null;
+            /** Format: date-time */
+            decided_at: string | null;
+            decided_by: components["schemas"]["Decider"] | null;
+            decision_reason: string;
+            /**
+             * Format: uuid
+             * @description The `approval` span that recorded the decision, once there is one.
+             */
+            decision_span_id: string | null;
+            /**
+             * Format: date-time
+             * @description When the call stops waiting.
+             */
+            expires_at: string;
+            /** Format: uuid */
+            graph_id: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            node_id: string;
+            policy_versions: components["schemas"]["PolicyVersions"];
+            /** @description The acting principal. */
+            principal: string;
+            reason: string;
+            /** Format: date-time */
+            requested_at: string;
+            /** @description The rule that asked (`approvals.tools`, `approvals.labels`). */
+            rule: string;
+            /** Format: uuid */
+            run_id: string;
+            /**
+             * Format: uuid
+             * @description The policy span that asked.
+             */
+            span_id: string;
+            status: components["schemas"]["ApprovalStatus"];
+            /** @description The tool that waits, and a digest of its arguments. */
+            tool: string;
+            /** Format: uuid */
+            workspace_id: string;
+        };
+        /** @description Which actions need a human to say yes. */
+        ApprovalRule: {
+            /** @description Members who may decide; empty means every workspace admin. */
+            approvers: string[];
+            /**
+             * @description A node that was given data of one of these labels needs an approval
+             *     before anything leaves it (`write_file`, `make_docx`).
+             */
+            labels: components["schemas"]["DataLabel"][];
+            /**
+             * Format: int32
+             * @description How long a call waits before the node fails; `null` inherits (default 600).
+             */
+            timeout_s: number | null;
+            /** @description Tools that wait for an approval before they run. */
+            tools: string[];
+        };
+        /** @description Which actions wait for a human, once resolved. */
+        ApprovalRules: {
+            /**
+             * @description Members who may decide; empty: every workspace admin.
+             * @default []
+             */
+            approvers: string[];
+            /** @default [] */
+            labels: components["schemas"]["DataLabel"][];
+            /**
+             * Format: int32
+             * @description Seconds a call waits before the node fails.
+             * @default 600
+             */
+            timeout_s: number;
+            /** @default [] */
+            tools: string[];
+        };
+        /**
+         * @description Where an approval stands.
+         * @enum {string}
+         */
+        ApprovalStatus: "pending" | "approved" | "denied" | "expired";
         /** @description A file produced by a node during a run. */
         Artifact: {
             /** Format: date-time */
@@ -2712,7 +2884,7 @@ export interface components {
          * @description What an audit entry records.
          * @enum {string}
          */
-        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned" | "trace_sealed" | "policy_changed" | "policy_mismatch" | "agent_quarantined" | "agent_released" | "classification_changed";
+        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned" | "trace_sealed" | "policy_changed" | "policy_mismatch" | "agent_quarantined" | "agent_released" | "approval_granted" | "approval_denied" | "artifact_quarantined" | "artifact_released" | "alert_raised" | "classification_changed";
         /** @description An answer from the audit. */
         AuditAnswer: {
             answer: string;
