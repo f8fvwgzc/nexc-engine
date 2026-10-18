@@ -3,7 +3,9 @@
 //! * register / login / refresh / logout: 60 per minute per IP (burst 20);
 //! * failed logins: 5 per minute per IP — the sixth failure within a minute
 //!   gets `429` until the bucket refills;
-//! * authenticated API calls: 600 per minute per user (burst 120).
+//! * authenticated API calls: 600 per minute per user (burst 120);
+//! * gateway calls (MCP tools, `fetch_url`): `NEXC_GATEWAY_CALLS_PER_MINUTE`
+//!   per agent principal (burst a quarter of it).
 
 use std::hash::Hash;
 use std::net::IpAddr;
@@ -86,22 +88,38 @@ pub struct RateLimiters {
     auth: Keyed<IpAddr>,
     login_failures: Keyed<IpAddr>,
     users: Keyed<Uuid>,
+    /// Gateway calls per agent principal.
+    gateway: Keyed<String>,
 }
 
 impl Default for RateLimiters {
     fn default() -> Self {
-        RateLimiters {
-            auth: Keyed::new(AUTH_PER_IP),
-            login_failures: Keyed::new(LOGIN_FAILURES_PER_IP),
-            users: Keyed::new(API_PER_USER),
-        }
+        Self::new(120)
     }
 }
 
 impl RateLimiters {
+    /// Limiters with `gateway_per_minute` gateway calls per agent.
+    pub fn new(gateway_per_minute: u32) -> Self {
+        RateLimiters {
+            auth: Keyed::new(AUTH_PER_IP),
+            login_failures: Keyed::new(LOGIN_FAILURES_PER_IP),
+            users: Keyed::new(API_PER_USER),
+            gateway: Keyed::new(Limit {
+                burst: (gateway_per_minute / 4).clamp(1, 1000),
+                per_minute: f64::from(gateway_per_minute),
+            }),
+        }
+    }
+
     /// Charges one authenticated request to `user`.
     pub fn check_user(&self, user: Uuid) -> Result<(), AppError> {
         self.users.acquire(user)
+    }
+
+    /// Charges one gateway call to the agent `principal`.
+    pub fn check_gateway(&self, principal: &str) -> Result<(), AppError> {
+        self.gateway.acquire(principal.to_owned())
     }
 
     /// Fails with 429 while `ip` has exhausted its failed-login allowance.
@@ -120,6 +138,7 @@ impl RateLimiters {
         self.auth.prune(now);
         self.login_failures.prune(now);
         self.users.prune(now);
+        self.gateway.prune(now);
     }
 }
 
@@ -163,5 +182,18 @@ mod tests {
         }
         let other: IpAddr = "203.0.113.10".parse().unwrap();
         assert!(l.check_login_allowed(other).is_ok());
+    }
+
+    #[test]
+    fn gateway_calls_are_limited_per_agent() {
+        let l = RateLimiters::new(8);
+        for _ in 0..2 {
+            assert!(l.check_gateway("agent://w/a").is_ok());
+        }
+        assert!(matches!(
+            l.check_gateway("agent://w/a"),
+            Err(AppError::RateLimited { .. })
+        ));
+        assert!(l.check_gateway("agent://w/b").is_ok(), "another agent");
     }
 }
