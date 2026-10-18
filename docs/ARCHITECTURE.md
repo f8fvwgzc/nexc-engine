@@ -9,7 +9,7 @@ contract wins.
 | Component                    | Tech                                             | Responsibility                                                                                                                                                            |
 | ---------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **frontend**                 | React 19, Vite, TypeScript, TanStack Query, zod  | Graph canvas, plan review, run monitoring, agents, memory, settings. Talks only to `/api/v1`.                                                                             |
-| **backend** (`nexc serve`)   | Rust, axum, sqlx, utoipa                         | Auth, REST API, SSE + WebSocket hub, graph analysis, planner, scheduler, memory, orchestrator, artifact storage, the tools gateway, the Agent Firewall API (gRPC) and the OTLP export of the trace.                                                          |
+| **backend** (`nexc serve`)   | Rust, axum, sqlx, utoipa                         | Auth, REST API, SSE + WebSocket hub, graph analysis, planner, scheduler, memory, orchestrator, artifact storage, the tools gateway, the Agent Firewall API (gRPC), the A2A adapter (agent cards and JSON-RPC at the root) and the OTLP export of the trace. |
 | **agent-runtime**            | Python 3.12, FastAPI + grpclib, Anthropic SDK, python-docx | Executes `executor: agent` nodes: agents are born from a spec per request and run a tool loop in a sandboxed workspace.                                                   |
 | **PostgreSQL 17**            |                                                  | Users, graphs, nodes, edges, plans, runs, artifacts metadata, agents, memories, refresh-token families. `LISTEN/NOTIFY` carries realtime events between backend replicas. |
 | **texc-symphony** (optional) | Rust                                             | Executes `executor: symphony` nodes as Codex coding tasks.                                                                                                                |
@@ -37,8 +37,9 @@ flowchart TB
     orchestrator -->|llm| provider[(LLM provider)]
     orchestrator -->|agent: gRPC stream| runtime[agent-runtime]
     runtime -.->|tool_request| gateway
-    gateway -->|MCP, fetch_url| mcp[(MCP servers, the web)]
+    gateway -->|MCP, fetch_url, a2a:name| mcp[(MCP servers, the web,<br/>A2A counterparts)]
     external[external agents] -->|gRPC, API token| firewall
+    external -->|A2A JSON-RPC, API token| http
     scheduler -->|spans| otlp[(OTLP collector)]
     orchestrator -->|symphony| symphony[texc-symphony]
     realtime <-->|LISTEN/NOTIFY| pg[(PostgreSQL)]
@@ -209,6 +210,18 @@ run of their own and re-decides each one, `VerifyTrace` recomputes the chain. Wi
 `NEXC_OTLP_ENDPOINT` set, every span of the trace is also exported to an OpenTelemetry collector
 (the run is the trace, the workspace the resource). `docs/CONTRACT.md` §8 has the wire.
 
+The A2A adapter sits on the same parts (`docs/CONTRACT.md` §10, `docs/AGENTSECOPS.md` §11). An
+agent an admin exposes publishes an agent card at `/.well-known/agent.json?agent=` and takes
+JSON-RPC tasks at `/a2a/agents/{principal}` from registered counterparts, each of which is an
+external agent principal of the workspace holding an API token. A task is a one-node run of
+the agent in a managed graph of its own, claimed and executed by the instance that took it
+(`scheduler::execute_claimed`) with the inbound call and the firewall's decision as the first
+spans of its chain; its output and files come back as A2A artifacts. Agents call counterparts
+as the gateway tool `a2a:<name>`, decided and recorded like any egress, with the hops and the
+chain of principals carried in the task's metadata so the delegation depth and loops are
+bounded across platforms. The surface lives at the root, where the protocol expects it; nginx,
+the ingress and the Vite dev server proxy it to the backend as they do `/api`.
+
 ## Scaling and state
 
 - **Backend** – stateless apart from `NEXC_DATA_DIR` (artifacts). Realtime events are published
@@ -267,6 +280,7 @@ from many machines at once.
 | Backend → runtime      | Shared bearer token (constant-time compare), internal network only, 4 MiB request limit, API keys passed per request and never stored or logged.                                                                                                                           |
 | Agent → network        | The runtime makes no outbound call: MCP servers and `fetch_url` are the backend's gateway, which decides the tool and the host under the policy (private and loopback addresses refused unless named), screens the arguments for data leaving, limits calls per agent, times a call out, caps the answer, starts a stdio server with an empty environment in a scratch directory and records a `tool_call` and an `egress` span. |
 | External agent → backend | The Agent Firewall API is off unless `NEXC_GRPC_ADDR` is set and is never for browsers; per-agent tokens are kept hashed and read on every call with the agent's status (a quarantine ends access at once); decisions are signed with Ed25519; reported spans are checked, bounded and re-decided like a runtime's. |
+| A2A counterpart ↔ backend | An inbound task needs the API token of a registered counterpart (401, 403 as JSON-RPC errors; the agent's status read on every call); the exposed agent's counterpart list and delegation depth decide it before anything runs, loops are refused, and the task runs as an ordinary run under the agent's own policy. An outbound task is an egress of the gateway: the host under the egress rules, the labels against the counterpart's clearance, the DLP screen of the message, a timeout and a size cap, the remote's files screened as artifacts. The card is public only for exposed agents and names no secret. |
 | Backend → collector    | The OTLP export (`NEXC_OTLP_ENDPOINT`, off by default) sends what the trace stores: digests, names, hosts, counts and decisions, never arguments, prompts or content. |
 | Agent → filesystem     | Per-run workspace; `safe_path` rejects absolute paths, `..`, NUL/backslashes and symlink escapes; per-file and per-workspace quotas.                                                                                                                                       |
 | Agent → code execution | Disabled by default. When enabled: `python -I`, scrubbed environment, rlimits (CPU, memory, file size, processes, open files), wall-clock timeout that kills the process group, truncated output.                                                                          |

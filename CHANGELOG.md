@@ -111,6 +111,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   opening on the inbound call and the admission; streaming, files as documents, cancellation;
   wrong, missing, revoked, foreign and non-counterpart tokens refused with 401, 403 and 404, a
   counterpart off the list refused on the record; the worst-case suite reads the new routes.
+  `docs/AGENTSECOPS.md` §11 says how A2A sits on the firewall (a counterpart is a principal, an
+  inbound task is a run, an outbound task is an egress, depth and loops cross platforms);
+  `docs/ARCHITECTURE.md` and the README name the adapter.
 - Alert routing: a workspace's alerts and approvals reach the outside. Admins register
   **alert destinations** (Settings → Alert destinations, `GET/POST
   /workspaces/{wid}/alert-destinations`, `GET/PATCH/DELETE …/{id}`, `POST …/{id}/test`, `GET

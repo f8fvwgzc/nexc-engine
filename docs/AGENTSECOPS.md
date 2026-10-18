@@ -123,7 +123,7 @@ flowchart LR
     runtime["agent runtime (Python)<br/>enforces scopes from its token,<br/>reports every action as a span"]
     onto["onto-intelli (Rust)<br/>ontology + audit facts<br/>'ask the audit', 0 tokens, <1 ms"]
     llm{{"LLM providers<br/>Anthropic / Claude CLI / Ollama / OpenAI-compatible"}}
-    ext[("MCP servers, APIs,<br/>other agents (A2A later)")]
+    ext[("MCP servers, APIs,<br/>other agents (A2A, §11)")]
     pg[("PostgreSQL 17")]
 
     console -- "REST, SSE" --> backend
@@ -171,8 +171,8 @@ Five rules the design follows:
 - **Agent card.** The console shows what SoftBank calls the ID card: purpose, owner, team, scopes,
   model, budget left, last heartbeat, current risk score, policy version, and the agent's last
   twenty actions.
-- **Later:** expose each agent as an A2A agent card and accept A2A / MCP callers through the gateway
-  with the same principals.
+- **Done (§11):** each agent an admin exposes publishes an A2A agent card and takes A2A tasks
+  through the firewall with the same principals; counterparts are external agent principals.
 
 ### 4.2 Observability: the trace spine
 
@@ -380,4 +380,48 @@ makes it a platform other agents can sit behind, which is what SoftBank's Agent 
 - **No "zero hallucination" claim.** The claim is "evidence-bound or refused", and the verifier
   that enforces it is part of the product.
 - **No A2A/ACP in the first release.** The gateway and principals are designed so these protocols
-  are adapters added later, as SoftBank's Agent Firewall does.
+  are adapters added later, as SoftBank's Agent Firewall does. (A2A came after the roadmap as
+  exactly such an adapter: §11.)
+
+---
+
+## 11. A2A on the firewall
+
+The Agent-to-Agent protocol is an adapter on the parts above, not a second security model.
+`docs/CONTRACT.md` §10 has the wire; this is where it sits.
+
+- **A counterpart is a principal.** A workspace registers a remote A2A agent by its card URL
+  (Settings → A2A counterparts). The registration makes an external agent of the workspace,
+  `agent://{workspace}/a2a:<name>`, and issues it an API token exactly as the Agent Firewall API
+  issues one: that token is what the remote agent presents, so every inbound call is from a
+  principal nexc knows, with a status it can quarantine and a token it can revoke. The host of
+  the card is checked as the gateway checks any egress host at registration.
+- **An inbound task is a run.** An admin exposes an agent (`a2a_exposed`, audited). A task sent
+  to its JSON-RPC endpoint becomes a one-node run of that agent in a managed graph of its own,
+  executed by the instance that took it, so everything the roadmap built applies unchanged: the
+  per-run token, the context builder's data scopes, the gateway for the agent's own calls, DLP
+  on its artifacts, the risk baseline, approvals, alerts. The run's chain opens with the inbound
+  call as a `tool_call` span marked `inbound` (the caller's principal, the task id, a digest of
+  the message) and the firewall's decision as a `policy` span: the counterpart list of the
+  agent's capabilities and its delegation depth decide it, as they decide a sub-agent's birth.
+- **An outbound task is an egress.** A counterpart is offered to agents as the gateway tool
+  `a2a:<name>` under the policy, and the gateway performs it like `fetch_url` or an MCP tool:
+  the counterpart's own allow-list of agents, the capabilities' counterpart list and depth, the
+  host under the egress rules (private hosts only when named), the data labels against the
+  counterpart's clearance, the DLP screen of the message; then the task, streamed when the
+  remote card says so, within the A2A timeout and the gateway's size cap. The answer's files
+  are artifacts of the node, screened like any other; the call is a `tool_call` and an `egress`
+  span naming the remote task.
+- **Depth and loops cross platforms.** A task carries `nexc.hop` and `nexc.chain` in its A2A
+  metadata; every outbound call made while answering an inbound task carries one more hop and
+  the chain with the agent appended. The agent's resolved `delegation.max_depth` bounds the
+  hop wherever the hops happened, and a chain that already names the agent, or a callback to a
+  counterpart already in it, is refused as `delegation.loop`: each refusal a `policy` span, the
+  run failed before the agent starts, the task answered `failed` with the rule.
+- **What the console shows.** The agent card's A2A tab (the switch, the card's addresses, the
+  tasks received with who called, the hop and the refusal), Settings → A2A counterparts, and
+  the trace explorer's `inbound` kind. The metric `nexc_a2a_tasks_total{direction, outcome}`
+  counts tasks either way.
+
+In SoftBank's terms: the agent card is the ID card shown outward, the counterpart's token is
+the visitor's badge, the firewall decides at the door, and the trace keeps the visit on record.

@@ -85,6 +85,13 @@ with their risk, a live feed of spans and alerts, approvals and alerts decided i
 over the last fourteen days, the resolved policy of any agent with a diff between versions,
 the audit's questions, and a trace explorer across every run.
 
+Agents also speak **A2A** (the Agent-to-Agent protocol) on the firewall: an admin publishes an
+agent and it serves an agent card at `/.well-known/agent.json?agent=…` and takes tasks over
+JSON-RPC, each a run of its own with the caller and the decision that admitted it on the trace;
+registered counterparts are principals with tokens, agents call them back as the gateway tool
+`a2a:<name>` under the policy, and the delegation depth and loops are bounded across platforms
+(`docs/CONTRACT.md` §10, `docs/AGENTSECOPS.md` §11).
+
 `make demo-secops` plays the five-minute script of the roadmap on the demo provider, no API
 key needed: an Analyst from a role template with its competency score, a traced run, an
 approval, a withheld document, a denial, an alert, a quarantine, the audit questions, the
@@ -105,6 +112,7 @@ latency table (`make prove-agentsecops`) and the chain verified, printing the UR
 | **LLM plan refinement**         | One click turns a rough sketch into a structured plan; proposed nodes and edges stream over SSE and are applied atomically.                                                                                                                          |
 | **DAG execution engine**        | Topological scheduling with concurrency limits, retries, timeouts, cancellation, critical-path analysis and a content-hash result cache that skips unchanged nodes.                                                                                  |
 | **Agents from birth**           | Each agent node spawns a role-specific agent in the Python runtime with its own token budget; agents may delegate to sub-agents (bounded depth and fan-out).                                                                                         |
+| **A2A on the firewall**         | Exposed agents publish an agent card and take tasks over the Agent-to-Agent protocol; counterparts are principals with tokens; outbound tasks go through the gateway under the policy; hops and loops are bounded across platforms.                 |
 | **Real deliverables**           | Agents write files into a sandboxed workspace: `.docx` reports via python-docx, source code, Markdown research. Download per artifact or as a zip.                                                                                                   |
 | **Memory**                      | Mem0/Hindsight-style: facts are extracted from node outputs, consolidated (add / update / skip near-duplicates) and retrieved by a hybrid score (embedding cosine + BM25 + recency × importance) as context for future nodes and plans.              |
 | **Data structures that matter** | Graph algorithms (Kahn topological order, levels, cycles, components via union-find), priority scheduling, token-bucket rate limiting, LRU caches.                                                                                                   |
