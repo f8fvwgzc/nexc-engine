@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 pub mod card;
+pub mod client;
 pub mod inbound;
 
 use axum::http::HeaderMap;

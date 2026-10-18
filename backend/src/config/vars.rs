@@ -182,6 +182,18 @@ pub const ENV_VARS: &[EnvVar] = &[
         "let alert destinations name private and loopback hosts (development only)",
     ),
     var(
+        "NEXC_A2A_TIMEOUT_SECS",
+        "120",
+        false,
+        "longest one outbound A2A task may take, the remote agent's work included",
+    ),
+    var(
+        "NEXC_A2A_ALLOW_PRIVATE_HOSTS",
+        "false",
+        false,
+        "let A2A counterparts be registered on private and loopback hosts (development only)",
+    ),
+    var(
         "NEXC_GATEWAY_CALLS_PER_MINUTE",
         "120",
         false,

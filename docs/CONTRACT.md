@@ -52,6 +52,8 @@ In Docker/K8s the frontend is served by unprivileged nginx on 8080 which proxies
 | `NEXC_RUNTIME_GRPC_URL`                                                 | `http://localhost:8095`                                   | backend → the runtime's gRPC endpoint                                                                                                                                                                                                                                                    |
 | `RUNTIME_GRPC_PORT`                                                     | `8095`                                                    | runtime: the gRPC stream next to its HTTP port; `0` turns it off                                                                                                                                                                                                                         |
 | `NEXC_GATEWAY_CALLS_PER_MINUTE` / `NEXC_GATEWAY_TIMEOUT_SECS` / `NEXC_GATEWAY_MAX_RESPONSE_BYTES` | `120` / `30` / `1048576`               | backend: the tools gateway (§8): calls one agent may make per minute (burst a quarter of it), the longest one call may take, the largest response passed on                                                                                                                               |
+| `NEXC_A2A_TIMEOUT_SECS`                                                 | `120`                                                     | backend: the A2A adapter (§10): the longest one outbound task (`a2a:<name>`) may take, the remote agent's work included (1–600)                                                                                                                                                             |
+| `NEXC_A2A_ALLOW_PRIVATE_HOSTS`                                          | `false`                                                   | backend: lets A2A counterparts be registered on private and loopback hosts (development only: a remote agent on this machine); at call time the agent's egress allow-list must still name such a host exactly                                                                               |
 | `NEXC_GRPC_ADDR`                                                        | — (off)                                                   | backend: where the Agent Firewall API listens (`0.0.0.0:50052`), with reflection and `grpc.health.v1`; unset keeps it off                                                                                                                                                                |
 | `NEXC_FIREWALL_SIGNING_KEY`                                             | — (derived from `NEXC_MASTER_KEY` when unset)             | backend: base64 of 32 bytes, the Ed25519 seed the firewall signs decisions with                                                                                                                                                                                                          |
 | `NEXC_OTLP_ENDPOINT`                                                    | — (off)                                                   | backend: OTLP/gRPC endpoint (`http://host:4317`) the trace spine is exported to; unset keeps it off                                                                                                                                                                                       |
@@ -607,6 +609,35 @@ interface A2aTask {
   state: "submitted" | "working" | "completed" | "canceled" | "failed"; // the A2A task state, from the run
   created_at: string;
 }
+
+// A remote A2A agent the workspace registered (§10): agents call it as the gateway tool
+// `a2a:<name>` under the policy, and it may send the workspace's exposed agents tasks as the
+// external agent principal made for it (`a2a:<name>`), whose API tokens are its credential.
+interface A2aCounterpart {
+  id: string;
+  workspace_id: string;
+  name: string; // [a-z0-9_-]{1,64}; the tool is `a2a:<name>`, the capabilities' `counterparts` list names it
+  card_url: string;
+  host: string; // the card URL's host (what the egress rules decide on at registration)
+  card: object; // the agent card as last fetched; `{}` until one was
+  has_auth_header: boolean; // an `Authorization` header is kept, encrypted, never shown
+  allowed_agents: string[]; // ids of the local agents that may call it; empty: any agent the policy allows
+  max_label: DataLabel; // the strictest classification of data that may be sent to it
+  agent_id: string; // the external agent principal its inbound calls act as
+  principal_id: string; // `agent://{workspace}/a2a:<name>`
+  last_checked_at: string | null;
+  last_check_ok: boolean | null;
+  last_check_detail: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+interface A2aCounterpartInput {
+  name: string; card_url: string; // http(s), no credentials, no private or loopback host unless NEXC_A2A_ALLOW_PRIVATE_HOSTS, not denied by the workspace policy's egress rules
+  auth_header?: string; allowed_agents?: string[]; max_label?: DataLabel; // default `internal`
+}
+interface RegisteredA2aCounterpart { counterpart: A2aCounterpart; token: IssuedAgentApiToken } // the principal's first token, shown once
+interface A2aCheck { ok: boolean; detail: string; card: object | null; latency_ms: number }
 interface AgentApiToken {
   id: string;
   agent_id: string;
@@ -978,6 +1009,9 @@ Everything else needs a bearer token: an access token, or for the A2A endpoint (
 | GET/POST `/agents?workspace_id=` | POST `{name, role, title?, model?, system_prompt?, reports_to?, budget_tokens?, runtime?, workspace_id?, purpose?, owner_user_id?, team_id?, capabilities?}` | `Agent[]` of the workspace (any member) / 201 `Agent` (member+; guests 403). The owner defaults to the caller and must be a member; the team one of the workspace's; the capabilities the default policy. A new workspace starts with a default organisation, each agent with a principal and the default policy |
 | GET/PATCH/DELETE `/agents/{id}` | PATCH: any subset of the agent fields (`team_id: null` detaches; `status` may be `active` or `paused`; `capabilities` replaces the whole document; `a2a_exposed` publishes the agent over A2A or withdraws it) | GET `AgentCard` (any member) / `Agent` / 204 (member+ of the agent's workspace; others 404). A change of capabilities raises `policy_version` and is audited (`policy_changed`); a quarantined agent's status is changed only through release (422). Changing `a2a_exposed` takes a workspace admin (403), is refused for an `external` agent (422) and is audited as `agent_a2a_changed` |
 | GET `/agents/{id}/a2a/tasks?limit=` | — | `A2aTask[]` newest first, `limit` 1–200 (default 50): the tasks the agent received over A2A (§10), with who called, the run that answered, the hop and the chain, and the rule that refused it when the firewall did (any member of the agent's workspace; others 404) |
+| GET/POST `/workspaces/{wid}/a2a-counterparts` | POST `A2aCounterpartInput` | `A2aCounterpart[]` by name (members and above) / 201 `RegisteredA2aCounterpart` (admins; guests and members 403; outsiders 404; 409 on a name already registered or an agent already named `a2a:<name>`; 422 on `name`, `card_url` (not http(s), credentials in it, a private or loopback host unless `NEXC_A2A_ALLOW_PRIVATE_HOSTS`, or a host the workspace policy's egress rules deny), `auth_header`, `allowed_agents`; at most 64 counterparts). Registering makes the external agent principal `a2a:<name>` with its first API token (in the answer once; audited as `agent_token_issued`), then fetches and validates the card (`name`, an http(s) `url`, `skills`; 15 s, 1 MiB) and records it or the failure (`last_check_ok`, `last_check_detail`); audited as `a2a_counterpart_added` (subject `a2a:<name>`) |
+| GET `/workspaces/{wid}/a2a-counterparts/{cid}`, DELETE | — | `A2aCounterpart` (members) / 204 (admins; others 404). Removal takes the principal with it, so its tokens stop working at once and its tool stops being offered at the next run; audited as `a2a_counterpart_removed` |
+| POST `/workspaces/{wid}/a2a-counterparts/{cid}/check` | — | `A2aCheck` (admins): fetches the card again and records what it says |
 | GET `/agents/{id}/activity?limit=` | — | `Span[]`: the agent's most recent spans across runs, newest first, `limit` 1–200 (default 20); only spans of runs whose graph the caller may open (any member of the agent's workspace; others 404) |
 | GET/POST `/workspaces/{wid}/policies?scope=&scope_id=&limit=` | POST `{scope: PolicyScope, scope_id?, document: PolicyDocument}` | `Policy[]` newest first, `limit` 1–200 (default 50), narrowed to one level by `scope` and `scope_id` / 201 `Policy` (workspace admins; members 403; others 404). The new version is the next number at its level; `scope_id` must be a team or agent of the workspace (422 `scope_id`); a document that would widen what the levels above resolve to is refused (422, `document.<rule>`: "would widen the policy of the level above"). Audited as `policy_changed` (subject: `the workspace`, `team {id}` or the agent's principal; detail: the version and what changed since the previous one, rule by rule) |
 | GET `/workspaces/{wid}/policies/resolve?agent_id=` | — | `ResolvedPolicy` of the agent (any member; unknown agent 404): its capabilities narrowed by every level, the rules beside them, which level set each rule, and the versions in force |
@@ -1378,10 +1412,12 @@ retryable error; an attempt is never resumed. The NDJSON endpoint stays for one 
 /v1/approvals/{id}`.
 
 **The tools gateway.** An agent never reaches the network itself. MCP servers registered for the
-workspace (`/workspaces/{wid}/mcp-servers`, §5) and the built-in `fetch_url` are offered to a
-node as `gateway_tools` as far as the policy lets it: a server's tools as `mcp:<name>/<tool>`,
-when the node's capabilities name the tool or `mcp:<name>/*` and the context's labels do not
-exceed the server's `max_label`; `fetch_url` when the capabilities name it (the `demo` provider
+workspace (`/workspaces/{wid}/mcp-servers`, §5), A2A counterparts (`a2a:<name>`, §10) and the
+built-in `fetch_url` are offered to a node as `gateway_tools` as far as the policy lets it: a
+server's tools as `mcp:<name>/<tool>`, when the node's capabilities name the tool or
+`mcp:<name>/*` and the context's labels do not exceed the server's `max_label`; a counterpart
+when it takes tasks from the node's agent (`allowed_agents`) and the capabilities name
+`a2a:<name>`; `fetch_url` when the capabilities name it (the `demo` provider
 reads the http(s) URLs a node's content names, three at most, through `fetch_url` when it is
 offered, so a demo run exercises the gateway without touching the network itself). The runtime
 calls such a tool by sending `tool_request` `{request_id, tool, arguments, agent, turn_span_id}` up the
@@ -1538,9 +1574,39 @@ keep in, each a file part with `bytes` inline up to 4 MiB, else a `uri`
 (`GET /a2a/tasks/{tid}/artifacts/{aid}`, the caller's token). `GET /agents/{id}/a2a/tasks` lists
 an agent's inbound tasks for the console.
 
+**Counterparts and the outbound tool.** A workspace registers remote A2A agents as
+counterparts (`/workspaces/{wid}/a2a-counterparts`, §5): a name, the card URL (its host checked
+as the gateway checks an egress host: http(s) without credentials, no private or loopback host
+unless `NEXC_A2A_ALLOW_PRIVATE_HOSTS`, not denied by the workspace policy's egress rules), an
+optional `Authorization` header sent with every task (encrypted at rest), the local agents that
+may call it and the data clearance `max_label`. Each counterpart is also an external agent
+principal of the workspace, `agent://{workspace}/a2a:<name>`, made at registration with its first
+API token: that token (and any issued later with `POST /agents/{id}/tokens`) is what the remote
+agent presents when it sends the workspace's exposed agents tasks, so an inbound call is always
+one nexc issued. The counterpart is offered to agents as the gateway tool `a2a:<name>`
+(`{message, session_id?}`) when the capabilities name the tool and the counterpart takes tasks
+from the agent. The gateway performs the call in this order: the counterpart's `allowed_agents`
+(rule `a2a.allowed_agents`), the hops (the run's inbound task, if it answers one, gives the hop
+and the chain; a counterpart already in the chain is a loop, `delegation.loop`; the capabilities'
+`counterparts` list and `delegation.max_depth` decide `Action::Counterpart` at `hop + 1`, rules
+`counterparts` and `delegation.max_depth`), the host of the card's `url` under the egress rules
+and the private-network rule (as for `fetch_url`), the node's labels against `max_label`
+(`a2a.max_label`), the DLP screen of the message under the context's labels (`dlp.*`), then
+`tasks/sendSubscribe` read as server-sent events when the card says `capabilities.streaming`,
+else `tasks/send` and `tasks/get` every second until the task ended, with `metadata`
+`{"nexc.hop": hop + 1, "nexc.chain": [..., the agent], "nexc.principal"}`, the task id a UUID v7,
+under `NEXC_A2A_TIMEOUT_SECS` and `NEXC_GATEWAY_MAX_RESPONSE_BYTES`. The model gets the remote
+artifacts' text; file parts with bytes are stored as artifacts of the node at
+`a2a/<name>/<file>` (screened by the DLP classifier like any artifact), files by `uri` are only
+named. The call is a `tool_call` span (`gateway: true`, `a2a: true`, `direction: outbound`,
+`counterpart` (the principal), `remote_task_id`, `remote_state`, `hop`, `chain`, `streamed`,
+`files`, `artifacts`) with an `egress` span under it (`transport: a2a`, the host, the endpoint
+without its query, the HTTP status, the bytes in); a refusal is a `policy` span naming the rule.
+
 **Hops.** `metadata["nexc.hop"]` is the number of nexc-mediated hops before the task (absent: 0,
 a counterpart's own call) and `metadata["nexc.chain"]` the principals it passed through. The
 exposed agent's resolved `delegation.max_depth` bounds the hop as it bounds a sub-agent's depth
 (`hop > max_depth` is refused as `delegation.max_depth`), and a chain that already names the
 agent is refused as `delegation.loop`. An outbound call made during such a run carries
-`hop + 1` and the chain with the agent appended.
+`hop + 1` and the chain with the agent appended, and is refused the same way when `hop + 1`
+exceeds the agent's depth or the counterpart is already in the chain.

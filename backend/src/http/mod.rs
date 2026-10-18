@@ -236,6 +236,9 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(mcp_servers::list, mcp_servers::create))
         .routes(routes!(mcp_servers::get, mcp_servers::delete))
         .routes(routes!(mcp_servers::check))
+        .routes(routes!(a2a_counterparts::list, a2a_counterparts::create))
+        .routes(routes!(a2a_counterparts::get, a2a_counterparts::delete))
+        .routes(routes!(a2a_counterparts::check))
         .routes(
             routes!(knowledge::upload)
                 .layer(DefaultBodyLimit::max(DOCUMENT_MAX_BYTES + UPLOAD_SLACK)),
@@ -328,6 +331,8 @@ mod tests {
             "/api/v1/agents/{id}/tokens",
             "/api/v1/agents/{id}/tokens/{tid}",
             "/api/v1/agents/{id}/a2a/tasks",
+            "/api/v1/workspaces/{wid}/a2a-counterparts",
+            "/api/v1/workspaces/{wid}/a2a-counterparts/{cid}/check",
             "/.well-known/agent.json",
             "/a2a/agents/{principal}/card",
             "/a2a/agents/{principal}",

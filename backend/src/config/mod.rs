@@ -100,6 +100,10 @@ pub struct Settings {
     pub public_url: String,
     /// Lets alert destinations name private and loopback hosts (development only).
     pub alert_allow_private_hosts: bool,
+    /// Longest one outbound A2A task may take, the remote agent's work included.
+    pub a2a_timeout: Duration,
+    /// Lets A2A counterparts be registered on private and loopback hosts (development only).
+    pub a2a_allow_private_hosts: bool,
 }
 
 /// The wire between the backend and the agent runtime.
@@ -228,6 +232,8 @@ impl Settings {
                 .trim_end_matches('/')
                 .to_owned(),
             alert_allow_private_hosts: r.parse("NEXC_ALERT_ALLOW_PRIVATE_HOSTS", false),
+            a2a_timeout: Duration::from_secs(r.parse("NEXC_A2A_TIMEOUT_SECS", 120)),
+            a2a_allow_private_hosts: r.parse("NEXC_A2A_ALLOW_PRIVATE_HOSTS", false),
         };
         let mut errors = r.errors;
         settings.check_invariants(&mut errors);
@@ -289,6 +295,9 @@ impl Settings {
         }
         if self.gateway_timeout.is_zero() || self.gateway_timeout > Duration::from_secs(600) {
             errors.push("NEXC_GATEWAY_TIMEOUT_SECS must be between 1 and 600".into());
+        }
+        if self.a2a_timeout.is_zero() || self.a2a_timeout > Duration::from_secs(600) {
+            errors.push("NEXC_A2A_TIMEOUT_SECS must be between 1 and 600".into());
         }
         if !(1024..=64 * 1024 * 1024).contains(&self.gateway_max_response_bytes) {
             errors.push("NEXC_GATEWAY_MAX_RESPONSE_BYTES must be between 1 KiB and 64 MiB".into());

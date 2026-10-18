@@ -2,6 +2,7 @@
 //! with `#[utoipa::path]` and every DTO derives `ToSchema`.
 
 pub mod a2a;
+pub mod a2a_counterparts;
 pub mod account;
 pub mod agent_templates;
 pub mod agents;

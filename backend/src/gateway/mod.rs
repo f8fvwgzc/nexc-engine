@@ -9,6 +9,7 @@
 //! and hands the result back down.
 #![forbid(unsafe_code)]
 
+mod a2a;
 pub mod fetch;
 pub mod mcp;
 
@@ -175,12 +176,14 @@ impl Overhead {
 }
 
 /// The gateway tools an agent with `caps` and `rules` may be offered in
-/// `workspace`: `fetch_url` and every allowed tool of every registered
-/// server, less what the policy denies outright. Tools a policy holds for
-/// an approval are offered; the runtime asks before calling.
+/// `workspace`: `fetch_url`, every allowed tool of every registered server
+/// and every A2A counterpart that takes tasks from `agent` (`a2a:<name>`),
+/// less what the policy denies outright. Tools a policy holds for an
+/// approval are offered; the runtime asks before calling.
 pub async fn tools_for(
     state: &AppState,
     workspace: Option<Uuid>,
+    agent: Option<Uuid>,
     caps: &Capabilities,
     rules: &Rules,
     labels: &[DataLabel],
@@ -196,6 +199,18 @@ pub async fn tools_for(
             }
         }
         Err(err) => tracing::error!(%workspace, error = %err, "MCP servers not read; none offered"),
+    }
+    match repo::a2a::list_counterparts(&state.db, workspace).await {
+        Ok(counterparts) => {
+            for row in counterparts {
+                if row.counterpart.allows_agent(agent) {
+                    tools.push(row.counterpart.gateway_tool());
+                }
+            }
+        }
+        Err(err) => {
+            tracing::error!(%workspace, error = %err, "A2A counterparts not read; none offered")
+        }
     }
     tools.retain(|t| {
         let decision = decide_with(caps, rules, labels, &Action::Tool(&t.name));
@@ -394,6 +409,11 @@ impl Call<'_> {
     /// Records the call as a `tool_call` span and, when it went out, an
     /// `egress` span naming the host.
     fn record(&self, outcome: &ToolOutcome, egress: Option<Egress<'_>>) {
+        self.record_with(outcome, egress, json!({}));
+    }
+
+    /// [`Call::record`] with `extra` attributes on the `tool_call` span.
+    fn record_with(&self, outcome: &ToolOutcome, egress: Option<Egress<'_>>, extra: Value) {
         let ctx = self.ctx;
         let now = Utc::now();
         let duration_ns = self.started.elapsed().as_nanos() as u64;
@@ -406,7 +426,7 @@ impl Call<'_> {
         } else {
             SpanStatus::Ok
         };
-        tool.attributes = json!({
+        let mut attributes = json!({
             "tool": self.req.tool,
             "args_sha256": self.args_sha256,
             "args_bytes": self.args_bytes,
@@ -422,6 +442,10 @@ impl Call<'_> {
             "payload_sha256": self.args_sha256,
             "payload_bytes": self.args_bytes,
         });
+        if let (Value::Object(into), Value::Object(from)) = (&mut attributes, extra) {
+            into.extend(from);
+        }
+        tool.attributes = attributes;
         let tool_span_id = tool.id;
         ctx.record(tool);
         if let Some(egress) = egress {
@@ -517,6 +541,8 @@ pub async fn perform(ctx: &ExecContext, req: &ToolRequest, granted: &Granted) ->
     outcome.overhead_ns = overhead.ns();
     let kind = if req.tool == FETCH_URL {
         "fetch_url"
+    } else if req.tool.starts_with(crate::domain::a2a::TOOL_PREFIX) {
+        "a2a"
     } else {
         "mcp"
     };
@@ -675,6 +701,9 @@ async fn perform_timed(
         return outcome;
     }
 
+    if let Some(name) = crate::domain::a2a::counterpart_of_tool(&req.tool) {
+        return a2a::perform(ctx, &call, name, overhead).await;
+    }
     let Some((server_name, tool_name)) = split_tool_name(&req.tool) else {
         let decision = Decision::deny("tools.allow", format!("{} is not a gateway tool", req.tool));
         return call.refuse("tool_call", &req.tool, &decision, true).await;

@@ -208,6 +208,7 @@ pub async fn run(ctx: &ExecContext, token: String) -> Result<ExecOutput, ExecErr
     let gateway_tools = gateway::tools_for(
         state,
         ctx.workspace_id,
+        ctx.agent.as_ref().map(|a| a.id),
         &ctx.capabilities,
         &ctx.rules,
         &ctx.labels_given,

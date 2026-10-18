@@ -72,6 +72,9 @@ backend:
     callsPerMinute: 120
     timeoutSecs: 30
     maxResponseBytes: 1048576
+  # The A2A adapter: the longest one outbound task may take (the remote agent's work included).
+  a2a:
+    timeoutSecs: 120
   dataStorage: 5Gi
   resources:
     requests: { cpu: 200m, memory: 256Mi }

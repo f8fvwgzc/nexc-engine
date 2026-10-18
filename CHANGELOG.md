@@ -9,6 +9,34 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A2A adapter, counterparts and the outbound tool (`docs/CONTRACT.md` §10): a workspace
+  registers remote A2A agents (Settings → A2A counterparts; `GET/POST
+  /workspaces/{wid}/a2a-counterparts`, `GET/DELETE …/{cid}`, `POST …/{cid}/check`): a name, the
+  card URL (its host checked as the gateway checks egress: http(s) without credentials, no
+  private or loopback host unless `NEXC_A2A_ALLOW_PRIVATE_HOSTS=true`, not denied by the
+  workspace policy's egress rules), an `Authorization` header kept encrypted, the local agents
+  that may call it and a data clearance. Registering fetches and validates the card (a name,
+  an http(s) `url`, `skills`) and keeps it, and makes the counterpart an external agent
+  principal of the workspace (`agent://{workspace}/a2a:<name>`) with its first API token in the
+  answer once: that is what the remote agent presents when it sends the workspace's exposed
+  agents tasks. Removal takes the principal with it. Audited as `a2a_counterpart_added` and
+  `a2a_counterpart_removed`. Agents call a counterpart as the built-in gateway tool
+  `a2a:<name>` (`{message, session_id?}`), offered when the capabilities name it and the
+  counterpart takes tasks from the agent, and performed by the gateway under the policy: the
+  counterpart's allow-list of agents, the capabilities' `counterparts` list and the delegation
+  depth at the next hop, the host under the egress rules, the labels against the counterpart's
+  clearance, the DLP screen of the message, then `tasks/sendSubscribe` read as server-sent
+  events when the card says it streams (else `tasks/send` and `tasks/get` until the task ended)
+  within `NEXC_A2A_TIMEOUT_SECS` and the gateway's size cap. The remote's text comes back to
+  the model, its files are kept as artifacts of the node at `a2a/<name>/<file>`, and the call
+  is a `tool_call` span (`a2a`, `direction: outbound`, the counterpart, the remote task id and
+  state, the hop and the chain) with an `egress` span of transport `a2a` under it; every
+  refusal is a `policy` span naming the rule. Tests: registration fetches the card, makes the
+  principal, lists to members, refuses members, duplicates, bad input, private hosts without
+  the setting and hosts the policy denies, and removal ends the token; an Analyst calls the
+  stub through the gateway, streamed and polled, with the hops in the metadata, the file kept
+  and the spans on the trace; a counterpart off the list, a host off the list and a message
+  after restricted data are refused as policy spans without a byte reaching the remote.
 - A2A adapter, inbound (`docs/CONTRACT.md` §10): an admin publishes a workspace agent over the
   Agent-to-Agent protocol (`PATCH /agents/{id}` `{a2a_exposed: true}`, workspace admins, not an
   `external` agent, audited as `agent_a2a_changed`). Its agent card is served to anyone at
