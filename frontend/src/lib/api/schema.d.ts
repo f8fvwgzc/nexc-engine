@@ -322,6 +322,77 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/alerts/{id}/acknowledge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Marks an alert seen (admins of its workspace). */
+        post: operations["acknowledge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/approvals/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One approval (members of its workspace). */
+        get: operations["get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/approvals/{id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Lets the call go ahead (an approver named by the policy, or a workspace admin). */
+        post: operations["approve"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/approvals/{id}/deny": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refuses the call, with a reason the model sees (an approver named by the
+         *     policy, or a workspace admin).
+         */
+        post: operations["deny"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/artifacts/{aid}/download": {
         parameters: {
             query?: never;
@@ -333,6 +404,26 @@ export interface paths {
         get: operations["download"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifacts/{aid}/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Releases a quarantined artifact (admins of the run's workspace): it can be
+         *     downloaded again. Audited as `artifact_released`.
+         */
+        post: operations["release"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1391,6 +1482,40 @@ export interface paths {
         patch: operations["update"];
         trace?: never;
     };
+    "/api/v1/workspaces/{wid}/alerts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The alerts of a workspace, newest first (admins). */
+        get: operations["list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The approvals of a workspace, newest first (admins). */
+        get: operations["list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{wid}/assistant": {
         parameters: {
             query?: never;
@@ -1891,6 +2016,48 @@ export interface paths {
         patch: operations["update_member"];
         trace?: never;
     };
+    "/api/v1/workspaces/{wid}/policies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every version of the workspace's policies, newest first (admins). */
+        get: operations["list"];
+        put?: never;
+        /**
+         * Adds a version at one level (admins). The document may only narrow the
+         *     policy the levels above it resolve to; the change is audited as
+         *     `policy_changed` with what changed since the previous version.
+         */
+        post: operations["create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/policies/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The effective policy of an agent: its capabilities narrowed by every
+         *     level, the rules beside them, and which level set each rule (members).
+         */
+        get: operations["resolve"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{wid}/projects": {
         parameters: {
             query?: never;
@@ -2340,6 +2507,16 @@ export interface components {
             quarantined_at: string | null;
             /** Format: uuid */
             reports_to: string | null;
+            /** @description Why, in words. */
+            risk_reasons: string[];
+            /**
+             * Format: double
+             * @description How far its latest run strayed from what it usually does (0 to 10; 0 until
+             *     three runs were learned from).
+             */
+            risk_score: number;
+            /** Format: date-time */
+            risk_updated_at: string | null;
             role: string;
             runtime: components["schemas"]["AgentRuntime"];
             /** Format: int64 */
@@ -2389,6 +2566,178 @@ export interface components {
             key: string;
             name: string;
         };
+        /** @description One alert. */
+        Alert: {
+            /** Format: date-time */
+            acknowledged_at: string | null;
+            /** Format: uuid */
+            acknowledged_by: string | null;
+            /** Format: uuid */
+            agent_id: string | null;
+            /** Format: date-time */
+            created_at: string;
+            detail: string;
+            /** Format: uuid */
+            graph_id: string | null;
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["AlertKind"];
+            /** Format: uuid */
+            node_id: string | null;
+            principal: string;
+            /** @description The rule that raised it. */
+            rule: string;
+            /** Format: uuid */
+            run_id: string | null;
+            severity: components["schemas"]["Severity"];
+            /**
+             * Format: uuid
+             * @description The policy span that recorded the finding, if any.
+             */
+            span_id: string | null;
+            title: string;
+            /** Format: uuid */
+            workspace_id: string;
+        };
+        /**
+         * @description What raised the alert.
+         * @enum {string}
+         */
+        AlertKind: "dlp" | "risk" | "injection" | "policy";
+        /** @description Thresholds that raise an alert, or quarantine the agent. */
+        AlertRule: {
+            /**
+             * Format: int32
+             * @description Policy denials in one run at and above which an alert is raised.
+             */
+            denials_per_run: number | null;
+            /**
+             * Format: double
+             * @description Novelty (1 - similarity to every earlier run) at and above which an alert is raised.
+             */
+            novelty: number | null;
+            /**
+             * Format: double
+             * @description Risk score at and above which the agent is quarantined.
+             */
+            quarantine_risk_score: number | null;
+            /**
+             * Format: double
+             * @description Risk score at and above which an alert is raised.
+             */
+            risk_score: number | null;
+        };
+        /** @description Alert thresholds, once resolved (the lowest of every level). */
+        AlertRules: {
+            /**
+             * Format: int32
+             * @default null
+             */
+            denials_per_run: number | null;
+            /**
+             * Format: double
+             * @default null
+             */
+            novelty: number | null;
+            /**
+             * Format: double
+             * @default null
+             */
+            quarantine_risk_score: number | null;
+            /**
+             * Format: double
+             * @default null
+             */
+            risk_score: number | null;
+        };
+        /** @description One approval, asked for by a tool call under a policy. */
+        Approval: {
+            /** Format: uuid */
+            agent_id: string | null;
+            /** @description Members who may decide; empty: every admin of the workspace. */
+            approver_ids: string[];
+            args_sha256: string | null;
+            /** Format: date-time */
+            decided_at: string | null;
+            decided_by: components["schemas"]["Decider"] | null;
+            decision_reason: string;
+            /**
+             * Format: uuid
+             * @description The `approval` span that recorded the decision, once there is one.
+             */
+            decision_span_id: string | null;
+            /**
+             * Format: date-time
+             * @description When the call stops waiting.
+             */
+            expires_at: string;
+            /** Format: uuid */
+            graph_id: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            node_id: string;
+            policy_versions: components["schemas"]["PolicyVersions"];
+            /** @description The acting principal. */
+            principal: string;
+            reason: string;
+            /** Format: date-time */
+            requested_at: string;
+            /** @description The rule that asked (`approvals.tools`, `approvals.labels`). */
+            rule: string;
+            /** Format: uuid */
+            run_id: string;
+            /**
+             * Format: uuid
+             * @description The policy span that asked.
+             */
+            span_id: string;
+            status: components["schemas"]["ApprovalStatus"];
+            /** @description The tool that waits, and a digest of its arguments. */
+            tool: string;
+            /** Format: uuid */
+            workspace_id: string;
+        };
+        /** @description Which actions need a human to say yes. */
+        ApprovalRule: {
+            /** @description Members who may decide; empty means every workspace admin. */
+            approvers: string[];
+            /**
+             * @description A node that was given data of one of these labels needs an approval
+             *     before anything leaves it (`write_file`, `make_docx`).
+             */
+            labels: components["schemas"]["DataLabel"][];
+            /**
+             * Format: int32
+             * @description How long a call waits before the node fails; `null` inherits (default 600).
+             */
+            timeout_s: number | null;
+            /** @description Tools that wait for an approval before they run. */
+            tools: string[];
+        };
+        /** @description Which actions wait for a human, once resolved. */
+        ApprovalRules: {
+            /**
+             * @description Members who may decide; empty: every workspace admin.
+             * @default []
+             */
+            approvers: string[];
+            /** @default [] */
+            labels: components["schemas"]["DataLabel"][];
+            /**
+             * Format: int32
+             * @description Seconds a call waits before the node fails.
+             * @default 600
+             */
+            timeout_s: number;
+            /** @default [] */
+            tools: string[];
+        };
+        /**
+         * @description Where an approval stands.
+         * @enum {string}
+         */
+        ApprovalStatus: "pending" | "approved" | "denied" | "expired";
         /** @description A file produced by a node during a run. */
         Artifact: {
             /** Format: date-time */
@@ -2400,6 +2749,18 @@ export interface components {
             node_id: string;
             /** @description Relative path inside the run (also the download file name). */
             path: string;
+            /** @description Why, in words (`dlp.secrets: 1 credential in the content`). */
+            quarantine_reason: string;
+            /**
+             * Format: date-time
+             * @description When the DLP classifier stopped the file on its way out; `null` when it may be downloaded.
+             */
+            quarantined_at: string | null;
+            /**
+             * Format: date-time
+             * @description When an admin released it; `null` until then.
+             */
+            released_at: string | null;
             /** Format: uuid */
             run_id: string;
             /** Format: int64 */
@@ -2446,7 +2807,7 @@ export interface components {
          * @description What an audit entry records.
          * @enum {string}
          */
-        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned" | "trace_sealed" | "policy_changed" | "policy_mismatch" | "agent_quarantined" | "agent_released" | "classification_changed";
+        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned" | "trace_sealed" | "policy_changed" | "policy_mismatch" | "agent_quarantined" | "agent_released" | "approval_granted" | "approval_denied" | "artifact_quarantined" | "artifact_released" | "alert_raised" | "classification_changed";
         /** @description One entry of a workspace's audit log. */
         AuditEntry: {
             action: components["schemas"]["AuditAction"];
@@ -2745,6 +3106,16 @@ export interface components {
         CreatePlan: {
             instructions?: string;
         };
+        /** @description `POST /workspaces/{wid}/policies` body. */
+        CreatePolicy: {
+            document: components["schemas"]["PolicyDocument"];
+            scope: components["schemas"]["PolicyScope"];
+            /**
+             * Format: uuid
+             * @description The team or agent; left out at the workspace level.
+             */
+            scope_id?: string | null;
+        };
         /** @description `POST /workspaces/{wid}/projects` body. */
         CreateProject: {
             description?: string;
@@ -2898,6 +3269,20 @@ export interface components {
             /** @description Whether more has happened on the day since it was written. */
             stale: boolean;
         };
+        /** @description `POST /approvals/{id}/approve` and `/deny` body. */
+        Decide: {
+            /** @description Why; required to deny. */
+            reason?: string;
+        };
+        /** @description Who decided. */
+        Decider: {
+            /**
+             * Format: uuid
+             * @description `null` once the account is gone; the name stays.
+             */
+            id: string | null;
+            name: string;
+        };
         /** @description How far an agent may delegate. */
         Delegation: {
             /**
@@ -2926,6 +3311,57 @@ export interface components {
             /** @description The app's current code, or a recovery code. */
             code: string;
             password: string;
+        };
+        /** @description Data loss prevention on the way out: artifacts and external calls. */
+        DlpRule: {
+            /** @description Per label, where content derived from it may go. */
+            labels: {
+                [key: string]: components["schemas"]["Outbound"];
+            };
+            pii: components["schemas"]["PiiRule"];
+            secrets: components["schemas"]["RuleAction"] | null;
+        };
+        /** @description DLP on the way out, once resolved. */
+        DlpRules: {
+            /**
+             * @default {
+             *       "confidential": {
+             *         "artifacts": true,
+             *         "egress_hosts": []
+             *       },
+             *       "internal": {
+             *         "artifacts": true,
+             *         "egress_hosts": null
+             *       },
+             *       "public": {
+             *         "artifacts": true,
+             *         "egress_hosts": null
+             *       },
+             *       "restricted": {
+             *         "artifacts": false,
+             *         "egress_hosts": []
+             *       }
+             *     }
+             */
+            labels: {
+                [key: string]: components["schemas"]["OutboundRules"];
+            };
+            /**
+             * @default {
+             *       "action": "alert",
+             *       "enabled": true,
+             *       "keywords": [],
+             *       "kinds": [
+             *         "email",
+             *         "phone",
+             *         "card",
+             *         "national_id"
+             *       ]
+             *     }
+             */
+            pii: components["schemas"]["PiiRules"];
+            /** @default deny */
+            secrets: components["schemas"]["RuleAction"];
         };
         /** @description An uploaded document. */
         Document: {
@@ -3193,6 +3629,24 @@ export interface components {
             /** @description Where the agent runtime is expected, and whether it answers. */
             runtime_url: string;
         };
+        /**
+         * @description What the prompt-injection screen does with a finding.
+         * @enum {string}
+         */
+        InjectionAction: "flag" | "block";
+        /** @description The prompt-injection screen. */
+        InjectionRule: {
+            action: components["schemas"]["InjectionAction"] | null;
+            /** @description Whether a small model is asked to confirm a finding (behind a runtime setting). */
+            model_check: boolean | null;
+        };
+        /** @description The prompt-injection screen, once resolved. */
+        InjectionRules: {
+            /** @default flag */
+            action: components["schemas"]["InjectionAction"];
+            /** @default false */
+            model_check: boolean;
+        };
         /** @description `POST /workspaces/{wid}/members` body. */
         InviteMember: {
             email: string;
@@ -3370,6 +3824,82 @@ export interface components {
             /** Format: uuid */
             id: string;
             name: string;
+        };
+        /** @description A level of the hierarchy, as shown in the resolve view. */
+        LevelRef: {
+            scope: components["schemas"]["PolicyScope"];
+            /** Format: uuid */
+            scope_id: string | null;
+            /** Format: int32 */
+            version: number;
+        };
+        /** @description Ceilings, once resolved (the lowest of every level). */
+        LimitRules: {
+            /**
+             * Format: double
+             * @default null
+             */
+            cost_usd_per_day: number | null;
+            /**
+             * Format: int32
+             * @default null
+             */
+            runs_per_hour: number | null;
+            /**
+             * Format: int64
+             * @default null
+             */
+            tokens_per_day: number | null;
+            /**
+             * Format: int64
+             * @default null
+             */
+            tokens_per_run: number | null;
+            /**
+             * Format: int32
+             * @default null
+             */
+            tool_calls_per_minute: number | null;
+        };
+        /** @description Ceilings. `null` inherits; a child may only lower one. */
+        Limits: {
+            /**
+             * Format: double
+             * @description Dollars the agent may spend per UTC day.
+             */
+            cost_usd_per_day: number | null;
+            /** Format: int32 */
+            max_depth: number | null;
+            /** Format: int32 */
+            max_fan_out: number | null;
+            /**
+             * Format: int32
+             * @description Nodes the agent may start per hour, across runs.
+             */
+            runs_per_hour: number | null;
+            /**
+             * Format: int64
+             * @description Tokens the agent may spend per UTC day, across runs.
+             */
+            tokens_per_day: number | null;
+            /**
+             * Format: int64
+             * @description Tokens (in + out) one run of the agent may spend.
+             */
+            tokens_per_run: number | null;
+            /**
+             * Format: int32
+             * @description Tool calls per minute within one run (the runtime refuses the rest).
+             */
+            tool_calls_per_minute: number | null;
+        };
+        /**
+         * @description An allow-list and a deny-list of names (tools, hosts, models). `allow:
+         *     null` inherits the level above; `deny` is always added to it.
+         */
+        ListRule: {
+            allow: string[] | null;
+            deny: string[];
         };
         /**
          * @description LLM backend family. `demo` is a deterministic offline provider; `claude_code` runs the
@@ -3563,6 +4093,8 @@ export interface components {
             /** Format: int32 */
             attempt: number;
             cached: boolean;
+            /** @description The classifications of the data the node was given. */
+            context_labels: components["schemas"]["DataLabel"][];
             error: string | null;
             executor: components["schemas"]["Executor"];
             /** Format: date-time */
@@ -3570,6 +4102,8 @@ export interface components {
             /** Format: uuid */
             node_id: string;
             output_preview: string | null;
+            /** @description The policy versions that governed the node, by level. */
+            policy_versions: components["schemas"]["PolicyVersions"];
             /** Format: date-time */
             started_at: string | null;
             status: components["schemas"]["NodeStatus"];
@@ -3582,7 +4116,7 @@ export interface components {
          * @description Execution status of a node (last run).
          * @enum {string}
          */
-        NodeStatus: "idle" | "queued" | "running" | "succeeded" | "failed" | "skipped" | "cancelled";
+        NodeStatus: "idle" | "queued" | "running" | "waiting_approval" | "succeeded" | "failed" | "skipped" | "cancelled";
         /** @description `node.status` payload. */
         NodeStatusEvent: {
             /** Format: int32 */
@@ -3627,14 +4161,48 @@ export interface components {
         /** @description One entry of a member's inbox. */
         Notification: {
             actor: components["schemas"]["IssuePerson"] | null;
+            alert: components["schemas"]["NotificationAlert"] | null;
+            approval: components["schemas"]["NotificationApproval"] | null;
             /** Format: date-time */
             created_at: string;
             /** Format: uuid */
             id: string;
-            issue: components["schemas"]["NotificationIssue"];
+            issue: components["schemas"]["NotificationIssue"] | null;
             kind: components["schemas"]["NotificationKind"];
             /** Format: date-time */
             read_at: string | null;
+        };
+        /** @description The alert an inbox entry points at, as much as the inbox shows. */
+        NotificationAlert: {
+            /** Format: uuid */
+            graph_id: string | null;
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["AlertKind"];
+            principal: string;
+            rule: string;
+            /** Format: uuid */
+            run_id: string | null;
+            severity: components["schemas"]["Severity"];
+            title: string;
+        };
+        /** @description The approval an inbox entry asks for, as much as the inbox shows. */
+        NotificationApproval: {
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: uuid */
+            graph_id: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            node_id: string;
+            /** @description The acting principal. */
+            principal: string;
+            reason: string;
+            /** Format: uuid */
+            run_id: string;
+            status: components["schemas"]["ApprovalStatus"];
+            tool: string;
         };
         /** @description The issue a notification is about, as much as a list row shows. */
         NotificationIssue: {
@@ -3647,7 +4215,7 @@ export interface components {
          * @description Why an issue is in someone's inbox.
          * @enum {string}
          */
-        NotificationKind: "assigned" | "comment" | "state" | "due";
+        NotificationKind: "assigned" | "comment" | "state" | "due" | "approval" | "alert";
         /** @description The node types and relation types of one graph. */
         Ontology: {
             node_types: components["schemas"]["NodeType"][];
@@ -3666,6 +4234,23 @@ export interface components {
             queue_depth: number;
             /** Format: int64 */
             running_nodes: number;
+        };
+        /** @description Where content of one label may go. */
+        Outbound: {
+            /** @description Whether a node that read data of the label may deliver artifacts. */
+            artifacts: boolean | null;
+            /** @description Hosts such content may be sent to; `[]` none, `null` inherits. */
+            egress_hosts: string[] | null;
+        };
+        /** @description Where content of one label may go, once resolved. */
+        OutboundRules: {
+            /** @default true */
+            artifacts: boolean;
+            /**
+             * @description `null`: any host the egress allow-list permits; `[]`: none.
+             * @default null
+             */
+            egress_hosts: string[] | null;
         };
         /**
          * @description Where in the app the member is while they write; the assistant is told, so
@@ -3702,6 +4287,38 @@ export interface components {
              */
             topic_id: string | null;
             topic_label: components["schemas"]["DataLabel"] | null;
+        };
+        /**
+         * @description A shape of personal data the DLP classifier looks for.
+         * @enum {string}
+         */
+        PiiKind: "email" | "phone" | "card" | "national_id";
+        /** @description The PII rule of the DLP classifier. */
+        PiiRule: {
+            action: components["schemas"]["RuleAction"] | null;
+            enabled: boolean | null;
+            /** @description Words that count as personal data in this workspace (code names, project names). */
+            keywords: string[];
+            /** @description The shapes looked for; `null` inherits (default: all of them). */
+            kinds: components["schemas"]["PiiKind"][] | null;
+        };
+        /** @description The PII rule, once resolved. */
+        PiiRules: {
+            /** @default alert */
+            action: components["schemas"]["RuleAction"];
+            /** @default true */
+            enabled: boolean;
+            /** @default [] */
+            keywords: string[];
+            /**
+             * @default [
+             *       "email",
+             *       "phone",
+             *       "card",
+             *       "national_id"
+             *     ]
+             */
+            kinds: components["schemas"]["PiiKind"][];
         };
         /** @description A plan as returned by the API. */
         Plan: {
@@ -3813,6 +4430,68 @@ export interface components {
             footprint: components["schemas"]["WorkspaceFootprint"];
             members: components["schemas"]["PlatformMember"][];
         };
+        /** @description One stored version of a policy. */
+        Policy: {
+            /** Format: uuid */
+            author_id: string | null;
+            author_name: string;
+            /** Format: date-time */
+            created_at: string;
+            document: components["schemas"]["PolicyDocument"];
+            /** Format: uuid */
+            id: string;
+            scope: components["schemas"]["PolicyScope"];
+            /**
+             * Format: uuid
+             * @description The team or agent; `null` at the workspace level.
+             */
+            scope_id: string | null;
+            /** Format: int32 */
+            version: number;
+            /** Format: uuid */
+            workspace_id: string;
+        };
+        /** @description One version of a policy. `{}` sets nothing and inherits everything. */
+        PolicyDocument: {
+            alerts: components["schemas"]["AlertRule"];
+            dlp: components["schemas"]["DlpRule"];
+            egress: components["schemas"]["ListRule"];
+            injection: components["schemas"]["InjectionRule"];
+            /** @description The classifications agents under this policy may read; `null` inherits. */
+            labels: components["schemas"]["DataLabel"][] | null;
+            limits: components["schemas"]["Limits"];
+            models: components["schemas"]["ListRule"];
+            require_approval: components["schemas"]["ApprovalRule"];
+            /** @description When agents may start work; `null` inherits, `[]` never. */
+            time_windows: components["schemas"]["TimeWindow"][] | null;
+            tools: components["schemas"]["ListRule"];
+        };
+        /**
+         * @description The level a policy is set at.
+         * @enum {string}
+         */
+        PolicyScope: "workspace" | "team" | "agent";
+        /**
+         * @description The versions of the policies that governed a node, by level; `null`
+         *     where no policy is set.
+         */
+        PolicyVersions: {
+            /**
+             * Format: int32
+             * @default null
+             */
+            agent: number | null;
+            /**
+             * Format: int32
+             * @default null
+             */
+            team: number | null;
+            /**
+             * Format: int32
+             * @default null
+             */
+            workspace: number | null;
+        };
         /** @description An RFC 7807 problem document. */
         Problem: {
             detail?: string | null;
@@ -3915,11 +4594,130 @@ export interface components {
             /** @description The token of a reset link, as a platform administrator issued it. */
             token: string;
         };
+        /** @description The effective policy of an agent and where each rule came from. */
+        Resolved: {
+            /** @description What the per-run token carries: the agent's capabilities narrowed by every level. */
+            capabilities: components["schemas"]["Capabilities"];
+            /** @description The policy versions in force, outermost first. */
+            levels: components["schemas"]["LevelRef"][];
+            /**
+             * @description Rule path (`tools.allow`, `limits.tokens_per_run`, ...) → the level that set it
+             *     (`workspace`, `team`, `agent`, `capabilities` for the agent's own document, `default`).
+             */
+            origins: {
+                [key: string]: string;
+            };
+            rules: components["schemas"]["Rules"];
+        };
         /**
          * @description Authorization role of a user.
          * @enum {string}
          */
         Role: "admin" | "user";
+        /**
+         * @description What a finding leads to: a word in the inbox, or a refusal.
+         * @enum {string}
+         */
+        RuleAction: "alert" | "deny";
+        /**
+         * @description Everything the resolved policy says beyond the capabilities: carried in
+         *     the per-run token next to them and evaluated by the same functions on
+         *     both sides. `Rules::default()` is what an agent gets when no policy is set.
+         */
+        Rules: {
+            /**
+             * @default {
+             *       "denials_per_run": null,
+             *       "novelty": null,
+             *       "quarantine_risk_score": null,
+             *       "risk_score": null
+             *     }
+             */
+            alerts: components["schemas"]["AlertRules"];
+            /**
+             * @default {
+             *       "labels": {
+             *         "confidential": {
+             *           "artifacts": true,
+             *           "egress_hosts": []
+             *         },
+             *         "internal": {
+             *           "artifacts": true,
+             *           "egress_hosts": null
+             *         },
+             *         "public": {
+             *           "artifacts": true,
+             *           "egress_hosts": null
+             *         },
+             *         "restricted": {
+             *           "artifacts": false,
+             *           "egress_hosts": []
+             *         }
+             *       },
+             *       "pii": {
+             *         "action": "alert",
+             *         "enabled": true,
+             *         "keywords": [],
+             *         "kinds": [
+             *           "email",
+             *           "phone",
+             *           "card",
+             *           "national_id"
+             *         ]
+             *       },
+             *       "secrets": "deny"
+             *     }
+             */
+            dlp: components["schemas"]["DlpRules"];
+            /** @default [] */
+            egress_denied: string[];
+            /**
+             * @default {
+             *       "action": "flag",
+             *       "model_check": false
+             *     }
+             */
+            injection: components["schemas"]["InjectionRules"];
+            /**
+             * @default {
+             *       "cost_usd_per_day": null,
+             *       "runs_per_hour": null,
+             *       "tokens_per_day": null,
+             *       "tokens_per_run": null,
+             *       "tool_calls_per_minute": null
+             *     }
+             */
+            limits: components["schemas"]["LimitRules"];
+            /** @default [] */
+            models_denied: string[];
+            /**
+             * @default {
+             *       "approvers": [],
+             *       "labels": [],
+             *       "timeout_s": 600,
+             *       "tools": []
+             *     }
+             */
+            require_approval: components["schemas"]["ApprovalRules"];
+            /**
+             * @description One set of windows per level that set some; a time must be in a window of every set.
+             * @default []
+             */
+            time_windows: components["schemas"]["TimeWindow"][][];
+            /**
+             * @description Tools refused whatever the allow-list says.
+             * @default []
+             */
+            tools_denied: string[];
+            /**
+             * @default {
+             *       "agent": null,
+             *       "team": null,
+             *       "workspace": null
+             *     }
+             */
+            versions: components["schemas"]["PolicyVersions"];
+        };
         /** @description One execution of (part of) a graph. */
         Run: {
             /** Format: double */
@@ -3939,6 +4737,8 @@ export interface components {
              *     not allow (each one is a `policy_mismatch` audit entry and a `policy` span).
              */
             policy_mismatches: number;
+            /** @description The workspace policy version that governed the run (each node run has every level). */
+            policy_versions: components["schemas"]["PolicyVersions"];
             /** Format: date-time */
             started_at: string | null;
             status: components["schemas"]["RunStatus"];
@@ -4001,6 +4801,11 @@ export interface components {
             /** @description The `otpauth://` address the app adds the account from. */
             uri: string;
         };
+        /**
+         * @description How bad an alert is.
+         * @enum {string}
+         */
+        Severity: "low" | "medium" | "high" | "critical";
         /** @description One span of a run's trace, as stored and as served. */
         Span: {
             /** Format: uuid */
@@ -4095,6 +4900,8 @@ export interface components {
         } | {
             span: components["schemas"]["Span"];
         } | {
+            alert: components["schemas"]["Alert"];
+        } | {
             run: components["schemas"]["Run"];
         };
         /** @description `POST /workspaces/{wid}/transfers` body. */
@@ -4184,6 +4991,14 @@ export interface components {
              */
             expires_in: number;
             ticket: string;
+        };
+        /** @description When the agent may start work (UTC). `days` are ISO weekdays, 1 = Monday. */
+        TimeWindow: {
+            days: number[];
+            /** @description `HH:MM`; a window ending before it starts wraps past midnight. */
+            end: string;
+            /** @description `HH:MM`. */
+            start: string;
         };
         /** @description How much happened on one day. */
         TimelineDay: {
@@ -5500,6 +6315,201 @@ export interface operations {
             };
         };
     };
+    acknowledge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Alert id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Alert"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Already acknowledged */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Approval id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Approval"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    approve: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Approval id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Decide"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Approval"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Already decided */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    deny: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Approval id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Decide"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Approval"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Already decided */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     download: {
         parameters: {
             query?: never;
@@ -5522,6 +6532,53 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    release: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Artifact id */
+                aid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Artifact"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not quarantined */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8216,6 +9273,92 @@ export interface operations {
             };
         };
     };
+    list: {
+        parameters: {
+            query?: {
+                /** @description Only alerts older than this. */
+                before?: string | null;
+                /** @description Alerts to return, 1–200 (default 50). */
+                limit?: number | null;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Alert"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list: {
+        parameters: {
+            query?: {
+                /** @description Only approvals in this state. */
+                status?: components["schemas"]["ApprovalStatus"] | null;
+                /** @description Approvals to return, 1–200 (default 50). */
+                limit?: number | null;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Approval"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     assistant: {
         parameters: {
             query?: never;
@@ -9797,6 +10940,134 @@ export interface operations {
             };
             /** @description Would leave no owner */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list: {
+        parameters: {
+            query?: {
+                /** @description Only this level. */
+                scope?: components["schemas"]["PolicyScope"] | null;
+                /** @description Only this team or agent. */
+                scope_id?: string | null;
+                /** @description Versions to return, 1–200 (default 50). */
+                limit?: number | null;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Policy"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreatePolicy"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Policy"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    resolve: {
+        parameters: {
+            query: {
+                /** @description The agent whose effective policy to show. */
+                agent_id: string;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Resolved"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

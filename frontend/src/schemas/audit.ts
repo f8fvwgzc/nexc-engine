@@ -27,6 +27,11 @@ export const auditActionSchema = z.enum([
   'agent_quarantined',
   'agent_released',
   'classification_changed',
+  'approval_granted',
+  'approval_denied',
+  'artifact_quarantined',
+  'artifact_released',
+  'alert_raised',
 ]);
 export type AuditAction = z.infer<typeof auditActionSchema>;
 

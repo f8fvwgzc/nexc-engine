@@ -83,6 +83,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `RUNTIME_INJECTION_MODEL_CHECK`). A finding is a `policy` span named `injection` with its
   severity and patterns; by default the text goes through (`flag`), under `injection.action:
   block` it is withheld and the model told why; a high finding is an alert of kind `injection`.
+- Console: a **Policies** page under Settings (admins) with the version history of each level,
+  the diff against the version before, a JSON editor for the next version and the effective
+  policy of any agent rule by rule with the level that set each; approvals in the **Inbox** with
+  Approve and Deny (with a reason); an **Alerts** feed under Settings with acknowledgement; the
+  risk score and its reasons on the agent card; the run page shows a node waiting for an
+  approval, the decision and who took it in the trace, and quarantined artifacts with Release
+  for admins; the audit log reads the new actions.
 - Agent identity and scopes (AgentSecOps phase 1, `docs/AGENTSECOPS.md` §4.1): every agent is a
   principal, `agent://{workspace}/{name}` (`principal_id`, unique, following the name), with an
   owner (`owner_user_id`), a team, a `purpose` and a `capabilities` document: the tools it may

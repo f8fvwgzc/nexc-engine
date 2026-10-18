@@ -196,6 +196,37 @@ export function AgentCardSheet({ agent, admin, onOpenChange, onEdit }: AgentCard
               </dl>
               <BudgetProgress spent={shown.spent_tokens} budget={shown.budget_tokens} />
               <section className="space-y-1.5">
+                <h3 className="text-xs font-medium text-muted-foreground">Risk</h3>
+                {shown.risk_updated_at === null ? (
+                  <p className="text-xs text-muted-foreground">
+                    Not scored yet: the baseline learns from the first three runs.
+                  </p>
+                ) : (
+                  <div className="space-y-1">
+                    <p className="text-sm">
+                      <span
+                        className={cn(
+                          'font-medium tabular-nums',
+                          shown.risk_score >= 6 && 'text-destructive',
+                        )}
+                      >
+                        {shown.risk_score.toFixed(1)}
+                      </span>
+                      <span className="text-muted-foreground"> / 10 · its latest run</span>
+                    </p>
+                    {shown.risk_reasons.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">Nothing unusual.</p>
+                    ) : (
+                      <ul className="list-disc space-y-0.5 pl-4 text-xs">
+                        {shown.risk_reasons.map((reason) => (
+                          <li key={reason}>{reason}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </section>
+              <section className="space-y-1.5">
                 <h3 className="text-xs font-medium text-muted-foreground">Capabilities</h3>
                 <ul className="space-y-0.5 text-xs">
                   {summarizeCapabilities(shown.capabilities).map((line) => (

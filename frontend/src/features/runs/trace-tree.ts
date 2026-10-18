@@ -151,7 +151,21 @@ export function describeSpan(span: Span): string {
           (Array.isArray(a.withheld_memory_ids) ? (a.withheld_memory_ids as unknown[]).length : 0)
         : 0;
       const what = withheld > 0 ? `${withheld} withheld` : text('reason');
-      return [text('decision'), text('rule'), what].filter(Boolean).join(' · ');
+      const decision =
+        text('decision') === 'require_approval' ? 'waits for approval' : text('decision');
+      return [decision, text('rule'), what].filter(Boolean).join(' · ');
+    }
+    case 'approval': {
+      const text = (key: string) => (typeof a[key] === 'string' ? a[key] : '');
+      const who = text('decided_by_name');
+      const waited = num('waited_ms');
+      return [
+        who ? `${text('decision')} by ${who}` : text('decision'),
+        text('reason'),
+        waited === null ? '' : `after ${Math.round(waited / 1000)}s`,
+      ]
+        .filter(Boolean)
+        .join(' · ');
     }
     default:
       return '';

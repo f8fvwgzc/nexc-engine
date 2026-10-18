@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { idSchema, timestampSchema } from './common';
+import { alertKindSchema, approvalStatusSchema, severitySchema } from './policy';
 
 export const stateCategorySchema = z.enum([
   'backlog',
@@ -88,8 +89,36 @@ export type IssueEvent = z.infer<typeof issueEventSchema>;
 /** One entry of the caller's inbox. */
 export const notificationSchema = z.object({
   id: idSchema,
-  kind: z.enum(['assigned', 'comment', 'state', 'due']),
-  issue: z.object({ id: idSchema, identifier: z.string(), title: z.string() }),
+  kind: z.enum(['assigned', 'comment', 'state', 'due', 'approval', 'alert']),
+  /** The issue; null for approvals and alerts. */
+  issue: z.object({ id: idSchema, identifier: z.string(), title: z.string() }).nullable(),
+  /** The tool call to decide (`approval`). */
+  approval: z
+    .object({
+      id: idSchema,
+      run_id: idSchema,
+      node_id: idSchema,
+      graph_id: idSchema,
+      principal: z.string(),
+      tool: z.string(),
+      reason: z.string(),
+      status: approvalStatusSchema,
+      expires_at: timestampSchema,
+    })
+    .nullable(),
+  /** The alert to look at (`alert`). */
+  alert: z
+    .object({
+      id: idSchema,
+      kind: alertKindSchema,
+      severity: severitySchema,
+      rule: z.string(),
+      title: z.string(),
+      principal: z.string(),
+      run_id: idSchema.nullable(),
+      graph_id: idSchema.nullable(),
+    })
+    .nullable(),
   actor: z.object({ user_id: idSchema, name: z.string() }).nullable(),
   created_at: timestampSchema,
   read_at: timestampSchema.nullable(),

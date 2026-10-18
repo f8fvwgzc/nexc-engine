@@ -6,6 +6,7 @@ export const NODE_STATUSES = [
   'idle',
   'queued',
   'running',
+  'waiting_approval',
   'succeeded',
   'failed',
   'skipped',

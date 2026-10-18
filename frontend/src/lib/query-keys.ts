@@ -62,6 +62,22 @@ export const qk = {
   },
   /** Kept out of the `workspaces` root, which is copied to browser storage. */
   audit: (workspaceId: string) => ['audit', workspaceId] as const,
+  policies: {
+    all: ['policies'] as const,
+    list: (workspaceId: string, scope?: string, scopeId?: string) =>
+      ['policies', workspaceId, 'list', scope ?? 'all', scopeId ?? 'all'] as const,
+    resolved: (workspaceId: string, agentId: string) =>
+      ['policies', workspaceId, 'resolved', agentId] as const,
+  },
+  approvals: {
+    all: ['approvals'] as const,
+    list: (workspaceId: string, status?: string) =>
+      ['approvals', workspaceId, status ?? 'all'] as const,
+  },
+  alerts: {
+    all: ['alerts'] as const,
+    list: (workspaceId: string) => ['alerts', workspaceId] as const,
+  },
   /** Not copied to browser storage: document names and passages stay on the server. */
   knowledge: {
     all: ['knowledge'] as const,
