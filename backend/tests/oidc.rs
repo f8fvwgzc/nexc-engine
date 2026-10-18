@@ -934,9 +934,23 @@ async fn a_suspended_account_is_refused(pool: PgPool) {
         .execute(&pool)
         .await
         .unwrap();
+    let last_sign_in = || async {
+        sqlx::query_scalar::<_, Option<chrono::DateTime<chrono::Utc>>>(
+            "SELECT last_login_at FROM user_identities",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    let before = last_sign_in().await;
     let t = trip(&app, &stub, person(), None).await;
     assert_eq!(t.location, "/login?sso_error=suspended");
     assert!(t.refresh.is_none());
+    assert_eq!(
+        last_sign_in().await,
+        before,
+        "a refused sign-in is no sign-in"
+    );
     let failed: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM account_events WHERE user_id = $1::uuid AND kind = 'sign_in_failed'",
     )

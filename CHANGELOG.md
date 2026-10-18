@@ -30,7 +30,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   declined at the provider; key rotation with one refetch and none for a made-up key id; ES256;
   the admin groups and the workspace mapping giving roles and taking back only what they gave,
   groups from userinfo, a sign-in without the groups claim changing no role; password sign-in off with the break-glass administrator still let in;
-  `return_to` never leaving the site; a suspended account refused; `GET /auth/providers` and
+  `return_to` never leaving the site; a suspended account refused (its identity's last sign-in
+  left as it was); `GET /auth/providers` and
   `GET /auth/identities`. `backend/tests/worst_case.rs` sends hostile values in every parameter
   and cookie of the two routes (every answer a redirect to the provider or to this site), races
   eight callbacks for one state (one session), and purges what expired sign-ins left. A vitest

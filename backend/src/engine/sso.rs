@@ -48,6 +48,9 @@ pub enum Resolution {
 
 /// What looking the identity up came to.
 enum Found {
+    /// The account the identity was linked to before.
+    Linked(Uuid),
+    /// The account the identity was linked to, or created for, just now.
     Account(Uuid),
     Refused(Refusal),
     /// Another sign-in created the account or the link at the same moment.
@@ -65,8 +68,9 @@ pub async fn sign_in(
     if matches!(found, Found::Raced) {
         found = find_or_create(state, settings, identity, ip).await?;
     }
-    let id = match found {
-        Found::Account(id) => id,
+    let (id, linked_before) = match found {
+        Found::Linked(id) => (id, true),
+        Found::Account(id) => (id, false),
         Found::Refused(refusal) => return Ok(Resolution::Refused(refusal)),
         Found::Raced => return Ok(Resolution::Refused(Refusal::Failed)),
     };
@@ -77,6 +81,11 @@ pub async fn sign_in(
         let detail = "single sign-on: the account is suspended";
         note(state, id, AccountEventKind::SignInFailed, Some(ip), detail).await;
         return Ok(Resolution::Refused(Refusal::Suspended));
+    }
+    if linked_before {
+        // Only a sign-in that is let in counts as the identity's last one.
+        let given = identity.profile.email.as_deref().unwrap_or_default();
+        repo::sso::touch(&state.db, &settings.issuer, &identity.subject, given).await?;
     }
     let groups = identity.profile.groups.as_deref();
     let role = match groups {
@@ -109,8 +118,7 @@ async fn find_or_create(
     let profile = &identity.profile;
     let given = profile.email.clone().unwrap_or_default();
     if let Some(id) = repo::sso::linked_user(&state.db, issuer, &identity.subject).await? {
-        repo::sso::touch(&state.db, issuer, &identity.subject, &given).await?;
-        return Ok(Found::Account(id));
+        return Ok(Found::Linked(id));
     }
     let email = user::normalize_email(&given);
     let mut errors = FieldErrors::default();
