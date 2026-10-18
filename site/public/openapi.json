@@ -8785,6 +8785,71 @@
         ]
       }
     },
+    "/api/v1/workspaces/{wid}/knowledge/passages/{cid}": {
+      "get": {
+        "tags": [
+          "knowledge"
+        ],
+        "summary": "One passage by its chunk id: what a citation `[doc:<chunk id>]` points\nat (everyone but guests; a passage of another workspace, or of a document\nthat is not ready, is not found).",
+        "operationId": "passage",
+        "parameters": [
+          {
+            "name": "wid",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "cid",
+            "in": "path",
+            "description": "Chunk id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Passage"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/workspaces/{wid}/knowledge/search": {
       "get": {
         "tags": [
@@ -11258,7 +11323,7 @@
           {
             "name": "decision",
             "in": "query",
-            "description": "Only policy and approval spans with this decision (`allow`, `deny`, `require_approval`, `alert`).",
+            "description": "Only policy and approval spans with this decision (`allow`, `deny`, `require_approval`,\n`alert`), or `evidence`: the spans carrying an evidence verdict (a node's last model\ncall and the policy decision about its output).",
             "required": false,
             "schema": {
               "type": [
@@ -13802,7 +13867,8 @@
           "team",
           "budget_left",
           "recent_spans",
-          "evaluation"
+          "evaluation",
+          "evidence"
         ],
         "properties": {
           "agent": {
@@ -13826,6 +13892,10 @@
                 "type": "null"
               }
             ]
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/AgentEvidence",
+            "description": "The verdicts on the agent's last twenty outputs across the runs the caller may open."
           },
           "owner": {
             "oneOf": [
@@ -13989,6 +14059,78 @@
           "total": {
             "type": "integer",
             "format": "int32"
+          }
+        }
+      },
+      "AgentEvidence": {
+        "type": "object",
+        "description": "The verdicts on an agent's last outputs (`docs/AGENTSECOPS.md` §2).",
+        "required": [
+          "verified",
+          "partial",
+          "unverified",
+          "recent"
+        ],
+        "properties": {
+          "partial": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "recent": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentOutputEvidence"
+            },
+            "description": "The outputs the counts are over, newest first (at most twenty)."
+          },
+          "unverified": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "verified": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "AgentOutputEvidence": {
+        "type": "object",
+        "description": "The verdict on one of an agent's outputs.",
+        "required": [
+          "run_id",
+          "graph_id",
+          "node_id",
+          "verdict",
+          "coverage",
+          "finished_at"
+        ],
+        "properties": {
+          "coverage": {
+            "type": "number",
+            "format": "double",
+            "description": "0 to 1."
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "graph_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "node_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/EvidenceVerdict"
           }
         }
       },
@@ -16752,6 +16894,167 @@
           }
         }
       },
+      "Evidence": {
+        "type": "object",
+        "description": "What the verifier found about an output: stored on the node run\n(`NodeRun.evidence`) and summarised on its last `llm_call` span.",
+        "required": [
+          "verdict",
+          "coverage",
+          "claims",
+          "cited_claims",
+          "declared_claims",
+          "cited",
+          "unknown",
+          "given",
+          "min_coverage"
+        ],
+        "properties": {
+          "cited": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Distinct ids cited that the node was given (`doc:…`), first cited first."
+          },
+          "cited_claims": {
+            "type": "integer",
+            "description": "Claims that cite at least one thing the node was given.",
+            "minimum": 0
+          },
+          "claims": {
+            "type": "integer",
+            "description": "The sentences, bullets and table rows of the prose (headings, quotes,\ncode and the sources section aside).",
+            "minimum": 0
+          },
+          "coverage": {
+            "type": "number",
+            "format": "double",
+            "description": "Claims citing what the node was given, over the claims not declared the\nmodel's own; 0 to 1."
+          },
+          "declared_claims": {
+            "type": "integer",
+            "description": "Claims the model declared its own (`[assumption]`) and cited nothing for.",
+            "minimum": 0
+          },
+          "given": {
+            "type": "integer",
+            "description": "How many things the node was given.",
+            "minimum": 0
+          },
+          "min_coverage": {
+            "type": "number",
+            "format": "double",
+            "description": "The coverage a verified output needed under the policy in force."
+          },
+          "unknown": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Distinct ids cited that the node was never given: forged, or another run's."
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/EvidenceVerdict"
+          }
+        }
+      },
+      "EvidenceAction": {
+        "type": "string",
+        "description": "What the evidence verifier does with an output that is not verified.",
+        "enum": [
+          "mark",
+          "reject"
+        ]
+      },
+      "EvidenceCounts": {
+        "type": "object",
+        "description": "Outputs by evidence verdict (`docs/AGENTSECOPS.md` §2).",
+        "required": [
+          "verified",
+          "partial",
+          "unverified"
+        ],
+        "properties": {
+          "partial": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "unverified": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "verified": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "EvidenceRule": {
+        "type": "object",
+        "description": "Evidence-bound outputs (`docs/AGENTSECOPS.md` §2): whether a node's\noutput must cite what the node was given, how much of it, and what\nhappens when it does not.",
+        "required": [
+          "required",
+          "min_coverage",
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EvidenceAction",
+                "description": "`mark` records the verdict, `reject` fails the node; `null` inherits (default mark)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "min_coverage": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The share of claims that must cite what was given for an output to be\nverified, 0 to 1; `null` inherits (default 0.8)."
+          },
+          "required": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the verifier acts on the verdict; `null` inherits (default: off,\nthe verdict is only recorded)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "EvidenceRules": {
+        "type": "object",
+        "description": "Evidence-bound outputs, once resolved: whether the verifier acts, the\ncoverage a verified output needs, and what happens below it.",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/EvidenceAction",
+            "default": "mark"
+          },
+          "min_coverage": {
+            "type": "number",
+            "format": "double",
+            "default": 0.8
+          },
+          "required": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "EvidenceVerdict": {
+        "type": "string",
+        "description": "How much of an output rests on what the node was given.",
+        "enum": [
+          "verified",
+          "partial",
+          "unverified"
+        ]
+      },
       "Executor": {
         "type": "string",
         "description": "Which executor runs a node.",
@@ -18887,7 +19190,8 @@
           "finished_at",
           "output_preview",
           "policy_versions",
-          "context_labels"
+          "context_labels",
+          "evidence"
         ],
         "properties": {
           "attempt": {
@@ -18908,6 +19212,17 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "evidence": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Evidence",
+                "description": "What the verifier found about the node's output: the verdict, the\ncoverage, the ids it cited and the ones it was never given. `null`\nuntil the node answered, and for a node that produced no output."
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "executor": {
@@ -19988,7 +20303,8 @@
           "require_approval",
           "alerts",
           "dlp",
-          "injection"
+          "injection",
+          "evidence"
         ],
         "properties": {
           "alerts": {
@@ -19999,6 +20315,9 @@
           },
           "egress": {
             "$ref": "#/components/schemas/ListRule"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/EvidenceRule"
           },
           "injection": {
             "$ref": "#/components/schemas/InjectionRule"
@@ -20649,6 +20968,14 @@
             },
             "default": []
           },
+          "evidence": {
+            "$ref": "#/components/schemas/EvidenceRules",
+            "default": {
+              "action": "mark",
+              "min_coverage": 0.8,
+              "required": false
+            }
+          },
           "injection": {
             "$ref": "#/components/schemas/InjectionRules",
             "default": {
@@ -20892,6 +21219,7 @@
           "approvals_open",
           "alerts_open",
           "artifacts_quarantined",
+          "evidence_today",
           "top_risk",
           "policy_versions",
           "last_seal",
@@ -20936,6 +21264,10 @@
               "$ref": "#/components/schemas/RuleCount"
             },
             "description": "Policy denials since midnight UTC, by the rule that denied."
+          },
+          "evidence_today": {
+            "$ref": "#/components/schemas/EvidenceCounts",
+            "description": "Outputs that answered since midnight UTC, by evidence verdict."
           },
           "last_seal": {
             "oneOf": [
@@ -21004,7 +21336,8 @@
           "model",
           "tokens_in",
           "tokens_out",
-          "inbound"
+          "inbound",
+          "evidence"
         ],
         "properties": {
           "agent_id": {
@@ -21027,6 +21360,13 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "evidence": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`attributes.evidence`: the verdict on an output, on a node's last model\ncall and on the policy decision about it."
           },
           "graph_id": {
             "type": "string",
