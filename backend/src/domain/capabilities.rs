@@ -224,8 +224,7 @@ impl Capabilities {
             }
         }
         fn is_tool(name: &str) -> bool {
-            name.bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b'.')
+            super::mcp::is_tool_entry(name)
         }
         fn is_host(host: &str) -> bool {
             let host = host.strip_prefix("*.").unwrap_or(host);

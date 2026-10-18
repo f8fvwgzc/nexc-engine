@@ -156,6 +156,28 @@ pub fn split_tool_name(name: &str) -> Option<(&str, &str)> {
         .then_some((server, tool))
 }
 
+/// Whether `name` may stand in a tool list of the capabilities or a policy:
+/// a plain tool name (`write_file`, `fetch_url`), a gateway tool
+/// (`mcp:<server>/<tool>`) or every tool of a server (`mcp:<server>/*`).
+pub fn is_tool_entry(name: &str) -> bool {
+    fn plain(name: &str) -> bool {
+        !name.is_empty()
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b'.')
+    }
+    match name.strip_prefix(TOOL_PREFIX) {
+        None => plain(name),
+        Some(rest) => match rest.split_once('/') {
+            Some((server, tool)) => {
+                is_valid_name(server)
+                    && (tool == "*" || (plain(tool) && tool.len() <= TOOL_NAME_MAX))
+            }
+            None => false,
+        },
+    }
+}
+
 /// Whether a server name fits: lowercase letters, digits, `_` and `-`.
 pub fn is_valid_name(name: &str) -> bool {
     !name.is_empty()
@@ -280,6 +302,10 @@ mod tests {
         assert_eq!(split_tool_name("mcp:github/"), None);
         assert!(is_valid_name("my-server_2"));
         assert!(!is_valid_name("My Server"));
+        assert!(is_tool_entry("write_file") && is_tool_entry("fetch_url"));
+        assert!(is_tool_entry("mcp:github/search") && is_tool_entry("mcp:github/*"));
+        assert!(!is_tool_entry("mcp:github") && !is_tool_entry("mcp:Git Hub/x"));
+        assert!(!is_tool_entry("write file") && !is_tool_entry(""));
         assert!(!is_valid_name(&"a".repeat(65)));
         let fetch = GatewayTool::fetch_url();
         assert_eq!(fetch.name, FETCH_URL);

@@ -3,6 +3,8 @@
 #![allow(dead_code)]
 #![forbid(unsafe_code)]
 
+pub mod grpc_runtime;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};

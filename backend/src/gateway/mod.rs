@@ -27,7 +27,7 @@ use crate::domain::mcp::{
 };
 use crate::domain::policy::{Action, Decision, Effect, Rules, decide_with};
 use crate::domain::policy_document::Severity;
-use crate::domain::trace::{SpanDraft, SpanKind, SpanStatus};
+use crate::domain::trace::{SpanKind, SpanStatus};
 use crate::engine::approvals::Granted;
 use crate::engine::defend::Finding;
 use crate::engine::executor::ExecContext;
@@ -71,6 +71,9 @@ pub struct ToolRequest {
 pub struct ToolOutcome {
     pub output: String,
     pub is_error: bool,
+    /// The gateway's own time on the call (decisions, DLP, spans), the tool
+    /// itself excluded; what `make prove-gateway` measures.
+    pub overhead_ns: u64,
 }
 
 impl ToolOutcome {
@@ -81,6 +84,7 @@ impl ToolOutcome {
                 decision.rule, decision.reason
             ),
             is_error: true,
+            overhead_ns: 0,
         }
     }
 
@@ -88,7 +92,39 @@ impl ToolOutcome {
         ToolOutcome {
             output: message.into(),
             is_error: true,
+            overhead_ns: 0,
         }
+    }
+}
+
+/// The gateway's own clock: everything but the tool's time.
+struct Overhead {
+    started: Instant,
+    /// Time spent inside the tool so far.
+    inside: Duration,
+}
+
+impl Overhead {
+    fn new() -> Self {
+        Overhead {
+            started: Instant::now(),
+            inside: Duration::ZERO,
+        }
+    }
+
+    /// Runs the tool, keeping its time out of the overhead.
+    async fn tool<T>(&mut self, work: impl Future<Output = T>) -> T {
+        let began = Instant::now();
+        let out = work.await;
+        self.inside += began.elapsed();
+        out
+    }
+
+    fn ns(&self) -> u64 {
+        self.started
+            .elapsed()
+            .saturating_sub(self.inside)
+            .as_nanos() as u64
     }
 }
 
@@ -430,6 +466,30 @@ fn screen_arguments(ctx: &ExecContext, text: &str, host: &str) -> Decision {
 /// Performs a gateway tool call for the node of `ctx`: decides it, does it,
 /// records it. Never fails the node; the model sees an error instead.
 pub async fn perform(ctx: &ExecContext, req: &ToolRequest, granted: &Granted) -> ToolOutcome {
+    let mut overhead = Overhead::new();
+    let mut outcome = perform_timed(ctx, req, granted, &mut overhead).await;
+    outcome.overhead_ns = overhead.ns();
+    let kind = if req.tool == FETCH_URL {
+        "fetch_url"
+    } else {
+        "mcp"
+    };
+    ctx.state.metrics.gateway_calls.add(
+        &[
+            ("kind", kind),
+            ("outcome", if outcome.is_error { "error" } else { "ok" }),
+        ],
+        1,
+    );
+    outcome
+}
+
+async fn perform_timed(
+    ctx: &ExecContext,
+    req: &ToolRequest,
+    granted: &Granted,
+    overhead: &mut Overhead,
+) -> ToolOutcome {
     let (args_sha256, args_bytes, args_text) = args_digest(&req.arguments);
     let own = ctx.principal();
     let principal = if is_principal_or_descendant(&req.agent, &own) {
@@ -515,11 +575,12 @@ pub async fn perform(ctx: &ExecContext, req: &ToolRequest, granted: &Granted) ->
                 Err((decision.rule, decision.reason))
             }
         };
-        let fetched = tokio::time::timeout(
-            timeout,
-            fetch::fetch(&ctx.state.gateway_http, url, max_bytes, &allow),
-        )
-        .await;
+        let fetched = overhead
+            .tool(tokio::time::timeout(
+                timeout,
+                fetch::fetch(&ctx.state.gateway_http, url, max_bytes, &allow),
+            ))
+            .await;
         let (outcome, egress) = match fetched {
             Ok(Ok(fetched)) => {
                 let outcome = ToolOutcome {
@@ -528,6 +589,7 @@ pub async fn perform(ctx: &ExecContext, req: &ToolRequest, granted: &Granted) ->
                         fetched.status, fetched.content_type, fetched.body
                     )),
                     is_error: fetched.status >= 400,
+                    overhead_ns: 0,
                 };
                 let final_host = fetched.host.clone();
                 let final_url = without_query(&fetched.final_url);
@@ -639,11 +701,12 @@ pub async fn perform(ctx: &ExecContext, req: &ToolRequest, granted: &Granted) ->
         session.close().await;
         result
     };
-    let outcome = match tokio::time::timeout(timeout, work).await {
+    let outcome = match overhead.tool(tokio::time::timeout(timeout, work)).await {
         Ok(Ok(output)) => {
             let outcome = ToolOutcome {
                 output: bounded(output.text),
                 is_error: output.is_error,
+                overhead_ns: 0,
             };
             call.record(
                 &outcome,
@@ -696,11 +759,6 @@ fn without_query(url: &str) -> String {
         Err(_) => url.split(['?', '#']).next().unwrap_or_default().to_owned(),
     }
 }
-
-/// The `policy` span a gateway refusal leaves is of this run's node: the
-/// draft helpers of [`ExecContext`] give it the right ids.
-#[allow(dead_code)]
-fn _spans_are_drafted_by_the_context(_: &SpanDraft) {}
 
 #[cfg(test)]
 mod tests {

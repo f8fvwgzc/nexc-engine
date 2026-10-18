@@ -43,8 +43,11 @@ use crate::rpc::firewall::agent_firewall_server::{AgentFirewall, AgentFirewallSe
 use crate::rpc::firewall::{self as pb};
 use crate::security::api_token;
 
-/// How long a caller's agent and policy are kept between calls.
-const CALLER_TTL: Duration = Duration::from_secs(5);
+/// How long an agent's resolved policy is kept between calls: the token and
+/// the agent's status are looked up on every call (a revoked token or a
+/// quarantine takes effect at once); a policy edited meanwhile applies
+/// within this long.
+const POLICY_TTL: Duration = Duration::from_secs(5);
 /// A decisions session is sealed after this long without a call.
 pub const SESSION_IDLE: Duration = Duration::from_secs(600);
 /// Spans accepted on one reported run.
@@ -193,12 +196,16 @@ async fn close_run(
     Some(sealed)
 }
 
+/// A resolved policy, kept for [`POLICY_TTL`] since the instant.
+type CachedPolicy = (Instant, Arc<Resolved>, PolicyVersions);
+
 /// The service.
 #[derive(Clone)]
 pub struct FirewallService {
     state: AppState,
     sessions: Arc<Sessions>,
-    callers: Arc<DashMap<[u8; 32], (Instant, Caller)>>,
+    /// Resolved policies by agent and policy version.
+    policies: Arc<DashMap<(Uuid, i32), CachedPolicy>>,
 }
 
 impl FirewallService {
@@ -206,7 +213,7 @@ impl FirewallService {
         FirewallService {
             sessions: state.firewall_sessions.clone(),
             state,
-            callers: Arc::default(),
+            policies: Arc::default(),
         }
     }
 
@@ -222,11 +229,6 @@ impl FirewallService {
             return Err(Status::unauthenticated("invalid agent API token"));
         }
         let hash = api_token::hash(presented);
-        if let Some(cached) = self.callers.get(&hash)
-            && cached.0.elapsed() < CALLER_TTL
-        {
-            return Ok(cached.1.clone());
-        }
         let agent = repo::agent_tokens::authenticate(&self.state.db, &hash)
             .await
             .map_err(internal)?
@@ -241,23 +243,36 @@ impl FirewallService {
         let Some(workspace_id) = repo_workspace(&agent) else {
             return Err(Status::permission_denied("the agent is in no workspace"));
         };
-        let policies = repo::policies::latest_all(&self.state.db, workspace_id)
-            .await
-            .map_err(internal)?;
-        let levels = levels_for(&policies, agent.team_id, Some(agent.id));
-        let versions = versions_of(&levels);
-        let resolved = Arc::new(resolve(&levels, Some(&agent.capabilities)));
-        let caller = Caller {
+        let key = (agent.id, agent.policy_version);
+        let cached = self
+            .policies
+            .get(&key)
+            .filter(|c| c.0.elapsed() < POLICY_TTL)
+            .map(|c| (c.1.clone(), c.2.clone()));
+        let (resolved, versions) = match cached {
+            Some(found) => found,
+            None => {
+                let policies = repo::policies::latest_all(&self.state.db, workspace_id)
+                    .await
+                    .map_err(internal)?;
+                let levels = levels_for(&policies, agent.team_id, Some(agent.id));
+                let versions = versions_of(&levels);
+                let resolved = Arc::new(resolve(&levels, Some(&agent.capabilities)));
+                self.policies
+                    .insert(key, (Instant::now(), resolved.clone(), versions.clone()));
+                if self.policies.len() > 10_000 {
+                    self.policies
+                        .retain(|_, (at, _, _)| at.elapsed() < POLICY_TTL);
+                }
+                (resolved, versions)
+            }
+        };
+        Ok(Caller {
             agent,
             workspace_id,
             resolved,
             versions,
-        };
-        self.callers.insert(hash, (Instant::now(), caller.clone()));
-        if self.callers.len() > 10_000 {
-            self.callers.retain(|_, (at, _)| at.elapsed() < CALLER_TTL);
-        }
-        Ok(caller)
+        })
     }
 
     /// The agent's decisions session on this instance, opened on demand.

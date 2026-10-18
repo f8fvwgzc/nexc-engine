@@ -323,10 +323,7 @@ pub struct PolicyDocument {
 }
 
 fn is_tool(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b'.')
+    super::mcp::is_tool_entry(name)
 }
 
 /// Whether `host` is a host name, optionally `*.`-prefixed, optionally with a port.
