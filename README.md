@@ -6,6 +6,7 @@
 
 [![CI](https://github.com/f8fvwgzc/nexc-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/f8fvwgzc/nexc-engine/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/f8fvwgzc/nexc-engine/actions/workflows/codeql.yml/badge.svg)](https://github.com/f8fvwgzc/nexc-engine/actions/workflows/codeql.yml)
+[![Docs](https://github.com/f8fvwgzc/nexc-engine/actions/workflows/docs.yml/badge.svg)](https://f8fvwgzc.github.io/nexc-engine/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust 1.99](https://img.shields.io/badge/rust-1.99-orange?logo=rust)](backend)
 [![React 19](https://img.shields.io/badge/react-19-61dafb?logo=react&logoColor=white)](frontend)
@@ -15,7 +16,7 @@
 [Try it in 60 seconds](#try-it-in-60-seconds) ·
 [Features](#features) ·
 [Architecture](#architecture) ·
-[Docs](docs/ARCHITECTURE.md) ·
+[Docs](https://f8fvwgzc.github.io/nexc-engine/) ·
 [Contributing](CONTRIBUTING.md)
 
 <img src="docs/media/hero.png" alt="nexc-engine: an Obsidian-like node graph whose nodes are planned by an LLM and executed by agents" width="900">
@@ -176,7 +177,9 @@ Request flows (plan and run) are described with sequence diagrams in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The cross-component contract (env vars, API, events,
 runtime protocol) is [docs/CONTRACT.md](docs/CONTRACT.md). The assessment of nexc-engine against SoftBank's
 AgentSecOps PF, and the roadmap to agent identity, policy, trace and audit, is
-[docs/AGENTSECOPS.md](docs/AGENTSECOPS.md).
+[docs/AGENTSECOPS.md](docs/AGENTSECOPS.md). The same documents, with search, the API reference and
+a reading layout, are the documentation site at https://f8fvwgzc.github.io/nexc-engine/
+(`make docs` serves it locally; `site/README.md` says how it is built).
 
 <!-- #endregion architecture -->
 ## Repository layout
@@ -430,6 +433,12 @@ and CI runs it against Docker Compose on every pull request.
 Contributions of all sizes are welcome – see [CONTRIBUTING.md](CONTRIBUTING.md) for the dev setup,
 conventions and commit style, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Good first issues are
 labelled [`good first issue`](https://github.com/f8fvwgzc/nexc-engine/labels/good%20first%20issue).
+
+The documentation site is built from the Markdown in this repository by
+[`.github/workflows/docs.yml`](.github/workflows/docs.yml) and published to GitHub Pages on
+every push to `main` and on every release tag, once Pages is enabled in the repository settings
+(Settings → Pages → Source: GitHub Actions). Pull requests build it without deploying, and a
+broken internal link fails the build.
 ## Star history
 
 <a href="https://star-history.com/#f8fvwgzc/nexc-engine&Date">

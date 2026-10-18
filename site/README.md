@@ -4,17 +4,18 @@ This folder builds the nexc-engine documentation from the Markdown the repositor
 
 ## Running it
 
-The site needs Node.js 22.12 and pnpm 10.
+| Command           | What it does                                                                        |
+| ----------------- | ----------------------------------------------------------------------------------- |
+| `make docs`       | Builds the site and serves it on http://localhost:4173/nexc-engine/                 |
+| `make docs-build` | Builds it to `site/.vitepress/dist`; fails on a link to a page that does not exist  |
+| `make docs-dev`   | Serves it with live reload on http://localhost:5174/nexc-engine/                    |
+| `make openapi`    | Refreshes `public/openapi.json`, the document the API reference shows               |
 
-```sh
-cd site
-pnpm install --frozen-lockfile
-pnpm build      # to .vitepress/dist; fails on a link to a page that does not exist
-pnpm preview    # serves the build on http://localhost:4173/nexc-engine/
-pnpm dev        # live reload while writing
-```
+The site needs Node.js 22.12 and pnpm 10; the targets run `pnpm install --frozen-lockfile` first. `DOCS_BASE` sets the path the site is served under (default `/nexc-engine/`, the GitHub Pages path of the repository; `/` for a root).
 
-`DOCS_BASE` sets the path the site is served under (default `/nexc-engine/`, the GitHub Pages path of the repository; `/` for a root). The API reference shows `public/openapi.json`, an export of `nexc openapi`; refresh it when the API changes.
+## Publishing
+
+`.github/workflows/docs.yml` builds the site and deploys it to GitHub Pages on every push to `main` and on every `v*` tag; it takes the base path from `actions/configure-pages`, so a custom domain needs no change here. Pages must be enabled once in the repository settings (Settings, Pages, Source: GitHub Actions); until then the workflow builds and the deploy step waits for the environment. Pull requests build the site in the `docs` job of `ci.yml` without deploying, so a broken link is caught before merge.
 
 ## How it is built
 

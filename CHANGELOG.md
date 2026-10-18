@@ -17,6 +17,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `deploy/k8s/README.md` and the Helm `values.yaml`: pages include regions of them, marked with
   `<!-- #region -->` comments that GitHub does not show, and the links inside them are mapped to
   the page that renders the file. The build fails on a link to a page that does not exist.
+  `make docs` builds and serves it; `.github/workflows/docs.yml` publishes it to GitHub Pages on
+  every push to `main` and on tags (once Pages is enabled in the repository settings), and CI
+  builds it on pull requests without deploying. The README carries a Docs badge, and the account
+  menu of the app links to the documentation and to the server's API reference.
 - A2A adapter, the console: the agent card gets an **A2A** tab with the switch that publishes
   the agent (admins; disabled for an external agent, with the reason), the addresses of its card,
   its well-known card and its JSON-RPC endpoint under the console's origin with a copy each, and

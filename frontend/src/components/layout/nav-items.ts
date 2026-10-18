@@ -77,3 +77,11 @@ export const API_DOCS_ITEM: NavItem = {
   icon: BookOpenTextIcon,
   external: true,
 };
+
+/** The documentation site, built from the repository's docs and published with each release. */
+export const DOCS_ITEM: NavItem = {
+  title: 'Documentation',
+  to: 'https://f8fvwgzc.github.io/nexc-engine/',
+  icon: BookOpenTextIcon,
+  external: true,
+};

@@ -17,7 +17,8 @@ LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a;
         backup backup-check restore prove prove-trace prove-identity prove-audit prove-policy prove-agentsecops prove-gateway test-worst-case \
         build test test-backend test-frontend test-runtime lint fmt check \
         docker-build docker-up docker-down docker-logs demo demo-onto demo-secops seed-demo \
-        minikube-up minikube-down k8s-render openapi proto-runtime doctor clean
+        minikube-up minikube-down k8s-render openapi proto-runtime doctor clean \
+        docs docs-build docs-dev
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage: make \033[36m<target>\033[0m\n"} \
@@ -194,6 +195,17 @@ openapi: ## Export the OpenAPI spec from the backend, regenerate frontend types 
 	@$(LOAD_ENV) $(CARGO) run --quiet --manifest-path $(BACKEND_MANIFEST) -- openapi > .cache/openapi.json
 	cd frontend && $(PNPM) exec openapi-typescript ../.cache/openapi.json -o src/lib/api/schema.d.ts
 	cp .cache/openapi.json site/public/openapi.json
+
+##@ Documentation
+
+docs: docs-build ## Build the documentation site and serve it on http://localhost:4173
+	cd site && $(PNPM) preview --port 4173
+
+docs-build: ## Build the documentation site to site/.vitepress/dist (fails on a broken internal link)
+	cd site && $(PNPM) install --frozen-lockfile && $(PNPM) build
+
+docs-dev: ## Serve the documentation site with live reload on http://localhost:5174
+	cd site && $(PNPM) install --frozen-lockfile && $(PNPM) dev --port 5174
 
 doctor: ## Check local tooling and configuration (nexc doctor)
 	@scripts/doctor.sh

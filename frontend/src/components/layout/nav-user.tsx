@@ -1,4 +1,11 @@
-import { ChevronsUpDownIcon, KeyboardIcon, LogOutIcon, PaletteIcon, UserIcon } from 'lucide-react';
+import {
+  ChevronsUpDownIcon,
+  CodeXmlIcon,
+  KeyboardIcon,
+  LogOutIcon,
+  PaletteIcon,
+  UserIcon,
+} from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -27,6 +34,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { useAuthStore } from '@/stores/auth-store';
 import { useCommandStore } from '@/stores/command-store';
 
+import { API_DOCS_ITEM, DOCS_ITEM } from './nav-items';
 import { isTheme, THEME_OPTIONS } from './theme-options';
 
 function initials(name: string): string {
@@ -122,6 +130,22 @@ export function NavUser() {
               <DropdownMenuItem onSelect={() => openShortcuts(true)}>
                 <KeyboardIcon />
                 Keyboard shortcuts
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            {/* Help: the documentation site and this server's API reference, each in a new tab. */}
+            <DropdownMenuGroup>
+              <DropdownMenuItem asChild>
+                <a href={DOCS_ITEM.to} target="_blank" rel="noopener noreferrer">
+                  <DOCS_ITEM.icon />
+                  {DOCS_ITEM.title}
+                </a>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <a href={API_DOCS_ITEM.to} target="_blank" rel="noopener noreferrer">
+                  <CodeXmlIcon />
+                  API reference
+                </a>
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />

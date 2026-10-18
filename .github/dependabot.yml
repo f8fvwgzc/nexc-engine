@@ -16,6 +16,13 @@ updates:
       npm-minor-patch:
         update-types: [minor, patch]
 
+  - package-ecosystem: npm
+    directory: /site
+    schedule: { interval: weekly, day: monday }
+    groups:
+      docs-minor-patch:
+        update-types: [minor, patch]
+
   - package-ecosystem: uv
     directory: /agent-runtime
     schedule: { interval: weekly, day: monday }
