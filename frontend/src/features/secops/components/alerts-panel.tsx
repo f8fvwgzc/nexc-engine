@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckIcon, SirenIcon } from 'lucide-react';
+import { CheckIcon, SendIcon, SirenIcon } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -76,6 +76,16 @@ export function AlertRow({
           )}{' '}
           · <time dateTime={alert.created_at}>{formatRelative(alert.created_at)}</time>
         </span>
+        {alert.deliveries > 0 && (
+          <Badge
+            variant="secondary"
+            className="ml-1.5 h-5 gap-1 text-[10px] font-normal"
+            title="Delivered to the workspace's alert destinations"
+          >
+            <SendIcon className="size-3" aria-hidden />
+            sent to {alert.deliveries} destination{alert.deliveries === 1 ? '' : 's'}
+          </Badge>
+        )}
       </span>
       {alert.acknowledged_at ? (
         <span className="text-[11px]">seen</span>

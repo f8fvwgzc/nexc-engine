@@ -16,6 +16,7 @@ import {
   UsersIcon,
   UsersRoundIcon,
   WaypointsIcon,
+  WebhookIcon,
 } from 'lucide-react';
 
 export interface SettingsItem {
@@ -65,6 +66,12 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
       { title: 'Guardrails', to: `${SETTINGS_ROOT}/guardrails`, icon: ShieldCheckIcon },
       { title: 'Policies', to: `${SETTINGS_ROOT}/policies`, icon: GavelIcon, adminOnly: true },
       { title: 'Alerts', to: `${SETTINGS_ROOT}/alerts`, icon: SirenIcon, adminOnly: true },
+      {
+        title: 'Alert destinations',
+        to: `${SETTINGS_ROOT}/alert-destinations`,
+        icon: WebhookIcon,
+        adminOnly: true,
+      },
       { title: 'MCP servers', to: `${SETTINGS_ROOT}/mcp-servers`, icon: PlugZapIcon },
       { title: 'Knowledge', to: `${SETTINGS_ROOT}/knowledge`, icon: BookOpenIcon },
       { title: 'Memory', to: `${SETTINGS_ROOT}/memory`, icon: BrainIcon },

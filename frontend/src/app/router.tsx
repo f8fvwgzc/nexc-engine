@@ -134,6 +134,10 @@ export const routes: RouteObject[] = [
               { path: 'guardrails', ...page(routeModules.settingsGuardrails) },
               { path: 'policies', ...page(routeModules.settingsPolicies) },
               { path: 'alerts', ...page(routeModules.settingsAlerts) },
+              {
+                path: 'alert-destinations',
+                ...page(routeModules.settingsAlertDestinations),
+              },
               { path: 'mcp-servers', ...page(routeModules.settingsMcpServers) },
               { path: 'memory', ...page(routeModules.memory) },
               { path: 'knowledge', ...page(routeModules.settingsKnowledge) },

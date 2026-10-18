@@ -83,6 +83,11 @@ function Feed({ workspace }: { workspace: Workspace }) {
                 <time dateTime={alert.created_at} title={formatDateTime(alert.created_at)}>
                   {formatRelative(alert.created_at)}
                 </time>
+                {alert.deliveries > 0 && (
+                  <span title="Delivered to the workspace's alert destinations">
+                    sent to {alert.deliveries} destination{alert.deliveries === 1 ? '' : 's'}
+                  </span>
+                )}
               </p>
             </div>
             <div className="shrink-0">
