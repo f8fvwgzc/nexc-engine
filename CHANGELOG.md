@@ -1192,11 +1192,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   page's gutter, so it no longer covers the right edge of tables and cards, and on a phone the
   assistant opens from a button in the header instead. The header's search is an icon with a
   tooltip on a phone, the theme menu is named on hover, the sidebar's empty "No graphs yet."
-  is a list item, its unread count is spoken as text, a graph that cannot be loaded no longer
-  leaves a skeleton in the breadcrumb, and the 404 and route-error states have an `h1` (and a
-  `main` outside the shells). **Try again** on the route's error reads the page's failed
-  requests again (it re-rendered the page on the cached error, so a page that failed once
-  stayed failed until a reload).
+  is a list item, the inbox's unread count is part of its link's name (and, in the tablet's
+  rail, where the count has no room, a dot on the icon and a line in its tooltip), a graph that
+  cannot be loaded no longer leaves a skeleton in the breadcrumb, and the 404 and route-error
+  states have an `h1` (and a `main` outside the shells). **Try again** on the route's error
+  reads the page's failed requests again (it re-rendered the page on the cached error, so a
+  page that failed once stayed failed until a reload).
 - UI pass, the pages (`frontend/e2e/AUDIT.md` lists every finding): every page sits in a
   `PageContainer`, so a title no longer jumps between 23, 63, 123 and 183 px from page to page;
   the graph cards fit a phone (they overflowed it by 474 px) and are a stretched link beside

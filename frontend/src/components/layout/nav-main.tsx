@@ -12,6 +12,7 @@ import {
 import { inboxQuery } from '@/features/issues/api';
 import { teamsQuery } from '@/features/workspaces/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
+import { cn } from '@/lib/utils';
 
 import { BUILD_ITEMS, WORK_ITEMS, type NavItem } from './nav-items';
 
@@ -46,27 +47,38 @@ function NavSection({
     <SidebarGroup className="py-1">
       {label && <SidebarGroupLabel className="h-7">{label}</SidebarGroupLabel>}
       <SidebarMenu className="gap-0.5">
-        {items.map((item) => (
-          <SidebarMenuItem key={item.to}>
-            <SidebarMenuButton
-              asChild
-              tooltip={item.title}
-              isActive={isActive(item.to, item.end)}
-              className={ROW}
-            >
-              <NavLink to={item.to} end={item.end}>
-                <item.icon />
-                <span>{item.title}</span>
-              </NavLink>
-            </SidebarMenuButton>
-            {(badges[item.to] ?? 0) > 0 && (
-              <SidebarMenuBadge>
-                {badges[item.to]}
-                <span className="sr-only"> unread</span>
-              </SidebarMenuBadge>
-            )}
-          </SidebarMenuItem>
-        ))}
+        {items.map((item) => {
+          const count = badges[item.to] ?? 0;
+          return (
+            <SidebarMenuItem key={item.to}>
+              <SidebarMenuButton
+                asChild
+                tooltip={count > 0 ? `${item.title} · ${count} unread` : item.title}
+                isActive={isActive(item.to, item.end)}
+                className={cn(ROW, 'relative')}
+              >
+                <NavLink to={item.to} end={item.end}>
+                  <item.icon />
+                  {/* In the tablet rail the row is an icon: a dot on it says there is something
+                      unread, and the count is in its tooltip. */}
+                  {count > 0 && (
+                    <span
+                      aria-hidden
+                      data-slot="unread-dot"
+                      className="absolute top-1 right-1 hidden size-2 rounded-full bg-primary ring-2 ring-sidebar group-data-[collapsible=icon]:block"
+                    />
+                  )}
+                  <span>
+                    {item.title}
+                    {/* Part of the link's name at every width: the badge is hidden in the rail. */}
+                    {count > 0 && <span className="sr-only"> ({count} unread)</span>}
+                  </span>
+                </NavLink>
+              </SidebarMenuButton>
+              {count > 0 && <SidebarMenuBadge aria-hidden>{count}</SidebarMenuBadge>}
+            </SidebarMenuItem>
+          );
+        })}
       </SidebarMenu>
     </SidebarGroup>
   );
