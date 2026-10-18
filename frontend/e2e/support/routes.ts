@@ -9,8 +9,15 @@ export interface AppRoute {
   persona: Persona;
   /** Public pages are visited signed out. */
   signedOut?: boolean;
-  /** A list page: with no data it must guide the reader to the first item. */
+  /**
+   * A list page: with no data it must guide the reader to the first item, with an empty state
+   * that has an icon, a sentence and a next step (`ui.spec.ts`).
+   */
   list?: boolean;
+  /** The next step, when the page's own design guides the reader instead of an empty state. */
+  guide?: string;
+  /** Why the list page shows no guided empty state with the empty data set. */
+  unguided?: string;
   /** One of the main pages the UI suite keeps a screenshot baseline of. */
   baseline?: boolean;
   /** A text that shows once the page has its data (not in a skeleton). */
@@ -28,7 +35,15 @@ const projectId = fixtures.projects[0]?.id ?? '';
 export const APP_ROUTES: AppRoute[] = [
   { name: 'landing', path: '/', persona: 'member', signedOut: true },
   { name: 'reset-password', path: '/reset-password', persona: 'member', signedOut: true },
-  { name: 'dashboard', path: '/app', persona: 'member', list: true, baseline: true },
+  {
+    name: 'dashboard',
+    path: '/app',
+    persona: 'member',
+    list: true,
+    baseline: true,
+    // The welcome: a blank graph, or one of the templates under it.
+    guide: 'main a[href="/app?new=1"]',
+  },
   { name: 'graph', path: `/app/graphs/${graphId}`, persona: 'member' },
   { name: 'runs', path: '/app/runs', persona: 'member', list: true, baseline: true },
   { name: 'run-detail', path: `/app/runs/${runId}`, persona: 'member', baseline: true },
@@ -51,6 +66,7 @@ export const APP_ROUTES: AppRoute[] = [
     persona: 'member',
     list: true,
     baseline: true,
+    unguided: 'a workspace is never without a member: the reader is listed',
   },
   { name: 'settings-teams', path: '/app/settings/teams', persona: 'member', list: true },
   { name: 'settings-ai', path: '/app/settings/ai', persona: 'member' },
@@ -79,11 +95,29 @@ export const APP_ROUTES: AppRoute[] = [
   { name: 'settings-knowledge', path: '/app/settings/knowledge', persona: 'member', list: true },
   { name: 'settings-usage', path: '/app/settings/usage', persona: 'member' },
   { name: 'settings-audit', path: '/app/settings/audit', persona: 'member', list: true },
-  { name: 'settings-activity', path: '/app/settings/activity', persona: 'member', list: true },
+  {
+    name: 'settings-activity',
+    path: '/app/settings/activity',
+    persona: 'member',
+    list: true,
+    unguided: 'a quiet day has nothing to create (AUDIT.md F27, deferred)',
+  },
   { name: 'settings-map', path: '/app/settings/map', persona: 'member' },
   { name: 'settings-transfer', path: '/app/settings/transfer', persona: 'member' },
-  { name: 'platform-workspaces', path: '/app/platform/workspaces', persona: 'admin', list: true },
-  { name: 'platform-users', path: '/app/platform/users', persona: 'admin', list: true },
+  {
+    name: 'platform-workspaces',
+    path: '/app/platform/workspaces',
+    persona: 'admin',
+    list: true,
+    unguided: 'the empty data set keeps one workspace: the console lists what exists',
+  },
+  {
+    name: 'platform-users',
+    path: '/app/platform/users',
+    persona: 'admin',
+    list: true,
+    unguided: 'the platform is never without an account: its administrator is listed',
+  },
   { name: 'platform-activity', path: '/app/platform/activity', persona: 'admin', list: true },
   { name: 'platform-account', path: '/app/platform/account', persona: 'admin' },
   { name: 'platform-infrastructure', path: '/app/platform/infrastructure', persona: 'admin' },

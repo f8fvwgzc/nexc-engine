@@ -54,9 +54,10 @@ network; never add tests that call a real LLM API.
 * Components are accessible (labels, focus states, keyboard navigation) and work in light and dark
   themes, at 375, 768 and 1280 px: `make e2e-ui` checks it on every route.
 * A page is a `PageContainer` with a `PageHeader`; an icon-only control is an `IconButton` (its
-  label is the tooltip); a list says what to do when it is empty (`EmptyState` with an action)
-  and lets the reader retry when it cannot load (`ErrorState`), never an empty state for an
-  error, nor an error in place of data already on screen when a later refetch fails.
+  label is the tooltip); a list says what to do when it is empty (`EmptyState` with an action;
+  the UI suite checks it on every list page) and lets the reader retry when it cannot load
+  (`ErrorState`), never an empty state for an error, nor an error in place of data already on
+  screen when a later refetch fails.
 * A new endpoint the SPA calls gets a fixture in `frontend/e2e/fixtures` and a handler in
   `frontend/e2e/support/mock-api.ts`; a new route gets a line in `frontend/e2e/support/routes.ts`.
 

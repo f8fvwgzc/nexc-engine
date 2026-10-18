@@ -7,6 +7,8 @@
  * - the layout check: nothing scrolls sideways (the document or the page's own scroller), and no
  *   two visible interactive elements overlap;
  * - axe finds no serious or critical violation (light, and dark at 1280 px);
+ * - a list page with no data guides the reader to its first item: an empty state with an icon,
+ *   a sentence and a next step (a link or a button);
  * - the same layout and axe checks while the data loads and when every request fails (375 and
  *   1280 px), so skeletons and error states are held to them too;
  * - the main pages match their screenshot baseline (light), within the threshold of
@@ -53,6 +55,30 @@ async function openAndCheck(
 
   const serious = (await runAxe(page)).filter(isSeriousOrCritical);
   expect(serious, 'serious or critical axe violations').toEqual([]);
+
+  if (mode === 'empty' && route.list && !route.unguided) {
+    if (route.guide) {
+      await expect(page.locator(route.guide).first(), 'the first step').toBeVisible();
+    } else {
+      const guided = await guidedEmptyStates(page);
+      expect(guided, 'a guided empty state (icon, sentence, next step)').toBeGreaterThan(0);
+    }
+  }
+}
+
+/** Empty states with an icon, a sentence and a link or a button to the next step. */
+function guidedEmptyStates(page: Page): Promise<number> {
+  return page.evaluate(
+    () =>
+      [...document.querySelectorAll('[data-slot="empty"]')].filter(
+        (empty) =>
+          empty.querySelector('svg') &&
+          empty.querySelector('[data-slot="empty-description"]') &&
+          empty.querySelector(
+            '[data-slot="empty-content"] a[href], [data-slot="empty-content"] button',
+          ),
+      ).length,
+  );
 }
 
 for (const route of APP_ROUTES) {
