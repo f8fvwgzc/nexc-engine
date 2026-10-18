@@ -1,0 +1,50 @@
+[
+  {
+    "id": "5fadcf1e-61e9-75d1-892d-2f497b32466f",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "name": "EU market entry",
+    "description": "Everything we need to decide on the EU launch.",
+    "status": "started",
+    "lead_id": "d6b5915c-4605-7bcb-805f-46f6433df656",
+    "target_date": "2026-11-23",
+    "issue_count": 9,
+    "closed_count": 4,
+    "created_at": "2026-08-15T12:00:00Z"
+  },
+  {
+    "id": "5b8f0a8c-fbcf-7c2f-8fe3-fc23c410d9ca",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "name": "Agent firewall hardening",
+    "description": "Close the gaps the red team found.",
+    "status": "planned",
+    "lead_id": "673aeeb0-8cfb-700b-81e5-e3c60b5ba318",
+    "target_date": "2026-12-28",
+    "issue_count": 5,
+    "closed_count": 0,
+    "created_at": "2026-08-16T12:00:00Z"
+  },
+  {
+    "id": "351935bb-cd28-72ec-8da9-7494d51064ab",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "name": "Design system v3 with a longer project name for truncation",
+    "description": "",
+    "status": "paused",
+    "lead_id": null,
+    "target_date": null,
+    "issue_count": 3,
+    "closed_count": 1,
+    "created_at": "2026-08-17T12:00:00Z"
+  },
+  {
+    "id": "3a3a3657-52e2-70e4-8b56-ef9af7c58a02",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "name": "Docs migration",
+    "description": "Move the handbook to the new site.",
+    "status": "completed",
+    "lead_id": "85f2ef98-7b76-74c3-8c08-1acef84e0a73",
+    "target_date": "2026-10-04",
+    "issue_count": 6,
+    "closed_count": 6,
+    "created_at": "2026-08-18T12:00:00Z"
+  }
+]

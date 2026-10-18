@@ -1,0 +1,37 @@
+[
+  {
+    "id": "e1ea8077-1fff-7fff-85a3-666567cb453d",
+    "kind": "signed_in",
+    "ip": "203.0.113.7",
+    "detail": "Chrome on macOS",
+    "created_at": "2026-10-14T11:30:00Z"
+  },
+  {
+    "id": "d4490d13-ba6b-7100-8146-6606e84d2e70",
+    "kind": "sign_in_failed",
+    "ip": "198.51.100.23",
+    "detail": "Wrong password",
+    "created_at": "2026-10-14T10:00:00Z"
+  },
+  {
+    "id": "03127092-ca84-72fd-8e50-4fef77ba4a95",
+    "kind": "password_changed",
+    "ip": "203.0.113.7",
+    "detail": "",
+    "created_at": "2026-10-11T12:00:00Z"
+  },
+  {
+    "id": "4f03b231-51a2-7271-8008-14be3f58dc04",
+    "kind": "two_factor_enabled",
+    "ip": "203.0.113.7",
+    "detail": "",
+    "created_at": "2026-09-14T12:00:00Z"
+  },
+  {
+    "id": "27fea0f0-7373-7f97-88d2-5202fee289a4",
+    "kind": "registered",
+    "ip": null,
+    "detail": "",
+    "created_at": "2025-09-09T12:00:00Z"
+  }
+]

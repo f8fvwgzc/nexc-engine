@@ -1,0 +1,26 @@
+[
+  {
+    "id": "restricted_reads",
+    "label": "Which agents read restricted data this week?"
+  },
+  {
+    "id": "egress_denied",
+    "label": "Which agents called hosts outside the allow-list?"
+  },
+  {
+    "id": "run_denied",
+    "label": "Why was run {run} denied?"
+  },
+  {
+    "id": "agent_day",
+    "label": "What did agent {agent} do today?"
+  },
+  {
+    "id": "code_policies",
+    "label": "Which policies allow code execution?"
+  },
+  {
+    "id": "approvals",
+    "label": "Who approved what this month?"
+  }
+]

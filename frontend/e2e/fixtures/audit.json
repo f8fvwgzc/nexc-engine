@@ -1,0 +1,92 @@
+[
+  {
+    "id": "723b18f3-7c13-7b46-8143-6ec784078479",
+    "action": "member_invited",
+    "actor_id": "d6b5915c-4605-7bcb-805f-46f6433df656",
+    "actor_name": "Ada Lovelace",
+    "subject": "margaret.hamilton@apollo.example",
+    "detail": "",
+    "created_at": "2026-10-14T11:40:00Z"
+  },
+  {
+    "id": "8a500f6a-ad09-7d63-8ef4-17612a6ae845",
+    "action": "policy_changed",
+    "actor_id": "673aeeb0-8cfb-700b-81e5-e3c60b5ba318",
+    "actor_name": "Grace Hopper",
+    "subject": "Workspace policy v3",
+    "detail": "Denied egress to *.unknown; required approval for email.send.",
+    "created_at": "2026-10-14T08:20:00Z"
+  },
+  {
+    "id": "4d6b0afe-9d36-7331-8e7c-22a8cb223a4a",
+    "action": "agent_quarantined",
+    "actor_id": "85f2ef98-7b76-74c3-8c08-1acef84e0a73",
+    "actor_name": "Alan Turing",
+    "subject": "Fact checker",
+    "detail": "",
+    "created_at": "2026-10-14T05:00:00Z"
+  },
+  {
+    "id": "d2153ae7-6889-7cb5-80b5-182221d56c15",
+    "action": "guardrails_changed",
+    "actor_id": "d6b5915c-4605-7bcb-805f-46f6433df656",
+    "actor_name": "Ada Lovelace",
+    "subject": "Guardrails",
+    "detail": "",
+    "created_at": "2026-10-14T01:40:00Z"
+  },
+  {
+    "id": "d23cecea-8446-78ed-8ab0-fb28f2b0a886",
+    "action": "credential_set",
+    "actor_id": "673aeeb0-8cfb-700b-81e5-e3c60b5ba318",
+    "actor_name": "Grace Hopper",
+    "subject": "Anthropic API key",
+    "detail": "",
+    "created_at": "2026-10-13T22:20:00Z"
+  },
+  {
+    "id": "7c8f7704-a601-7f2c-812c-33f06b5d9603",
+    "action": "team_created",
+    "actor_id": "85f2ef98-7b76-74c3-8c08-1acef84e0a73",
+    "actor_name": "Alan Turing",
+    "subject": "Security operations",
+    "detail": "",
+    "created_at": "2026-10-13T19:00:00Z"
+  },
+  {
+    "id": "8ccfda58-6da8-76da-8b88-da42ab71b06e",
+    "action": "trace_sealed",
+    "actor_id": null,
+    "actor_name": "nexc",
+    "subject": "Run 05c0e3",
+    "detail": "",
+    "created_at": "2026-10-13T15:40:00Z"
+  },
+  {
+    "id": "af19a0bd-d4d9-7452-873a-00e183a7af8f",
+    "action": "approval_granted",
+    "actor_id": "673aeeb0-8cfb-700b-81e5-e3c60b5ba318",
+    "actor_name": "Grace Hopper",
+    "subject": "email.send",
+    "detail": "",
+    "created_at": "2026-10-13T12:20:00Z"
+  },
+  {
+    "id": "7600b9b1-7d4d-784d-8eb6-b7116347fa69",
+    "action": "alert_destination_changed",
+    "actor_id": "85f2ef98-7b76-74c3-8c08-1acef84e0a73",
+    "actor_name": "Alan Turing",
+    "subject": "Slack #alerts",
+    "detail": "",
+    "created_at": "2026-10-13T09:00:00Z"
+  },
+  {
+    "id": "8ad1313d-5456-7035-8fe4-4a116ce20019",
+    "action": "artifact_quarantined",
+    "actor_id": "d6b5915c-4605-7bcb-805f-46f6433df656",
+    "actor_name": "Ada Lovelace",
+    "subject": "interviews.csv",
+    "detail": "",
+    "created_at": "2026-10-13T05:40:00Z"
+  }
+]

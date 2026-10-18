@@ -1,0 +1,179 @@
+[
+  {
+    "id": "researcher",
+    "name": "Researcher",
+    "role": "researcher",
+    "title": "Researcher",
+    "description": "Finds and cites sources.",
+    "purpose": "Research questions with citations.",
+    "runtime": "python",
+    "budget_tokens": 500000,
+    "capabilities": {
+      "tools": ["web.search", "knowledge.search"],
+      "data": {
+        "topics": null,
+        "labels": ["public", "internal"],
+        "memory_namespaces": null
+      },
+      "egress_hosts": ["*.example.com"],
+      "counterparts": null,
+      "delegation": {
+        "max_depth": 2,
+        "max_fan_out": 4
+      },
+      "models": null
+    },
+    "policy": {
+      "tools": {
+        "allow": null,
+        "deny": ["shell.exec"]
+      },
+      "egress": {
+        "allow": ["*.example.com", "api.anthropic.com"],
+        "deny": []
+      },
+      "models": {
+        "allow": null,
+        "deny": []
+      },
+      "labels": ["public", "internal", "confidential"],
+      "limits": {
+        "tokens_per_run": 200000,
+        "tokens_per_day": 2000000,
+        "cost_usd_per_day": 50,
+        "tool_calls_per_minute": 60,
+        "runs_per_hour": 20,
+        "max_depth": 2,
+        "max_fan_out": 4
+      },
+      "time_windows": null,
+      "require_approval": {
+        "tools": ["email.send"],
+        "labels": ["restricted"],
+        "approvers": [
+          "d6b5915c-4605-7bcb-805f-46f6433df656",
+          "673aeeb0-8cfb-700b-81e5-e3c60b5ba318"
+        ],
+        "timeout_s": 3600
+      },
+      "alerts": {
+        "risk_score": 6,
+        "quarantine_risk_score": 8.5,
+        "denials_per_run": 3,
+        "novelty": 0.4
+      },
+      "dlp": {
+        "secrets": "deny",
+        "pii": {
+          "enabled": true,
+          "kinds": ["email", "card"],
+          "keywords": ["confidential"],
+          "action": "alert"
+        },
+        "labels": {}
+      },
+      "injection": {
+        "action": "block",
+        "model_check": true
+      },
+      "evidence": {
+        "required": true,
+        "min_coverage": 0.6,
+        "action": "mark"
+      }
+    },
+    "knowledge": ["research"],
+    "questions": [
+      {
+        "question": "How do you cite?",
+        "expected": ["[doc:"]
+      }
+    ]
+  },
+  {
+    "id": "analyst",
+    "name": "Analyst",
+    "role": "analyst",
+    "title": "Analyst",
+    "description": "Builds models from data.",
+    "purpose": "Quantitative analysis.",
+    "runtime": "python",
+    "budget_tokens": 300000,
+    "capabilities": {
+      "tools": ["web.search", "knowledge.search"],
+      "data": {
+        "topics": null,
+        "labels": ["public", "internal"],
+        "memory_namespaces": null
+      },
+      "egress_hosts": ["*.example.com"],
+      "counterparts": null,
+      "delegation": {
+        "max_depth": 2,
+        "max_fan_out": 4
+      },
+      "models": null
+    },
+    "policy": {
+      "tools": {
+        "allow": null,
+        "deny": ["shell.exec"]
+      },
+      "egress": {
+        "allow": ["*.example.com", "api.anthropic.com"],
+        "deny": []
+      },
+      "models": {
+        "allow": null,
+        "deny": []
+      },
+      "labels": ["public", "internal", "confidential"],
+      "limits": {
+        "tokens_per_run": 200000,
+        "tokens_per_day": 2000000,
+        "cost_usd_per_day": 50,
+        "tool_calls_per_minute": 60,
+        "runs_per_hour": 20,
+        "max_depth": 2,
+        "max_fan_out": 4
+      },
+      "time_windows": null,
+      "require_approval": {
+        "tools": ["email.send"],
+        "labels": ["restricted"],
+        "approvers": [
+          "d6b5915c-4605-7bcb-805f-46f6433df656",
+          "673aeeb0-8cfb-700b-81e5-e3c60b5ba318"
+        ],
+        "timeout_s": 3600
+      },
+      "alerts": {
+        "risk_score": 6,
+        "quarantine_risk_score": 8.5,
+        "denials_per_run": 3,
+        "novelty": 0.4
+      },
+      "dlp": {
+        "secrets": "deny",
+        "pii": {
+          "enabled": true,
+          "kinds": ["email", "card"],
+          "keywords": ["confidential"],
+          "action": "alert"
+        },
+        "labels": {}
+      },
+      "injection": {
+        "action": "block",
+        "model_check": true
+      },
+      "evidence": {
+        "required": true,
+        "min_coverage": 0.6,
+        "action": "mark"
+      }
+    },
+    "knowledge": [],
+    "questions": []
+  }
+]

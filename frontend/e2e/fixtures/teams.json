@@ -1,0 +1,35 @@
+[
+  {
+    "id": "59a5a0c7-c397-74d9-8335-9438fe114555",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "name": "Engineering",
+    "key": "ENG",
+    "description": "Builds and runs the platform.",
+    "private": false,
+    "role": "owner",
+    "member_count": 4,
+    "created_at": "2026-03-28T12:00:00Z"
+  },
+  {
+    "id": "749ce328-6f34-7c68-8572-e2edf21c2ad5",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "name": "Design",
+    "key": "DES",
+    "description": "Product and interaction design.",
+    "private": false,
+    "role": "member",
+    "member_count": 3,
+    "created_at": "2026-03-29T12:00:00Z"
+  },
+  {
+    "id": "bb352f84-0be2-7602-8692-4d6f1f04994e",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "name": "Security operations",
+    "key": "SEC",
+    "description": "Watches agents, policies and alerts.",
+    "private": true,
+    "role": null,
+    "member_count": 2,
+    "created_at": "2026-03-30T12:00:00Z"
+  }
+]

@@ -1,0 +1,24 @@
+{
+  "provider": "anthropic",
+  "note": null,
+  "models": [
+    {
+      "id": "claude-sonnet-4-5",
+      "name": "Claude Sonnet 4.5",
+      "released_at": "2026-09-29",
+      "recent": true
+    },
+    {
+      "id": "claude-haiku-4-5",
+      "name": "Claude Haiku 4.5",
+      "released_at": "2026-08-01",
+      "recent": true
+    },
+    {
+      "id": "claude-opus-4-1",
+      "name": "Claude Opus 4.1",
+      "released_at": "2026-03-01",
+      "recent": false
+    }
+  ]
+}

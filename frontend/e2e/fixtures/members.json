@@ -1,0 +1,50 @@
+[
+  {
+    "user_id": "d6b5915c-4605-7bcb-805f-46f6433df656",
+    "name": "Ada Lovelace",
+    "email": "ada@acme.example",
+    "role": "owner",
+    "suspended": false,
+    "joined_at": "2025-12-18T12:00:00Z"
+  },
+  {
+    "user_id": "673aeeb0-8cfb-700b-81e5-e3c60b5ba318",
+    "name": "Grace Hopper",
+    "email": "grace@acme.example",
+    "role": "admin",
+    "suspended": false,
+    "joined_at": "2026-01-07T12:00:00Z"
+  },
+  {
+    "user_id": "85f2ef98-7b76-74c3-8c08-1acef84e0a73",
+    "name": "Alan Turing",
+    "email": "alan@acme.example",
+    "role": "member",
+    "suspended": false,
+    "joined_at": "2026-01-27T12:00:00Z"
+  },
+  {
+    "user_id": "492ab00b-be71-7b09-8c80-c473346ab211",
+    "name": "Katherine Johnson",
+    "email": "katherine.johnson.longaddress@research.acme.example",
+    "role": "member",
+    "suspended": false,
+    "joined_at": "2026-02-16T12:00:00Z"
+  },
+  {
+    "user_id": "6669b848-2999-7fdc-8f11-e5e9a07caffa",
+    "name": "Edsger Dijkstra",
+    "email": "edsger@acme.example",
+    "role": "member",
+    "suspended": true,
+    "joined_at": "2026-03-08T12:00:00Z"
+  },
+  {
+    "user_id": "62325dfc-1fc6-7525-8519-674da6e2c4aa",
+    "name": "Barbara Liskov",
+    "email": "barbara@partner.example",
+    "role": "guest",
+    "suspended": false,
+    "joined_at": "2026-03-28T12:00:00Z"
+  }
+]

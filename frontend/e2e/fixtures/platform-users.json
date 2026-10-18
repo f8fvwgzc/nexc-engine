@@ -1,0 +1,93 @@
+[
+  {
+    "id": "d6b5915c-4605-7bcb-805f-46f6433df656",
+    "email": "ada@acme.example",
+    "name": "Ada Lovelace",
+    "role": "user",
+    "workspace_count": 2,
+    "owned_count": 2,
+    "locked": false,
+    "suspended": false,
+    "suspended_reason": "",
+    "two_factor": true,
+    "created_at": "2025-09-09T12:00:00Z"
+  },
+  {
+    "id": "673aeeb0-8cfb-700b-81e5-e3c60b5ba318",
+    "email": "grace@acme.example",
+    "name": "Grace Hopper",
+    "role": "user",
+    "workspace_count": 1,
+    "owned_count": 0,
+    "locked": false,
+    "suspended": false,
+    "suspended_reason": "",
+    "two_factor": true,
+    "created_at": "2025-10-09T12:00:00Z"
+  },
+  {
+    "id": "85f2ef98-7b76-74c3-8c08-1acef84e0a73",
+    "email": "alan@acme.example",
+    "name": "Alan Turing",
+    "role": "user",
+    "workspace_count": 1,
+    "owned_count": 0,
+    "locked": false,
+    "suspended": false,
+    "suspended_reason": "",
+    "two_factor": false,
+    "created_at": "2025-11-08T12:00:00Z"
+  },
+  {
+    "id": "492ab00b-be71-7b09-8c80-c473346ab211",
+    "email": "katherine.johnson.longaddress@research.acme.example",
+    "name": "Katherine Johnson",
+    "role": "user",
+    "workspace_count": 1,
+    "owned_count": 0,
+    "locked": true,
+    "suspended": false,
+    "suspended_reason": "",
+    "two_factor": false,
+    "created_at": "2025-12-08T12:00:00Z"
+  },
+  {
+    "id": "6669b848-2999-7fdc-8f11-e5e9a07caffa",
+    "email": "edsger@acme.example",
+    "name": "Edsger Dijkstra",
+    "role": "user",
+    "workspace_count": 1,
+    "owned_count": 0,
+    "locked": false,
+    "suspended": true,
+    "suspended_reason": "Left the company",
+    "two_factor": false,
+    "created_at": "2026-01-07T12:00:00Z"
+  },
+  {
+    "id": "62325dfc-1fc6-7525-8519-674da6e2c4aa",
+    "email": "barbara@partner.example",
+    "name": "Barbara Liskov",
+    "role": "user",
+    "workspace_count": 1,
+    "owned_count": 0,
+    "locked": false,
+    "suspended": false,
+    "suspended_reason": "",
+    "two_factor": false,
+    "created_at": "2026-02-06T12:00:00Z"
+  },
+  {
+    "id": "a10860ab-75d1-7c62-8b6f-af7546c42b13",
+    "email": "root@acme.example",
+    "name": "Platform Admin",
+    "role": "admin",
+    "workspace_count": 0,
+    "owned_count": 0,
+    "locked": false,
+    "suspended": false,
+    "suspended_reason": "",
+    "two_factor": true,
+    "created_at": "2025-06-01T12:00:00Z"
+  }
+]

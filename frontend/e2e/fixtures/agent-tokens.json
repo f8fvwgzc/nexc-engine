@@ -1,0 +1,22 @@
+[
+  {
+    "id": "1e4016f0-cb24-7834-8474-c0b35b06077e",
+    "agent_id": "9211ce12-92a4-75a8-86f9-47ec2550c5ba",
+    "prefix": "nexc_agt_3f9a",
+    "name": "Partner production",
+    "created_by": "d6b5915c-4605-7bcb-805f-46f6433df656",
+    "created_at": "2026-09-24T12:00:00Z",
+    "last_used_at": "2026-10-14T09:00:00Z",
+    "revoked_at": null
+  },
+  {
+    "id": "a4eccc06-d5de-7598-8687-3f688bbbe4ea",
+    "agent_id": "9211ce12-92a4-75a8-86f9-47ec2550c5ba",
+    "prefix": "nexc_agt_77c1",
+    "name": "Old key",
+    "created_by": "d6b5915c-4605-7bcb-805f-46f6433df656",
+    "created_at": "2026-07-16T12:00:00Z",
+    "last_used_at": "2026-09-04T12:00:00Z",
+    "revoked_at": "2026-09-14T12:00:00Z"
+  }
+]

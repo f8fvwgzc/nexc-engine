@@ -1,0 +1,58 @@
+[
+  {
+    "id": "4d41d5f7-7df1-7d5c-8edb-f2663d791656",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "name": "EU storage market 2026.pdf",
+    "size_bytes": 2481223,
+    "status": "ready",
+    "error": "",
+    "page_count": 48,
+    "chunk_count": 212,
+    "uploaded_by": "d6b5915c-4605-7bcb-805f-46f6433df656",
+    "created_at": "2026-10-12T12:00:00Z",
+    "updated_at": "2026-10-14T11:55:00Z",
+    "label": "internal"
+  },
+  {
+    "id": "54e79015-dac2-7df3-8d5c-715bec293c09",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "name": "Tender rules — Bavaria (German original, with an English translation appended at the end).pdf",
+    "size_bytes": 914002,
+    "status": "ready",
+    "error": "",
+    "page_count": 31,
+    "chunk_count": 120,
+    "uploaded_by": "673aeeb0-8cfb-700b-81e5-e3c60b5ba318",
+    "created_at": "2026-10-10T12:00:00Z",
+    "updated_at": "2026-10-14T10:55:00Z",
+    "label": "confidential"
+  },
+  {
+    "id": "47bbb0b9-9ea3-7ab8-89f7-214ecbeff779",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "name": "interviews-q3.docx",
+    "size_bytes": 210331,
+    "status": "embedding",
+    "error": "",
+    "page_count": 12,
+    "chunk_count": 40,
+    "uploaded_by": "d6b5915c-4605-7bcb-805f-46f6433df656",
+    "created_at": "2026-10-08T12:00:00Z",
+    "updated_at": "2026-10-14T09:55:00Z",
+    "label": "restricted"
+  },
+  {
+    "id": "94a402b4-e9dd-7905-8628-2ffe6ccc0187",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "name": "pricing.xlsx",
+    "size_bytes": 51200,
+    "status": "failed",
+    "error": "The workbook is password protected.",
+    "page_count": null,
+    "chunk_count": 0,
+    "uploaded_by": "673aeeb0-8cfb-700b-81e5-e3c60b5ba318",
+    "created_at": "2026-10-06T12:00:00Z",
+    "updated_at": "2026-10-14T08:55:00Z",
+    "label": "internal"
+  }
+]

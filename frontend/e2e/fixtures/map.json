@@ -1,0 +1,65 @@
+{
+  "entities": [
+    {
+      "key": "member",
+      "label": "Members",
+      "count": 6
+    },
+    {
+      "key": "team",
+      "label": "Teams",
+      "count": 3
+    },
+    {
+      "key": "project",
+      "label": "Projects",
+      "count": 4
+    },
+    {
+      "key": "issue",
+      "label": "Issues",
+      "count": 12
+    },
+    {
+      "key": "graph",
+      "label": "Graphs",
+      "count": 5
+    },
+    {
+      "key": "document",
+      "label": "Documents",
+      "count": 4
+    },
+    {
+      "key": "agent",
+      "label": "Agents",
+      "count": 6
+    }
+  ],
+  "relations": [
+    {
+      "from": "member",
+      "to": "team",
+      "label": "belongs to",
+      "count": 9
+    },
+    {
+      "from": "issue",
+      "to": "project",
+      "label": "part of",
+      "count": 8
+    },
+    {
+      "from": "issue",
+      "to": "graph",
+      "label": "planned in",
+      "count": 1
+    },
+    {
+      "from": "agent",
+      "to": "team",
+      "label": "works for",
+      "count": 3
+    }
+  ]
+}

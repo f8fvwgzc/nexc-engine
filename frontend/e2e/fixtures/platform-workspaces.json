@@ -1,0 +1,46 @@
+[
+  {
+    "id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "name": "Acme Research",
+    "owner_name": "Ada Lovelace",
+    "owner_email": "ada@acme.example",
+    "member_count": 6,
+    "team_count": 3,
+    "issue_count": 12,
+    "graph_count": 5,
+    "created_at": "2025-09-09T12:00:00Z"
+  },
+  {
+    "id": "13113e08-4fda-7328-8717-3cbbfd37d75b",
+    "name": "Ada's workspace",
+    "owner_name": "Ada Lovelace",
+    "owner_email": "ada@acme.example",
+    "member_count": 1,
+    "team_count": 0,
+    "issue_count": 0,
+    "graph_count": 1,
+    "created_at": "2025-10-29T12:00:00Z"
+  },
+  {
+    "id": "8e0375ad-fc1f-7563-8724-7b91b11520cf",
+    "name": "Globex Corporation international subsidiaries and partners",
+    "owner_name": "Hank Scorpio",
+    "owner_email": "hank@globex.example",
+    "member_count": 42,
+    "team_count": 7,
+    "issue_count": 1840,
+    "graph_count": 33,
+    "created_at": "2025-12-18T12:00:00Z"
+  },
+  {
+    "id": "fa70b304-f0b4-7892-8d67-eb02f862d07a",
+    "name": "Initech",
+    "owner_name": null,
+    "owner_email": null,
+    "member_count": 0,
+    "team_count": 0,
+    "issue_count": 0,
+    "graph_count": 0,
+    "created_at": "2026-02-06T12:00:00Z"
+  }
+]

@@ -5,7 +5,10 @@ This file is the single source of truth that the **backend** (`backend/`, Rust a
 **frontend** (`frontend/`, React) and the **agent runtime** (`agent-runtime/`, Python) agree on.
 Change the contract and every implementation together. The backend also publishes the machine
 readable form at `GET /api/openapi.json` (utoipa); the frontend generates TypeScript types from it
-(`npm run gen:api`) and validates responses at runtime with zod.
+(`npm run gen:api`) and validates responses at runtime with zod. The frontend's UI suite
+(`frontend/e2e`) answers the SPA from JSON fixtures typed against those generated types and parsed
+by the same zod schemas, so a contract change that the fixtures no longer match fails
+`pnpm typecheck` and `pnpm e2e`: update `frontend/e2e/fixtures` with it.
 
 <!-- #endregion intro -->
 <!-- #region topology -->

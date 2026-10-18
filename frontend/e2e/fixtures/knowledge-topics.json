@@ -1,0 +1,23 @@
+[
+  {
+    "id": "01e6a16c-9288-75f0-8c22-4d902aa9d87d",
+    "label": "grid storage tenders",
+    "terms": ["tender", "MW", "grid"],
+    "chunk_count": 140,
+    "classification": "internal"
+  },
+  {
+    "id": "e8d2c914-a438-7df5-8440-f404500025ce",
+    "label": "battery chemistry",
+    "terms": ["LFP", "NMC"],
+    "chunk_count": 80,
+    "classification": "public"
+  },
+  {
+    "id": "e2166d13-0e7e-7a36-8595-523fb8d0a1f9",
+    "label": "customer interviews",
+    "terms": ["interview"],
+    "chunk_count": 40,
+    "classification": "restricted"
+  }
+]

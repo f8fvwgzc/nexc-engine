@@ -1,0 +1,176 @@
+[
+  {
+    "id": "8a3eb195-9ce1-779b-8a66-3c422b71f892",
+    "run_id": "d7a0cee7-b61e-70e3-8477-6e245cfafbfb",
+    "node_id": "a5886f21-fcb5-7028-833b-8e8d7bba1412",
+    "agent_id": "d24bf172-c29e-7cc8-86cf-fd5582921f02",
+    "principal": "agent://acme-research/Researcher",
+    "parent_id": null,
+    "kind": "llm_call",
+    "name": "plan the research",
+    "started_at": "2026-10-14T11:10:00Z",
+    "ended_at": "2026-10-14T11:10:30Z",
+    "status": "ok",
+    "attributes": {
+      "model": "claude-sonnet-4-5",
+      "tokens_in": 1200,
+      "tokens_out": 340
+    },
+    "seq": 0,
+    "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+    "hash": "0101010101010101010101010101010101010101010101010101010101010101"
+  },
+  {
+    "id": "c7bd4600-2457-7bba-8c36-f29b3725c933",
+    "run_id": "d7a0cee7-b61e-70e3-8477-6e245cfafbfb",
+    "node_id": "03842368-8a80-7226-8989-396b2e2a130f",
+    "agent_id": "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4",
+    "principal": "agent://acme-research/Analyst",
+    "parent_id": "8a3eb195-9ce1-779b-8a66-3c422b71f892",
+    "kind": "tool_call",
+    "name": "web.search",
+    "started_at": "2026-10-14T11:11:00Z",
+    "ended_at": "2026-10-14T11:11:30Z",
+    "status": "ok",
+    "attributes": {
+      "model": "claude-sonnet-4-5",
+      "tokens_in": 1200,
+      "tokens_out": 340,
+      "tool": "web.search"
+    },
+    "seq": 1,
+    "prev_hash": "0101010101010101010101010101010101010101010101010101010101010101",
+    "hash": "0202020202020202020202020202020202020202020202020202020202020202"
+  },
+  {
+    "id": "e0406996-a77d-7db4-8d2f-f8169d6468a7",
+    "run_id": "d7a0cee7-b61e-70e3-8477-6e245cfafbfb",
+    "node_id": "bc2e390f-b4b6-7ef5-88a1-db1e00495787",
+    "agent_id": "c7f7d38d-b27f-71fe-8513-963f58ce7471",
+    "principal": "agent://acme-research/Writer",
+    "parent_id": "8a3eb195-9ce1-779b-8a66-3c422b71f892",
+    "kind": "data_read",
+    "name": "knowledge.search",
+    "started_at": "2026-10-14T11:12:00Z",
+    "ended_at": "2026-10-14T11:12:30Z",
+    "status": "ok",
+    "attributes": {
+      "model": "claude-sonnet-4-5",
+      "tokens_in": 1200,
+      "tokens_out": 340
+    },
+    "seq": 2,
+    "prev_hash": "0202020202020202020202020202020202020202020202020202020202020202",
+    "hash": "0303030303030303030303030303030303030303030303030303030303030303"
+  },
+  {
+    "id": "06f3b532-160c-757e-895a-b68b321bdfcc",
+    "run_id": "d7a0cee7-b61e-70e3-8477-6e245cfafbfb",
+    "node_id": "08966897-55ff-7e77-86ab-a6b7a17810d4",
+    "agent_id": "d24bf172-c29e-7cc8-86cf-fd5582921f02",
+    "principal": "agent://acme-research/Researcher",
+    "parent_id": "8a3eb195-9ce1-779b-8a66-3c422b71f892",
+    "kind": "egress",
+    "name": "GET regulations.example.eu",
+    "started_at": "2026-10-14T11:13:00Z",
+    "ended_at": "2026-10-14T11:13:30Z",
+    "status": "error",
+    "attributes": {
+      "model": "claude-sonnet-4-5",
+      "tokens_in": 1200,
+      "tokens_out": 340,
+      "host": "regulations.example.eu",
+      "decision": "deny"
+    },
+    "seq": 3,
+    "prev_hash": "0303030303030303030303030303030303030303030303030303030303030303",
+    "hash": "0404040404040404040404040404040404040404040404040404040404040404"
+  },
+  {
+    "id": "3b380f6b-5d1f-730c-8286-2a063fd0b834",
+    "run_id": "d7a0cee7-b61e-70e3-8477-6e245cfafbfb",
+    "node_id": "ce0c00d5-a0ea-7441-82ba-d96e505a2dc5",
+    "agent_id": "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4",
+    "principal": "agent://acme-research/Analyst",
+    "parent_id": "8a3eb195-9ce1-779b-8a66-3c422b71f892",
+    "kind": "policy",
+    "name": "egress denied",
+    "started_at": "2026-10-14T11:14:00Z",
+    "ended_at": "2026-10-14T11:14:30Z",
+    "status": "error",
+    "attributes": {
+      "model": "claude-sonnet-4-5",
+      "tokens_in": 1200,
+      "tokens_out": 340,
+      "decision": "deny",
+      "rule": "egress.allow"
+    },
+    "seq": 4,
+    "prev_hash": "0404040404040404040404040404040404040404040404040404040404040404",
+    "hash": "0505050505050505050505050505050505050505050505050505050505050505"
+  },
+  {
+    "id": "2f28b554-ffd1-7bfc-8924-0f0cfd3dbac4",
+    "run_id": "d7a0cee7-b61e-70e3-8477-6e245cfafbfb",
+    "node_id": "a5886f21-fcb5-7028-833b-8e8d7bba1412",
+    "agent_id": "c7f7d38d-b27f-71fe-8513-963f58ce7471",
+    "principal": "agent://acme-research/Writer",
+    "parent_id": "8a3eb195-9ce1-779b-8a66-3c422b71f892",
+    "kind": "spawn",
+    "name": "spawn sub-agent: fact checker",
+    "started_at": "2026-10-14T11:15:00Z",
+    "ended_at": "2026-10-14T11:15:30Z",
+    "status": "ok",
+    "attributes": {
+      "model": "claude-sonnet-4-5",
+      "tokens_in": 1200,
+      "tokens_out": 340
+    },
+    "seq": 5,
+    "prev_hash": "0505050505050505050505050505050505050505050505050505050505050505",
+    "hash": "0606060606060606060606060606060606060606060606060606060606060606"
+  },
+  {
+    "id": "26dd4426-163e-7a7d-8e11-78bab167155e",
+    "run_id": "d7a0cee7-b61e-70e3-8477-6e245cfafbfb",
+    "node_id": "03842368-8a80-7226-8989-396b2e2a130f",
+    "agent_id": "d24bf172-c29e-7cc8-86cf-fd5582921f02",
+    "principal": "agent://acme-research/Researcher",
+    "parent_id": "8a3eb195-9ce1-779b-8a66-3c422b71f892",
+    "kind": "approval",
+    "name": "approval requested: send email",
+    "started_at": "2026-10-14T11:16:00Z",
+    "ended_at": "2026-10-14T11:16:30Z",
+    "status": "ok",
+    "attributes": {
+      "model": "claude-sonnet-4-5",
+      "tokens_in": 1200,
+      "tokens_out": 340,
+      "decision": "require_approval"
+    },
+    "seq": 6,
+    "prev_hash": "0606060606060606060606060606060606060606060606060606060606060606",
+    "hash": "0707070707070707070707070707070707070707070707070707070707070707"
+  },
+  {
+    "id": "aa374707-a786-72dd-8826-00afb294098f",
+    "run_id": "d7a0cee7-b61e-70e3-8477-6e245cfafbfb",
+    "node_id": "bc2e390f-b4b6-7ef5-88a1-db1e00495787",
+    "agent_id": "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4",
+    "principal": "agent://acme-research/Analyst",
+    "parent_id": "8a3eb195-9ce1-779b-8a66-3c422b71f892",
+    "kind": "llm_call",
+    "name": "write the summary",
+    "started_at": "2026-10-14T11:17:00Z",
+    "ended_at": "2026-10-14T11:17:30Z",
+    "status": "ok",
+    "attributes": {
+      "model": "claude-sonnet-4-5",
+      "tokens_in": 1200,
+      "tokens_out": 340
+    },
+    "seq": 7,
+    "prev_hash": "0707070707070707070707070707070707070707070707070707070707070707",
+    "hash": "0808080808080808080808080808080808080808080808080808080808080808"
+  }
+]

@@ -1,0 +1,32 @@
+[
+  {
+    "id": "7db21be1-6a62-7fd3-89fb-c228569bfd4d",
+    "destination_id": "507a1ad6-8e0f-76a6-845f-b91390269f24",
+    "event": "alert.raised",
+    "alert_id": "758595d5-b60a-703b-80f0-da6eadf6e7f3",
+    "approval_id": null,
+    "status": "delivered",
+    "attempts": 1,
+    "next_attempt_at": null,
+    "last_attempt_at": "2026-10-14T10:00:00Z",
+    "last_status": 200,
+    "last_error": "",
+    "created_at": "2026-10-14T10:00:00Z",
+    "delivered_at": "2026-10-14T10:00:00Z"
+  },
+  {
+    "id": "ac462b32-80ea-7b32-8633-cf98bc68439c",
+    "destination_id": "507a1ad6-8e0f-76a6-845f-b91390269f24",
+    "event": "approval.requested",
+    "alert_id": null,
+    "approval_id": "24d3b658-d393-7e45-8bd8-1439c52aac5e",
+    "status": "failed",
+    "attempts": 3,
+    "next_attempt_at": "2026-10-14T12:05:00Z",
+    "last_attempt_at": "2026-10-14T11:55:00Z",
+    "last_status": 500,
+    "last_error": "HTTP 500",
+    "created_at": "2026-10-14T11:50:00Z",
+    "delivered_at": null
+  }
+]

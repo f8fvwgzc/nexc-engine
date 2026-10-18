@@ -124,6 +124,8 @@ export default defineConfig({
     },
   },
   test: {
+    // e2e/ is Playwright's (pnpm e2e), not vitest's.
+    include: ['src/**/*.test.{ts,tsx}'],
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/test/setup.ts'],

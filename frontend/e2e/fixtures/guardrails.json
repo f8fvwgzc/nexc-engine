@@ -1,0 +1,16 @@
+{
+  "monthly_token_budget": 50000000,
+  "member_monthly_token_budget": 5000000,
+  "allowed_providers": ["anthropic"],
+  "allow_code_exec": false,
+  "redact_secrets": true,
+  "memory_limit": 10000,
+  "memory_forget_after_days": 180,
+  "recording": {
+    "prompts": true,
+    "completions": true,
+    "tool_io": false,
+    "retention_days": 30,
+    "redact_labels": ["confidential", "restricted"]
+  }
+}

@@ -1,0 +1,116 @@
+{
+  "59a5a0c7-c397-74d9-8335-9438fe114555": [
+    {
+      "id": "828aba01-0ee6-7c91-8c40-5a53dac7a7f8",
+      "team_id": "59a5a0c7-c397-74d9-8335-9438fe114555",
+      "number": 12,
+      "name": "Storage sprint",
+      "starts_on": "2026-10-09",
+      "ends_on": "2026-10-23",
+      "status": "active",
+      "issue_count": 8,
+      "closed_count": 3,
+      "created_at": "2026-09-24T12:00:00Z"
+    },
+    {
+      "id": "c997e26c-40ba-7fcf-8887-bf07434e1549",
+      "team_id": "59a5a0c7-c397-74d9-8335-9438fe114555",
+      "number": 13,
+      "name": "",
+      "starts_on": "2026-10-24",
+      "ends_on": "2026-11-07",
+      "status": "upcoming",
+      "issue_count": 2,
+      "closed_count": 0,
+      "created_at": "2026-10-04T12:00:00Z"
+    },
+    {
+      "id": "d83be0ea-956f-79a4-88ca-6f1360b6617b",
+      "team_id": "59a5a0c7-c397-74d9-8335-9438fe114555",
+      "number": 11,
+      "name": "Hardening",
+      "starts_on": "2026-09-24",
+      "ends_on": "2026-10-08",
+      "status": "completed",
+      "issue_count": 11,
+      "closed_count": 10,
+      "created_at": "2026-09-04T12:00:00Z"
+    }
+  ],
+  "749ce328-6f34-7c68-8572-e2edf21c2ad5": [
+    {
+      "id": "0a564d6e-86b6-77c4-8312-d7697b8e4f94",
+      "team_id": "749ce328-6f34-7c68-8572-e2edf21c2ad5",
+      "number": 12,
+      "name": "Storage sprint",
+      "starts_on": "2026-10-09",
+      "ends_on": "2026-10-23",
+      "status": "active",
+      "issue_count": 8,
+      "closed_count": 3,
+      "created_at": "2026-09-24T12:00:00Z"
+    },
+    {
+      "id": "0c311e7b-bf25-788f-8545-57102912e175",
+      "team_id": "749ce328-6f34-7c68-8572-e2edf21c2ad5",
+      "number": 13,
+      "name": "",
+      "starts_on": "2026-10-24",
+      "ends_on": "2026-11-07",
+      "status": "upcoming",
+      "issue_count": 2,
+      "closed_count": 0,
+      "created_at": "2026-10-04T12:00:00Z"
+    },
+    {
+      "id": "18dd8a03-ab55-7ca8-8cc1-2adbf777105b",
+      "team_id": "749ce328-6f34-7c68-8572-e2edf21c2ad5",
+      "number": 11,
+      "name": "Hardening",
+      "starts_on": "2026-09-24",
+      "ends_on": "2026-10-08",
+      "status": "completed",
+      "issue_count": 11,
+      "closed_count": 10,
+      "created_at": "2026-09-04T12:00:00Z"
+    }
+  ],
+  "bb352f84-0be2-7602-8692-4d6f1f04994e": [
+    {
+      "id": "fe3fc16c-1081-7608-81f2-267767ecc370",
+      "team_id": "bb352f84-0be2-7602-8692-4d6f1f04994e",
+      "number": 12,
+      "name": "Storage sprint",
+      "starts_on": "2026-10-09",
+      "ends_on": "2026-10-23",
+      "status": "active",
+      "issue_count": 8,
+      "closed_count": 3,
+      "created_at": "2026-09-24T12:00:00Z"
+    },
+    {
+      "id": "2fd41021-5a02-7dcf-8c26-06085912acbe",
+      "team_id": "bb352f84-0be2-7602-8692-4d6f1f04994e",
+      "number": 13,
+      "name": "",
+      "starts_on": "2026-10-24",
+      "ends_on": "2026-11-07",
+      "status": "upcoming",
+      "issue_count": 2,
+      "closed_count": 0,
+      "created_at": "2026-10-04T12:00:00Z"
+    },
+    {
+      "id": "12ac9327-c333-73f0-8716-4a5006eebb49",
+      "team_id": "bb352f84-0be2-7602-8692-4d6f1f04994e",
+      "number": 11,
+      "name": "Hardening",
+      "starts_on": "2026-09-24",
+      "ends_on": "2026-10-08",
+      "status": "completed",
+      "issue_count": 11,
+      "closed_count": 10,
+      "created_at": "2026-09-04T12:00:00Z"
+    }
+  ]
+}

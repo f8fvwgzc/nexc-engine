@@ -7,3 +7,7 @@ coverage
 !.env.example
 *.tsbuildinfo
 .vite
+# Playwright: the audit's screenshots, test results and the HTML report
+e2e/.audit
+e2e/.results
+e2e/.report

@@ -1,0 +1,42 @@
+{
+  "conversation": {
+    "id": "86a1ce9b-e357-7d30-8bf1-081de46c8e85",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "title": "Which tenders close this month?",
+    "page_path": "/app/issues",
+    "page_title": "Issues",
+    "message_count": 6,
+    "created_at": "2026-10-14T10:50:00Z",
+    "updated_at": "2026-10-14T11:20:00Z"
+  },
+  "messages": [
+    {
+      "id": "7ed32260-67e6-7df8-8ad4-23ec5aa91721",
+      "role": "user",
+      "content": "Which tenders close this month?",
+      "outcome": null,
+      "page_path": "/app/issues",
+      "page_title": "Issues",
+      "created_at": "2026-10-14T10:50:00Z"
+    },
+    {
+      "id": "5f94a2c3-d9e2-79ed-8532-1930dbf9166b",
+      "role": "assistant",
+      "content": "Three tenders close before the 31st:\n\n1. **Bavaria grid storage** — 21 October\n2. **Lyon microgrid** — 25 October\n3. **Rotterdam port** — 30 October\n\nI filed an issue to track them.",
+      "outcome": {
+        "created": [
+          {
+            "id": "6c08cc63-f95f-77d4-8576-23a9c41035ee",
+            "identifier": "ENG-43",
+            "title": "Collect EU tender data for 2025–2026"
+          }
+        ],
+        "skipped": [],
+        "memories_used": 2
+      },
+      "page_path": "/app/issues",
+      "page_title": "Issues",
+      "created_at": "2026-10-14T10:51:00Z"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "scope": "workspace",
+  "days": 30,
+  "totals": {
+    "calls": 0,
+    "tokens_in": 0,
+    "tokens_out": 0,
+    "cost_usd": 0,
+    "context_chars_saved": 0
+  },
+  "by_day": [],
+  "by_member": [],
+  "by_model": [],
+  "by_purpose": [],
+  "by_credential": []
+}

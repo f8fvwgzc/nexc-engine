@@ -1,0 +1,52 @@
+[
+  {
+    "id": "d4803e17-ed18-73d4-8de0-582d5192eca3",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "team_id": null,
+    "name": "Market research: EU battery storage",
+    "description": "Competitive landscape, pricing and regulation for grid-scale storage.",
+    "node_count": 7,
+    "edge_count": 8,
+    "updated_at": "2026-10-14T11:30:00Z"
+  },
+  {
+    "id": "d29b9bf0-2d7d-7ea9-8978-633edbd91ab8",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "team_id": "59a5a0c7-c397-74d9-8335-9438fe114555",
+    "name": "Quarterly competitive landscape analysis for the European renewable energy storage market and its suppliers",
+    "description": "A long name to check that cards and the sidebar truncate it with a tooltip.",
+    "node_count": 12,
+    "edge_count": 15,
+    "updated_at": "2026-10-14T09:00:00Z"
+  },
+  {
+    "id": "3be52504-bc36-7151-8c8e-b1a050a3ccdb",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "team_id": null,
+    "name": "Onboarding guide",
+    "description": "Docs for new engineers, generated from the codebase.",
+    "node_count": 5,
+    "edge_count": 4,
+    "updated_at": "2026-10-12T12:00:00Z"
+  },
+  {
+    "id": "e766f727-391d-7682-8df4-e8cf6a44c182",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "team_id": null,
+    "name": "Incident review INC-482",
+    "description": "",
+    "node_count": 9,
+    "edge_count": 11,
+    "updated_at": "2026-10-08T12:00:00Z"
+  },
+  {
+    "id": "5a23e96a-1231-7c41-8550-13ed2a5b40cb",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "team_id": null,
+    "name": "Pricing page rewrite",
+    "description": "Copy, experiments and the rollout plan.",
+    "node_count": 4,
+    "edge_count": 3,
+    "updated_at": "2026-09-24T12:00:00Z"
+  }
+]

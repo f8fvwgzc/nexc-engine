@@ -1,0 +1,38 @@
+[
+  {
+    "id": "b0bbc62f-5957-74a4-8562-5ab402e864dd",
+    "action": "account_suspended",
+    "actor_id": "a10860ab-75d1-7c62-8b6f-af7546c42b13",
+    "actor_name": "Platform Admin",
+    "subject": "edsger@acme.example",
+    "detail": "Left the company",
+    "created_at": "2026-10-14T11:20:00Z"
+  },
+  {
+    "id": "0e24e526-d706-709f-85d3-60332cbaf6e1",
+    "action": "owner_assigned",
+    "actor_id": "a10860ab-75d1-7c62-8b6f-af7546c42b13",
+    "actor_name": "Platform Admin",
+    "subject": "Initech",
+    "detail": "Ada Lovelace",
+    "created_at": "2026-10-14T06:20:00Z"
+  },
+  {
+    "id": "c721c199-c857-7ce1-8140-0fe5f95f8e88",
+    "action": "password_reset_issued",
+    "actor_id": "a10860ab-75d1-7c62-8b6f-af7546c42b13",
+    "actor_name": "Platform Admin",
+    "subject": "katherine.johnson.longaddress@research.acme.example",
+    "detail": "",
+    "created_at": "2026-10-14T01:20:00Z"
+  },
+  {
+    "id": "6c076eb2-c88f-7ced-821c-08fc6be62c4c",
+    "action": "role_changed",
+    "actor_id": "a10860ab-75d1-7c62-8b6f-af7546c42b13",
+    "actor_name": "Platform Admin",
+    "subject": "grace@acme.example",
+    "detail": "user → admin",
+    "created_at": "2026-10-13T20:20:00Z"
+  }
+]

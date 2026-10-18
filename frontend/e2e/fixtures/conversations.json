@@ -1,0 +1,32 @@
+[
+  {
+    "id": "86a1ce9b-e357-7d30-8bf1-081de46c8e85",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "title": "Which tenders close this month?",
+    "page_path": "/app/issues",
+    "page_title": "Issues",
+    "message_count": 6,
+    "created_at": "2026-10-14T10:50:00Z",
+    "updated_at": "2026-10-14T11:20:00Z"
+  },
+  {
+    "id": "151b91c0-042b-7961-87cd-7bb7b805fda9",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "title": "Draft issues for the pricing model bugs",
+    "page_path": "/app/graphs/x",
+    "page_title": "Market research",
+    "message_count": 4,
+    "created_at": "2026-10-14T08:30:00Z",
+    "updated_at": "2026-10-14T09:00:00Z"
+  },
+  {
+    "id": "90d7f5da-067e-7988-8520-7875ad1de3d4",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "title": "Summarise yesterday",
+    "page_path": "/app",
+    "page_title": "Graphs",
+    "message_count": 2,
+    "created_at": "2026-10-11T11:30:00Z",
+    "updated_at": "2026-10-11T12:00:00Z"
+  }
+]

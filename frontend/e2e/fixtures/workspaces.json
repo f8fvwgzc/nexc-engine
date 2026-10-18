@@ -1,0 +1,18 @@
+[
+  {
+    "id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "name": "Acme Research",
+    "slug": "acme-research",
+    "role": "owner",
+    "member_count": 6,
+    "created_at": "2025-09-29T12:00:00Z"
+  },
+  {
+    "id": "13113e08-4fda-7328-8717-3cbbfd37d75b",
+    "name": "Ada's workspace",
+    "slug": "ada",
+    "role": "owner",
+    "member_count": 1,
+    "created_at": "2025-09-09T12:00:00Z"
+  }
+]

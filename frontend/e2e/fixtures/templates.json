@@ -1,0 +1,34 @@
+[
+  {
+    "id": "research-report-docx",
+    "name": "Research report",
+    "description": "Question, sources, analysis and a Word report.",
+    "category": "Research",
+    "node_count": 6,
+    "tags": ["docx", "research"]
+  },
+  {
+    "id": "competitive-analysis",
+    "name": "Competitive analysis",
+    "description": "Competitors, positioning and a comparison table.",
+    "category": "Strategy",
+    "node_count": 5,
+    "tags": ["strategy"]
+  },
+  {
+    "id": "incident-postmortem",
+    "name": "Incident postmortem",
+    "description": "Timeline, causes and follow-up actions.",
+    "category": "Operations",
+    "node_count": 4,
+    "tags": ["ops"]
+  },
+  {
+    "id": "product-spec",
+    "name": "Product spec",
+    "description": "Problem, users, requirements and rollout.",
+    "category": "Product",
+    "node_count": 7,
+    "tags": ["product", "spec"]
+  }
+]

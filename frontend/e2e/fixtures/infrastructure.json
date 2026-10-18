@@ -1,0 +1,48 @@
+{
+  "database": {
+    "location": "postgres://db.internal:5432/nexc",
+    "version": "PostgreSQL 17.6",
+    "size_bytes": 1840221184,
+    "pgvector": "0.8.1",
+    "migrations_applied": 94,
+    "migrations_known": 94
+  },
+  "runtime_url": "http://runtime:8090",
+  "runtime_reachable": true,
+  "runtime_protocol": "grpc",
+  "runtime_grpc": {
+    "enabled": true,
+    "ok": true,
+    "url": "http://runtime:9095",
+    "detail": null
+  },
+  "firewall": {
+    "enabled": true,
+    "addr": "0.0.0.0:50052",
+    "public_key": "ed25519:Zm9vYmFyYmF6cXV4Zm9vYmFyYmF6cXV4Zm9vYmFyYmF6",
+    "open_sessions": 3
+  },
+  "otlp": {
+    "enabled": true,
+    "endpoint": "http://otel-collector:4317",
+    "reachable": true,
+    "spans_exported": 182331,
+    "behind": 0,
+    "last_exported_at": "2026-10-14T11:59:00Z",
+    "last_error": null
+  },
+  "gateway": {
+    "calls_per_minute": 600,
+    "timeout_secs": 30,
+    "max_response_bytes": 1048576
+  },
+  "embedding_model": "builtin",
+  "ontology": {
+    "enabled": false,
+    "ok": false,
+    "url": null,
+    "detail": "Not configured"
+  },
+  "queue": "postgres",
+  "cache": "in-process"
+}

@@ -1,0 +1,106 @@
+[
+  {
+    "id": "e368f0f6-2e88-7b4d-8bf9-238de2d40908",
+    "kind": "approval",
+    "issue": null,
+    "approval": {
+      "id": "24d3b658-d393-7e45-8bd8-1439c52aac5e",
+      "run_id": "d7a0cee7-b61e-70e3-8477-6e245cfafbfb",
+      "node_id": "9cc0a944-e130-7446-8e17-59db752a3773",
+      "graph_id": "d4803e17-ed18-73d4-8de0-582d5192eca3",
+      "principal": "agent://acme-research/Writer",
+      "tool": "email.send",
+      "reason": "Sends the draft to an external address.",
+      "status": "pending",
+      "expires_at": "2026-10-14T12:50:00Z"
+    },
+    "alert": null,
+    "actor": null,
+    "created_at": "2026-10-14T11:50:00Z",
+    "read_at": null
+  },
+  {
+    "id": "9118e869-4b33-773f-8410-11931d394efc",
+    "kind": "assigned",
+    "issue": {
+      "id": "cccce954-1033-7b22-8b6c-765225669205",
+      "identifier": "ENG-49",
+      "title": "Pricing model returns NaN for zero-capacity sites"
+    },
+    "approval": null,
+    "alert": null,
+    "actor": {
+      "user_id": "673aeeb0-8cfb-700b-81e5-e3c60b5ba318",
+      "name": "Grace Hopper"
+    },
+    "created_at": "2026-10-14T11:05:00Z",
+    "read_at": null
+  },
+  {
+    "id": "c484e4ef-2d70-7981-81ed-266cbfba3654",
+    "kind": "alert",
+    "issue": null,
+    "approval": null,
+    "alert": {
+      "id": "758595d5-b60a-703b-80f0-da6eadf6e7f3",
+      "kind": "dlp",
+      "severity": "high",
+      "rule": "dlp.pii",
+      "title": "Personal data in an artifact",
+      "principal": "agent://acme-research/Researcher",
+      "run_id": "d7a0cee7-b61e-70e3-8477-6e245cfafbfb",
+      "graph_id": "d4803e17-ed18-73d4-8de0-582d5192eca3"
+    },
+    "actor": null,
+    "created_at": "2026-10-14T10:00:00Z",
+    "read_at": null
+  },
+  {
+    "id": "ee4362b6-42ca-7281-83ee-9d4e01ffb3c0",
+    "kind": "comment",
+    "issue": {
+      "id": "6c08cc63-f95f-77d4-8576-23a9c41035ee",
+      "identifier": "ENG-43",
+      "title": "Collect EU tender data for 2025–2026"
+    },
+    "approval": null,
+    "alert": null,
+    "actor": {
+      "user_id": "85f2ef98-7b76-74c3-8c08-1acef84e0a73",
+      "name": "Alan Turing"
+    },
+    "created_at": "2026-10-14T07:00:00Z",
+    "read_at": "2026-10-14T08:00:00Z"
+  },
+  {
+    "id": "3d1754b2-c4e0-7a77-8286-397cea16ca8d",
+    "kind": "due",
+    "issue": {
+      "id": "61456c3b-a4db-7db7-814a-046a471fd6ae",
+      "identifier": "ENG-46",
+      "title": "Agent firewall: deny egress to unknown hosts by default"
+    },
+    "approval": null,
+    "alert": null,
+    "actor": null,
+    "created_at": "2026-10-13T12:00:00Z",
+    "read_at": "2026-10-13T16:00:00Z"
+  },
+  {
+    "id": "c2bc9bc0-1f86-709f-8b95-76833bb80409",
+    "kind": "state",
+    "issue": {
+      "id": "ecbffac9-f9f9-75d9-893a-3d8a379ade42",
+      "identifier": "ENG-55",
+      "title": "Write the regulatory summary for Germany, France, Spain, Italy, the Netherlands and the Nordic countries"
+    },
+    "approval": null,
+    "alert": null,
+    "actor": {
+      "user_id": "492ab00b-be71-7b09-8c80-c473346ab211",
+      "name": "Katherine Johnson"
+    },
+    "created_at": "2026-10-11T12:00:00Z",
+    "read_at": "2026-10-11T12:00:00Z"
+  }
+]

@@ -1,0 +1,27 @@
+[
+  {
+    "id": "50054795-7dcb-7aff-838f-d062736656cd",
+    "name": "bug",
+    "color": "#ef4444"
+  },
+  {
+    "id": "3b54c463-e23d-7c1c-85b0-247e6067290f",
+    "name": "feature",
+    "color": "#3b82f6"
+  },
+  {
+    "id": "52792812-691e-759b-83ef-d77d9060047d",
+    "name": "research",
+    "color": "#8b5cf6"
+  },
+  {
+    "id": "9787b902-5fb9-7dde-8fe4-19262518617c",
+    "name": "needs-design",
+    "color": "#ec4899"
+  },
+  {
+    "id": "335749ce-a0e8-73c0-813d-0360e93abcae",
+    "name": "tech-debt",
+    "color": "#f97316"
+  }
+]

@@ -1,0 +1,137 @@
+{
+  "next": null,
+  "sessions": [
+    {
+      "run_id": "d7a0cee7-b61e-70e3-8477-6e245cfafbfb",
+      "graph_id": "d4803e17-ed18-73d4-8de0-582d5192eca3",
+      "graph_name": "Market research: EU battery storage",
+      "status": "running",
+      "created_at": "2026-10-14T11:09:00Z",
+      "started_at": "2026-10-14T11:10:00Z",
+      "finished_at": null,
+      "duration_ms": null,
+      "nodes": 7,
+      "agents": [
+        {
+          "id": "d24bf172-c29e-7cc8-86cf-fd5582921f02",
+          "name": "Planner"
+        },
+        {
+          "id": "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4",
+          "name": "Researcher"
+        },
+        {
+          "id": "c7f7d38d-b27f-71fe-8513-963f58ce7471",
+          "name": "Analyst"
+        },
+        {
+          "id": "7151e019-9814-768a-86f2-eb698526c0ba",
+          "name": "Writer"
+        }
+      ],
+      "rollup": {
+        "spans": 56,
+        "llm_calls": 21,
+        "tool_calls": 28,
+        "denials": 1,
+        "tokens_in": 36400,
+        "tokens_out": 9100,
+        "tokens_cached": 2800,
+        "cost_usd": 1.47
+      }
+    },
+    {
+      "run_id": "8d8ea375-8174-790c-8a32-72621ec7d1ee",
+      "graph_id": "d4803e17-ed18-73d4-8de0-582d5192eca3",
+      "graph_name": "Market research: EU battery storage",
+      "status": "failed",
+      "created_at": "2026-10-14T08:59:00Z",
+      "started_at": "2026-10-14T09:00:00Z",
+      "finished_at": "2026-10-14T09:18:00Z",
+      "duration_ms": 1081234,
+      "nodes": 6,
+      "agents": [
+        {
+          "id": "d24bf172-c29e-7cc8-86cf-fd5582921f02",
+          "name": "Planner"
+        },
+        {
+          "id": "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4",
+          "name": "Researcher"
+        },
+        {
+          "id": "c7f7d38d-b27f-71fe-8513-963f58ce7471",
+          "name": "Analyst"
+        }
+      ],
+      "rollup": {
+        "spans": 48,
+        "llm_calls": 18,
+        "tool_calls": 24,
+        "denials": 0,
+        "tokens_in": 31200,
+        "tokens_out": 7800,
+        "tokens_cached": 2400,
+        "cost_usd": 1.26
+      }
+    },
+    {
+      "run_id": "111c309f-c0cf-72b7-82a2-6b9c6f05c0e3",
+      "graph_id": "3be52504-bc36-7151-8c8e-b1a050a3ccdb",
+      "graph_name": "Onboarding guide",
+      "status": "succeeded",
+      "created_at": "2026-10-12T11:59:00Z",
+      "started_at": "2026-10-12T12:00:00Z",
+      "finished_at": "2026-10-12T12:18:00Z",
+      "duration_ms": 1082468,
+      "nodes": 5,
+      "agents": [
+        {
+          "id": "d24bf172-c29e-7cc8-86cf-fd5582921f02",
+          "name": "Planner"
+        },
+        {
+          "id": "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4",
+          "name": "Researcher"
+        }
+      ],
+      "rollup": {
+        "spans": 40,
+        "llm_calls": 15,
+        "tool_calls": 20,
+        "denials": 2,
+        "tokens_in": 26000,
+        "tokens_out": 6500,
+        "tokens_cached": 2000,
+        "cost_usd": 1.05
+      }
+    },
+    {
+      "run_id": "02cc1007-36c7-7d8b-875e-b76852460fcf",
+      "graph_id": "e766f727-391d-7682-8df4-e8cf6a44c182",
+      "graph_name": "Incident review INC-482",
+      "status": "cancelled",
+      "created_at": "2026-10-09T11:59:00Z",
+      "started_at": "2026-10-09T12:00:00Z",
+      "finished_at": "2026-10-09T12:18:00Z",
+      "duration_ms": 1083702,
+      "nodes": 4,
+      "agents": [
+        {
+          "id": "d24bf172-c29e-7cc8-86cf-fd5582921f02",
+          "name": "Planner"
+        }
+      ],
+      "rollup": {
+        "spans": 32,
+        "llm_calls": 12,
+        "tool_calls": 16,
+        "denials": 1,
+        "tokens_in": 20800,
+        "tokens_out": 5200,
+        "tokens_cached": 1600,
+        "cost_usd": 0.84
+      }
+    }
+  ]
+}

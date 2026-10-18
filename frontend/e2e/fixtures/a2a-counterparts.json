@@ -1,0 +1,45 @@
+[
+  {
+    "id": "6eadd694-48a2-75e2-8a84-25eb4254b78a",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "name": "partner-research",
+    "card_url": "https://agents.partner.example/.well-known/agent.json",
+    "host": "agents.partner.example",
+    "card": {
+      "name": "Partner Research Agent",
+      "capabilities": {
+        "streaming": true
+      }
+    },
+    "has_auth_header": true,
+    "allowed_agents": ["01cbdeb6-76f5-73d7-800d-7403e6bcc2f4"],
+    "max_label": "internal",
+    "agent_id": "9211ce12-92a4-75a8-86f9-47ec2550c5ba",
+    "principal_id": "agent://acme-research/a2a/partner-research",
+    "last_checked_at": "2026-10-14T11:00:00Z",
+    "last_check_ok": true,
+    "last_check_detail": "card fetched",
+    "created_by": "d6b5915c-4605-7bcb-805f-46f6433df656",
+    "created_at": "2026-09-30T12:00:00Z",
+    "updated_at": "2026-10-14T11:00:00Z"
+  },
+  {
+    "id": "6cf777be-1007-79d5-848b-23334bf2d2d4",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "name": "legacy-bot",
+    "card_url": "https://legacy.example/agent.json",
+    "host": "legacy.example",
+    "card": {},
+    "has_auth_header": false,
+    "allowed_agents": [],
+    "max_label": "public",
+    "agent_id": "9211ce12-92a4-75a8-86f9-47ec2550c5ba",
+    "principal_id": "agent://acme-research/a2a/legacy-bot",
+    "last_checked_at": "2026-10-11T12:00:00Z",
+    "last_check_ok": false,
+    "last_check_detail": "HTTP 404",
+    "created_by": "673aeeb0-8cfb-700b-81e5-e3c60b5ba318",
+    "created_at": "2026-08-15T12:00:00Z",
+    "updated_at": "2026-10-11T12:00:00Z"
+  }
+]

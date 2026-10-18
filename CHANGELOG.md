@@ -9,6 +9,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A Playwright harness for the SPA (`frontend/e2e`, `@playwright/test` and `@axe-core/playwright`):
+  it builds the app, serves the production build with `vite preview` and answers every
+  `/api/v1` call from JSON fixtures (`frontend/e2e/fixtures`) with `page.route`, so no backend
+  is needed. The boot-time refresh is answered with a mocked access token, so the browser is
+  signed in without touching the login form; the graph's WebSocket is mocked and its event
+  stream left open. The fixtures are typed against the OpenAPI types (`pnpm typecheck` covers
+  `e2e/` through `tsconfig.e2e.json`) and parsed by the app's own zod schemas
+  (`fixtures.spec.ts`). `pnpm e2e` visits every route of `src/app/router.tsx` (the login and
+  register pages aside) with realistic data and with empty data and fails on an API call no
+  fixture answers or an uncaught error; `pnpm e2e:audit` is the audit tool: every route at 375,
+  768 and 1280 px, light and dark, both data sets, with a full-page screenshot and a record of
+  axe, the layout check, unnamed icon controls, silent truncation, headings, empty states,
+  focus visibility and refetches under `frontend/e2e/.audit/` (not committed). Vitest now only
+  collects `src/**/*.test.*`.
 - Documentation site (`site/`, VitePress): the repository's Markdown rendered with a sidebar,
   full-text search, a dark theme, mermaid diagrams and the API reference (Scalar over
   `site/public/openapi.json`, a committed export of `nexc openapi`), in six sections: Start,

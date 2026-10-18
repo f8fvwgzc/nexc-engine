@@ -1,0 +1,30 @@
+[
+  {
+    "user_id": "d6b5915c-4605-7bcb-805f-46f6433df656",
+    "name": "Ada Lovelace",
+    "email": "ada@acme.example",
+    "role": "owner",
+    "joined_at": "2026-05-17T12:00:00Z"
+  },
+  {
+    "user_id": "85f2ef98-7b76-74c3-8c08-1acef84e0a73",
+    "name": "Alan Turing",
+    "email": "alan@acme.example",
+    "role": "member",
+    "joined_at": "2026-05-18T12:00:00Z"
+  },
+  {
+    "user_id": "492ab00b-be71-7b09-8c80-c473346ab211",
+    "name": "Katherine Johnson",
+    "email": "katherine.johnson.longaddress@research.acme.example",
+    "role": "member",
+    "joined_at": "2026-05-19T12:00:00Z"
+  },
+  {
+    "user_id": "6669b848-2999-7fdc-8f11-e5e9a07caffa",
+    "name": "Edsger Dijkstra",
+    "email": "edsger@acme.example",
+    "role": "member",
+    "joined_at": "2026-05-20T12:00:00Z"
+  }
+]
