@@ -151,8 +151,10 @@ ends such transactions sooner, which is harmless.
 
 The backend's readiness probe is `/api/v1/readyz`. It answers 503 while the database does not
 answer and from the moment the replica is told to stop, so a load balancer stops sending it
-requests while it hands its runs over. The Helm chart probes it every 2 s and takes the pod out
-of the Service after one failure.
+requests while it hands its runs over. The Helm chart probes it every 2 s (5 s to answer) and
+takes the pod out of the Service after three failures in a row, so a database that is slow for a
+moment does not take every replica out at once; a pod being deleted leaves the Service at once
+anyway.
 
 ## Shutting down
 

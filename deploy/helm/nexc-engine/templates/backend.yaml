@@ -95,12 +95,14 @@ spec:
             periodSeconds: 15
             timeoutSeconds: 5
           # Drain-aware: /readyz answers 503 from the moment the pod is told to stop (and while
-          # the database does not answer), so it leaves the Service at the next probe.
+          # the database does not answer). A pod being deleted leaves the Service at once anyway;
+          # three failures in a row keep a database that is slow for a moment (every replica
+          # probes the same one) from taking every backend out of the Service together.
           readinessProbe:
             httpGet: { path: /api/v1/readyz, port: http }
             periodSeconds: 2
-            timeoutSeconds: 2
-            failureThreshold: 1
+            timeoutSeconds: 5
+            failureThreshold: 3
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}
           securityContext:

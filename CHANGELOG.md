@@ -93,7 +93,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   its dispatcher claims nothing more, every run it executes stops, writes its trace and releases
   its lease (a `released` event at the next epoch), so a peer takes it over within one dispatcher
   poll rather than after the lease; the HTTP server closes after at most 15 s. The Helm chart
-  gets a drain-aware readiness probe (every 2 s, out after one failure), a configurable grace
+  gets a drain-aware readiness probe (every 2 s, out after three failures in a row, so a
+  database slow for a moment does not empty the Service), a configurable grace
   period (`backend.terminationGracePeriodSeconds`), PodDisruptionBudgets for the backend, the
   runtime and the frontend that allow `podDisruptionBudgets.maxUnavailable` evictions at once
   (they required one pod to stay, which blocked node drains with one replica), optional
