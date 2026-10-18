@@ -2,9 +2,9 @@ import { PageHeader } from '@/components/custom-ui/page-header';
 import { Seo } from '@/components/seo/seo';
 import { ActivityCard } from '@/features/account/components/activity-card';
 import { DataCard } from '@/features/account/components/data-card';
-import { PasswordCard } from '@/features/account/components/password-card';
+import { LocalSignInCards } from '@/features/account/components/local-sign-in-cards';
 import { SessionsCard } from '@/features/account/components/sessions-card';
-import { TwoFactorCard } from '@/features/account/components/two-factor-card';
+import { SignInCard } from '@/features/account/components/sign-in-card';
 import { ProfileCard } from '@/features/settings/components/profile-card';
 
 /**
@@ -20,8 +20,8 @@ export default function ProfileSettingsPage() {
         description="Your account: your name, your password, where you are signed in, what happened to your access, and your data."
       />
       <ProfileCard />
-      <PasswordCard />
-      <TwoFactorCard />
+      <SignInCard />
+      <LocalSignInCards />
       <SessionsCard />
       <ActivityCard />
       <DataCard />

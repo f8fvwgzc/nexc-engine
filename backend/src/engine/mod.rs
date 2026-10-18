@@ -22,6 +22,7 @@ pub mod policy;
 pub mod recording;
 pub mod risk;
 pub mod scheduler;
+pub mod sso;
 pub mod summary;
 pub mod templates;
 pub mod trace;

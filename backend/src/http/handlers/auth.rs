@@ -66,6 +66,24 @@ impl Validate for LoginRequest {
     }
 }
 
+/// The single sign-on provider's name when password sign-in is off
+/// (`NEXC_OIDC_ALLOW_LOCAL_LOGIN=false`).
+fn sso_only(state: &AppState) -> Option<&str> {
+    state
+        .settings
+        .oidc
+        .as_ref()
+        .filter(|oidc| !oidc.allow_local_login)
+        .map(|oidc| oidc.display_name.as_str())
+}
+
+/// 403 for a password sign-in while only single sign-on is allowed.
+fn password_sign_in_off(name: &str) -> AppError {
+    AppError::Forbidden(format!(
+        "password sign-in is turned off; continue with {name}"
+    ))
+}
+
 pub(super) fn session_config(state: &AppState) -> SessionConfig<'_> {
     SessionConfig {
         jwt: &state.jwt,
@@ -123,7 +141,7 @@ fn require_csrf_header(headers: &HeaderMap) -> Result<(), AppError> {
 #[utoipa::path(post, path = "/auth/register", tag = "auth", request_body = RegisterRequest,
     responses(
         (status = 201, description = "Registered; refresh cookie set", body = AuthResponse),
-        (status = 403, description = "Signups disabled", body = Problem),
+        (status = 403, description = "Signups disabled, or password sign-in is off and accounts come from single sign-on", body = Problem),
         (status = 409, description = "E-mail already registered", body = Problem),
         (status = 422, description = "Validation failed", body = Problem),
         (status = 429, description = "Rate limited", body = Problem),
@@ -134,6 +152,11 @@ pub async fn register(
     ClientIp(ip): ClientIp,
     ValidatedJson(req): ValidatedJson<RegisterRequest>,
 ) -> Result<Response, AppError> {
+    if let Some(name) = sso_only(&state) {
+        return Err(AppError::Forbidden(format!(
+            "accounts are created by signing in with {name}"
+        )));
+    }
     if !state.settings.allow_signup {
         return Err(AppError::Forbidden("signups are disabled".into()));
     }
@@ -193,6 +216,7 @@ pub async fn create_user(
     responses(
         (status = 200, description = "Logged in; refresh cookie set", body = AuthResponse),
         (status = 401, description = "Invalid credentials", body = Problem),
+        (status = 403, description = "The account is suspended, or password sign-in is off (single sign-on only) and this is not the break-glass administrator", body = Problem),
         (status = 422, description = "The account has two-factor sign-in: `errors.code` asks for the code, or says it is wrong", body = Problem),
         (status = 429, description = "Too many failed attempts", body = Problem),
     ))]
@@ -204,6 +228,17 @@ pub async fn login(
 ) -> Result<Response, AppError> {
     state.limiters.check_login_allowed(ip)?;
     let email = user::normalize_email(&req.email);
+    // With password sign-in off, only the break-glass administrator gets as far as a password.
+    let only_sso = state
+        .settings
+        .oidc
+        .as_ref()
+        .filter(|oidc| !oidc.allow_local_login);
+    let break_glass = match only_sso {
+        None => false,
+        Some(oidc) if oidc.is_break_glass(&email) => true,
+        Some(oidc) => return Err(password_sign_in_off(&oidc.display_name)),
+    };
     // The account's holder sees where they signed in from, and when someone failed to.
     let failed = |detail: &'static str| {
         let (state, email) = (&state, &email);
@@ -233,6 +268,10 @@ pub async fn login(
         }
         Err(err) => return Err(err),
     };
+    if break_glass && user.role != Role::Admin {
+        // The break-glass address only opens a platform administrator's account.
+        return Err(password_sign_in_off(sso_only(&state).unwrap_or("SSO")));
+    }
     // The password was right; an account with a second factor is not in yet.
     if let Err(err) = two_factor::check(&state, user.id, req.code.as_deref()).await {
         if req.code.as_deref().is_some_and(|c| !c.trim().is_empty()) {

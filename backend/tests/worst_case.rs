@@ -31,6 +31,11 @@ const PUBLIC: &[&str] = &[
     "/api/v1/auth/refresh",
     "/api/v1/auth/logout",
     "/api/v1/auth/password/reset",
+    // Single sign-on: the browser is sent to the provider and comes back (404 while it is off).
+    "/api/v1/auth/oidc/login",
+    "/api/v1/auth/oidc/callback",
+    // What the login page offers.
+    "/api/v1/auth/providers",
     // The A2A agent card is for anyone to read (an agent that is not exposed is not found).
     "/.well-known/agent.json",
     "/a2a/agents/{principal}/card",
@@ -1120,6 +1125,95 @@ async fn a_session_ended_on_one_server_ends_on_the_others(pool: PgPool) {
         StatusCode::UNAUTHORIZED,
         "and on the other after it looked"
     );
+}
+
+/// Single sign-on's two routes are addresses anyone can send a browser to,
+/// with anything in them: no input makes them fail, every answer is a
+/// redirect to the provider or to a path of this site, a state is spent by
+/// one of many callbacks racing for it, and what a sign-in leaves behind is
+/// cleaned up.
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn single_sign_on_holds_against_hostile_browsers(pool: PgPool) {
+    use common::oidc::{Assertion, Stub, begin, local, visitor};
+
+    let stub = Stub::start().await;
+    let settings = stub.settings();
+    let mut overrides = vec![("NEXC_TRUST_PROXY", "true")];
+    overrides.extend(settings.iter().map(|(k, v)| (*k, v.as_str())));
+    let app = TestApp::new(pool.clone(), &overrides).await;
+    let long = "a".repeat(5_000);
+    let hostile = [
+        "%27%3B%20DROP%20TABLE%20users%3B--",
+        "https%3A%2F%2Fevil.example",
+        "%2F%2Fevil.example",
+        "%2F%5Cevil.example",
+        "%0d%0aSet-Cookie%3A%20x%3D1",
+        "%00",
+        "%ZZ",
+        "..%2F..%2Fetc",
+        "-1",
+        long.as_str(),
+    ];
+    let mut sent = 0;
+    for value in hostile {
+        for path in [
+            format!("/api/v1/auth/oidc/login?return_to={value}"),
+            format!("/api/v1/auth/oidc/login?return_to=/app&unknown={value}"),
+            format!("/api/v1/auth/oidc/callback?state={value}&code={value}"),
+            format!("/api/v1/auth/oidc/callback?error={value}&state={value}"),
+            format!("/api/v1/auth/oidc/callback?iss={value}&error_description={value}"),
+        ] {
+            let from = visitor();
+            let cookie = format!("nexc_sso={value}");
+            let r = app
+                .request_with(
+                    Method::GET,
+                    &path,
+                    None,
+                    None,
+                    &[("x-forwarded-for", &from), ("cookie", &cookie)],
+                )
+                .await;
+            sent += 1;
+            assert_eq!(r.status, StatusCode::SEE_OTHER, "{path}: {}", r.body);
+            let location = r.headers[header::LOCATION].to_str().unwrap();
+            let to_provider = location.starts_with(&format!("{}/authorize?", stub.issuer));
+            let here = location.starts_with('/') && !location.starts_with("//");
+            assert!(to_provider || here, "{path} -> {location}");
+            if path.contains("/callback") {
+                assert!(
+                    location.starts_with("/login?sso_error="),
+                    "{path} -> {location}"
+                );
+                assert!(common::oidc::set_cookie(&r.headers, "nexc_refresh").is_none());
+            }
+        }
+    }
+    assert_eq!(sent, 50);
+
+    // One state, eight callbacks at once: one exchange, one session at most.
+    stub.expect(Assertion::person("sub-race", "race@example.com"));
+    let (_, location, binding) = begin(&app, None).await;
+    let back = local(&stub.authorize(&location));
+    let answers = join_all((0..8).map(|_| common::oidc::callback(&app, &back, &binding))).await;
+    let sessions = answers
+        .iter()
+        .filter(|r| common::oidc::set_cookie(&r.headers, "nexc_refresh").is_some())
+        .count();
+    assert_eq!(sessions, 1, "a state is spent once");
+    assert_eq!(stub.exchanges(), 1);
+
+    // Every login above left a sign-in waiting; their time runs out and they are deleted.
+    let waiting: i64 = sqlx::query_scalar("SELECT count(*) FROM oidc_logins")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(waiting, 20, "two logins per hostile value");
+    sqlx::query("UPDATE oidc_logins SET expires_at = now() - interval '1 second'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(nexc::repo::sso::purge_logins(&pool).await.unwrap(), 20);
 }
 
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]

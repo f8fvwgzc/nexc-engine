@@ -27,6 +27,8 @@ string_enum!(
         AccountErased => "account_erased",
         PasswordResetIssued => "password_reset_issued",
         TwoFactorReset => "two_factor_reset",
+        /// A single sign-on identity was unlinked from an account.
+        IdentityUnlinked => "identity_unlinked",
     }
 );
 
@@ -107,7 +109,9 @@ pub struct PlatformUser {
 pub struct PlatformEvent {
     pub id: Uuid,
     pub action: PlatformAction,
-    /// `null` once the administrator's account is gone; `actor_name` stays.
+    /// `null` once the administrator's account is gone, and when the platform
+    /// acted by itself (single sign-on's admin groups); `actor_name` says who
+    /// or what acted, and stays.
     #[schema(required = true)]
     pub actor_id: Option<Uuid>,
     pub actor_name: String,

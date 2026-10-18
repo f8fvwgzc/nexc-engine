@@ -101,6 +101,7 @@ pub mod sessions;
 pub mod settings;
 pub mod span_payloads;
 pub mod spans;
+pub mod sso;
 pub mod teams;
 pub mod tickets;
 pub mod tokens;

@@ -75,6 +75,14 @@ pub async fn create(
     .await
 }
 
+/// The name of a workspace, if it exists (a single sign-on group mapping's).
+pub async fn name_of(db: impl PgExecutor<'_>, id: Uuid) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar("SELECT name FROM workspaces WHERE id = $1")
+        .bind(id)
+        .fetch_optional(db)
+        .await
+}
+
 /// Whether a slug is taken.
 pub async fn slug_exists(db: impl PgExecutor<'_>, slug: &str) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM workspaces WHERE slug = $1)")

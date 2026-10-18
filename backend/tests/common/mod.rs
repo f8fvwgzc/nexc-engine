@@ -4,6 +4,7 @@
 #![forbid(unsafe_code)]
 
 pub mod grpc_runtime;
+pub mod oidc;
 
 use std::collections::HashMap;
 use std::sync::Arc;

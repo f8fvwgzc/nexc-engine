@@ -67,6 +67,7 @@ export const platformActionSchema = z.enum([
   'account_erased',
   'password_reset_issued',
   'two_factor_reset',
+  'identity_unlinked',
 ]);
 export type PlatformAction = z.infer<typeof platformActionSchema>;
 
@@ -122,6 +123,33 @@ export const platformEventsQuery = (page: PlatformPage) =>
       apiRequest('/admin/events', z.array(platformEventSchema), { query: { ...page }, signal }),
     placeholderData: keepPreviousData,
   });
+
+/** A single sign-on identity linked to an account, with who the person is at the provider. */
+export const accountIdentitySchema = z.object({
+  id: idSchema,
+  provider: z.string(),
+  issuer: z.string(),
+  subject: z.string(),
+  email: z.string(),
+  linked_at: timestampSchema,
+  last_login_at: timestampSchema.nullable(),
+});
+export type AccountIdentity = z.infer<typeof accountIdentitySchema>;
+
+export const accountIdentitiesQuery = (userId: string) =>
+  queryOptions({
+    queryKey: ['platform', 'users', 'identities', userId] as const,
+    queryFn: ({ signal }) =>
+      apiRequest(`/admin/users/${userId}/identities`, z.array(accountIdentitySchema), { signal }),
+  });
+
+/**
+ * Unlinks a single sign-on identity from an account and signs the account out everywhere; the
+ * person's next sign-in through the provider is a first one again.
+ */
+export function unlinkIdentity(userId: string, identityId: string) {
+  return apiSend(`/admin/users/${userId}/identities/${identityId}`, { method: 'DELETE' });
+}
 
 /** A platform role, a suspension with its reason, or lifting one. */
 export type PlatformUserChange =

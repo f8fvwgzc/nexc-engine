@@ -231,6 +231,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/users/{uid}/identities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The single sign-on identities linked to an account, with who each is at
+         *     its provider (`sub`), oldest first.
+         */
+        get: operations["user_identities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users/{uid}/identities/{iid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Unlinks a single sign-on identity from an account, and signs the account
+         *     out everywhere. The person's next sign-in through the provider is a
+         *     first one again: linked by a verified address, or refused. This is what
+         *     sorts out an identity the provider re-created (a new `sub`, refused with
+         *     `email_taken` until then), one linked by mistake, or one that must not
+         *     sign in any more (stop the provider vouching for the address too, or it
+         *     is linked again).
+         */
+        delete: operations["unlink_identity"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/users/{uid}/password-reset": {
         parameters: {
             query?: never;
@@ -714,7 +759,10 @@ export interface paths {
         /**
          * Starts setting up two-factor sign-in: a secret for an authenticator app,
          *     as text and as an `otpauth://` address. Nothing changes about signing in
-         *     until `POST /auth/2fa/enable` proves the app has it.
+         *     until `POST /auth/2fa/enable` proves the app has it. An account without a
+         *     password (single sign-on created it) has no use for one: it signs in
+         *     through the provider, which asks for its own second factor, and could
+         *     never turn this one off again (that asks for the password).
          */
         post: operations["two_factor_setup"];
         delete?: never;
@@ -737,6 +785,26 @@ export interface paths {
          *     did to it. Entries are kept for 180 days.
          */
         get: operations["activity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/identities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * How the caller signs in: whether the account has a password, and the
+         *     single sign-on identities linked to it.
+         */
+        get: operations["identities"];
         put?: never;
         post?: never;
         delete?: never;
@@ -841,6 +909,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/oidc/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Where the provider sends the browser back: the code is exchanged, the ID
+         *     token verified, the account found, linked or created, and a session
+         *     started as `POST /auth/login` starts one. The browser then goes to the
+         *     path it asked for, carrying no token. No second factor is asked: the
+         *     provider is the one that authenticates.
+         */
+        get: operations["oidc_callback"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/oidc/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Links the provider's identity to the signed-in account: the answer names
+         *     the provider's authorization URL for the browser to go to (with the
+         *     `nexc_sso` cookie set, as `GET /auth/oidc/login` sets it). Whoever signs
+         *     in there is linked to this account, whatever address the provider gives,
+         *     and the browser comes back to the account page. This is how an account
+         *     that is never linked by its address (a platform administrator's, or one
+         *     with two-factor sign-in) gets single sign-on. The break-glass account is
+         *     never linked: it stays independent of the provider.
+         */
+        post: operations["oidc_link"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/oidc/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Sends the browser to the provider to sign in. */
+        get: operations["oidc_login"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/password": {
         parameters: {
             query?: never;
@@ -878,6 +1012,26 @@ export interface paths {
          *     meet the rules does not use the link up.
          */
         post: operations["reset_password"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The ways to sign in here, for the login page: a password or not,
+         *     registration or not, and the single sign-on provider.
+         */
+        get: operations["providers"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3256,7 +3410,7 @@ export interface components {
          * @description What an entry of an account's security activity records.
          * @enum {string}
          */
-        AccountEventKind: "registered" | "signed_in" | "sign_in_failed" | "password_changed" | "password_reset" | "reset_link_issued" | "sessions_ended" | "suspended" | "reactivated" | "role_changed" | "two_factor_enabled" | "two_factor_disabled";
+        AccountEventKind: "registered" | "signed_in" | "sign_in_failed" | "password_changed" | "password_reset" | "reset_link_issued" | "sessions_ended" | "suspended" | "reactivated" | "role_changed" | "two_factor_enabled" | "two_factor_disabled" | "sso_signed_in" | "sso_linked" | "sso_provisioned" | "sso_unlinked";
         /** @description A copy of what the installation holds about one account. */
         AccountExport: {
             account: components["schemas"]["User"];
@@ -3265,11 +3419,31 @@ export interface components {
             /**
              * @description `workspaces`, `teams`, `issues_created`, `issues_assigned`,
              *     `comments`, `graphs`, `documents`, `memories`, `ai_account`, `usage`,
-             *     `security_activity`, `notifications`: each a list of plain objects.
+             *     `security_activity`, `notifications`, `assistant_conversations`,
+             *     `sign_in_identities`: each a list of plain objects.
              */
             sections: Record<string, never>;
             /** @description Sections that hold more than [`EXPORT_SECTION_MAX`] rows and were cut there. */
             truncated: string[];
+        };
+        /**
+         * @description An identity linked to an account, as a platform administrator sees it
+         *     (`GET /admin/users/{uid}/identities`).
+         */
+        AccountIdentity: {
+            /** @description The address the provider gave at the last sign-in. */
+            email: string;
+            /** Format: uuid */
+            id: string;
+            issuer: string;
+            /** Format: date-time */
+            last_login_at: string | null;
+            /** Format: date-time */
+            linked_at: string;
+            /** @description The provider's name on the login page (its issuer when it is no longer the one configured). */
+            provider: string;
+            /** @description Who the person is at the provider: what the provider's ID tokens carry in `sub`. */
+            subject: string;
         };
         /** @description An agent in the user's organisation. */
         Agent: {
@@ -5217,6 +5391,36 @@ export interface components {
              */
             tool_calls_per_minute: number | null;
         };
+        /** @description `POST /auth/oidc/link` body. */
+        LinkIdentity: {
+            /** @description The account's password: a session left open is not enough to link an identity to it. */
+            password: string;
+        };
+        /**
+         * @description `POST /auth/oidc/link`: where to send the browser to link the provider's
+         *     identity to the signed-in account.
+         */
+        LinkStart: {
+            /**
+             * @description The provider's authorization endpoint, with this sign-in's `state`,
+             *     `nonce` and PKCE challenge. The answer also sets the `nexc_sso` cookie.
+             */
+            authorization_url: string;
+        };
+        /** @description An identity of a single sign-on provider that signs in to the account. */
+        LinkedIdentity: {
+            /** @description Whether it is an identity of the provider configured now (the one the login page offers). */
+            current: boolean;
+            /** @description The address the provider gave at the last sign-in. */
+            email: string;
+            issuer: string;
+            /** Format: date-time */
+            last_login_at: string | null;
+            /** Format: date-time */
+            linked_at: string;
+            /** @description The provider's name on the login page (its issuer when it is no longer the one configured). */
+            provider: string;
+        };
         /**
          * @description An allow-list and a deny-list of names (tools, hosts, models). `allow:
          *     null` inherits the level above; `deny` is always added to it.
@@ -5248,6 +5452,19 @@ export interface components {
          * @enum {string}
          */
         LogLevel: "debug" | "info" | "warn" | "error";
+        /** @description The ways to sign in to this installation. */
+        LoginProviders: {
+            /**
+             * @description E-mail and password (`POST /auth/login`). `false` when only single
+             *     sign-on is allowed: the login page hides its form, which the
+             *     break-glass administrator opens at `/login?break_glass=1`.
+             */
+            password: boolean;
+            /** @description Whether `POST /auth/register` creates accounts. */
+            signup: boolean;
+            /** @description Single sign-on providers; empty while single sign-on is off. */
+            sso: components["schemas"]["SsoProvider"][];
+        };
         /** @description `POST /auth/login` body. */
         LoginRequest: {
             /**
@@ -5774,13 +5991,15 @@ export interface components {
          * @description What a platform administrator did.
          * @enum {string}
          */
-        PlatformAction: "role_changed" | "account_suspended" | "account_reactivated" | "owner_assigned" | "workspace_deleted" | "account_erased" | "password_reset_issued" | "two_factor_reset";
+        PlatformAction: "role_changed" | "account_suspended" | "account_reactivated" | "owner_assigned" | "workspace_deleted" | "account_erased" | "password_reset_issued" | "two_factor_reset" | "identity_unlinked";
         /** @description One entry of the platform's activity log. */
         PlatformEvent: {
             action: components["schemas"]["PlatformAction"];
             /**
              * Format: uuid
-             * @description `null` once the administrator's account is gone; `actor_name` stays.
+             * @description `null` once the administrator's account is gone, and when the platform
+             *     acted by itself (single sign-on's admin groups); `actor_name` says who
+             *     or what acted, and stays.
              */
             actor_id: string | null;
             actor_name: string;
@@ -6598,6 +6817,13 @@ export interface components {
             count: number;
             severity: components["schemas"]["Severity"];
         };
+        /** @description How an account signs in. */
+        SignInMethods: {
+            /** @description The provider identities linked to the account, oldest first. */
+            identities: components["schemas"]["LinkedIdentity"][];
+            /** @description Whether the account has a password; one single sign-on created has none. */
+            password: boolean;
+        };
         /** @description One span of a run's trace, as stored and as served. */
         Span: {
             /** Format: uuid */
@@ -6729,6 +6955,18 @@ export interface components {
             alert: components["schemas"]["Alert"];
         } | {
             run: components["schemas"]["Run"];
+        };
+        /** @description A single sign-on provider the login page offers. */
+        SsoProvider: {
+            /** @description What the button says after "Continue with". */
+            display_name: string;
+            /** @description `oidc`. */
+            id: string;
+            /**
+             * @description Where the button sends the browser (`GET`, a navigation), with
+             *     `?return_to=<path of this site>`.
+             */
+            login_url: string;
         };
         /** @description `POST /workspaces/{wid}/transfers` body. */
         StartTransfer: {
@@ -7782,6 +8020,92 @@ export interface operations {
             };
             /** @description The address does not match */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    user_identities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description User id */
+                uid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountIdentity"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    unlink_identity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description User id */
+                uid: string;
+                /** @description Identity id */
+                iid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Unlinked; every session of the account ended */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Your own account */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9032,7 +9356,7 @@ export interface operations {
                     "application/json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Already on */
+            /** @description Already on, or the account has no password (it signs in with single sign-on only) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -9073,6 +9397,33 @@ export interface operations {
             };
         };
     };
+    identities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignInMethods"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     login: {
         parameters: {
             query?: never;
@@ -9097,6 +9448,15 @@ export interface operations {
             };
             /** @description Invalid credentials */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The account is suspended, or password sign-in is off (single sign-on only) and this is not the break-glass administrator */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9304,6 +9664,172 @@ export interface operations {
             };
         };
     };
+    oidc_callback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The authorization code. */
+                code: string | null;
+                /** @description The `state` of the authorization request; it works once, for ten minutes. */
+                state: string | null;
+                /** @description Set by the provider when the sign-in did not happen there. */
+                error: string | null;
+                /** @description The provider's explanation of `error`; logged, never shown. */
+                error_description: string | null;
+                /** @description The issuer the answer comes from (RFC 9207); when given it must be the configured one. */
+                iss: string | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Signed in: to the `return_to` path given at the start (the account page after `POST /auth/oidc/link`), with the `nexc_refresh` cookie set (the console then calls `POST /auth/refresh`). Not signed in: to `/login?sso_error=` (`/app/settings/profile?sso_error=` when linking) `unavailable` | `denied` | `expired` | `invalid` | `no_email` | `unverified_email` | `email_taken` | `link_required` | `identity_taken` | `suspended` | `failed` */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Single sign-on is not configured */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    oidc_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LinkIdentity"];
+            };
+        };
+        responses: {
+            /** @description Where to send the browser; the `nexc_sso` cookie is set */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkStart"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Single sign-on is not configured */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The account is linked to an identity of the provider already, or is the break-glass account */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Wrong password */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The provider cannot be reached */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    oidc_login: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Where to go once signed in: a path of this site (`/app/...`).
+                 *     Anything else, an address of another site included, is ignored for `/app`.
+                 */
+                return_to: string | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description To the provider's authorization endpoint (authorization code with PKCE S256, a `state` and a `nonce` kept here for ten minutes), with the `nexc_sso` cookie binding the sign-in to this browser. When the provider cannot be reached: to `/login?sso_error=unavailable` */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Single sign-on is not configured */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     change_password: {
         parameters: {
             query?: never;
@@ -9403,6 +9929,25 @@ export interface operations {
             };
         };
     };
+    providers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginProviders"];
+                };
+            };
+        };
+    };
     refresh: {
         parameters: {
             query?: never;
@@ -9466,7 +10011,7 @@ export interface operations {
                     "application/json": components["schemas"]["AuthResponse"];
                 };
             };
-            /** @description Signups disabled */
+            /** @description Signups disabled, or password sign-in is off and accounts come from single sign-on */
             403: {
                 headers: {
                     [name: string]: unknown;

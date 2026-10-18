@@ -21,6 +21,10 @@ const KIND: Record<AccountEvent['kind'], { label: string; alert?: boolean }> = {
   role_changed: { label: 'Platform role changed', alert: true },
   two_factor_enabled: { label: 'Two-factor sign-in turned on' },
   two_factor_disabled: { label: 'Two-factor sign-in turned off', alert: true },
+  sso_signed_in: { label: 'Signed in with single sign-on' },
+  sso_linked: { label: 'Single sign-on identity linked', alert: true },
+  sso_provisioned: { label: 'Account created by single sign-on' },
+  sso_unlinked: { label: 'Single sign-on identity unlinked', alert: true },
 };
 
 /**

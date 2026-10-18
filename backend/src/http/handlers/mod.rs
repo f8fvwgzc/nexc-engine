@@ -36,6 +36,7 @@ pub mod search;
 pub mod secops;
 pub mod sessions;
 pub mod settings;
+pub mod sso;
 pub mod teams;
 pub mod templates;
 pub mod trace;

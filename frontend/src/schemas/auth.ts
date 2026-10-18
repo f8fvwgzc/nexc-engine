@@ -21,6 +21,42 @@ export const authResponseSchema = z.object({
 });
 export type AuthResponse = z.infer<typeof authResponseSchema>;
 
+/** A single sign-on provider the login page offers (CONTRACT §5, `GET /auth/providers`). */
+export const ssoProviderSchema = z.object({
+  id: z.string(),
+  display_name: z.string(),
+  login_url: z.string(),
+});
+export type SsoProvider = z.infer<typeof ssoProviderSchema>;
+
+/** The ways to sign in to this installation. */
+export const loginProvidersSchema = z.object({
+  /** False when only single sign-on is allowed: the password form is hidden. */
+  password: z.boolean(),
+  signup: z.boolean(),
+  sso: z.array(ssoProviderSchema),
+});
+export type LoginProviders = z.infer<typeof loginProvidersSchema>;
+
+/** A single sign-on identity linked to the signed-in account. */
+export const linkedIdentitySchema = z.object({
+  provider: z.string(),
+  issuer: z.string(),
+  /** Whether it is an identity of the provider configured now. */
+  current: z.boolean(),
+  email: z.string(),
+  linked_at: timestampSchema,
+  last_login_at: timestampSchema.nullable(),
+});
+export type LinkedIdentity = z.infer<typeof linkedIdentitySchema>;
+
+/** How the signed-in account signs in (`GET /auth/identities`). */
+export const signInMethodsSchema = z.object({
+  password: z.boolean(),
+  identities: z.array(linkedIdentitySchema),
+});
+export type SignInMethods = z.infer<typeof signInMethodsSchema>;
+
 /* ---------- request bodies / form schemas ---------- */
 
 export const loginInputSchema = z.object({

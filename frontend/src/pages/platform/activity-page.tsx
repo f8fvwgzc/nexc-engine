@@ -23,6 +23,7 @@ const VERB: Record<PlatformAction, string> = {
   account_erased: 'erased',
   password_reset_issued: 'issued a password reset link for',
   two_factor_reset: 'turned off two-factor sign-in for',
+  identity_unlinked: 'unlinked a single sign-on identity from',
 };
 
 function Entry({ event }: { event: PlatformEvent }) {

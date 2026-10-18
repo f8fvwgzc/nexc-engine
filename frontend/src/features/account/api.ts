@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { apiRequest, apiSend } from '@/lib/api/client';
 import { saveDownload } from '@/lib/api/download';
-import { authResponseSchema, userSchema } from '@/schemas/auth';
+import { authResponseSchema, signInMethodsSchema, userSchema } from '@/schemas/auth';
 import { idSchema, timestampSchema } from '@/schemas/common';
 
 /** Changes the signed-in person's display name. */
@@ -42,12 +42,34 @@ export const accountEventSchema = z.object({
     'role_changed',
     'two_factor_enabled',
     'two_factor_disabled',
+    'sso_signed_in',
+    'sso_linked',
+    'sso_provisioned',
+    'sso_unlinked',
   ]),
   ip: z.string().nullable(),
   detail: z.string(),
   created_at: timestampSchema,
 });
 export type AccountEvent = z.infer<typeof accountEventSchema>;
+
+/** How the signed-in person signs in: a password or not, and the single sign-on identities. */
+export const signInMethodsQuery = () =>
+  queryOptions({
+    queryKey: ['account', 'sign-in'] as const,
+    queryFn: ({ signal }) => apiRequest('/auth/identities', signInMethodsSchema, { signal }),
+  });
+
+/**
+ * Starts linking the single sign-on provider's identity to the signed-in account; the password
+ * confirms it. The browser then goes to the provider and comes back to the profile page.
+ */
+export function linkIdentity(password: string) {
+  return apiRequest('/auth/oidc/link', z.object({ authorization_url: z.string().min(1) }), {
+    method: 'POST',
+    body: { password },
+  });
+}
 
 /** What happened to the signed-in person's access lately, newest first. */
 export const activityQuery = () =>

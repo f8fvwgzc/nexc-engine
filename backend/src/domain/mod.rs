@@ -40,6 +40,7 @@ pub mod search;
 pub mod secops;
 pub mod session;
 pub mod settings;
+pub mod sso;
 pub mod status;
 pub mod template;
 pub mod topics;

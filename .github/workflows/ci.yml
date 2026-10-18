@@ -170,6 +170,13 @@ jobs:
           helm template nexc deploy/helm/nexc-engine -n nexc --set secrets.existingSecret=nexc-secrets \
             --set autoscaling.backend.enabled=true --set autoscaling.runtime.enabled=true \
             --set podDisruptionBudgets.maxUnavailable=2 > /dev/null
+          # Single sign-on on: the settings in the ConfigMap, the client secret from its own Secret.
+          helm template nexc deploy/helm/nexc-engine -n nexc --set secrets.existingSecret=nexc-secrets \
+            --set oidc.enabled=true --set oidc.issuer=https://idp.example.com/realms/acme \
+            --set oidc.clientId=nexc --set oidc.existingSecret=nexc-oidc \
+            --set config.NEXC_PUBLIC_URL=https://nexc.example.com \
+            --set 'oidc.adminGroups={nexc-admins}' --set oidc.allowLocalLogin=false > "$RUNNER_TEMP/sso.yaml"
+          grep -q 'NEXC_OIDC_CLIENT_SECRET' "$RUNNER_TEMP/sso.yaml"
       - name: shellcheck
         run: shellcheck -x scripts/*.sh
       - name: Grafana dashboard is valid JSON

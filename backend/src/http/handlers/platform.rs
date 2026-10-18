@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
+use super::sso::provider_name;
 use super::workspaces::{audit, ensure_personal};
 use crate::app::AppState;
 use crate::domain::AppError;
@@ -22,6 +23,7 @@ use crate::domain::platform::{
     PlatformAction, PlatformEvent, PlatformUser, PlatformWorkspace, PlatformWorkspaceDetail,
     REASON_MAX,
 };
+use crate::domain::sso::AccountIdentity;
 use crate::domain::user::{self, Role};
 use crate::domain::validation::{FieldErrors, Validate};
 use crate::domain::workspace::WorkspaceRole;
@@ -470,6 +472,82 @@ pub struct EraseAccount {
 
 impl Validate for EraseAccount {
     fn validate(&self, _errors: &mut FieldErrors) {}
+}
+
+/// The single sign-on identities linked to an account, with who each is at
+/// its provider (`sub`), oldest first.
+#[utoipa::path(get, path = "/admin/users/{uid}/identities", tag = "admin", security(("bearer" = [])),
+    params(("uid" = Uuid, Path, description = "User id")),
+    responses((status = 200, body = [AccountIdentity]), (status = 403, body = Problem), (status = 404, body = Problem)))]
+pub async fn user_identities(
+    State(state): State<AppState>,
+    _admin: PlatformAdmin,
+    Path(uid): Path<Uuid>,
+) -> Result<Json<Vec<AccountIdentity>>, AppError> {
+    repo::platform::user(&state.db, uid)
+        .await
+        .or_not_found("user")?;
+    let identities = repo::sso::account_identities(&state.db, uid)
+        .await?
+        .into_iter()
+        .map(|row| AccountIdentity {
+            id: row.id,
+            provider: provider_name(&state, &row.issuer),
+            issuer: row.issuer,
+            subject: row.subject,
+            email: row.email,
+            linked_at: row.created_at,
+            last_login_at: row.last_login_at,
+        })
+        .collect();
+    Ok(Json(identities))
+}
+
+/// Unlinks a single sign-on identity from an account, and signs the account
+/// out everywhere. The person's next sign-in through the provider is a
+/// first one again: linked by a verified address, or refused. This is what
+/// sorts out an identity the provider re-created (a new `sub`, refused with
+/// `email_taken` until then), one linked by mistake, or one that must not
+/// sign in any more (stop the provider vouching for the address too, or it
+/// is linked again).
+#[utoipa::path(delete, path = "/admin/users/{uid}/identities/{iid}", tag = "admin", security(("bearer" = [])),
+    params(("uid" = Uuid, Path, description = "User id"), ("iid" = Uuid, Path, description = "Identity id")),
+    responses((status = 204, description = "Unlinked; every session of the account ended"), (status = 403, body = Problem),
+        (status = 404, body = Problem), (status = 409, description = "Your own account", body = Problem)))]
+pub async fn unlink_identity(
+    State(state): State<AppState>,
+    admin: PlatformAdmin,
+    Path((uid, iid)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, AppError> {
+    let account = repo::platform::user(&state.db, uid)
+        .await
+        .or_not_found("user")?;
+    if uid == admin.id {
+        return Err(AppError::Conflict(
+            "you cannot change your own account here; ask another administrator".into(),
+        ));
+    }
+    let identity = repo::sso::unlink(&state.db, uid, iid)
+        .await?
+        .ok_or(AppError::NotFound("identity"))?;
+    let epoch = repo::users::end_sessions(&state.db, uid).await?;
+    repo::tokens::revoke_user(&state.db, uid).await?;
+    state.sessions.raise(uid, epoch);
+    let provider = provider_name(&state, &identity.issuer);
+    let detail = format!(
+        "{provider} identity `{}` ({})",
+        identity.subject, identity.issuer
+    );
+    log(
+        &state,
+        admin,
+        PlatformAction::IdentityUnlinked,
+        &named(&account),
+        &detail,
+    )
+    .await;
+    note(&state, uid, AccountEventKind::SsoUnlinked, &provider).await;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Deletes an account on its holder's request, exactly as the holder could

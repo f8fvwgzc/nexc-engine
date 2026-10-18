@@ -114,6 +114,121 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   deploying, shutting down, seeing takeovers happen, retrying writes); the contract documents the
   setting, the lease semantics and `Idempotency-Key`; the architecture's scaling section no
   longer says an in-flight run is lost with its replica.
+- Operate, Single sign-on (`site/operate/sso.md`): how a sign-in goes (CONTRACT §5's single
+  sign-on region), every `NEXC_OIDC_*` setting, roles from groups, the break-glass
+  administrator, and configuration examples for Keycloak, Microsoft Entra ID (which sends no
+  `email_verified`), Okta (the groups claim on the authorization server the issuer names) and
+  Google (no groups; keep the consent screen internal), clearly
+  marked as not yet tried against those providers, with what to look at when a sign-in fails.
+  The Helm chart gains an `oidc` block: the settings go into the ConfigMap and the client secret
+  is read from a Secret of your own (`oidc.existingSecret`, key `oidc.existingSecretKey`); the
+  chart refuses to render SSO without an issuer, a client id, that Secret, or the console's
+  address (`config.NEXC_PUBLIC_URL` or `oidc.redirectUrl`), and CI renders it with SSO on.
+- Single sign-on tests against an OpenID Connect provider in process (`backend/tests/common/oidc.rs`:
+  axum serving discovery, a key set of two RSA keys and a P-256 key made at start, a token
+  endpoint that checks the client's HTTP Basic credentials, the redirect URI and the PKCE
+  verifier, and userinfo), driving the whole browser trip through the real router
+  (`backend/tests/oidc.rs`): an account created at the first sign-in; an existing account linked
+  by a verified address, and not by an unverified one nor a second identity; a platform
+  administrator, an account with two-factor sign-in and the break-glass address refused
+  (`link_required`) and linked from the profile page with the password (another account's
+  identity refused, the break-glass account never); an identity unlinked by an administrator, the
+  account signed out and the re-created identity then linked; a bad signature,
+  another audience, several audiences without `azp`, an expired, future, stale or not-yet-valid
+  token, another issuer, a nonce mismatch, `alg: none` and HS256 (with the client secret too) all
+  refused; a state replayed, finished in another browser, older than ten minutes, made up or
+  declined at the provider; key rotation with one refetch and none for a made-up key id; ES256;
+  the admin groups and the workspace mapping giving roles and taking back only what they gave,
+  groups from userinfo, a sign-in without the groups claim changing no role; password sign-in off with the break-glass administrator still let in;
+  `return_to` never leaving the site; a suspended account refused (its identity's last sign-in
+  left as it was); `GET /auth/providers` and
+  `GET /auth/identities`. `backend/tests/worst_case.rs` sends hostile values in every parameter
+  and cookie of the two routes (every answer a redirect to the provider or to this site), races
+  eight callbacks for one state (one session), and purges what expired sign-ins left.
+  `make prove-api` drives the login (held to the write target) and the whole callback
+  (informational: half of it is the provider's) against the same provider in process, each
+  caller a person of their own (`docs/PERFORMANCE.md`). A vitest
+  renders the login page in its three states, the break-glass form and an `sso_error`; others
+  render the profile page's sign-in cards: the link form and its password, a refusal in words, and
+  no password or two-factor forms for an account without a password.
+- Single sign-on in the console: `GET /auth/providers` (public) says how one signs in here
+  (passwords or not, registration or not, the provider and its name), and the login page shows
+  "Continue with" and the provider's name (wrapping on a phone), with a key icon, above the password form when single
+  sign-on is on, only the button when password sign-in is off (`/login?break_glass=1` opens the
+  form for the break-glass administrator), and in words why the provider sent the browser back
+  when it did (`sso_error`). "Create an account" shows only when registration is open, and the register page
+  says how accounts are made when it is not. The profile page (the platform console's account
+  page too) shows the linked identity, with the provider, the address it gave and the last
+  sign-in, and says when the account has no password (`GET /auth/identities`), and lets an account
+  with a password link the provider there (Single sign-on, *Link*, with the password; a refusal
+  comes back to the page in words); such an account sees
+  no password or two-factor forms and no self-delete it could never confirm, only a note that the
+  provider checks both, and `POST /auth/2fa/setup` answers 409 for it.
+- Single sign-on with an OpenID Connect provider: `GET /auth/oidc/login` sends the browser to the
+  provider (authorization code flow, PKCE S256, a `state` and a `nonce` kept server-side for ten
+  minutes, single use, bound to the browser by the `nexc_sso` cookie) and
+  `GET /auth/oidc/callback` exchanges the code and verifies the ID token: an RS256 or ES256
+  signature by the provider's key set (kept an hour, fetched again once for a key id it does not
+  hold, at most once a minute; a failed refresh of the set or of the discovery document keeps the
+  old one and asks again only after a minute, so sign-ins do not queue on a slow provider; `none`
+  and HS* never pass), `iss`, `aud` (and `azp` with several
+  audiences), `exp` and `iat` with a minute of leeway, and the nonce. Email, verification, name and
+  groups come from the ID token, else from userinfo (an address and whether it is verified always
+  from the same answer). Accounts are found by a new `(issuer,
+  subject)` link table (`user_identities`): a first sign-in links an existing account only by a
+  verified address and only when it has no other identity of the provider, and never a platform
+  administrator's, the break-glass account or one with two-factor sign-in (`link_required`: a
+  provider's word on an address alone would open those, skipping their second factor), else
+  creates the account (no password; invitations accepted only for a verified address; never the
+  break-glass address). Those holders link the identity from their profile page instead:
+  `POST /auth/oidc/link` (their password confirms) starts the same trip, the identity that signs
+  in is linked whatever address it gives, and the browser comes back to the profile page
+  (`identity_taken` when it is another account's). A platform administrator lists an account's
+  identities with their subjects (`GET /admin/users/{uid}/identities`) and unlinks one
+  (`DELETE /admin/users/{uid}/identities/{iid}`: the account is signed out, `identity_unlinked` in
+  the platform's log, `sso_unlinked` in the account's activity), from the Accounts menu's "Single
+  sign-on identities"; the person's next sign-in is a first one again, which lets in someone the
+  provider re-created. Refusals that turn on the account are logged at `warn` with whether an
+  address was given and what `email_verified` said. The admin groups give
+  the platform role and the workspace mapping gives workspace roles at every sign-in, and both take
+  back what they gave once the group is gone (the role before is restored; a role changed by hand,
+  a platform role given in the console and a workspace's last owner are left alone); each workspace
+  change is in its audit log, by `system`, and each platform role given or taken back is in the
+  platform's activity log (`GET /admin/events`, no `actor_id`, by `single sign-on (<name>)`,
+  naming the group). A sign-in without the groups claim at all (an Entra ID
+  overage, a mapper left out of the token) changes no role and logs a warning naming the claim;
+  only a claim that is there, even empty, takes roles back. The callback starts the session exactly as a password
+  sign-in does and sends the browser to a same-origin `return_to` path (another site, `//host`,
+  `/\host` and encoded slashes fall back to `/app`), with no token in any address; refusals go to
+  `/login?sso_error=<code>`. Suspended accounts are refused; the local second factor is not asked.
+  Sign-ins, links and created accounts are in the account's activity (`sso_signed_in`,
+  `sso_linked`, `sso_provisioned`), and its export lists its identities. With
+  `NEXC_OIDC_ALLOW_LOCAL_LOGIN=false` password sign-in answers 403 except for the break-glass
+  platform administrator, and registration 403. Expired sign-ins are purged with the other
+  short-lived rows; deleting an account erases its identities (`backend/src/engine/sso.rs`,
+  `backend/src/http/handlers/sso.rs`, migration `20261006000080`).
+- Single sign-on settings (OpenID Connect): `NEXC_OIDC_ISSUER` turns it on (unset keeps it off
+  and every other `NEXC_OIDC_*` variable is ignored), with `NEXC_OIDC_CLIENT_ID`,
+  `NEXC_OIDC_CLIENT_SECRET` (redacted), `NEXC_OIDC_REDIRECT_URL` (default `NEXC_PUBLIC_URL` +
+  `/api/v1/auth/oidc/callback`; any other path is refused, since the cookie that binds a sign-in to
+  its browser is only sent there, and the problem of a derived one is said of `NEXC_PUBLIC_URL`),
+  `NEXC_OIDC_SCOPES` (`openid email profile`; `openid` is always
+  asked for), `NEXC_OIDC_DISPLAY_NAME` (`SSO`), `NEXC_OIDC_GROUPS_CLAIM` (`groups`),
+  `NEXC_OIDC_ADMIN_GROUPS`, `NEXC_OIDC_WORKSPACE_ROLES` (`group=workspace:role`, the workspace
+  by its id, which the platform console's workspace panel now shows; a slug is refused, since
+  whoever creates a workspace of that name could take it), `NEXC_OIDC_ALLOW_LOCAL_LOGIN` (`true`), `NEXC_OIDC_BREAK_GLASS_EMAIL` and
+  `NEXC_OIDC_REQUIRE_VERIFIED_EMAIL` (`true`). Every problem is reported at start-up (an
+  `http://` issuer or redirect URL in production, a missing client, a scope that is not one, an
+  unknown role). `nexc doctor` fetches the issuer's discovery document and its signing keys,
+  checks that the document is the issuer's own, uses usable endpoints and signs with RS256 or
+  ES256, names the redirect URL to register (warning when its host is not `NEXC_PUBLIC_URL`'s, or
+  is this machine outside development), warns when password sign-in is off without a
+  break-glass administrator and fails when that address names no account, a suspended one, one
+  without a password or one that is not a platform administrator's (logged at start-up too),
+  counts only the RS256/ES256 keys a sign-in would use, says why an unreachable provider could not
+  be reached (each cause, the URL once), and checks that each mapped workspace exists. `nexc init` quotes
+  a default with a space, which `.env` needs (`backend/src/config/oidc.rs`,
+  `backend/src/security/oidc.rs`, `backend/src/cli/doctor.rs`).
 - Documentation site (`site/`, VitePress): the repository's Markdown rendered with a sidebar,
   full-text search, a dark theme, mermaid diagrams and the API reference (Scalar over
   `site/public/openapi.json`, a committed export of `nexc openapi`), in six sections: Start,

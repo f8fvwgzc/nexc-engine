@@ -49,7 +49,8 @@ pub struct AccountExport {
     pub account: User,
     /// `workspaces`, `teams`, `issues_created`, `issues_assigned`,
     /// `comments`, `graphs`, `documents`, `memories`, `ai_account`, `usage`,
-    /// `security_activity`, `notifications`: each a list of plain objects.
+    /// `security_activity`, `notifications`, `assistant_conversations`,
+    /// `sign_in_identities`: each a list of plain objects.
     #[schema(value_type = Object)]
     pub sections: Map<String, Value>,
     /// Sections that hold more than [`EXPORT_SECTION_MAX`] rows and were cut there.
@@ -128,6 +129,11 @@ const SECTIONS: &[(&str, &str)] = &[
         "notifications",
         "SELECT n.kind, n.created_at, n.read_at FROM notifications n
          WHERE n.user_id = $1 ORDER BY n.created_at",
+    ),
+    (
+        "sign_in_identities",
+        "SELECT i.issuer, i.subject, i.email, i.created_at AS linked_at, i.last_login_at
+         FROM user_identities i WHERE i.user_id = $1 ORDER BY i.created_at",
     ),
     (
         "assistant_conversations",
@@ -235,6 +241,8 @@ pub async fn erase(state: &AppState, user: Uuid) -> Result<(), AppError> {
         "DELETE FROM account_events WHERE user_id = $1",
         "DELETE FROM recovery_codes WHERE user_id = $1",
         "DELETE FROM idempotency_keys WHERE user_id = $1",
+        "DELETE FROM user_identities WHERE user_id = $1",
+        "DELETE FROM sso_role_grants WHERE user_id = $1",
         "DELETE FROM memories WHERE owner_id = $1 AND scope = 'user'",
         "DELETE FROM graphs WHERE owner_id = $1 AND workspace_id IS NULL",
     ] {
@@ -247,7 +255,7 @@ pub async fn erase(state: &AppState, user: Uuid) -> Result<(), AppError> {
     let epoch: i32 = sqlx::query_scalar(
         "UPDATE users
          SET email = 'deleted-' || id || '@deleted.invalid', name = $2, password_hash = '!',
-             role = 'user', failed_logins = 0, locked_until = NULL,
+             role = 'user', admin_by_sso = false, failed_logins = 0, locked_until = NULL,
              suspended_at = COALESCE(suspended_at, now()), suspended_reason = '',
              totp_secret_enc = NULL, totp_enabled_at = NULL, totp_last_step = NULL,
              deleted_at = now(), session_epoch = session_epoch + 1, session_epoch_at = now(),

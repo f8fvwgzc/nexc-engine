@@ -34,6 +34,16 @@ string_enum!(
         RoleChanged => "role_changed",
         TwoFactorEnabled => "two_factor_enabled",
         TwoFactorDisabled => "two_factor_disabled",
+        /// Signed in through the single sign-on provider (detail: its name).
+        SsoSignedIn => "sso_signed_in",
+        /// An identity of the provider was linked to the account by its
+        /// verified e-mail address, at its first sign-in there.
+        SsoLinked => "sso_linked",
+        /// The account was created at its first sign-in through the provider.
+        SsoProvisioned => "sso_provisioned",
+        /// A platform administrator unlinked an identity of the provider
+        /// (detail: the provider's name).
+        SsoUnlinked => "sso_unlinked",
     }
 );
 

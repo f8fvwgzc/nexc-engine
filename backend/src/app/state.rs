@@ -26,6 +26,7 @@ use crate::realtime::hub::Hub;
 use crate::security::agent_token::AgentTokenKeys;
 use crate::security::gate::SessionGate;
 use crate::security::jwt::JwtKeys;
+use crate::security::oidc::OidcClient;
 use crate::security::secret_box::SecretBox;
 use crate::security::signing::Signer;
 
@@ -69,6 +70,8 @@ pub struct AppState {
     pub firewall_sessions: Arc<crate::firewall::Sessions>,
     /// Hot reads kept in memory, dropped on write across replicas.
     pub caches: Arc<Caches>,
+    /// The single sign-on provider's relying party; `None` when `NEXC_OIDC_ISSUER` is unset.
+    pub oidc: Option<Arc<OidcClient>>,
 }
 
 impl AppState {
@@ -145,7 +148,15 @@ impl AppState {
             None => None,
         };
         let firewall_signer = Arc::new(Signer::from_seed(settings.firewall_signing_key.expose())?);
+        let oidc = match &settings.oidc {
+            Some(oidc) => Some(Arc::new(OidcClient::new(
+                oidc.clone(),
+                settings.is_production(),
+            )?)),
+            None => None,
+        };
         Ok(AppState {
+            oidc,
             caches: Arc::new(Caches::new(settings.cache_ttl, metrics.clone())),
             runtime_grpc,
             otlp_channel,

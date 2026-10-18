@@ -101,6 +101,7 @@ export default defineConfig({
           { text: 'High availability', link: '/operate/ha' },
           { text: 'Backups', link: '/operate/backups' },
           { text: 'Infrastructure', link: '/operate/infrastructure' },
+          { text: 'Single sign-on', link: '/operate/sso' },
           { text: 'Workspace transfers', link: '/operate/transfers' },
           { text: 'Alerts', link: '/operate/alerts' },
           { text: 'SIEM export', link: '/operate/siem' },

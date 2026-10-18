@@ -1,6 +1,7 @@
 //! Typed, validated settings loaded from the environment (and `.env`).
 #![forbid(unsafe_code)]
 
+pub mod oidc;
 mod secret;
 pub mod vars;
 
@@ -122,6 +123,8 @@ pub struct Settings {
     pub a2a_timeout: Duration,
     /// Lets A2A counterparts be registered on private and loopback hosts (development only).
     pub a2a_allow_private_hosts: bool,
+    /// Single sign-on with an OpenID Connect provider; `None` when `NEXC_OIDC_ISSUER` is unset.
+    pub oidc: Option<oidc::OidcSettings>,
 }
 
 /// The wire between the backend and the agent runtime.
@@ -191,7 +194,7 @@ impl Settings {
             }
         };
         let prod = env == Environment::Production;
-        let settings = Settings {
+        let mut settings = Settings {
             env,
             host: r.parse("NEXC_HOST", "0.0.0.0".parse().expect("valid ip")),
             port: r.parse("NEXC_PORT", 8080),
@@ -262,7 +265,9 @@ impl Settings {
             alert_allow_private_hosts: r.parse("NEXC_ALERT_ALLOW_PRIVATE_HOSTS", false),
             a2a_timeout: Duration::from_secs(r.parse("NEXC_A2A_TIMEOUT_SECS", 120)),
             a2a_allow_private_hosts: r.parse("NEXC_A2A_ALLOW_PRIVATE_HOSTS", false),
+            oidc: None,
         };
+        settings.oidc = oidc::read(r.lookup, prod, &settings.public_url, &mut r.errors);
         let mut errors = r.errors;
         settings.check_invariants(&mut errors);
         if errors.is_empty() {

@@ -28,9 +28,11 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import {
+  accountIdentitiesQuery,
   eraseAccount,
   issuePasswordReset,
   platformUsersQuery,
+  unlinkIdentity,
   updatePlatformUser,
   type PlatformUser,
   type PlatformUserChange,
@@ -177,6 +179,107 @@ function ResetLinkDialog({ user, onClose }: { user: PlatformUser | null; onClose
   );
 }
 
+/**
+ * The single sign-on identities linked to an account, with who the person is at the provider.
+ * Unlinking one signs the account out everywhere; the person's next sign-in through the provider
+ * is a first one again.
+ */
+function IdentitiesDialog({ user, onClose }: { user: PlatformUser | null; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const userId = user?.id ?? '';
+  const { data, isPending, error } = useQuery({
+    ...accountIdentitiesQuery(userId),
+    enabled: user !== null,
+  });
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const unlink = useMutation({
+    mutationFn: (identityId: string) => unlinkIdentity(userId, identityId),
+    meta: { errorToast: false, successMessage: 'Identity unlinked; the account was signed out' },
+    onSuccess: () => {
+      setConfirming(null);
+      return queryClient.invalidateQueries({ queryKey: ['platform'] });
+    },
+  });
+  const close = () => {
+    unlink.reset();
+    setConfirming(null);
+    onClose();
+  };
+  return (
+    <Dialog open={user !== null} onOpenChange={(open) => !open && close()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Single sign-on identities of {user?.name}</DialogTitle>
+          <DialogDescription>
+            Who {user?.email} is at the identity provider. Unlink one the provider re-created (its
+            new subject is refused until then), linked by mistake, or that must not sign in any
+            more. The account is signed out everywhere, and the next sign-in through the provider
+            links again by a verified address, so stop the provider vouching for it first when that
+            is the point.
+          </DialogDescription>
+        </DialogHeader>
+        {error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {errorMessage(error)}
+          </p>
+        ) : isPending ? (
+          <Skeleton className="h-16 w-full" />
+        ) : data.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No identity is linked to this account.</p>
+        ) : (
+          <ul className="divide-y rounded-lg border text-[13px]">
+            {data.map((identity) => (
+              <li
+                key={identity.id}
+                className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2"
+              >
+                <span className="min-w-0 flex-1 basis-56">
+                  <span className="block font-medium" title={identity.issuer}>
+                    {identity.provider}
+                  </span>
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {identity.email || 'no address given'} · subject{' '}
+                    <code className="font-mono">{identity.subject}</code>
+                  </span>
+                  <span className="block text-xs text-muted-foreground">
+                    {identity.last_login_at
+                      ? `last sign-in ${formatRelative(identity.last_login_at)}`
+                      : `linked ${formatRelative(identity.linked_at)}`}
+                  </span>
+                </span>
+                {confirming === identity.id ? (
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    disabled={unlink.isPending}
+                    onClick={() => unlink.mutate(identity.id)}
+                  >
+                    Unlink and sign out
+                  </Button>
+                ) : (
+                  <Button variant="outline" size="sm" onClick={() => setConfirming(identity.id)}>
+                    Unlink…
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        {unlink.error ? (
+          <p role="alert" className="text-xs text-destructive">
+            {errorMessage(unlink.error)}
+          </p>
+        ) : null}
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={close}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /** Erases an account on its holder's request, once its address is typed out. */
 function EraseDialog({ user, onClose }: { user: PlatformUser | null; onClose: () => void }) {
   const queryClient = useQueryClient();
@@ -254,6 +357,7 @@ export default function PlatformUsersPage() {
   const [suspending, setSuspending] = useState<PlatformUser | null>(null);
   const [erasing, setErasing] = useState<PlatformUser | null>(null);
   const [resetting, setResetting] = useState<PlatformUser | null>(null);
+  const [identities, setIdentities] = useState<PlatformUser | null>(null);
   const change = useMutation({
     mutationFn: ({ user, change }: { user: PlatformUser; change: PlatformUserChange }) =>
       updatePlatformUser(user.id, change),
@@ -346,6 +450,9 @@ export default function PlatformUsersPage() {
                   <DropdownMenuItem onSelect={() => setResetting(u)}>
                     Password reset link…
                   </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => setIdentities(u)}>
+                    Single sign-on identities…
+                  </DropdownMenuItem>
                   {u.two_factor && (
                     <DropdownMenuItem
                       title="For someone who lost their authenticator app and their recovery codes"
@@ -385,6 +492,7 @@ export default function PlatformUsersPage() {
       )}
       {controls(data?.length ?? 0)}
       <ResetLinkDialog user={resetting} onClose={() => setResetting(null)} />
+      <IdentitiesDialog user={identities} onClose={() => setIdentities(null)} />
       <EraseDialog user={erasing} onClose={() => setErasing(null)} />
       <SuspendDialog
         user={suspending}
