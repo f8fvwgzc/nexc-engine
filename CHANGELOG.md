@@ -626,6 +626,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `make db-up` on a machine whose `.env` names the repo's own pgvector image
+  (`NEXC_DB_IMAGE=nexc-postgres-pgvector:17`, built once from
+  `deploy/postgres/pgvector.Dockerfile`) failed with docker's "pull access denied" (exit 125)
+  when that image was not there: `docker run` tries to pull what it does not have, and the
+  image is on no registry. `scripts/db.sh` now builds it from the Dockerfile when it is
+  missing, pulls any other image it lacks, and says which to check when neither works.
 - CI on `main` is green again: the MCP gateway's stdio transport is boxed so that `Transport`'s
   variants are close in size (clippy's `large_enum_variant` fires on Linux, where a `Child` is
   large, and not on macOS), and `scripts/restore.sh` checks for a backup with an `if` rather

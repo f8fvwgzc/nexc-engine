@@ -24,7 +24,9 @@ database, and a web form that repoints a server at another database is a way to 
    its migrations (`backend/migrations/`, versioned by timestamp, applied once each in order).
 
 For vector search use an image with pgvector: `deploy/postgres/pgvector.Dockerfile` builds one;
-`NEXC_DB_IMAGE` and `NEXC_DB_VOLUME` in `.env` select it for `make dev`.
+`NEXC_DB_IMAGE` and `NEXC_DB_VOLUME` in `.env` select it for `make dev`. `make db-up` builds
+`nexc-postgres-pgvector:<tag>` from that Dockerfile when the machine does not have it (it is on
+no registry) and pulls any other image it lacks.
 
 ## Transferring one workspace to its owner's database
 

@@ -30,6 +30,22 @@ PORT="${NEXC_DB_PORT:-5432}"
 exists() { docker container inspect "$CONTAINER" >/dev/null 2>&1; }
 running() { [[ "$(docker container inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" == "true" ]]; }
 
+# `docker run` pulls an image it does not have, and the repo's own pgvector image
+# (nexc-postgres-pgvector:<tag>, deploy/postgres/pgvector.Dockerfile) is on no registry: without
+# this, a machine where it was never built (or was pruned) fails with "pull access denied".
+ensure_image() {
+  if docker image inspect "$IMAGE" >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ "$IMAGE" == nexc-postgres-pgvector:* ]]; then
+    echo "image $IMAGE is not on this machine; building it from deploy/postgres/pgvector.Dockerfile"
+    docker build -t "$IMAGE" -f deploy/postgres/pgvector.Dockerfile deploy/postgres
+  elif ! docker pull "$IMAGE"; then
+    echo "error: image $IMAGE is neither on this machine nor on a registry; check NEXC_DB_IMAGE in .env" >&2
+    exit 1
+  fi
+}
+
 case "${1:-}" in
   up)
     if running; then
@@ -43,6 +59,7 @@ case "${1:-}" in
         echo "  NEXC_DATABASE_URL (or clear NEXC_DATABASE_URL and re-run make init)." >&2
         exit 1
       fi
+      ensure_image
       docker run -d --name "$CONTAINER" \
         -p "127.0.0.1:$PORT:5432" \
         -e POSTGRES_USER="$POSTGRES_USER" \
