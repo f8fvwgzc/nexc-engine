@@ -170,6 +170,9 @@
   --canvas-bg: oklch(0.98 0 0);
   --canvas-dot: oklch(0.85 0 0);
   --canvas-edge: oklch(0.6 0 0);
+  /* How much of a status colour the text of a tinted badge keeps; the rest is the foreground, so
+     12px badge text stays above 4.5:1 on its tint in both themes. */
+  --badge-ink: 60%;
 }
 
 .dark {
@@ -217,6 +220,7 @@
   --canvas-bg: oklch(0.12 0 0);
   --canvas-dot: oklch(0.26 0 0);
   --canvas-edge: oklch(0.55 0 0);
+  --badge-ink: 85%;
 }
 
 @layer base {
@@ -250,4 +254,25 @@
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* Text in a status colour, on that colour's tint: badges, verdict chips, severity pills. */
+@utility text-badge {
+  color: color-mix(in oklch, var(--badge-color) var(--badge-ink), var(--foreground));
+}
+
+/* The destructive badge (Suspended, failed, not answering…) and button are read on a tint at
+   12–13px: same rule. A tooltip trigger replaces a button's data-slot, so buttons are matched
+   by element. */
+[data-slot='badge'][data-variant='destructive'],
+button[data-variant='destructive'],
+a[data-variant='destructive'] {
+  color: color-mix(in oklch, var(--destructive) var(--badge-ink), var(--foreground));
+}
+
+/* A tab panel takes focus after its tab (Radix makes it tabbable): show where focus went. */
+[data-slot='tabs-content']:focus-visible {
+  border-radius: var(--radius);
+  outline: 2px solid color-mix(in oklch, var(--ring) 60%, transparent);
+  outline-offset: 4px;
 }

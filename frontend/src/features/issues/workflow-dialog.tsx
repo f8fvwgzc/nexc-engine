@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowDownIcon, ArrowUpIcon, PlusIcon, Trash2Icon } from 'lucide-react';
 import { useState } from 'react';
 
+import { IconButton } from '@/components/custom-ui/icon-button';
 import { StateGlyph } from '@/components/custom-ui/issue-glyphs';
 import { OptionSelect } from '@/components/custom-ui/option-select';
 import { Button } from '@/components/ui/button';
@@ -83,33 +84,19 @@ function StateRow({
       />
       {editable && (
         <>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            disabled={first}
-            aria-label={`Move ${state.name} up`}
-            onClick={() => onMove(-1)}
-          >
+          <IconButton disabled={first} label={`Move ${state.name} up`} onClick={() => onMove(-1)}>
             <ArrowUpIcon />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            disabled={last}
-            aria-label={`Move ${state.name} down`}
-            onClick={() => onMove(1)}
-          >
+          </IconButton>
+          <IconButton disabled={last} label={`Move ${state.name} down`} onClick={() => onMove(1)}>
             <ArrowDownIcon />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
+          </IconButton>
+          <IconButton
             className="text-destructive"
-            aria-label={`Delete ${state.name}`}
+            label={`Delete ${state.name}`}
             onClick={onDelete}
           >
             <Trash2Icon />
-          </Button>
+          </IconButton>
         </>
       )}
     </li>

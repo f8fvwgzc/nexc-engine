@@ -20,7 +20,7 @@ export function AgentStatusBadge({
     <span
       style={{ '--badge-color': meta.color } as React.CSSProperties}
       className={cn(
-        'inline-flex h-5 items-center gap-1.5 rounded-full px-2 text-[11px] font-medium text-[var(--badge-color)]',
+        'inline-flex h-5 items-center gap-1.5 rounded-full px-2 text-[11px] font-medium text-badge',
         'bg-[color-mix(in_oklch,var(--badge-color)_12%,transparent)]',
         className,
       )}

@@ -1,6 +1,7 @@
 import { queryOptions } from '@tanstack/react-query';
 
 import { apiRequest, apiSend } from '@/lib/api/client';
+import { FRESH } from '@/lib/freshness';
 import { qk } from '@/lib/query-keys';
 import { llmSettingsSchema, modelCatalogSchema, type LlmProvider } from '@/schemas/settings';
 
@@ -14,6 +15,7 @@ const scoped = (path: string, workspaceId?: string) =>
 export const llmSettingsQuery = (workspaceId?: string) =>
   queryOptions({
     queryKey: qk.settings.effective(workspaceId),
+    staleTime: FRESH.setup,
     queryFn: ({ signal }) =>
       apiRequest(scoped('/settings/llm', workspaceId), llmSettingsSchema, { signal }),
   });
@@ -22,6 +24,7 @@ export const llmSettingsQuery = (workspaceId?: string) =>
 export const workspaceLlmQuery = (workspaceId: string) =>
   queryOptions({
     queryKey: qk.settings.workspace(workspaceId),
+    staleTime: FRESH.setup,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/llm`, llmSettingsSchema.nullable(), { signal }),
   });

@@ -5,6 +5,7 @@ import { useSearchParams } from 'react-router-dom';
 
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { PageSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
@@ -36,7 +37,7 @@ function Agents({ open }: { open: string | null }) {
   const create = () => setEditing({ agent: null });
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-8 p-4 sm:p-6">
+    <PageContainer>
       <PageHeader
         title="Agents"
         description="This workspace’s AI org chart: who reports to whom, which roles execute which nodes, what each may do, and how much budget each has left."
@@ -99,7 +100,7 @@ function Agents({ open }: { open: string | null }) {
         destructive
         onConfirm={() => deleting && deleteAgent.mutate(deleting.id)}
       />
-    </div>
+    </PageContainer>
   );
 }
 

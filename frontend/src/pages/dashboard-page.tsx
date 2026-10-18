@@ -1,8 +1,9 @@
 import { useSuspenseQuery } from '@tanstack/react-query';
 import { Suspense } from 'react';
 
-import { PageHeader } from '@/components/custom-ui/page-header';
 import { Stagger } from '@/components/custom-ui/motion';
+import { PageContainer } from '@/components/custom-ui/page-container';
+import { PageHeader } from '@/components/custom-ui/page-header';
 import { PageSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { graphsQuery } from '@/features/graphs/api';
@@ -19,7 +20,7 @@ function Dashboard() {
   const sorted = [...graphs].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-8 p-4 sm:p-6">
+    <PageContainer>
       {graphs.length === 0 ? (
         <>
           <FirstRunHero />
@@ -33,8 +34,12 @@ function Dashboard() {
             actions={<CreateGraphDialog />}
           />
           <DashboardStats graphs={graphs} />
-          <section aria-label="Your graphs">
-            <Stagger className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <section aria-labelledby="your-graphs">
+            <h2 id="your-graphs" className="sr-only">
+              Your graphs
+            </h2>
+            {/* One column on a phone: `grid-cols-1` lets a card shrink below its content's width. */}
+            <Stagger className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {sorted.map((graph) => (
                 <GraphCard key={graph.id} graph={graph} />
               ))}
@@ -43,7 +48,7 @@ function Dashboard() {
           <TemplateGallery />
         </>
       )}
-    </div>
+    </PageContainer>
   );
 }
 

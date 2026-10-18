@@ -1,0 +1,38 @@
+[
+  {
+    "at": "2026-10-14T11:50:00Z",
+    "kind": "run.finished",
+    "actor": "Ada Lovelace",
+    "entity_type": "run",
+    "entity_id": "111c309f-c0cf-72b7-82a2-6b9c6f05c0e3",
+    "title": "Run finished: Market research",
+    "detail": "7 nodes, 0 failed"
+  },
+  {
+    "at": "2026-10-14T10:40:00Z",
+    "kind": "issue.created",
+    "actor": "Alan Turing",
+    "entity_type": "issue",
+    "entity_id": "cccce954-1033-7b22-8b6c-765225669205",
+    "title": "ENG-49 created",
+    "detail": "Pricing model returns NaN for zero-capacity sites"
+  },
+  {
+    "at": "2026-10-14T09:30:00Z",
+    "kind": "alert.raised",
+    "actor": null,
+    "entity_type": "alert",
+    "entity_id": "758595d5-b60a-703b-80f0-da6eadf6e7f3",
+    "title": "Alert: personal data in an artifact",
+    "detail": "high"
+  },
+  {
+    "at": "2026-10-14T08:20:00Z",
+    "kind": "member.invited",
+    "actor": "Ada Lovelace",
+    "entity_type": "member",
+    "entity_id": null,
+    "title": "Invited margaret.hamilton@apollo.example",
+    "detail": "as admin"
+  }
+]

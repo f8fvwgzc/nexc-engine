@@ -1,0 +1,29 @@
+{
+  "window_secs": 300,
+  "rows": [
+    {
+      "method": "GET",
+      "route": "/api/v1/workspaces/{wid}/issues",
+      "count": 1840,
+      "p50_ms": 3.1,
+      "p99_ms": 11.8,
+      "max_ms": 40.2
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/graphs/{gid}",
+      "count": 920,
+      "p50_ms": 2.4,
+      "p99_ms": 9.3,
+      "max_ms": 22
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/graphs/{gid}/runs",
+      "count": 41,
+      "p50_ms": 12.8,
+      "p99_ms": 48.1,
+      "max_ms": 61.3
+    }
+  ]
+}

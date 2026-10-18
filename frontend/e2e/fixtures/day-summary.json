@@ -1,0 +1,11 @@
+{
+  "day": "2026-10-14",
+  "headline": "A failed regulatory scan and a quarantined agent",
+  "highlights": ["Run of the market research graph finished", "Three issues moved to review"],
+  "attention": ["Fact checker is quarantined", "Approval for email.send is pending"],
+  "event_count": 18,
+  "stale": false,
+  "model": "claude-sonnet-4-5",
+  "created_by": "Ada Lovelace",
+  "created_at": "2026-10-14T11:30:00Z"
+}

@@ -4,8 +4,10 @@ import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { ErrorState } from '@/components/custom-ui/error-state';
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { PageSkeleton } from '@/components/layout/page-skeleton';
+import { ContentSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { agentsQuery } from '@/features/agents/api';
@@ -22,7 +24,6 @@ import { RiskPanel } from '@/features/secops/components/risk-panel';
 import { SecopsStats } from '@/features/secops/components/secops-stats';
 import { TraceExplorer } from '@/features/secops/components/trace-explorer';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
-import { errorMessage } from '@/lib/api/errors';
 import { formatRelative } from '@/lib/format';
 import { isWorkspaceAdmin, type Workspace } from '@/schemas/workspace';
 import { ScrollTextIcon } from 'lucide-react';
@@ -71,12 +72,18 @@ function Console({ workspace }: { workspace: Workspace }) {
           <TabsTrigger value="explorer">Trace explorer</TabsTrigger>
         </TabsList>
         <TabsContent value="console" className="space-y-4">
-          {overview.error && (
-            <p role="alert" className="text-sm text-destructive">
-              {errorMessage(overview.error)}
-            </p>
+          {overview.error && !overview.data ? (
+            <ErrorState
+              compact
+              title="Couldn’t load the overview"
+              error={overview.error}
+              onRetry={() => void overview.refetch()}
+            />
+          ) : (
+            <div className="@container">
+              <SecopsStats overview={overview.data} />
+            </div>
           )}
-          <SecopsStats overview={overview.data} />
           <div className="grid gap-4 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
             <div className="min-w-0 space-y-4">
               <RegistryPanel
@@ -102,7 +109,13 @@ function Console({ workspace }: { workspace: Workspace }) {
               <LiveFeedPanel workspaceId={workspace.id} agents={agents} />
               <ApprovalsPanel workspaceId={workspace.id} admin={admin} />
               <AlertsPanel workspaceId={workspace.id} admin={admin} />
-              <RiskPanel overview={overview.data} agents={agents} onOpenAgent={openCard} />
+              <RiskPanel
+                overview={overview.data}
+                error={overview.error}
+                onRetry={() => void overview.refetch()}
+                agents={agents}
+                onOpenAgent={openCard}
+              />
             </div>
           </div>
           {overview.data && (
@@ -128,7 +141,7 @@ function Console({ workspace }: { workspace: Workspace }) {
 export default function SecopsPage() {
   const { current } = useCurrentWorkspace();
   return (
-    <div className="mx-auto w-full max-w-[96rem] space-y-4 p-4 sm:p-6">
+    <PageContainer width="wide">
       <Seo title="AgentSecOps" noIndex />
       <PageHeader
         title="AgentSecOps"
@@ -139,7 +152,7 @@ export default function SecopsPage() {
         }
       />
       {!current ? (
-        <PageSkeleton />
+        <ContentSkeleton />
       ) : current.role === 'guest' ? (
         <EmptyState
           icon={ShieldCheckIcon}
@@ -149,6 +162,6 @@ export default function SecopsPage() {
       ) : (
         <Console key={current.id} workspace={current} />
       )}
-    </div>
+    </PageContainer>
   );
 }

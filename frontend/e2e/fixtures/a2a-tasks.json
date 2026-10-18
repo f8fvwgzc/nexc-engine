@@ -1,0 +1,19 @@
+[
+  {
+    "id": "87a7c0b5-3413-7c05-895e-3fdfadf69f05",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "agent_id": "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4",
+    "caller_agent_id": "9211ce12-92a4-75a8-86f9-47ec2550c5ba",
+    "caller_principal": "agent://acme-research/Partner",
+    "run_id": "d7a0cee7-b61e-70e3-8477-6e245cfafbfb",
+    "node_id": "03842368-8a80-7226-8989-396b2e2a130f",
+    "session_id": null,
+    "hop": 0,
+    "chain": [],
+    "refused_rule": null,
+    "refused_reason": null,
+    "title": "Summarise Q3 storage tenders",
+    "state": "completed",
+    "created_at": "2026-10-14T07:00:00Z"
+  }
+]

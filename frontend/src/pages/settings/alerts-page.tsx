@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckIcon, SirenIcon } from 'lucide-react';
+import { CheckIcon, GavelIcon, SirenIcon } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { ErrorState } from '@/components/custom-ui/error-state';
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { PageSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
@@ -11,7 +13,6 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { acknowledgeAlert, alertsQuery } from '@/features/policies/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
-import { errorMessage } from '@/lib/api/errors';
 import { formatDateTime, formatRelative } from '@/lib/format';
 import { qk } from '@/lib/query-keys';
 import { displayPrincipal } from '@/schemas/agent';
@@ -28,7 +29,7 @@ const KIND_LABEL: Record<AlertKind, string> = {
 
 function Feed({ workspace }: { workspace: Workspace }) {
   const queryClient = useQueryClient();
-  const { data: alerts, isPending, error } = useQuery(alertsQuery(workspace.id));
+  const { data: alerts, isPending, error, refetch } = useQuery(alertsQuery(workspace.id));
   const acknowledge = useMutation({
     mutationFn: acknowledgeAlert,
     onSuccess: (seen) =>
@@ -39,9 +40,7 @@ function Feed({ workspace }: { workspace: Workspace }) {
   if (isPending) return <Skeleton className="h-48 rounded-xl" />;
   if (error) {
     return (
-      <p role="alert" className="text-sm text-destructive">
-        {errorMessage(error)}
-      </p>
+      <ErrorState title="Couldn’t load the alerts" error={error} onRetry={() => void refetch()} />
     );
   }
   if (alerts.length === 0) {
@@ -49,7 +48,15 @@ function Feed({ workspace }: { workspace: Workspace }) {
       <EmptyState
         icon={SirenIcon}
         title="Nothing to look at"
-        description="A credential or personal data on its way out, a run unlike an agent's usual ones, or instructions planted in data would appear here."
+        description="A credential or personal data on its way out, a run unlike an agent's usual ones, or instructions planted in data would appear here. The policies set what raises one."
+        action={
+          <Button variant="outline" asChild>
+            <Link to="/app/settings/policies">
+              <GavelIcon />
+              Review the policies
+            </Link>
+          </Button>
+        }
       />
     );
   }
@@ -76,7 +83,10 @@ function Feed({ workspace }: { workspace: Workspace }) {
                 <span title={alert.principal}>{displayPrincipal(alert.principal)}</span>
                 <span className="font-mono">{alert.rule}</span>
                 {alert.run_id && (
-                  <Link to={`/app/runs/${alert.run_id}`} className="hover:underline">
+                  <Link
+                    to={`/app/runs/${alert.run_id}`}
+                    className="inline-flex min-h-[1.6rem] items-center hover:underline"
+                  >
                     run {alert.run_id.slice(0, 8)}
                   </Link>
                 )}
@@ -114,10 +124,10 @@ function Feed({ workspace }: { workspace: Workspace }) {
 
 export default function AlertsSettingsPage() {
   const { current } = useCurrentWorkspace();
-  if (!current) return <PageSkeleton />;
+  if (!current) return <PageSkeleton width="narrow" />;
   const allowed = isWorkspaceAdmin(current.role);
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-6 p-4 sm:p-6">
+    <PageContainer width="narrow">
       <Seo title="Alerts" noIndex />
       <PageHeader
         title="Alerts"
@@ -132,6 +142,6 @@ export default function AlertsSettingsPage() {
           description="Ask an owner or admin of this workspace."
         />
       )}
-    </div>
+    </PageContainer>
   );
 }

@@ -2,6 +2,7 @@ import { queryOptions } from '@tanstack/react-query';
 import { z } from 'zod';
 
 import { apiRequest, apiSend } from '@/lib/api/client';
+import { FRESH } from '@/lib/freshness';
 import { qk } from '@/lib/query-keys';
 import {
   edgeSuggestionSchema,
@@ -20,6 +21,7 @@ import { runSchema, type StartRunBody } from '@/schemas/run';
 export const suggestionsQuery = (graphId: string) =>
   queryOptions({
     queryKey: qk.graphs.suggestions(graphId),
+    staleTime: FRESH.list,
     queryFn: ({ signal }) =>
       apiRequest(`/graphs/${graphId}/suggestions`, z.array(edgeSuggestionSchema), { signal }),
   });

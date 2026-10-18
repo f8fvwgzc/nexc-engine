@@ -8,3 +8,10 @@ coverage/
 Dockerfile
 .dockerignore
 .DS_Store
+# Playwright: the audit's output, test results, the report and the screenshots (the image only
+# typechecks e2e/)
+e2e/.audit/
+e2e/.results/
+e2e/.report/
+e2e/__screenshots__/
+e2e/audit-images/

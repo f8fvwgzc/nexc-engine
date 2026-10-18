@@ -4,8 +4,8 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { IconButton } from '@/components/custom-ui/icon-button';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SPAN_KIND_META } from '@/features/runs/span-kinds';
 import { barOf, describeSpan, durationOf, traceWindow } from '@/features/runs/trace-tree';
@@ -111,26 +111,31 @@ function SpanRow({
       className={cn('px-2 py-1', highlighted && 'bg-brand/10 ring-1 ring-brand/40 ring-inset')}
     >
       <div className="grid grid-cols-[auto_minmax(0,1fr)_4rem] items-center gap-2 sm:grid-cols-[auto_minmax(0,16rem)_minmax(0,1fr)_4rem]">
-        <Button
+        <IconButton
           type="button"
-          variant="ghost"
           size="icon-xs"
           aria-expanded={open}
-          aria-label={open ? `Fold ${span.name}` : `Unfold ${span.name}`}
+          label={open ? `Fold ${span.name}` : `Unfold ${span.name}`}
           onClick={() => setOpen((o) => !o)}
         >
           <ChevronRightIcon className={cn('transition-transform', open && 'rotate-90')} />
-        </Button>
+        </IconButton>
         <div className="flex min-w-0 items-center gap-1.5">
           <Icon
             className={cn('size-3.5 shrink-0 text-muted-foreground', error && 'text-destructive')}
             aria-label={meta.label}
           />
-          <span className={cn('truncate font-mono text-xs', error && 'text-destructive')}>
+          <span
+            className={cn('truncate font-mono text-xs', error && 'text-destructive')}
+            title={span.name}
+          >
             {span.name}
           </span>
           {detail && (
-            <span className="hidden truncate text-xs text-muted-foreground md:inline">
+            <span
+              className="hidden truncate text-xs text-muted-foreground md:inline"
+              title={detail}
+            >
               {detail}
             </span>
           )}
@@ -214,7 +219,9 @@ export function SpanTimeline({
     <section aria-label={`Spans of ${title}`} className="rounded-xl border bg-card">
       <header className="flex items-center gap-2 border-b px-3 py-2 text-sm">
         <WaypointsIcon className="size-4 text-muted-foreground" aria-hidden />
-        <span className="truncate font-medium">{title}</span>
+        <span className="truncate font-medium" title={title}>
+          {title}
+        </span>
         <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">
           {spans.length} span{spans.length === 1 ? '' : 's'}
           {spans.length > SPANS_MAX ? ` · first ${SPANS_MAX} shown` : ''}

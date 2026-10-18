@@ -1,11 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { FolderKanbanIcon, Trash2Icon } from 'lucide-react';
+import { ArrowLeftIcon, FolderKanbanIcon, Trash2Icon } from 'lucide-react';
 import { useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { ErrorState } from '@/components/custom-ui/error-state';
+import { IconButton } from '@/components/custom-ui/icon-button';
 import { OptionSelect } from '@/components/custom-ui/option-select';
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Button } from '@/components/ui/button';
@@ -66,6 +69,8 @@ function ProjectHeader({ workspace, project }: { workspace: Workspace; project: 
 
   return (
     <header className="space-y-3 border-b pb-4">
+      {/* The name is edited in place; the heading names the page for assistive technology. */}
+      <h1 className="sr-only">{project.name}</h1>
       <div className="flex items-start gap-2">
         <FolderKanbanIcon className="mt-1.5 size-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1 space-y-1">
@@ -74,7 +79,7 @@ function ProjectHeader({ workspace, project }: { workspace: Workspace; project: 
             maxLength={200}
             readOnly={!canEdit}
             aria-label="Project name"
-            className="w-full bg-transparent text-lg font-semibold tracking-tight outline-none"
+            className="-mx-1 w-full rounded-md bg-transparent px-1 text-lg font-semibold tracking-tight outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
             onChange={(e) => setName(e.target.value)}
             onBlur={commitText}
             onKeyDown={(e) => {
@@ -87,21 +92,19 @@ function ProjectHeader({ workspace, project }: { workspace: Workspace; project: 
             readOnly={!canEdit}
             aria-label="Project description"
             placeholder={canEdit ? 'Add a short summary of the outcome…' : ''}
-            className="min-h-0 resize-none border-0 bg-transparent p-0 text-[13px] text-muted-foreground shadow-none focus-visible:ring-0 dark:bg-transparent"
+            className="-mx-1 min-h-0 resize-none rounded-md border-0 bg-transparent px-1 py-0 text-[13px] text-muted-foreground shadow-none focus-visible:ring-2 focus-visible:ring-ring/50 dark:bg-transparent"
             onChange={(e) => setDescription(e.target.value)}
             onBlur={commitText}
           />
         </div>
         {isWorkspaceAdmin(workspace.role) && (
-          <Button
-            variant="ghost"
-            size="icon-sm"
+          <IconButton
             className="text-muted-foreground hover:text-destructive"
-            aria-label={`Delete ${project.name}`}
+            label={`Delete ${project.name}`}
             onClick={() => setDeleting(true)}
           >
             <Trash2Icon />
-          </Button>
+          </IconButton>
         )}
       </div>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px]">
@@ -140,7 +143,7 @@ function ProjectHeader({ workspace, project }: { workspace: Workspace; project: 
             {project.target_date ? ` · target ${project.target_date}` : ''}
           </span>
         )}
-        <span className="ml-auto flex w-56 items-center gap-2">
+        <span className="flex w-full items-center gap-2 sm:ml-auto sm:w-56">
           <Progress
             value={done}
             aria-label={`${done}% of issues closed`}
@@ -170,26 +173,49 @@ function ProjectHeader({ workspace, project }: { workspace: Workspace; project: 
 }
 
 function ProjectView({ workspace, projectId }: { workspace: Workspace; projectId: string }) {
-  const { data: projects, isPending } = useQuery(projectsQuery(workspace.id));
+  const { data: projects, isPending, error, refetch } = useQuery(projectsQuery(workspace.id));
   if (isPending) return <PageSkeleton />;
-  const project = projects?.find((p) => p.id === projectId);
+  // Only a project list that was never read stands in for the page: once read, it stays on
+  // screen when a later refetch fails.
+  if (!projects) {
+    return (
+      <PageContainer>
+        <h1 className="sr-only">Project</h1>
+        <ErrorState
+          title="Couldn’t load the project"
+          error={error}
+          onRetry={() => void refetch()}
+        />
+      </PageContainer>
+    );
+  }
+  const project = projects.find((p) => p.id === projectId);
   if (!project) {
     return (
-      <div className="p-6">
+      <PageContainer>
         <EmptyState
           icon={FolderKanbanIcon}
           title="No such project"
+          headingLevel={1}
           description="It may have been deleted, or it belongs to another workspace."
+          action={
+            <Button variant="outline" asChild>
+              <Link to="/app/projects">
+                <ArrowLeftIcon />
+                All projects
+              </Link>
+            </Button>
+          }
         />
-      </div>
+      </PageContainer>
     );
   }
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-5 p-4 sm:p-6">
+    <PageContainer>
       <Seo title={project.name} noIndex />
       <ProjectHeader key={project.id} workspace={workspace} project={project} />
       <IssueExplorer workspace={workspace} project={project} />
-    </div>
+    </PageContainer>
   );
 }
 

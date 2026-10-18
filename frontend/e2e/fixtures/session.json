@@ -1,0 +1,281 @@
+{
+  "run_id": "d7a0cee7-b61e-70e3-8477-6e245cfafbfb",
+  "graph_id": "d4803e17-ed18-73d4-8de0-582d5192eca3",
+  "graph_name": "Market research: EU battery storage",
+  "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+  "status": "running",
+  "created_at": "2026-10-14T11:09:00Z",
+  "started_at": "2026-10-14T11:10:00Z",
+  "finished_at": null,
+  "duration_ms": null,
+  "rollup": {
+    "spans": 56,
+    "llm_calls": 21,
+    "tool_calls": 28,
+    "denials": 1,
+    "tokens_in": 36400,
+    "tokens_out": 9100,
+    "tokens_cached": 2800,
+    "cost_usd": 1.47
+  },
+  "by_model": [
+    {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5",
+      "llm_calls": 21,
+      "tokens_in": 36400,
+      "tokens_out": 9100,
+      "tokens_cached": 2800,
+      "cost_usd": 1.47
+    }
+  ],
+  "recording": true,
+  "nodes": [
+    {
+      "node_id": "a5886f21-fcb5-7028-833b-8e8d7bba1412",
+      "title": "Define the research question",
+      "executor": "llm",
+      "status": "succeeded",
+      "attempt": 1,
+      "cached": false,
+      "error": null,
+      "started_at": "2026-10-14T11:10:00Z",
+      "ended_at": "2026-10-14T11:20:00Z",
+      "duration_ms": 300000,
+      "rollup": {
+        "spans": 8,
+        "llm_calls": 3,
+        "tool_calls": 4,
+        "denials": 1,
+        "tokens_in": 5200,
+        "tokens_out": 1300,
+        "tokens_cached": 400,
+        "cost_usd": 0.21
+      },
+      "context_span_ids": ["e0406996-a77d-7db4-8d2f-f8169d6468a7"],
+      "agents": []
+    },
+    {
+      "node_id": "03842368-8a80-7226-8989-396b2e2a130f",
+      "title": "Collect market reports",
+      "executor": "agent",
+      "status": "succeeded",
+      "attempt": 1,
+      "cached": false,
+      "error": null,
+      "started_at": "2026-10-14T11:15:00Z",
+      "ended_at": "2026-10-14T11:25:00Z",
+      "duration_ms": 301000,
+      "rollup": {
+        "spans": 16,
+        "llm_calls": 6,
+        "tool_calls": 8,
+        "denials": 2,
+        "tokens_in": 10400,
+        "tokens_out": 2600,
+        "tokens_cached": 800,
+        "cost_usd": 0.42
+      },
+      "context_span_ids": ["e0406996-a77d-7db4-8d2f-f8169d6468a7"],
+      "agents": [
+        {
+          "principal": "agent://acme-research/Researcher",
+          "agent_id": "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4",
+          "role": "researcher",
+          "depth": 0,
+          "spawn_span_id": null,
+          "parent_principal": null,
+          "status": "running",
+          "started_at": "2026-10-14T11:12:00Z",
+          "ended_at": null,
+          "duration_ms": null,
+          "own": {
+            "spans": 8,
+            "llm_calls": 3,
+            "tool_calls": 4,
+            "denials": 1,
+            "tokens_in": 5200,
+            "tokens_out": 1300,
+            "tokens_cached": 400,
+            "cost_usd": 0.21
+          },
+          "total": {
+            "spans": 16,
+            "llm_calls": 6,
+            "tool_calls": 8,
+            "denials": 2,
+            "tokens_in": 10400,
+            "tokens_out": 2600,
+            "tokens_cached": 800,
+            "cost_usd": 0.42
+          },
+          "span_ids": [
+            "8a3eb195-9ce1-779b-8a66-3c422b71f892",
+            "c7bd4600-2457-7bba-8c36-f29b3725c933"
+          ],
+          "cancellable": true,
+          "children": [
+            {
+              "principal": "agent://acme-research/Researcher/fact-checker",
+              "agent_id": "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4",
+              "role": "researcher",
+              "depth": 1,
+              "spawn_span_id": "2f28b554-ffd1-7bfc-8924-0f0cfd3dbac4",
+              "parent_principal": "agent://acme-research/Researcher",
+              "status": "running",
+              "started_at": "2026-10-14T11:12:00Z",
+              "ended_at": null,
+              "duration_ms": null,
+              "own": {
+                "spans": 8,
+                "llm_calls": 3,
+                "tool_calls": 4,
+                "denials": 1,
+                "tokens_in": 5200,
+                "tokens_out": 1300,
+                "tokens_cached": 400,
+                "cost_usd": 0.21
+              },
+              "total": {
+                "spans": 8,
+                "llm_calls": 3,
+                "tool_calls": 4,
+                "denials": 1,
+                "tokens_in": 5200,
+                "tokens_out": 1300,
+                "tokens_cached": 400,
+                "cost_usd": 0.21
+              },
+              "span_ids": [
+                "8a3eb195-9ce1-779b-8a66-3c422b71f892",
+                "c7bd4600-2457-7bba-8c36-f29b3725c933"
+              ],
+              "cancellable": true,
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "node_id": "bc2e390f-b4b6-7ef5-88a1-db1e00495787",
+      "title": "Interview summaries",
+      "executor": "agent",
+      "status": "succeeded",
+      "attempt": 1,
+      "cached": true,
+      "error": null,
+      "started_at": "2026-10-14T11:20:00Z",
+      "ended_at": "2026-10-14T11:30:00Z",
+      "duration_ms": 302000,
+      "rollup": {
+        "spans": 24,
+        "llm_calls": 9,
+        "tool_calls": 12,
+        "denials": 0,
+        "tokens_in": 15600,
+        "tokens_out": 3900,
+        "tokens_cached": 1200,
+        "cost_usd": 0.63
+      },
+      "context_span_ids": ["e0406996-a77d-7db4-8d2f-f8169d6468a7"],
+      "agents": []
+    },
+    {
+      "node_id": "08966897-55ff-7e77-86ab-a6b7a17810d4",
+      "title": "Pricing model",
+      "executor": "agent",
+      "status": "running",
+      "attempt": 1,
+      "cached": false,
+      "error": null,
+      "started_at": "2026-10-14T11:25:00Z",
+      "ended_at": null,
+      "duration_ms": null,
+      "rollup": {
+        "spans": 32,
+        "llm_calls": 12,
+        "tool_calls": 16,
+        "denials": 1,
+        "tokens_in": 20800,
+        "tokens_out": 5200,
+        "tokens_cached": 1600,
+        "cost_usd": 0.84
+      },
+      "context_span_ids": ["e0406996-a77d-7db4-8d2f-f8169d6468a7"],
+      "agents": []
+    },
+    {
+      "node_id": "ce0c00d5-a0ea-7441-82ba-d96e505a2dc5",
+      "title": "Regulatory scan",
+      "executor": "llm",
+      "status": "failed",
+      "attempt": 1,
+      "cached": false,
+      "error": "Tool call denied by policy: egress to regulations.example.eu is not allowed.",
+      "started_at": "2026-10-14T11:30:00Z",
+      "ended_at": "2026-10-14T11:40:00Z",
+      "duration_ms": 304000,
+      "rollup": {
+        "spans": 40,
+        "llm_calls": 15,
+        "tool_calls": 20,
+        "denials": 2,
+        "tokens_in": 26000,
+        "tokens_out": 6500,
+        "tokens_cached": 2000,
+        "cost_usd": 1.05
+      },
+      "context_span_ids": ["e0406996-a77d-7db4-8d2f-f8169d6468a7"],
+      "agents": []
+    },
+    {
+      "node_id": "9cc0a944-e130-7446-8e17-59db752a3773",
+      "title": "Draft the report",
+      "executor": "agent",
+      "status": "queued",
+      "attempt": 1,
+      "cached": false,
+      "error": null,
+      "started_at": null,
+      "ended_at": null,
+      "duration_ms": null,
+      "rollup": {
+        "spans": 48,
+        "llm_calls": 18,
+        "tool_calls": 24,
+        "denials": 0,
+        "tokens_in": 31200,
+        "tokens_out": 7800,
+        "tokens_cached": 2400,
+        "cost_usd": 1.26
+      },
+      "context_span_ids": ["e0406996-a77d-7db4-8d2f-f8169d6468a7"],
+      "agents": []
+    },
+    {
+      "node_id": "83a1c6ab-9e9e-77e9-80f6-d5f809d4daba",
+      "title": "Executive summary",
+      "executor": "llm",
+      "status": "queued",
+      "attempt": 1,
+      "cached": false,
+      "error": null,
+      "started_at": null,
+      "ended_at": null,
+      "duration_ms": null,
+      "rollup": {
+        "spans": 56,
+        "llm_calls": 21,
+        "tool_calls": 28,
+        "denials": 1,
+        "tokens_in": 36400,
+        "tokens_out": 9100,
+        "tokens_cached": 2800,
+        "cost_usd": 1.47
+      },
+      "context_span_ids": ["e0406996-a77d-7db4-8d2f-f8169d6468a7"],
+      "agents": []
+    }
+  ]
+}

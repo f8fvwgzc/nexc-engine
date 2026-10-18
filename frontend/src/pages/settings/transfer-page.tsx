@@ -6,12 +6,15 @@ import { z } from 'zod';
 
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { ErrorState } from '@/components/custom-ui/error-state';
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { PageSkeleton } from '@/components/layout/page-skeleton';
+import { ContentSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { apiRequest, apiSend } from '@/lib/api/client';
 import { errorMessage } from '@/lib/api/errors';
@@ -99,7 +102,7 @@ function TransferForm({ workspace }: { workspace: Workspace }) {
   const queryClient = useQueryClient();
   const [url, setUrl] = useState('');
   const [redisUrl, setRedisUrl] = useState('');
-  const { data: transfers = [] } = useQuery({
+  const history = useQuery({
     queryKey: key(workspace.id),
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspace.id}/transfers`, z.array(transferSchema), { signal }),
@@ -107,6 +110,7 @@ function TransferForm({ workspace }: { workspace: Workspace }) {
     refetchInterval: (query) =>
       query.state.data?.some((t) => t.status === 'running') ? 2_000 : false,
   });
+  const transfers = history.data ?? [];
   const body = () => ({ url: url.trim(), redis_url: redisUrl.trim() || undefined });
   const check = useMutation({
     mutationFn: () =>
@@ -217,6 +221,16 @@ function TransferForm({ workspace }: { workspace: Workspace }) {
             {errorMessage(check.error ?? start.error)}
           </p>
         )}
+        {history.isPending && <Skeleton className="h-16 w-full rounded-lg" />}
+        {/* A failed poll keeps the list it had; only a list never read becomes an error. */}
+        {history.error && !history.data && (
+          <ErrorState
+            compact
+            title="Couldn’t load the earlier transfers"
+            error={history.error}
+            onRetry={() => void history.refetch()}
+          />
+        )}
         {transfers.length > 0 && (
           <ul className="divide-y rounded-lg border" aria-label="Transfers">
             {transfers.map((t) => (
@@ -265,14 +279,14 @@ function TransferForm({ workspace }: { workspace: Workspace }) {
 export default function TransferPage() {
   const { current } = useCurrentWorkspace();
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-6 p-4 sm:p-6">
+    <PageContainer width="narrow">
       <Seo title="Data transfer" noIndex />
       <PageHeader
         title="Data transfer"
         description="Hold your workspace’s data yourself: move everything to a database you control in one step, then remove it from this server."
       />
       {!current ? (
-        <PageSkeleton />
+        <ContentSkeleton />
       ) : current.role === 'owner' ? (
         <TransferForm key={current.id} workspace={current} />
       ) : (
@@ -282,6 +296,6 @@ export default function TransferPage() {
           description="It copies everything the workspace holds."
         />
       )}
-    </div>
+    </PageContainer>
   );
 }

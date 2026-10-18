@@ -9,9 +9,12 @@ import { AnimatedButton } from '@/components/custom-ui/animated-button';
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
 import { CopyButton } from '@/components/custom-ui/copy-button';
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { ErrorState } from '@/components/custom-ui/error-state';
 import { FormField } from '@/components/custom-ui/form-field';
 import { OptionSelect } from '@/components/custom-ui/option-select';
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
+import { IconButton } from '@/components/custom-ui/icon-button';
 import { PageSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Badge } from '@/components/ui/badge';
@@ -310,14 +313,9 @@ function CounterpartRow({
             <RefreshCwIcon />
             Check
           </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => setRemoving(true)}
-            aria-label={`Remove ${counterpart.name}`}
-          >
+          <IconButton label={`Remove ${counterpart.name}`} onClick={() => setRemoving(true)}>
             <Trash2Icon />
-          </Button>
+          </IconButton>
           <ConfirmDialog
             open={removing}
             onOpenChange={setRemoving}
@@ -333,35 +331,41 @@ function CounterpartRow({
   );
 }
 
-function Counterparts({ workspace }: { workspace: Workspace }) {
-  const { data: counterparts, isPending, error } = useQuery(a2aCounterpartsQuery(workspace.id));
+function Counterparts({
+  workspace,
+  adding,
+  setAdding,
+}: {
+  workspace: Workspace;
+  adding: boolean;
+  setAdding: (adding: boolean) => void;
+}) {
+  const {
+    data: counterparts,
+    isPending,
+    error,
+    refetch,
+  } = useQuery(a2aCounterpartsQuery(workspace.id));
   const { data: agents } = useQuery(agentsQuery(workspace.id));
-  const [adding, setAdding] = useState(false);
   const [registered, setRegistered] = useState<RegisteredA2aCounterpart | null>(null);
   const admin = isWorkspaceAdmin(workspace.role);
   if (isPending) return <Skeleton className="h-40 rounded-xl" />;
   if (error) {
     return (
-      <p role="alert" className="text-sm text-destructive">
-        {errorMessage(error)}
-      </p>
+      <ErrorState
+        title="Couldn’t load the counterparts"
+        error={error}
+        onRetry={() => void refetch()}
+      />
     );
   }
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      {counterparts.length > 0 && (
         <p className="text-[13px] text-muted-foreground">
-          {counterparts.length === 0
-            ? 'No counterparts registered.'
-            : `${counterparts.length} counterpart${counterparts.length === 1 ? '' : 's'}; agents send them tasks through the gateway, under the policy, and they send tasks back with the tokens issued here.`}
+          {`${counterparts.length} counterpart${counterparts.length === 1 ? '' : 's'}; agents send them tasks through the gateway, under the policy, and they send tasks back with the tokens issued here.`}
         </p>
-        {admin && (
-          <Button size="sm" onClick={() => setAdding(true)}>
-            <PlusIcon />
-            Register a counterpart
-          </Button>
-        )}
-      </div>
+      )}
       {registered && <IssuedToken registered={registered} onDone={() => setRegistered(null)} />}
       {counterparts.length === 0 ? (
         <EmptyState
@@ -399,15 +403,24 @@ function Counterparts({ workspace }: { workspace: Workspace }) {
 
 export default function A2aCounterpartsSettingsPage() {
   const { current } = useCurrentWorkspace();
-  if (!current) return <PageSkeleton />;
+  const [adding, setAdding] = useState(false);
+  if (!current) return <PageSkeleton width="narrow" />;
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-6 p-4 sm:p-6">
+    <PageContainer width="narrow">
       <Seo title="A2A counterparts" noIndex />
       <PageHeader
         title="A2A counterparts"
         description={`Remote agents ${current.name} exchanges tasks with over the Agent-to-Agent protocol: your agents call them as tools through the gateway, and they call your published agents with a token issued here. Every task either way is on the trace.`}
+        actions={
+          isWorkspaceAdmin(current.role) && (
+            <Button onClick={() => setAdding(true)}>
+              <PlusIcon />
+              Register a counterpart
+            </Button>
+          )
+        }
       />
-      <Counterparts workspace={current} />
-    </div>
+      <Counterparts key={current.id} workspace={current} adding={adding} setAdding={setAdding} />
+    </PageContainer>
   );
 }

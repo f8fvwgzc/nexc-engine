@@ -4,6 +4,8 @@ import { MapPinIcon, MessagesSquareIcon, SparklesIcon, Trash2Icon } from 'lucide
 import { Suspense } from 'react';
 
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { IconButton } from '@/components/custom-ui/icon-button';
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { TableSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
@@ -90,12 +92,14 @@ function Timeline({ workspaceId }: { workspaceId: string }) {
               >
                 <button
                   type="button"
-                  className="min-w-0 flex-1 text-left outline-none"
+                  className="-m-1 min-w-0 flex-1 rounded-md p-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                   data-open={c.id === shownId}
                   onClick={() => show(workspaceId, c.id)}
                   aria-label={`Continue “${c.title}”`}
                 >
-                  <p className="truncate font-medium">{c.title}</p>
+                  <p className="truncate font-medium" title={c.title}>
+                    {c.title}
+                  </p>
                   <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                     <span>
                       {c.message_count} {c.message_count === 1 ? 'message' : 'messages'}
@@ -111,16 +115,14 @@ function Timeline({ workspaceId }: { workspaceId: string }) {
                     </time>
                   </p>
                 </button>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-                  aria-label={`Delete “${c.title}”`}
+                <IconButton
+                  className="shrink-0 text-muted-foreground transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:hover)]:opacity-0"
+                  label={`Delete “${c.title}”`}
                   disabled={remove.isPending}
                   onClick={() => remove.mutate(c.id)}
                 >
                   <Trash2Icon />
-                </Button>
+                </IconButton>
               </li>
             ))}
           </ul>
@@ -139,7 +141,7 @@ export default function ConversationsPage() {
   return (
     <>
       <Seo title="Conversations" noIndex />
-      <div className="mx-auto w-full max-w-3xl space-y-6 p-4 sm:p-6">
+      <PageContainer>
         <PageHeader
           title="Conversations"
           description="Everything you have talked over with the assistant in this workspace, latest first. Open one to read it back and keep going."
@@ -147,7 +149,7 @@ export default function ConversationsPage() {
         <Suspense fallback={<TableSkeleton />}>
           <ConversationsList />
         </Suspense>
-      </div>
+      </PageContainer>
     </>
   );
 }

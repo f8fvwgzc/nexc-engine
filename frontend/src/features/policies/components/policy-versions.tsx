@@ -5,6 +5,8 @@ import { toast } from 'sonner';
 
 import { AnimatedButton } from '@/components/custom-ui/animated-button';
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { ErrorState } from '@/components/custom-ui/error-state';
+import { ScrollRegion } from '@/components/custom-ui/scroll-region';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -48,7 +50,9 @@ export function DocumentDiff({
     [before, after],
   );
   return (
-    <pre
+    <ScrollRegion
+      as="pre"
+      label={`Version ${after.version} against ${before ? `version ${before.version}` : 'nothing'}`}
       className={cn(
         'max-h-[32rem] overflow-auto rounded-lg border bg-muted/30 p-3 text-xs leading-5',
         className,
@@ -72,7 +76,7 @@ export function DocumentDiff({
           {line.text}
         </div>
       ))}
-    </pre>
+    </ScrollRegion>
   );
 }
 
@@ -183,15 +187,19 @@ export function PolicyVersions({ workspaceId, scope, scopeId, levelName }: Polic
     data: versions,
     isPending,
     error,
+    refetch,
   } = useQuery(policiesQuery(workspaceId, scope, scopeId ?? undefined));
   const [selected, setSelected] = useState<number | null>(null);
   const [adding, setAdding] = useState(false);
   if (isPending) return <Skeleton className="h-48 rounded-xl" />;
   if (error) {
     return (
-      <p role="alert" className="text-sm text-destructive">
-        {errorMessage(error)}
-      </p>
+      <ErrorState
+        compact
+        title={`Couldn’t load the versions of ${levelName}`}
+        error={error}
+        onRetry={() => void refetch()}
+      />
     );
   }
   const current = versions.find((v) => v.version === selected) ?? versions[0] ?? null;
@@ -225,7 +233,7 @@ export function PolicyVersions({ workspaceId, scope, scopeId, levelName }: Polic
                   type="button"
                   onClick={() => setSelected(policy.version)}
                   className={cn(
-                    'flex w-full flex-col gap-0.5 px-3 py-2 text-left text-xs outline-none hover:bg-muted/60 focus-visible:bg-muted/60',
+                    'flex w-full flex-col gap-0.5 px-3 py-2 text-left text-xs outline-none hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset',
                     current?.id === policy.id && 'bg-muted/60',
                   )}
                 >

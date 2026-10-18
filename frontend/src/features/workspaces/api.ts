@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { apiRequest, apiSend } from '@/lib/api/client';
 import { auditEntrySchema } from '@/schemas/audit';
+import { FRESH } from '@/lib/freshness';
 import { qk } from '@/lib/query-keys';
 import {
   assistantReplySchema,
@@ -28,7 +29,7 @@ export const workspacesQuery = () =>
   queryOptions({
     queryKey: qk.workspaces.all,
     queryFn: ({ signal }) => apiRequest('/workspaces', z.array(workspaceSchema), { signal }),
-    staleTime: 60_000,
+    staleTime: FRESH.setup,
   });
 
 export function createWorkspace(body: { name: string }) {
@@ -38,6 +39,7 @@ export function createWorkspace(body: { name: string }) {
 export const membersQuery = (workspaceId: string) =>
   queryOptions({
     queryKey: qk.workspaces.members(workspaceId),
+    staleTime: FRESH.setup,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/members`, z.array(workspaceMemberSchema), { signal }),
   });
@@ -45,6 +47,7 @@ export const membersQuery = (workspaceId: string) =>
 export const invitesQuery = (workspaceId: string) =>
   queryOptions({
     queryKey: qk.workspaces.invites(workspaceId),
+    staleTime: FRESH.setup,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/invites`, z.array(workspaceInviteSchema), { signal }),
   });
@@ -76,6 +79,8 @@ export function withdrawInvite(workspaceId: string, inviteId: string) {
 export const usageQuery = (workspaceId: string, days: number) =>
   queryOptions({
     queryKey: qk.workspaces.usage(workspaceId, days),
+    // Tokens and cost grow with every run: a list's freshness, not the setup's.
+    staleTime: FRESH.list,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/usage?days=${days}`, usageReportSchema, { signal }),
   });
@@ -93,6 +98,7 @@ export function auditPage(workspaceId: string, before: string | undefined, signa
 export const guardrailsQuery = (workspaceId: string) =>
   queryOptions({
     queryKey: qk.workspaces.guardrails(workspaceId),
+    staleTime: FRESH.setup,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/guardrails`, guardrailsSchema, { signal }),
   });
@@ -123,6 +129,7 @@ export function askAssistant(
 export const conversationsQuery = (workspaceId: string) =>
   queryOptions({
     queryKey: qk.workspaces.conversations(workspaceId),
+    staleTime: FRESH.list,
     queryFn: ({ signal }) =>
       apiRequest(
         `/workspaces/${workspaceId}/assistant/conversations`,
@@ -136,6 +143,7 @@ export const conversationsQuery = (workspaceId: string) =>
 export const conversationQuery = (workspaceId: string, id: string) =>
   queryOptions({
     queryKey: qk.workspaces.conversation(workspaceId, id),
+    staleTime: FRESH.list,
     queryFn: ({ signal }) =>
       apiRequest(
         `/workspaces/${workspaceId}/assistant/conversations/${id}`,
@@ -153,6 +161,7 @@ export function deleteConversation(workspaceId: string, id: string) {
 export const teamsQuery = (workspaceId: string) =>
   queryOptions({
     queryKey: qk.workspaces.teams(workspaceId),
+    staleTime: FRESH.setup,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/teams`, z.array(teamSchema), { signal }),
   });
@@ -160,6 +169,7 @@ export const teamsQuery = (workspaceId: string) =>
 export const teamMembersQuery = (workspaceId: string, teamId: string) =>
   queryOptions({
     queryKey: qk.workspaces.teamMembers(workspaceId, teamId),
+    staleTime: FRESH.setup,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/teams/${teamId}/members`, z.array(teamMemberSchema), {
         signal,

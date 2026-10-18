@@ -229,6 +229,46 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   be reached (each cause, the URL once), and checks that each mapped workspace exists. `nexc init` quotes
   a default with a space, which `.env` needs (`backend/src/config/oidc.rs`,
   `backend/src/security/oidc.rs`, `backend/src/cli/doctor.rs`).
+- A Playwright harness for the SPA (`frontend/e2e`, `@playwright/test` and `@axe-core/playwright`):
+  it builds the app, serves the production build with `vite preview` and answers every
+  `/api/v1` call from JSON fixtures (`frontend/e2e/fixtures`) with `page.route`, so no backend
+  is needed. The boot-time refresh is answered with a mocked access token, so the browser is
+  signed in without touching the login form; the graph's WebSocket is mocked and its event
+  stream left open. The fixtures are typed against the OpenAPI types (`pnpm typecheck` covers
+  `e2e/` through `tsconfig.e2e.json`) and parsed by the app's own zod schemas
+  (`fixtures.spec.ts`). `pnpm e2e` visits every route of `src/app/router.tsx` (the login and
+  register pages aside) with realistic data and with empty data at 375, 768 and 1280 px and
+  fails on an API call no fixture answers, an uncaught error, a placeholder that never resolves,
+  anything that scrolls sideways, two visible interactive elements that overlap, or a serious or
+  critical axe violation (light, and dark at 1280 px), and holds every page's skeleton and error
+  state to the same layout and axe checks at 375 and 1280 px; ten main pages (Graphs, Runs, a run,
+  Agents, AgentSecOps, Sessions, Inbox, Issues, Projects, Members) are compared with screenshot
+  baselines at the three widths (`frontend/e2e/__screenshots__`, light, 1% of pixels may differ).
+  The overlap check holds the header and the sidebar to it too (only the overlays marked
+  `data-floating` float over the page), and a list page given empty data must show a guided
+  empty state: an icon, a sentence and a link or a button (`routes.ts` names the exceptions).
+  `behaviour.spec.ts` checks what pages do over time: the Runs page following a run to its end,
+  **Try again** on a page that failed to load, data kept on screen when a background refetch
+  fails, a filter that matches nothing, and the inbox's unread count at 768 and 1280 px. The
+  suite serves its build on port 4174, or `E2E_PORT`, and a port already in use fails the run
+  instead of testing another checkout's build (`E2E_REUSE_SERVER=1` reuses a server).
+  The baselines are rendered in the Playwright image (`mcr.microsoft.com/playwright`, the
+  version of `@playwright/test`), which the new CI job **Frontend UI** runs and `make e2e-ui`
+  runs locally through Docker (`scripts/e2e-ui.sh`, with a `node_modules` volume per checkout
+  and the files it writes into the checkout handed back to the caller; `make e2e-ui-update`
+  re-renders the baselines; without Docker the suite runs natively and skips the pixels off
+  Linux). The frontend image's build context leaves out the suite's output and screenshots; it
+  still typechecks `e2e/`.
+  `pnpm e2e:audit` is the audit tool: every route at 375, 768 and 1280 px, light and dark, both
+  data sets, with a full-page screenshot and a record of axe, the layout check, unnamed icon
+  controls, silent truncation, headings, empty states, focus visibility and refetches under
+  `frontend/e2e/.audit/` (not committed), plus every page while its data loads and when its
+  requests fail. Vitest now only collects `src/**/*.test.*`. `frontend/e2e/AUDIT.md` records what
+  the audit found: 33 findings on layout, headers, controls, accessibility, empty, loading and
+  error states, and caching; and what the same audit measures after the fixes (no serious or
+  critical axe violation in 626 page, loading and error states, from 187; refetches on focus
+  from 135 to 47), the five worst before and after (`frontend/e2e/audit-images`), and the three
+  findings deferred in part (F27, F30, F31), with the reasons.
 - Documentation site (`site/`, VitePress): the repository's Markdown rendered with a sidebar,
   full-text search, a dark theme, mermaid diagrams and the API reference (Scalar over
   `site/public/openapi.json`, a committed export of `nexc openapi`), in six sections: Start,
@@ -1360,6 +1400,69 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- UI pass, shared pieces (`frontend/src/components/custom-ui`): `PageContainer` gives every page
+  one of three widths (`default` for the app, `wide` for the consoles, `narrow` for settings and
+  the platform console) and one vertical rhythm; `IconButton` and `WithTooltip` name an
+  icon-only control and show its name as a tooltip; `ErrorState` is the frame of a failed load,
+  with the reason and **Try again**, distinct from `EmptyState`, which gains a heading level
+  and a compact frame (a page that fails as a whole shows the route's error in the same
+  `ErrorState`, with a level-1 heading and **Go to dashboard**); `ScrollRegion` (and the table container) become a focusable, named
+  group while their content scrolls; `MainLandmark` gives a 404 or an error outside the shells
+  a `main`; `PageSkeleton` takes the width of the page it stands for and `ContentSkeleton` is a
+  page body's placeholder under a header; placeholders labelled "Loading" are a `status`, where
+  the label was not allowed on a plain `div` (axe `aria-prohibited-attr` while a page loads).
+  Status, evidence, severity and destructive badges
+  mix their colour with the foreground (`text-badge`, `--badge-ink`) so 12px text clears
+  4.5:1 in both themes; stat tiles wrap their labels and hints instead of cutting them; tab
+  panels show focus; the command palette's hidden title no longer sits in every page.
+- UI pass, the shells: from 768 to 1023 px the app's, the settings' and the platform console's
+  sidebars are a rail of icons named by tooltips, so a tablet keeps 720 px for the page instead
+  of 528; each sidebar is a navigation landmark. The assistant's notch is narrower than the
+  page's gutter, so it no longer covers the right edge of tables and cards, and on a phone the
+  assistant opens from a button in the header instead. The header's search is an icon with a
+  tooltip on a phone, the theme menu is named on hover, the sidebar's empty "No graphs yet."
+  is a list item, the inbox's unread count is part of its link's name (and, in the tablet's
+  rail, where the count has no room, a dot on the icon and a line in its tooltip), a graph that
+  cannot be loaded no longer leaves a skeleton in the breadcrumb, and the 404 and route-error
+  states have an `h1` (and a `main` outside the shells). **Try again** on the route's error
+  reads the page's failed requests again (it re-rendered the page on the cached error, so a
+  page that failed once stayed failed until a reload).
+- UI pass, the pages (`frontend/e2e/AUDIT.md` lists every finding): every page sits in a
+  `PageContainer`, so a title no longer jumps between 23, 63, 123 and 183 px from page to page;
+  the graph cards fit a phone (they overflowed it by 474 px) and are a stretched link beside
+  their menu instead of a link under it; tables drop their secondary columns on a phone and a
+  tablet (runs, sessions, agents, node runs, members) and say the rest in the row; the
+  AgentSecOps tiles go three to a row until the console is wide enough for nine; the canvas
+  legend and the run's progress share one bottom bar instead of overlapping; the session tree
+  sizes its columns by its own width; the org chart opens centred on its root; inbox
+  approvals, issue rows, memories, platform accounts and workspaces are laid out for a phone.
+  Every icon-only control is an `IconButton` with a tooltip; truncated names carry their full
+  text on hover; list rows and fields show focus; targets are at least 24 px. List pages lead
+  an empty workspace to the first step (Teams from Issues, the file picker from Knowledge, a
+  graph from Sessions, Memory and Usage, the name field from Projects, the policies from
+  Alerts), Usage and the workspace map have an empty state, and a failed load is an
+  `ErrorState` with **Try again** instead of red text (lists, Infrastructure, policy versions,
+  an agent's approvals and alerts, a destination's deliveries) or a skeleton that never went
+  away (the SecOps risk panel), or, worse, an empty state that
+  told the reader to create what may exist (Issues, Sessions, Knowledge, Memory, Project,
+  Policies); a list that was read stays on screen when a later refetch fails (Issues, a
+  project, Data transfer's earlier transfers, which also have a placeholder while they load);
+  Sessions tells a filter that matches nothing ("No matching sessions", **Clear the filters**)
+  from a workspace with no runs yet. The
+  primary action of A2A counterparts, MCP servers and Alert destinations moved into the page
+  header, as on the other pages, and My issues has its **New issue** there too (it was only in
+  the toolbar, under the tabs); the graph canvas and the project page have an `h1`.
+- The console caches by the kind of resource (`frontend/src/lib/freshness.ts`, CONTRACT §3):
+  catalogues stay fresh 30 minutes, a workspace's setup 5, working lists 1, live state 10
+  seconds beside its poll, where every query was stale after 30 seconds. Coming back to a tab
+  two minutes later now refetches what is stale on the page (0 to 4 requests, 47 over the 41
+  routes) instead of everything on it (up to 10 on Agents, one per agent card, 135 in all); an
+  agent's activity, fanned out over the Agents page, is not refetched on focus, and a graph's
+  runs only while one of them is queued or running, which the Runs page also polls every 10
+  seconds, so a run that finishes shows as finished there (the run-status stream is the
+  canvas's); the usage report is fresh for a minute, like the lists, since every run adds to
+  it; the orchestrator status is polled by the dashboard only, not on every page for the demo
+  banner.
 - The per-account API rate limit is a setting, `NEXC_API_CALLS_PER_MINUTE` (600, the burst a
   fifth of it, as before), so a load test or an automation account can be given more on its own
   server.

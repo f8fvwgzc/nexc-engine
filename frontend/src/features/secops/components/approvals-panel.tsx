@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { AnimatedButton } from '@/components/custom-ui/animated-button';
+import { ErrorState } from '@/components/custom-ui/error-state';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -144,7 +145,7 @@ interface ApprovalsPanelProps {
 
 /** Tool calls waiting for a human, decided here. */
 export function ApprovalsPanel({ workspaceId, admin, className }: ApprovalsPanelProps) {
-  const { data, isPending, error } = useQuery({
+  const { data, isPending, error, refetch } = useQuery({
     ...approvalsQuery(workspaceId, 'pending'),
     enabled: admin,
   });
@@ -165,11 +166,17 @@ export function ApprovalsPanel({ workspaceId, admin, className }: ApprovalsPanel
           <Skeleton className="h-16 rounded-lg" />
         </div>
       ) : error ? (
-        <p role="alert" className="p-3 text-xs text-destructive">
-          {errorMessage(error)}
-        </p>
+        <ErrorState
+          compact
+          className="m-3"
+          title="Couldn’t load the approvals"
+          error={error}
+          onRetry={() => void refetch()}
+        />
       ) : waiting.length === 0 ? (
-        <PanelEmpty>Nothing waits for a decision.</PanelEmpty>
+        <PanelEmpty icon={UserCheckIcon}>
+          Nothing waits for a decision. A tool call the policy holds for approval shows here.
+        </PanelEmpty>
       ) : (
         <ul className="max-h-72 divide-y overflow-y-auto" aria-label="Pending approvals">
           {waiting.map((approval) => (

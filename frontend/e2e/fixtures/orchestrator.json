@@ -1,0 +1,27 @@
+{
+  "demo_mode": false,
+  "queue_depth": 3,
+  "running_nodes": 2,
+  "active_runs": 1,
+  "agents_active": 4,
+  "backends": {
+    "llm": {
+      "enabled": true,
+      "ok": true,
+      "url": "https://api.anthropic.com",
+      "detail": null
+    },
+    "agent_runtime": {
+      "enabled": true,
+      "ok": true,
+      "url": "http://runtime:8090",
+      "detail": null
+    },
+    "symphony": {
+      "enabled": false,
+      "ok": false,
+      "url": null,
+      "detail": "Not configured"
+    }
+  }
+}

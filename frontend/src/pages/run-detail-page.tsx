@@ -13,6 +13,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { AnimatedButton } from '@/components/custom-ui/animated-button';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { PageSkeleton } from '@/components/layout/page-skeleton';
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { StatTile } from '@/components/custom-ui/stat-tile';
 import { StatusBadge } from '@/components/custom-ui/status-badge';
 import { Seo } from '@/components/seo/seo';
@@ -59,7 +60,7 @@ function RunDetail({ runId }: { runId: string }) {
   useLiveTrace(run);
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-8 p-4 sm:p-6">
+    <PageContainer>
       <PageHeader
         title={
           <span className="flex flex-wrap items-center gap-3">
@@ -196,7 +197,7 @@ function RunDetail({ runId }: { runId: string }) {
         </h2>
         <ArtifactsList runId={run.id} titles={titles} admin={admin} />
       </section>
-    </div>
+    </PageContainer>
   );
 }
 

@@ -1,0 +1,38 @@
+[
+  {
+    "id": "507a1ad6-8e0f-76a6-845f-b91390269f24",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "name": "Slack #sec-alerts",
+    "kind": "slack",
+    "host": "hooks.slack.com",
+    "kinds": [],
+    "min_severity": "medium",
+    "include_approvals": true,
+    "enabled": true,
+    "disabled_reason": "",
+    "failures": 0,
+    "last_delivered_at": "2026-10-14T10:00:00Z",
+    "last_error": "",
+    "created_by": "d6b5915c-4605-7bcb-805f-46f6433df656",
+    "created_at": "2026-09-24T12:00:00Z",
+    "updated_at": "2026-10-14T10:00:00Z"
+  },
+  {
+    "id": "2ca8f794-cb13-73ef-875f-663de86904b9",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "name": "PagerDuty bridge",
+    "kind": "webhook",
+    "host": "events.pagerduty.example",
+    "kinds": ["risk", "dlp"],
+    "min_severity": "high",
+    "include_approvals": false,
+    "enabled": false,
+    "disabled_reason": "50 deliveries failed in a row",
+    "failures": 50,
+    "last_delivered_at": "2026-10-05T12:00:00Z",
+    "last_error": "HTTP 503 Service Unavailable",
+    "created_by": "673aeeb0-8cfb-700b-81e5-e3c60b5ba318",
+    "created_at": "2026-09-04T12:00:00Z",
+    "updated_at": "2026-10-13T12:00:00Z"
+  }
+]

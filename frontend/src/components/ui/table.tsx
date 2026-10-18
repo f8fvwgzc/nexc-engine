@@ -1,9 +1,20 @@
 import * as React from 'react';
 import { cn } from 'cn';
 
+import { useOverflowX } from '@/hooks/use-overflow-x';
+
 function Table({ className, ...props }: React.ComponentProps<'table'>) {
+  // A table wider than its container scrolls sideways; it is then a focusable region, so the
+  // keyboard can scroll it too (nexc addition to the generated component).
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const scrolls = useOverflowX(containerRef);
   return (
-    <div data-slot="table-container" className="relative w-full overflow-x-auto">
+    <div
+      ref={containerRef}
+      data-slot="table-container"
+      className="relative w-full overflow-x-auto focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+      {...(scrolls ? { tabIndex: 0, role: 'group', 'aria-label': 'Table, scrolls sideways' } : {})}
+    >
       <table
         data-slot="table"
         className={cn('w-full caption-bottom text-sm', className)}

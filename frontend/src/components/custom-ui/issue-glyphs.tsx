@@ -124,6 +124,7 @@ export function PersonGlyph({ name, className }: { name: string | undefined; cla
     .join('');
   return (
     <span
+      role="img"
       title={name ?? 'Unassigned'}
       aria-label={name ?? 'Unassigned'}
       className={cn(

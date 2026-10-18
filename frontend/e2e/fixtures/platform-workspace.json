@@ -1,0 +1,74 @@
+{
+  "id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+  "name": "Acme Research",
+  "owner_name": "Ada Lovelace",
+  "owner_email": "ada@acme.example",
+  "member_count": 6,
+  "team_count": 3,
+  "issue_count": 12,
+  "graph_count": 5,
+  "created_at": "2025-09-29T12:00:00Z",
+  "members": [
+    {
+      "user_id": "d6b5915c-4605-7bcb-805f-46f6433df656",
+      "name": "Ada Lovelace",
+      "email": "ada@acme.example",
+      "role": "owner",
+      "suspended": false,
+      "platform_admin": false,
+      "joined_at": "2025-12-18T12:00:00Z"
+    },
+    {
+      "user_id": "673aeeb0-8cfb-700b-81e5-e3c60b5ba318",
+      "name": "Grace Hopper",
+      "email": "grace@acme.example",
+      "role": "admin",
+      "suspended": false,
+      "platform_admin": false,
+      "joined_at": "2025-12-19T12:00:00Z"
+    },
+    {
+      "user_id": "85f2ef98-7b76-74c3-8c08-1acef84e0a73",
+      "name": "Alan Turing",
+      "email": "alan@acme.example",
+      "role": "member",
+      "suspended": false,
+      "platform_admin": false,
+      "joined_at": "2025-12-20T12:00:00Z"
+    },
+    {
+      "user_id": "492ab00b-be71-7b09-8c80-c473346ab211",
+      "name": "Katherine Johnson",
+      "email": "katherine.johnson.longaddress@research.acme.example",
+      "role": "member",
+      "suspended": false,
+      "platform_admin": false,
+      "joined_at": "2025-12-21T12:00:00Z"
+    },
+    {
+      "user_id": "6669b848-2999-7fdc-8f11-e5e9a07caffa",
+      "name": "Edsger Dijkstra",
+      "email": "edsger@acme.example",
+      "role": "member",
+      "suspended": true,
+      "platform_admin": false,
+      "joined_at": "2025-12-22T12:00:00Z"
+    },
+    {
+      "user_id": "62325dfc-1fc6-7525-8519-674da6e2c4aa",
+      "name": "Barbara Liskov",
+      "email": "barbara@partner.example",
+      "role": "guest",
+      "suspended": false,
+      "platform_admin": false,
+      "joined_at": "2025-12-23T12:00:00Z"
+    }
+  ],
+  "footprint": {
+    "project_count": 4,
+    "document_count": 4,
+    "document_bytes": 3656756,
+    "memory_count": 23,
+    "run_count": 83
+  }
+}

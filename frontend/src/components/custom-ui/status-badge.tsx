@@ -21,7 +21,7 @@ export function StatusBadge({ status, className, compact = false }: StatusBadgeP
       style={{ '--badge-color': meta.color } as React.CSSProperties}
       className={cn(
         'inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full border px-2 text-xs font-medium whitespace-nowrap',
-        'border-[color-mix(in_oklch,var(--badge-color)_35%,transparent)] bg-[color-mix(in_oklch,var(--badge-color)_12%,transparent)] text-[var(--badge-color)]',
+        'border-[color-mix(in_oklch,var(--badge-color)_35%,transparent)] bg-[color-mix(in_oklch,var(--badge-color)_12%,transparent)] text-badge',
         running && 'motion-safe:animate-pulse-ring',
         compact && 'size-6 justify-center px-0',
         className,

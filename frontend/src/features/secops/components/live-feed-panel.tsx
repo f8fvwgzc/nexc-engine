@@ -2,7 +2,7 @@ import { PauseIcon, PlayIcon, RadioIcon, SirenIcon, Trash2Icon } from 'lucide-re
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
-import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/custom-ui/icon-button';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { SeverityBadge } from '@/features/policies/components/severity-badge';
 import { SPAN_KIND_META } from '@/features/runs/span-kinds';
@@ -82,7 +82,7 @@ function Line({ event }: { event: FeedEvent }) {
 }
 
 const ROW =
-  'flex items-center gap-2 px-3 py-1 text-xs outline-none hover:bg-muted/60 focus-visible:bg-muted/60';
+  'flex items-center gap-2 px-3 py-1 text-xs outline-none hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset';
 
 interface LiveFeedPanelProps {
   workspaceId: string;
@@ -157,24 +157,21 @@ export function LiveFeedPanel({ workspaceId, agents, className }: LiveFeedPanelP
               </NativeSelectOption>
             ))}
           </NativeSelect>
-          <Button
-            size="icon-sm"
+          <IconButton
             variant="outline"
             aria-pressed={paused}
-            aria-label={paused ? 'Resume the feed' : 'Pause the feed'}
+            label={paused ? 'Resume the feed' : 'Pause the feed'}
             onClick={() => setPaused((p) => !p)}
           >
             {paused ? <PlayIcon /> : <PauseIcon />}
-          </Button>
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            aria-label="Clear the feed"
+          </IconButton>
+          <IconButton
+            label="Clear the feed"
             disabled={feed.events.length === 0}
             onClick={feed.clear}
           >
             <Trash2Icon />
-          </Button>
+          </IconButton>
         </>
       }
     >

@@ -1,0 +1,20 @@
+[
+  {
+    "id": "2e2391de-55e4-7628-85b1-74aa6c73e875",
+    "label": "tenders grid storage",
+    "terms": ["tender", "grid", "storage"],
+    "memory_count": 12
+  },
+  {
+    "id": "4ab9b4e6-2266-742c-8900-aa413651d4ce",
+    "label": "pricing model",
+    "terms": ["price", "model"],
+    "memory_count": 7
+  },
+  {
+    "id": "91004735-94a2-74b1-83c8-e755d95fb9de",
+    "label": "team preferences",
+    "terms": ["prefer", "style"],
+    "memory_count": 4
+  }
+]

@@ -1,0 +1,9 @@
+{
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-5",
+  "base_url": null,
+  "has_api_key": true,
+  "key_hint": "sk-ant-…9f3a",
+  "source": "workspace",
+  "scope": "workspace"
+}

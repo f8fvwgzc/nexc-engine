@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 
+import { ErrorState } from '@/components/custom-ui/error-state';
 import { Badge } from '@/components/ui/badge';
 import {
   Table,
@@ -10,7 +11,6 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
-import { errorMessage } from '@/lib/api/errors';
 import { resolvedPolicyQuery } from '../api';
 import { ruleRows } from '../rules';
 
@@ -29,13 +29,16 @@ export function ResolvedPolicyView({
   workspaceId: string;
   agentId: string;
 }) {
-  const { data, isPending, error } = useQuery(resolvedPolicyQuery(workspaceId, agentId));
+  const { data, isPending, error, refetch } = useQuery(resolvedPolicyQuery(workspaceId, agentId));
   if (isPending) return <Skeleton className="h-64 rounded-xl" />;
   if (error) {
     return (
-      <p role="alert" className="text-sm text-destructive">
-        {errorMessage(error)}
-      </p>
+      <ErrorState
+        compact
+        title="Couldn’t resolve the policy"
+        error={error}
+        onRetry={() => void refetch()}
+      />
     );
   }
   const rows = ruleRows(data);

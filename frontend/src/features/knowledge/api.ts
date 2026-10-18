@@ -2,6 +2,7 @@ import { keepPreviousData, queryOptions } from '@tanstack/react-query';
 import { z } from 'zod';
 
 import { apiRequest, apiSend } from '@/lib/api/client';
+import { FRESH } from '@/lib/freshness';
 import { qk } from '@/lib/query-keys';
 import type { DataLabel } from '@/schemas/agent';
 import {
@@ -25,6 +26,7 @@ export interface DocumentFilter {
 export const documentsQuery = (workspaceId: string, filter: DocumentFilter) =>
   queryOptions({
     queryKey: qk.knowledge.documents(workspaceId, filter),
+    staleTime: FRESH.list,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/documents`, z.array(documentSchema), {
         query: { q: filter.q, limit: filter.limit, offset: filter.offset },
@@ -73,6 +75,7 @@ export const knowledgeSearchQuery = (workspaceId: string, q: string, topicId?: s
 export const passageQuery = (workspaceId: string, chunkId: string) =>
   queryOptions({
     queryKey: qk.knowledge.passage(workspaceId, chunkId),
+    staleTime: FRESH.setup,
     queryFn: ({ signal }) =>
       apiRequest(
         `/workspaces/${workspaceId}/knowledge/passages/${encodeURIComponent(chunkId)}`,
@@ -86,6 +89,7 @@ export const passageQuery = (workspaceId: string, chunkId: string) =>
 export const topicsQuery = (workspaceId: string) =>
   queryOptions({
     queryKey: qk.knowledge.topics(workspaceId),
+    staleTime: FRESH.setup,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/knowledge/topics`, z.array(topicSchema), { signal }),
   });
@@ -98,6 +102,7 @@ export function rebuildTopics(workspaceId: string) {
 export const knowledgeSettingsQuery = (workspaceId: string) =>
   queryOptions({
     queryKey: qk.knowledge.settings(workspaceId),
+    staleTime: FRESH.setup,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/knowledge/settings`, knowledgeSettingsSchema, {
         signal,

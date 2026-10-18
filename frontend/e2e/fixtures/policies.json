@@ -1,0 +1,209 @@
+[
+  {
+    "id": "e5b9978d-d26f-7dcc-85f0-6b77afdf18c9",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "scope": "workspace",
+    "scope_id": null,
+    "version": 3,
+    "document": {
+      "tools": {
+        "allow": null,
+        "deny": ["shell.exec"]
+      },
+      "egress": {
+        "allow": ["*.example.com", "api.anthropic.com"],
+        "deny": []
+      },
+      "models": {
+        "allow": null,
+        "deny": []
+      },
+      "labels": ["public", "internal", "confidential"],
+      "limits": {
+        "tokens_per_run": 200000,
+        "tokens_per_day": 2000000,
+        "cost_usd_per_day": 50,
+        "tool_calls_per_minute": 60,
+        "runs_per_hour": 20,
+        "max_depth": 2,
+        "max_fan_out": 4
+      },
+      "time_windows": null,
+      "require_approval": {
+        "tools": ["email.send"],
+        "labels": ["restricted"],
+        "approvers": [
+          "d6b5915c-4605-7bcb-805f-46f6433df656",
+          "673aeeb0-8cfb-700b-81e5-e3c60b5ba318"
+        ],
+        "timeout_s": 3600
+      },
+      "alerts": {
+        "risk_score": 6,
+        "quarantine_risk_score": 8.5,
+        "denials_per_run": 3,
+        "novelty": 0.4
+      },
+      "dlp": {
+        "secrets": "deny",
+        "pii": {
+          "enabled": true,
+          "kinds": ["email", "card"],
+          "keywords": ["confidential"],
+          "action": "alert"
+        },
+        "labels": {}
+      },
+      "injection": {
+        "action": "block",
+        "model_check": true
+      },
+      "evidence": {
+        "required": true,
+        "min_coverage": 0.6,
+        "action": "mark"
+      }
+    },
+    "author_id": "d6b5915c-4605-7bcb-805f-46f6433df656",
+    "author_name": "Ada Lovelace",
+    "created_at": "2026-10-12T12:00:00Z"
+  },
+  {
+    "id": "82707e9b-e33b-7d93-8547-22a0dacc237d",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "scope": "workspace",
+    "scope_id": null,
+    "version": 2,
+    "document": {
+      "tools": {
+        "allow": null,
+        "deny": ["shell.exec"]
+      },
+      "egress": {
+        "allow": null,
+        "deny": []
+      },
+      "models": {
+        "allow": null,
+        "deny": []
+      },
+      "labels": ["public", "internal", "confidential"],
+      "limits": {
+        "tokens_per_run": 200000,
+        "tokens_per_day": 2000000,
+        "cost_usd_per_day": 50,
+        "tool_calls_per_minute": 60,
+        "runs_per_hour": 20,
+        "max_depth": 2,
+        "max_fan_out": 4
+      },
+      "time_windows": null,
+      "require_approval": {
+        "tools": ["email.send"],
+        "labels": ["restricted"],
+        "approvers": [
+          "d6b5915c-4605-7bcb-805f-46f6433df656",
+          "673aeeb0-8cfb-700b-81e5-e3c60b5ba318"
+        ],
+        "timeout_s": 3600
+      },
+      "alerts": {
+        "risk_score": 6,
+        "quarantine_risk_score": 8.5,
+        "denials_per_run": 3,
+        "novelty": 0.4
+      },
+      "dlp": {
+        "secrets": "deny",
+        "pii": {
+          "enabled": true,
+          "kinds": ["email", "card"],
+          "keywords": ["confidential"],
+          "action": "alert"
+        },
+        "labels": {}
+      },
+      "injection": {
+        "action": "block",
+        "model_check": true
+      },
+      "evidence": {
+        "required": true,
+        "min_coverage": 0.6,
+        "action": "mark"
+      }
+    },
+    "author_id": "673aeeb0-8cfb-700b-81e5-e3c60b5ba318",
+    "author_name": "Grace Hopper",
+    "created_at": "2026-10-05T12:00:00Z"
+  },
+  {
+    "id": "23b29316-d6ff-773f-89f6-5092dc1e44fe",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "scope": "agent",
+    "scope_id": "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4",
+    "version": 2,
+    "document": {
+      "tools": {
+        "allow": ["web.search"],
+        "deny": []
+      },
+      "egress": {
+        "allow": ["*.example.com", "api.anthropic.com"],
+        "deny": []
+      },
+      "models": {
+        "allow": null,
+        "deny": []
+      },
+      "labels": ["public", "internal", "confidential"],
+      "limits": {
+        "tokens_per_run": 200000,
+        "tokens_per_day": 2000000,
+        "cost_usd_per_day": 50,
+        "tool_calls_per_minute": 60,
+        "runs_per_hour": 20,
+        "max_depth": 2,
+        "max_fan_out": 4
+      },
+      "time_windows": null,
+      "require_approval": {
+        "tools": ["email.send"],
+        "labels": ["restricted"],
+        "approvers": [
+          "d6b5915c-4605-7bcb-805f-46f6433df656",
+          "673aeeb0-8cfb-700b-81e5-e3c60b5ba318"
+        ],
+        "timeout_s": 3600
+      },
+      "alerts": {
+        "risk_score": 6,
+        "quarantine_risk_score": 8.5,
+        "denials_per_run": 3,
+        "novelty": 0.4
+      },
+      "dlp": {
+        "secrets": "deny",
+        "pii": {
+          "enabled": true,
+          "kinds": ["email", "card"],
+          "keywords": ["confidential"],
+          "action": "alert"
+        },
+        "labels": {}
+      },
+      "injection": {
+        "action": "block",
+        "model_check": true
+      },
+      "evidence": {
+        "required": true,
+        "min_coverage": 0.6,
+        "action": "mark"
+      }
+    },
+    "author_id": "d6b5915c-4605-7bcb-805f-46f6433df656",
+    "author_name": "Ada Lovelace",
+    "created_at": "2026-10-09T12:00:00Z"
+  }
+]

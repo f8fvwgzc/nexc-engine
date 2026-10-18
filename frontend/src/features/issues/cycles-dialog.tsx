@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PlusIcon, Trash2Icon } from 'lucide-react';
 import { useState } from 'react';
 
+import { IconButton } from '@/components/custom-ui/icon-button';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -123,16 +124,15 @@ export function CyclesDialog({
                   {STATUS_LABEL[cycle.status]}
                 </Badge>
                 {editable && (
-                  <Button
-                    variant="ghost"
+                  <IconButton
                     size="icon"
                     className="size-7 text-muted-foreground hover:text-destructive"
-                    aria-label={`Delete ${cycleLabel(cycle)}`}
+                    label={`Delete ${cycleLabel(cycle)}`}
                     disabled={remove.isPending}
                     onClick={() => remove.mutate(cycle.id)}
                   >
                     <Trash2Icon className="size-3.5" />
-                  </Button>
+                  </IconButton>
                 )}
               </li>
             ))}

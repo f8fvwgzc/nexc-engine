@@ -77,7 +77,9 @@ export function NavGraphs() {
           </SidebarMenuItem>
         ))}
         {graphs?.length === 0 && (
-          <p className="px-2 py-1.5 text-xs text-muted-foreground">No graphs yet.</p>
+          <SidebarMenuItem className="px-2 py-1.5 text-xs text-muted-foreground">
+            No graphs yet.
+          </SidebarMenuItem>
         )}
       </SidebarMenu>
     </SidebarGroup>

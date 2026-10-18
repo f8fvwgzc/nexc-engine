@@ -1,0 +1,12 @@
+{
+  "embed_base_url": null,
+  "embed_model": "builtin",
+  "embed_dims": null,
+  "has_api_key": false,
+  "key_hint": null,
+  "semantic": false,
+  "passages": 6,
+  "budget_chars": 6000,
+  "use_in_nodes": true,
+  "use_in_plan": true
+}

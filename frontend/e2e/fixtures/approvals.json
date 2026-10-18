@@ -1,0 +1,62 @@
+[
+  {
+    "id": "24d3b658-d393-7e45-8bd8-1439c52aac5e",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "run_id": "d7a0cee7-b61e-70e3-8477-6e245cfafbfb",
+    "node_id": "9cc0a944-e130-7446-8e17-59db752a3773",
+    "graph_id": "d4803e17-ed18-73d4-8de0-582d5192eca3",
+    "agent_id": "7151e019-9814-768a-86f2-eb698526c0ba",
+    "principal": "agent://acme-research/Writer",
+    "span_id": "26dd4426-163e-7a7d-8e11-78bab167155e",
+    "tool": "email.send",
+    "args_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "rule": "require_approval.tools",
+    "reason": "Sends the draft report to partner@external.example.",
+    "approver_ids": [
+      "d6b5915c-4605-7bcb-805f-46f6433df656",
+      "673aeeb0-8cfb-700b-81e5-e3c60b5ba318"
+    ],
+    "status": "pending",
+    "requested_at": "2026-10-14T11:50:00Z",
+    "expires_at": "2026-10-14T12:50:00Z",
+    "decided_by": null,
+    "decided_at": null,
+    "decision_reason": "",
+    "decision_span_id": null,
+    "policy_versions": {
+      "workspace": 3,
+      "team": null,
+      "agent": 2
+    }
+  },
+  {
+    "id": "ae84df82-7ae0-7c70-8953-2b2f3d6c44db",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "run_id": "8d8ea375-8174-790c-8a32-72621ec7d1ee",
+    "node_id": "ce0c00d5-a0ea-7441-82ba-d96e505a2dc5",
+    "graph_id": "d4803e17-ed18-73d4-8de0-582d5192eca3",
+    "agent_id": "c7f7d38d-b27f-71fe-8513-963f58ce7471",
+    "principal": "agent://acme-research/Analyst",
+    "span_id": "3b380f6b-5d1f-730c-8286-2a063fd0b834",
+    "tool": "files.read",
+    "args_sha256": null,
+    "rule": "require_approval.labels",
+    "reason": "Reads a restricted document.",
+    "approver_ids": ["d6b5915c-4605-7bcb-805f-46f6433df656"],
+    "status": "approved",
+    "requested_at": "2026-10-14T09:00:00Z",
+    "expires_at": "2026-10-14T10:00:00Z",
+    "decided_by": {
+      "id": "d6b5915c-4605-7bcb-805f-46f6433df656",
+      "name": "Ada Lovelace"
+    },
+    "decided_at": "2026-10-14T09:10:00Z",
+    "decision_reason": "Needed for the pricing model.",
+    "decision_span_id": "aa374707-a786-72dd-8826-00afb294098f",
+    "policy_versions": {
+      "workspace": 3,
+      "team": null,
+      "agent": 2
+    }
+  }
+]

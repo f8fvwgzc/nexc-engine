@@ -1,0 +1,26 @@
+[
+  {
+    "id": "db022c90-d3cd-7fa1-819d-22494cfd9a6c",
+    "run_id": "d7a0cee7-b61e-70e3-8477-6e245cfafbfb",
+    "node_id": "03842368-8a80-7226-8989-396b2e2a130f",
+    "path": "reports/market-overview.docx",
+    "size": 48213,
+    "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "created_at": "2026-10-14T11:15:00Z",
+    "quarantined_at": null,
+    "quarantine_reason": "",
+    "released_at": null
+  },
+  {
+    "id": "e5b7895e-6576-7b1f-8d86-9e5abe060f98",
+    "run_id": "d7a0cee7-b61e-70e3-8477-6e245cfafbfb",
+    "node_id": "bc2e390f-b4b6-7ef5-88a1-db1e00495787",
+    "path": "data/interviews-with-customers-and-partners-q3-2026-transcripts.csv",
+    "size": 1204331,
+    "mime": "text/csv",
+    "created_at": "2026-10-14T11:16:00Z",
+    "quarantined_at": "2026-10-14T11:16:00Z",
+    "quarantine_reason": "Contains personal data (email addresses).",
+    "released_at": null
+  }
+]

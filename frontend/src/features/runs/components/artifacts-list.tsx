@@ -10,6 +10,7 @@ import {
 import { toast } from 'sonner';
 
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { IconButton } from '@/components/custom-ui/icon-button';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -90,10 +91,16 @@ export function ArtifactsList({ runId, titles, admin = false }: ArtifactsListPro
                 <FileIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
               )}
               <div className="min-w-0 flex-1">
-                <p className={`truncate font-mono text-sm ${kept ? 'text-muted-foreground' : ''}`}>
+                <p
+                  className={`truncate font-mono text-sm ${kept ? 'text-muted-foreground' : ''}`}
+                  title={artifact.path}
+                >
                   {artifact.path}
                 </p>
-                <p className="truncate text-xs text-muted-foreground">
+                <p
+                  className="truncate text-xs text-muted-foreground"
+                  title={`${titles.get(artifact.node_id) ?? 'Node'} · ${artifact.mime}`}
+                >
                   {titles.get(artifact.node_id) ?? 'Node'} · {artifact.mime} ·{' '}
                   {formatBytes(artifact.size)} · {formatRelative(artifact.created_at)}
                   {kept && (
@@ -118,15 +125,13 @@ export function ArtifactsList({ runId, titles, admin = false }: ArtifactsListPro
                   Release
                 </Button>
               )}
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={`Download ${artifact.path}`}
+              <IconButton
+                label={`Download ${artifact.path}`}
                 disabled={kept}
                 onClick={() => download(downloadArtifact(artifact))}
               >
                 <DownloadIcon />
-              </Button>
+              </IconButton>
             </li>
           );
         })}

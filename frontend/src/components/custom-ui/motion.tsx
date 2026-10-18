@@ -43,7 +43,7 @@ export function Stagger({
     <div className={className} {...props}>
       {Children.map(children, (child, i) => (
         <div
-          className="motion-safe:animate-fade-up"
+          className="min-w-0 motion-safe:animate-fade-up"
           style={{ animationDelay: `${Math.min(i * stepMs, maxDelayMs)}ms` }}
         >
           {child}

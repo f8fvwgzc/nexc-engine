@@ -1,0 +1,152 @@
+{
+  "59a5a0c7-c397-74d9-8335-9438fe114555": [
+    {
+      "id": "5e016034-43fb-7f55-8ffc-2bcd8d2d82d2",
+      "team_id": "59a5a0c7-c397-74d9-8335-9438fe114555",
+      "name": "Backlog",
+      "category": "backlog",
+      "color": "#94a3b8",
+      "position": 0
+    },
+    {
+      "id": "665ca27f-c427-76b6-8314-2d71506a7933",
+      "team_id": "59a5a0c7-c397-74d9-8335-9438fe114555",
+      "name": "Todo",
+      "category": "unstarted",
+      "color": "#64748b",
+      "position": 1
+    },
+    {
+      "id": "592e1f0c-f5f0-704e-84de-2c06182a4e95",
+      "team_id": "59a5a0c7-c397-74d9-8335-9438fe114555",
+      "name": "In progress",
+      "category": "started",
+      "color": "#f59e0b",
+      "position": 2
+    },
+    {
+      "id": "7e35c599-fb7f-705e-8b35-20a0c165eb51",
+      "team_id": "59a5a0c7-c397-74d9-8335-9438fe114555",
+      "name": "In review",
+      "category": "started",
+      "color": "#8b5cf6",
+      "position": 3
+    },
+    {
+      "id": "97c90213-a205-7f9e-892f-e8e2dc76404f",
+      "team_id": "59a5a0c7-c397-74d9-8335-9438fe114555",
+      "name": "Done",
+      "category": "completed",
+      "color": "#22c55e",
+      "position": 4
+    },
+    {
+      "id": "688c6eab-98ec-7764-8a1f-99576863efc1",
+      "team_id": "59a5a0c7-c397-74d9-8335-9438fe114555",
+      "name": "Canceled",
+      "category": "canceled",
+      "color": "#ef4444",
+      "position": 5
+    }
+  ],
+  "749ce328-6f34-7c68-8572-e2edf21c2ad5": [
+    {
+      "id": "4a90468f-c204-7995-8af0-afaf1cd38cb2",
+      "team_id": "749ce328-6f34-7c68-8572-e2edf21c2ad5",
+      "name": "Backlog",
+      "category": "backlog",
+      "color": "#94a3b8",
+      "position": 0
+    },
+    {
+      "id": "bc0be66f-222f-7628-8e4a-e437529c0a71",
+      "team_id": "749ce328-6f34-7c68-8572-e2edf21c2ad5",
+      "name": "Todo",
+      "category": "unstarted",
+      "color": "#64748b",
+      "position": 1
+    },
+    {
+      "id": "23c16fb3-fadc-7941-8b3c-caf4166775ff",
+      "team_id": "749ce328-6f34-7c68-8572-e2edf21c2ad5",
+      "name": "In progress",
+      "category": "started",
+      "color": "#f59e0b",
+      "position": 2
+    },
+    {
+      "id": "359a354a-8c26-77cd-85e2-dd588f3cea89",
+      "team_id": "749ce328-6f34-7c68-8572-e2edf21c2ad5",
+      "name": "In review",
+      "category": "started",
+      "color": "#8b5cf6",
+      "position": 3
+    },
+    {
+      "id": "799942dd-63c6-7759-8623-a93c53e9e6c9",
+      "team_id": "749ce328-6f34-7c68-8572-e2edf21c2ad5",
+      "name": "Done",
+      "category": "completed",
+      "color": "#22c55e",
+      "position": 4
+    },
+    {
+      "id": "6cea2f7c-74bd-704f-8d85-7bec638f7b61",
+      "team_id": "749ce328-6f34-7c68-8572-e2edf21c2ad5",
+      "name": "Canceled",
+      "category": "canceled",
+      "color": "#ef4444",
+      "position": 5
+    }
+  ],
+  "bb352f84-0be2-7602-8692-4d6f1f04994e": [
+    {
+      "id": "244828ad-a6db-7230-8bc6-54c7695b6a0a",
+      "team_id": "bb352f84-0be2-7602-8692-4d6f1f04994e",
+      "name": "Backlog",
+      "category": "backlog",
+      "color": "#94a3b8",
+      "position": 0
+    },
+    {
+      "id": "24f100fd-c4fd-7825-8f3a-5562f8d1e588",
+      "team_id": "bb352f84-0be2-7602-8692-4d6f1f04994e",
+      "name": "Todo",
+      "category": "unstarted",
+      "color": "#64748b",
+      "position": 1
+    },
+    {
+      "id": "c57c43ed-d3d3-76bd-8a07-0a3975208389",
+      "team_id": "bb352f84-0be2-7602-8692-4d6f1f04994e",
+      "name": "In progress",
+      "category": "started",
+      "color": "#f59e0b",
+      "position": 2
+    },
+    {
+      "id": "57c7515c-7593-79f4-8b2d-be8c44ee3375",
+      "team_id": "bb352f84-0be2-7602-8692-4d6f1f04994e",
+      "name": "In review",
+      "category": "started",
+      "color": "#8b5cf6",
+      "position": 3
+    },
+    {
+      "id": "accbd06b-6999-7df2-89d5-1d813f4796a9",
+      "team_id": "bb352f84-0be2-7602-8692-4d6f1f04994e",
+      "name": "Done",
+      "category": "completed",
+      "color": "#22c55e",
+      "position": 4
+    },
+    {
+      "id": "26ebc1a8-77ce-76bd-801c-d08de7db2cad",
+      "team_id": "bb352f84-0be2-7602-8692-4d6f1f04994e",
+      "name": "Canceled",
+      "category": "canceled",
+      "color": "#ef4444",
+      "position": 5
+    }
+  ]
+}

@@ -30,9 +30,9 @@ const KIND_ICON: Record<CitationKind, LucideIcon> = {
 };
 
 const TONE_CLASS = {
-  ok: 'border-[color-mix(in_oklch,var(--status-succeeded)_45%,transparent)] text-[var(--status-succeeded)]',
-  warn: 'border-[color-mix(in_oklch,var(--status-queued)_55%,transparent)] text-[var(--status-queued)]',
-  bad: 'border-destructive/40 text-destructive',
+  ok: 'border-[color-mix(in_oklch,var(--status-succeeded)_45%,transparent)] [--badge-color:var(--status-succeeded)] text-badge',
+  warn: 'border-[color-mix(in_oklch,var(--status-queued)_55%,transparent)] [--badge-color:var(--status-queued)] text-badge',
+  bad: 'border-destructive/40 [--badge-color:var(--destructive)] text-badge',
 } as const;
 
 /** The verdict as a badge, with the coverage; hover for what it means. */
@@ -48,7 +48,7 @@ export function EvidenceBadge({ evidence, className }: { evidence: Evidence; cla
           className={cn('gap-1 tabular-nums', TONE_CLASS[meta.tone], className)}
         >
           {meta.label}
-          <span className="font-normal opacity-80">{coveragePct(evidence.coverage)}%</span>
+          <span className="font-normal">{coveragePct(evidence.coverage)}%</span>
         </Badge>
       </TooltipTrigger>
       <TooltipContent className="max-w-xs">

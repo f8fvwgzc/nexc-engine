@@ -10,7 +10,7 @@ import { WorkspaceSwitcher } from './workspace-switcher';
 /** The app's sidebar: workspace switcher, navigation, recent graphs and the account menu. */
 export function AppSidebar(props: ComponentProps<typeof Sidebar>) {
   return (
-    <Sidebar {...props}>
+    <Sidebar role="navigation" aria-label="Workspace" {...props}>
       <SidebarHeader>
         <WorkspaceSwitcher />
       </SidebarHeader>

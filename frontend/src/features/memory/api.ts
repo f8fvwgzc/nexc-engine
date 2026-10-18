@@ -2,12 +2,14 @@ import { keepPreviousData, queryOptions } from '@tanstack/react-query';
 import { z } from 'zod';
 
 import { apiRequest, apiSend } from '@/lib/api/client';
+import { FRESH } from '@/lib/freshness';
 import { qk } from '@/lib/query-keys';
 import { memorySchema, memoryTopicSchema, type MemoryQuery } from '@/schemas/memory';
 
 export const memoriesQuery = (query: MemoryQuery) =>
   queryOptions({
     queryKey: qk.memories.search(query),
+    staleTime: FRESH.list,
     queryFn: ({ signal }) =>
       apiRequest('/memories', z.array(memorySchema), {
         query: {
@@ -37,6 +39,7 @@ export const memoryQuery = (memoryId: string) =>
 export const memoryTopicsQuery = (workspaceId: string) =>
   queryOptions({
     queryKey: qk.memories.topics(workspaceId),
+    staleTime: FRESH.setup,
     queryFn: ({ signal }) =>
       apiRequest('/memories/topics', z.array(memoryTopicSchema), {
         query: { workspace_id: workspaceId },

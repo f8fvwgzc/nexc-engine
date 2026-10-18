@@ -23,10 +23,12 @@
     "dev": "vite",
     "build": "pnpm typecheck && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -p tsconfig.app.json && tsc -p tsconfig.node.json",
+    "typecheck": "tsc -p tsconfig.app.json && tsc -p tsconfig.node.json && tsc -p tsconfig.e2e.json",
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "e2e": "playwright test --project=ui",
+    "e2e:audit": "playwright test --project=audit-summary",
     "gen:api": "openapi-typescript http://localhost:8080/api/openapi.json -o src/lib/api/schema.d.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
@@ -65,7 +67,9 @@
     "zustand": "5.0.15"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "1.63.0",
     "@tailwindcss/typography": "0.5.20",
     "@tailwindcss/vite": "4.3.3",
     "@testing-library/dom": "^10.4.2",

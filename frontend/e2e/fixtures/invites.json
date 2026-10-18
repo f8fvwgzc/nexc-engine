@@ -1,0 +1,14 @@
+[
+  {
+    "id": "188baa46-8537-7372-847a-444c143d3e71",
+    "email": "linus@acme.example",
+    "role": "member",
+    "created_at": "2026-10-12T12:00:00Z"
+  },
+  {
+    "id": "92e3017a-32a4-7afa-86ad-dcab5d7e743c",
+    "email": "margaret.hamilton@apollo.example",
+    "role": "admin",
+    "created_at": "2026-10-14T07:00:00Z"
+  }
+]

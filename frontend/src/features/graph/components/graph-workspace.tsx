@@ -112,6 +112,8 @@ export function GraphWorkspace({ graphId }: { graphId: string }) {
     <OntologyContext value={graph.ontology}>
       <div className="flex min-h-0 flex-1">
         <GraphSeo name={graph.name} description={graph.description} />
+        {/* The canvas is the page: its title is the graph's name, for assistive technology. */}
+        <h1 className="sr-only">{graph.name}</h1>
         <div className="relative min-h-[60svh] min-w-0 flex-1">
           <Suspense fallback={<CanvasSkeleton />}>
             <GraphCanvas
@@ -127,15 +129,6 @@ export function GraphWorkspace({ graphId }: { graphId: string }) {
             />
           </Suspense>
           {graph.nodes.length === 0 && <CanvasEmptyHint />}
-          {graph.nodes.length > 0 && (
-            <div className="pointer-events-none absolute bottom-3 left-3 hidden md:block">
-              <CanvasLegend
-                suggestionCount={suggestions.length}
-                showSuggestions={showSuggestions}
-                onShowSuggestions={setShowSuggestions}
-              />
-            </div>
-          )}
           <div className="pointer-events-none absolute inset-x-3 top-3 flex justify-center">
             <GraphToolbar
               graph={graph}
@@ -150,12 +143,25 @@ export function GraphWorkspace({ graphId }: { graphId: string }) {
               onPlanApplied={layout}
             />
           </div>
-          <div className="pointer-events-none absolute inset-x-3 bottom-3 flex flex-col items-center gap-2">
-            <EdgeInspector
-              graph={graph}
-              onDelete={(id) => setPendingDelete({ kind: 'edge', id })}
-            />
-            <RunProgress />
+          {/* One bottom bar, so the legend and the run's progress never sit on each other: side
+              by side from lg, the legend above the progress on a tablet, no legend on a phone. */}
+          <div className="pointer-events-none absolute inset-x-3 bottom-3 flex flex-col gap-2 lg:flex-row lg:items-end">
+            {graph.nodes.length > 0 && (
+              <div className="hidden shrink-0 self-start md:block lg:self-end">
+                <CanvasLegend
+                  suggestionCount={suggestions.length}
+                  showSuggestions={showSuggestions}
+                  onShowSuggestions={setShowSuggestions}
+                />
+              </div>
+            )}
+            <div className="flex min-w-0 flex-1 flex-col items-center gap-2">
+              <EdgeInspector
+                graph={graph}
+                onDelete={(id) => setPendingDelete({ kind: 'edge', id })}
+              />
+              <RunProgress />
+            </div>
           </div>
         </div>
         <NodePanel

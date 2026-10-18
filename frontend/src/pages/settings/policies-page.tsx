@@ -3,6 +3,8 @@ import { GavelIcon } from 'lucide-react';
 import { useState } from 'react';
 
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { ErrorState } from '@/components/custom-ui/error-state';
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { PageSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
@@ -13,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Skeleton } from '@/components/ui/skeleton';
 import { agentsQuery } from '@/features/agents/api';
 import { PolicyVersions } from '@/features/policies/components/policy-versions';
 import { ResolvedPolicyView } from '@/features/policies/components/resolved-policy';
@@ -26,7 +29,8 @@ type Level = { scope: 'workspace' } | { scope: 'team' | 'agent'; id: string };
 
 function Policies({ workspace }: { workspace: Workspace }) {
   const { data: teams = [] } = useQuery(teamsQuery(workspace.id));
-  const { data: agents = [] } = useQuery(agentsQuery(workspace.id));
+  const agentsList = useQuery(agentsQuery(workspace.id));
+  const agents = agentsList.data ?? [];
   const [level, setLevel] = useState<Level>({ scope: 'workspace' });
   const [resolveFor, setResolveFor] = useState<string | null>(null);
   const value = level.scope === 'workspace' ? 'workspace' : `${level.scope}:${level.id}`;
@@ -98,7 +102,16 @@ function Policies({ workspace }: { workspace: Workspace }) {
             </Select>
           )}
         </div>
-        {agentForResolve ? (
+        {agentsList.error ? (
+          <ErrorState
+            compact
+            title="Couldn’t load the agents"
+            error={agentsList.error}
+            onRetry={() => void agentsList.refetch()}
+          />
+        ) : agentsList.isPending ? (
+          <Skeleton className="h-64 rounded-xl" />
+        ) : agentForResolve ? (
           <ResolvedPolicyView workspaceId={workspace.id} agentId={agentForResolve} />
         ) : (
           <p className="text-sm text-muted-foreground">No agents to resolve a policy for yet.</p>
@@ -110,10 +123,10 @@ function Policies({ workspace }: { workspace: Workspace }) {
 
 export default function PoliciesSettingsPage() {
   const { current } = useCurrentWorkspace();
-  if (!current) return <PageSkeleton />;
+  if (!current) return <PageSkeleton width="narrow" />;
   const allowed = isWorkspaceAdmin(current.role);
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-6 p-4 sm:p-6">
+    <PageContainer width="narrow">
       <Seo title="Policies" noIndex />
       <PageHeader
         title="Policies"
@@ -128,6 +141,6 @@ export default function PoliciesSettingsPage() {
           description="Ask an owner or admin of this workspace."
         />
       )}
-    </div>
+    </PageContainer>
   );
 }

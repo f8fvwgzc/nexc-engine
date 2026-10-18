@@ -1,0 +1,39 @@
+{
+  "agents": {
+    "total": 0,
+    "active": 0,
+    "paused": 0,
+    "over_budget": 0,
+    "quarantined": 0
+  },
+  "runs_today": {
+    "total": 0,
+    "succeeded": 0,
+    "failed": 0,
+    "cancelled": 0,
+    "active": 0
+  },
+  "runs_week": {
+    "total": 0,
+    "succeeded": 0,
+    "failed": 0,
+    "cancelled": 0,
+    "active": 0
+  },
+  "spans_today": 0,
+  "denials_today": [],
+  "denials_fortnight": [],
+  "approvals_open": 0,
+  "alerts_open": [],
+  "artifacts_quarantined": 0,
+  "evidence_today": {
+    "verified": 0,
+    "partial": 0,
+    "unverified": 0
+  },
+  "top_risk": [],
+  "policy_versions": [],
+  "last_seal": null,
+  "risk_history": [],
+  "at": "2026-10-14T12:00:00Z"
+}

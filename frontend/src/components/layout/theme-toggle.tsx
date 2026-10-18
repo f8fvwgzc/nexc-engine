@@ -1,6 +1,6 @@
 import { MoonIcon, SunIcon } from 'lucide-react';
 
-import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/custom-ui/icon-button';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,9 +17,9 @@ export function ThemeToggle() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" aria-label="Change theme">
+        <IconButton size="icon" label="Change theme">
           {resolvedTheme === 'dark' ? <MoonIcon /> : <SunIcon />}
-        </Button>
+        </IconButton>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-36">
         <DropdownMenuRadioGroup value={theme} onValueChange={(v) => isTheme(v) && setTheme(v)}>

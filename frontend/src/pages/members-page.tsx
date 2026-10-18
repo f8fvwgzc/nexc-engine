@@ -4,9 +4,11 @@ import { Suspense, useState } from 'react';
 import { toast } from 'sonner';
 
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
+import { IconButton } from '@/components/custom-ui/icon-button';
 import { OptionSelect } from '@/components/custom-ui/option-select';
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { PageSkeleton } from '@/components/layout/page-skeleton';
+import { PageSkeleton, TableSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -125,16 +127,16 @@ function PendingInvites({ workspace }: { workspace: Workspace }) {
         {invites.map((invite) => (
           <li key={invite.id} className="flex items-center gap-3 px-3 py-2 text-sm">
             <MailIcon className="size-4 text-muted-foreground" aria-hidden />
-            <span className="min-w-0 flex-1 truncate">{invite.email}</span>
+            <span className="min-w-0 flex-1 truncate" title={invite.email}>
+              {invite.email}
+            </span>
             <Badge variant="secondary">{ROLE_LABEL[invite.role]}</Badge>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={`Withdraw the invitation of ${invite.email}`}
+            <IconButton
+              label={`Withdraw the invitation of ${invite.email}`}
               onClick={() => withdraw.mutate(invite.id)}
             >
               <Trash2Icon />
-            </Button>
+            </IconButton>
           </li>
         ))}
       </ul>
@@ -171,9 +173,11 @@ function MembersTable({ workspace }: { workspace: Workspace }) {
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
-              <TableHead>E-mail</TableHead>
-              <TableHead className="w-40">Role</TableHead>
-              <TableHead className="w-12" />
+              <TableHead className="hidden md:table-cell">E-mail</TableHead>
+              <TableHead className="w-32 sm:w-40">Role</TableHead>
+              <TableHead className="w-12">
+                <span className="sr-only">Actions</span>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -183,7 +187,7 @@ function MembersTable({ workspace }: { workspace: Workspace }) {
               const isMe = member.user_id === me;
               return (
                 <TableRow key={member.user_id}>
-                  <TableCell className="font-medium">
+                  <TableCell className="max-w-44 font-medium whitespace-normal sm:max-w-60">
                     {member.name}
                     {isMe && <span className="ml-2 text-xs text-muted-foreground">you</span>}
                     {member.suspended && (
@@ -195,8 +199,20 @@ function MembersTable({ workspace }: { workspace: Workspace }) {
                         Suspended
                       </Badge>
                     )}
+                    {/* Below md the e-mail column is gone: the address goes under the name. */}
+                    <span
+                      className="block truncate text-xs font-normal text-muted-foreground md:hidden"
+                      title={member.email}
+                    >
+                      {member.email}
+                    </span>
                   </TableCell>
-                  <TableCell className="text-muted-foreground">{member.email}</TableCell>
+                  <TableCell
+                    className="hidden max-w-72 truncate text-muted-foreground md:table-cell"
+                    title={member.email}
+                  >
+                    {member.email}
+                  </TableCell>
                   <TableCell>
                     {manageable ? (
                       <OptionSelect
@@ -216,15 +232,13 @@ function MembersTable({ workspace }: { workspace: Workspace }) {
                   </TableCell>
                   <TableCell>
                     {(manageable || isMe) && (
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
+                      <IconButton
                         className="text-destructive"
-                        aria-label={isMe ? 'Leave the workspace' : `Remove ${member.name}`}
+                        label={isMe ? 'Leave the workspace' : `Remove ${member.name}`}
                         onClick={() => setRemoving(member)}
                       >
                         <Trash2Icon />
-                      </Button>
+                      </IconButton>
                     )}
                   </TableCell>
                 </TableRow>
@@ -250,10 +264,10 @@ function MembersTable({ workspace }: { workspace: Workspace }) {
 
 function Members() {
   const { current } = useCurrentWorkspace();
-  if (!current) return <PageSkeleton />;
+  if (!current) return <PageSkeleton width="narrow" />;
   const admin = isWorkspaceAdmin(current.role);
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-6 p-4 sm:p-6">
+    <PageContainer width="narrow">
       <PageHeader
         title="Members"
         description={`Who belongs to ${current.name} and what they may do. You are ${
@@ -267,7 +281,7 @@ function Members() {
       ) : (
         <>
           {admin && <InviteForm workspace={current} />}
-          <Suspense fallback={<PageSkeleton />}>
+          <Suspense fallback={<TableSkeleton rows={4} />}>
             <MembersTable key={current.id} workspace={current} />
           </Suspense>
           {admin && <PendingInvites workspace={current} />}
@@ -281,7 +295,7 @@ function Members() {
           </dl>
         </>
       )}
-    </div>
+    </PageContainer>
   );
 }
 

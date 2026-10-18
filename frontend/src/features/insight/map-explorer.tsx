@@ -16,9 +16,14 @@ import { countOf, followable, FOLLOWABLE, nameOf, pageOf } from './map-kinds';
 function ItemRow({ item, onFollow }: { item: MapItem; onFollow?: () => void }) {
   const body = (
     <>
-      <span className="min-w-0 flex-1 truncate font-medium">{item.title}</span>
+      <span className="min-w-0 flex-1 truncate font-medium" title={item.title}>
+        {item.title}
+      </span>
       {item.subtitle && (
-        <span className="max-w-[45%] shrink-0 truncate text-xs text-muted-foreground">
+        <span
+          className="max-w-[45%] shrink-0 truncate text-xs text-muted-foreground"
+          title={item.subtitle}
+        >
           {item.subtitle}
         </span>
       )}
@@ -29,7 +34,7 @@ function ItemRow({ item, onFollow }: { item: MapItem; onFollow?: () => void }) {
   return onFollow ? (
     <button
       type="button"
-      className={`${className} hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none`}
+      className={`${className} hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none focus-visible:ring-inset`}
       onClick={onFollow}
     >
       {body}
@@ -129,7 +134,12 @@ function Neighbourhood({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <h3 className="min-w-0 truncate text-sm font-semibold">{data?.item.title ?? item.title}</h3>
+        <h3
+          className="min-w-0 truncate text-sm font-semibold"
+          title={data?.item.title ?? item.title}
+        >
+          {data?.item.title ?? item.title}
+        </h3>
         <span className="text-xs text-muted-foreground">
           {nameOf(item.kind)}
           {(data?.item.subtitle ?? item.subtitle) && ` · ${data?.item.subtitle ?? item.subtitle}`}
@@ -221,13 +231,18 @@ export function MapExplorer({
             <span key={`${step.id}:${index}`} className="flex min-w-0 items-center gap-1">
               <ChevronRightIcon aria-hidden className="size-3 text-muted-foreground" />
               {index === trail.length - 1 ? (
-                <span aria-current="step" className="max-w-48 truncate font-medium">
+                <span
+                  aria-current="step"
+                  className="max-w-48 truncate font-medium"
+                  title={step.title}
+                >
                   {step.title}
                 </span>
               ) : (
                 <button
                   type="button"
                   className="max-w-48 truncate text-muted-foreground underline-offset-2 hover:underline"
+                  title={step.title}
                   onClick={() => setTrail(trail.slice(0, index + 1))}
                 >
                   {step.title}

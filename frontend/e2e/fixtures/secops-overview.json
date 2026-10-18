@@ -1,0 +1,336 @@
+{
+  "agents": {
+    "total": 6,
+    "active": 3,
+    "paused": 1,
+    "over_budget": 1,
+    "quarantined": 1
+  },
+  "runs_today": {
+    "total": 14,
+    "succeeded": 10,
+    "failed": 2,
+    "cancelled": 1,
+    "active": 1
+  },
+  "runs_week": {
+    "total": 83,
+    "succeeded": 70,
+    "failed": 8,
+    "cancelled": 4,
+    "active": 1
+  },
+  "spans_today": 4821,
+  "denials_today": [
+    {
+      "rule": "egress.allow",
+      "count": 7
+    },
+    {
+      "rule": "tools.deny",
+      "count": 2
+    }
+  ],
+  "denials_fortnight": [
+    {
+      "rule": "egress.allow",
+      "count": 41
+    },
+    {
+      "rule": "tools.deny",
+      "count": 12
+    },
+    {
+      "rule": "dlp.secrets",
+      "count": 3
+    }
+  ],
+  "approvals_open": 1,
+  "alerts_open": [
+    {
+      "severity": "critical",
+      "count": 1
+    },
+    {
+      "severity": "high",
+      "count": 1
+    }
+  ],
+  "artifacts_quarantined": 1,
+  "evidence_today": {
+    "verified": 31,
+    "partial": 6,
+    "unverified": 2
+  },
+  "top_risk": [
+    {
+      "agent_id": "d24bf172-c29e-7cc8-86cf-fd5582921f02",
+      "name": "Planner",
+      "principal_id": "agent://acme-research/Planner",
+      "status": "active",
+      "risk_score": 2.1,
+      "risk_reasons": [],
+      "risk_updated_at": "2026-10-14T11:30:00Z"
+    },
+    {
+      "agent_id": "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4",
+      "name": "Researcher",
+      "principal_id": "agent://acme-research/Researcher",
+      "status": "active",
+      "risk_score": 4.6,
+      "risk_reasons": ["New egress host", "Denials above baseline"],
+      "risk_updated_at": "2026-10-14T11:30:00Z"
+    },
+    {
+      "agent_id": "c7f7d38d-b27f-71fe-8513-963f58ce7471",
+      "name": "Analyst",
+      "principal_id": "agent://acme-research/Analyst",
+      "status": "over_budget",
+      "risk_score": 3.2,
+      "risk_reasons": [],
+      "risk_updated_at": "2026-10-14T11:30:00Z"
+    },
+    {
+      "agent_id": "2c9f8c05-f28c-7ca6-8df5-2bac4a9358b1",
+      "name": "Fact checker with an unusually long agent name",
+      "principal_id": "agent://acme-research/Fact",
+      "status": "quarantined",
+      "risk_score": 8.7,
+      "risk_reasons": ["New egress host", "Denials above baseline"],
+      "risk_updated_at": "2026-10-14T11:30:00Z"
+    }
+  ],
+  "policy_versions": [
+    {
+      "scope": "workspace",
+      "scope_id": null,
+      "version": 3,
+      "created_at": "2026-10-12T12:00:00Z"
+    },
+    {
+      "scope": "agent",
+      "scope_id": "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4",
+      "version": 2,
+      "created_at": "2026-10-09T12:00:00Z"
+    }
+  ],
+  "last_seal": {
+    "run_id": "111c309f-c0cf-72b7-82a2-6b9c6f05c0e3",
+    "graph_id": "d4803e17-ed18-73d4-8de0-582d5192eca3",
+    "trace_hash": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+    "sealed_at": "2026-10-12T12:00:00Z"
+  },
+  "risk_history": [
+    {
+      "agent_id": "d24bf172-c29e-7cc8-86cf-fd5582921f02",
+      "day": "2026-10-01",
+      "score": 0
+    },
+    {
+      "agent_id": "d24bf172-c29e-7cc8-86cf-fd5582921f02",
+      "day": "2026-10-02",
+      "score": 3
+    },
+    {
+      "agent_id": "d24bf172-c29e-7cc8-86cf-fd5582921f02",
+      "day": "2026-10-03",
+      "score": 6
+    },
+    {
+      "agent_id": "d24bf172-c29e-7cc8-86cf-fd5582921f02",
+      "day": "2026-10-04",
+      "score": 0
+    },
+    {
+      "agent_id": "d24bf172-c29e-7cc8-86cf-fd5582921f02",
+      "day": "2026-10-05",
+      "score": 3
+    },
+    {
+      "agent_id": "d24bf172-c29e-7cc8-86cf-fd5582921f02",
+      "day": "2026-10-06",
+      "score": 6
+    },
+    {
+      "agent_id": "d24bf172-c29e-7cc8-86cf-fd5582921f02",
+      "day": "2026-10-07",
+      "score": 0
+    },
+    {
+      "agent_id": "d24bf172-c29e-7cc8-86cf-fd5582921f02",
+      "day": "2026-10-08",
+      "score": 3
+    },
+    {
+      "agent_id": "d24bf172-c29e-7cc8-86cf-fd5582921f02",
+      "day": "2026-10-09",
+      "score": 6
+    },
+    {
+      "agent_id": "d24bf172-c29e-7cc8-86cf-fd5582921f02",
+      "day": "2026-10-10",
+      "score": 0
+    },
+    {
+      "agent_id": "d24bf172-c29e-7cc8-86cf-fd5582921f02",
+      "day": "2026-10-11",
+      "score": 3
+    },
+    {
+      "agent_id": "d24bf172-c29e-7cc8-86cf-fd5582921f02",
+      "day": "2026-10-12",
+      "score": 6
+    },
+    {
+      "agent_id": "d24bf172-c29e-7cc8-86cf-fd5582921f02",
+      "day": "2026-10-13",
+      "score": 0
+    },
+    {
+      "agent_id": "d24bf172-c29e-7cc8-86cf-fd5582921f02",
+      "day": "2026-10-14",
+      "score": 3
+    },
+    {
+      "agent_id": "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4",
+      "day": "2026-10-01",
+      "score": 0
+    },
+    {
+      "agent_id": "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4",
+      "day": "2026-10-02",
+      "score": 4
+    },
+    {
+      "agent_id": "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4",
+      "day": "2026-10-03",
+      "score": 8
+    },
+    {
+      "agent_id": "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4",
+      "day": "2026-10-04",
+      "score": 3
+    },
+    {
+      "agent_id": "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4",
+      "day": "2026-10-05",
+      "score": 7
+    },
+    {
+      "agent_id": "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4",
+      "day": "2026-10-06",
+      "score": 2
+    },
+    {
+      "agent_id": "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4",
+      "day": "2026-10-07",
+      "score": 6
+    },
+    {
+      "agent_id": "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4",
+      "day": "2026-10-08",
+      "score": 1
+    },
+    {
+      "agent_id": "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4",
+      "day": "2026-10-09",
+      "score": 5
+    },
+    {
+      "agent_id": "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4",
+      "day": "2026-10-10",
+      "score": 0
+    },
+    {
+      "agent_id": "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4",
+      "day": "2026-10-11",
+      "score": 4
+    },
+    {
+      "agent_id": "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4",
+      "day": "2026-10-12",
+      "score": 8
+    },
+    {
+      "agent_id": "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4",
+      "day": "2026-10-13",
+      "score": 3
+    },
+    {
+      "agent_id": "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4",
+      "day": "2026-10-14",
+      "score": 7
+    },
+    {
+      "agent_id": "2c9f8c05-f28c-7ca6-8df5-2bac4a9358b1",
+      "day": "2026-10-01",
+      "score": 1.5
+    },
+    {
+      "agent_id": "2c9f8c05-f28c-7ca6-8df5-2bac4a9358b1",
+      "day": "2026-10-02",
+      "score": 8.5
+    },
+    {
+      "agent_id": "2c9f8c05-f28c-7ca6-8df5-2bac4a9358b1",
+      "day": "2026-10-03",
+      "score": 6.5
+    },
+    {
+      "agent_id": "2c9f8c05-f28c-7ca6-8df5-2bac4a9358b1",
+      "day": "2026-10-04",
+      "score": 4.5
+    },
+    {
+      "agent_id": "2c9f8c05-f28c-7ca6-8df5-2bac4a9358b1",
+      "day": "2026-10-05",
+      "score": 2.5
+    },
+    {
+      "agent_id": "2c9f8c05-f28c-7ca6-8df5-2bac4a9358b1",
+      "day": "2026-10-06",
+      "score": 9.5
+    },
+    {
+      "agent_id": "2c9f8c05-f28c-7ca6-8df5-2bac4a9358b1",
+      "day": "2026-10-07",
+      "score": 7.5
+    },
+    {
+      "agent_id": "2c9f8c05-f28c-7ca6-8df5-2bac4a9358b1",
+      "day": "2026-10-08",
+      "score": 5.5
+    },
+    {
+      "agent_id": "2c9f8c05-f28c-7ca6-8df5-2bac4a9358b1",
+      "day": "2026-10-09",
+      "score": 3.5
+    },
+    {
+      "agent_id": "2c9f8c05-f28c-7ca6-8df5-2bac4a9358b1",
+      "day": "2026-10-10",
+      "score": 1.5
+    },
+    {
+      "agent_id": "2c9f8c05-f28c-7ca6-8df5-2bac4a9358b1",
+      "day": "2026-10-11",
+      "score": 8.5
+    },
+    {
+      "agent_id": "2c9f8c05-f28c-7ca6-8df5-2bac4a9358b1",
+      "day": "2026-10-12",
+      "score": 6.5
+    },
+    {
+      "agent_id": "2c9f8c05-f28c-7ca6-8df5-2bac4a9358b1",
+      "day": "2026-10-13",
+      "score": 4.5
+    },
+    {
+      "agent_id": "2c9f8c05-f28c-7ca6-8df5-2bac4a9358b1",
+      "day": "2026-10-14",
+      "score": 2.5
+    }
+  ],
+  "at": "2026-10-14T12:00:00Z"
+}

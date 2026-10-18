@@ -27,7 +27,10 @@ export function AgentActivity({ agentId, limit = 3 }: { agentId: string; limit?:
               className={cn('size-3 shrink-0 text-muted-foreground', error && 'text-destructive')}
               aria-label={meta.label}
             />
-            <span className={cn('truncate font-mono', error && 'text-destructive')}>
+            <span
+              className={cn('truncate font-mono', error && 'text-destructive')}
+              title={span.name}
+            >
               {span.name}
             </span>
             <span className="ml-auto shrink-0 text-muted-foreground">
