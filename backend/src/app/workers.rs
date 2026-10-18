@@ -124,5 +124,6 @@ async fn housekeeping(state: &AppState) -> anyhow::Result<()> {
     state.hub.prune();
     state.limiters.prune();
     state.engine.prune_dispatches();
+    state.gateway_registry.prune();
     Ok(())
 }

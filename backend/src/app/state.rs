@@ -57,6 +57,8 @@ pub struct AppState {
     pub runtime_grpc: Option<Channel>,
     /// The tools gateway's outbound HTTP client (no redirects of its own).
     pub gateway_http: reqwest::Client,
+    /// The MCP server registrations the gateway read lately.
+    pub gateway_registry: Arc<crate::gateway::Registry>,
     /// Signs the decisions the Agent Firewall API hands out.
     pub firewall_signer: Arc<Signer>,
     /// The external agents' decisions sessions open on this instance.
@@ -115,6 +117,7 @@ impl AppState {
         Ok(AppState {
             runtime_grpc,
             gateway_http: crate::gateway::http_client()?,
+            gateway_registry: Arc::default(),
             firewall_signer,
             firewall_sessions: Arc::default(),
             jwt: Arc::new(JwtKeys::new(

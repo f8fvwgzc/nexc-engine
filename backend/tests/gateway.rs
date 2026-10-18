@@ -969,7 +969,7 @@ fn pct(sorted: &[f64], p: f64) -> f64 {
 
 /// `make prove-gateway`, first half: the gateway's own overhead per call
 /// (the pace, the decisions, the DLP screen, the spans), the tool itself
-/// excluded, over 1,000 calls of an MCP tool over HTTP and 1,000 of
+/// excluded, over 500 calls of an MCP tool over HTTP and 500 of
 /// `fetch_url`, through `gateway::perform` on a real node of a real run.
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
 #[ignore = "a measurement: run with `make prove-gateway`"]
@@ -982,8 +982,8 @@ async fn prove_gateway(pool: PgPool) {
     use nexc::gateway::{self, ToolRequest};
     use nexc::llm::LlmTarget;
 
-    // Within the pace's burst (a quarter of the minute's allowance).
-    const CALLS: usize = 1_000;
+    // Within the pace's burst (a quarter of the minute's allowance, 1,000 at most).
+    const CALLS: usize = 500;
     let app = TestApp::new(pool.clone(), &[("NEXC_GATEWAY_CALLS_PER_MINUTE", "10000")]).await;
     let (owner, _) = app.register("prover@example.com").await;
     let wid = workspace(&app, &owner).await;

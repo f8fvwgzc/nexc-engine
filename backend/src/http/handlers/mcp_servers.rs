@@ -120,6 +120,7 @@ pub async fn create(
     )
     .await?;
     let check = gateway::check_server(&state, &row).await;
+    state.gateway_registry.forget(wid);
     audit(
         &state,
         wid,
@@ -176,7 +177,9 @@ pub async fn check(
     let row = repo::mcp_servers::find(&state.db, wid, sid)
         .await?
         .ok_or(AppError::NotFound("mcp server"))?;
-    Ok(Json(gateway::check_server(&state, &row).await))
+    let found = gateway::check_server(&state, &row).await;
+    state.gateway_registry.forget(wid);
+    Ok(Json(found))
 }
 
 /// Removes a server (admins); its tools stop being offered at the next run.
@@ -198,6 +201,7 @@ pub async fn delete(
     if !repo::mcp_servers::delete(&state.db, wid, sid).await? {
         return Err(AppError::NotFound("mcp server"));
     }
+    state.gateway_registry.forget(wid);
     audit(
         &state,
         wid,

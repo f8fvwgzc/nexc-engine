@@ -12,9 +12,11 @@
 pub mod fetch;
 pub mod mcp;
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
+use dashmap::DashMap;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -37,6 +39,50 @@ use crate::repo::mcp_servers::McpServerRow;
 
 /// Opening a connection for a gateway call.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a server's registration is kept between calls on one instance:
+/// a call decides from memory; a change made elsewhere applies within this long.
+const REGISTRY_TTL: Duration = Duration::from_secs(5);
+
+/// The registered servers this instance has read lately, by workspace and
+/// name, so a call does not go to the database for the registration.
+#[derive(Debug, Default)]
+pub struct Registry {
+    servers: DashMap<(Uuid, String), (Instant, Arc<McpServerRow>)>,
+}
+
+impl Registry {
+    /// Forgets what is kept of a workspace (a server was registered, checked or removed).
+    pub fn forget(&self, workspace: Uuid) {
+        self.servers.retain(|(w, _), _| *w != workspace);
+    }
+
+    /// Forgets entries older than their keep.
+    pub fn prune(&self) {
+        self.servers
+            .retain(|_, (at, _)| at.elapsed() < REGISTRY_TTL);
+    }
+
+    async fn find(
+        &self,
+        state: &AppState,
+        workspace: Uuid,
+        name: &str,
+    ) -> Result<Option<Arc<McpServerRow>>, sqlx::Error> {
+        let key = (workspace, name.to_owned());
+        if let Some(found) = self.servers.get(&key)
+            && found.0.elapsed() < REGISTRY_TTL
+        {
+            return Ok(Some(found.1.clone()));
+        }
+        let row = repo::mcp_servers::find_by_name(&state.db, workspace, name)
+            .await?
+            .map(Arc::new);
+        if let Some(row) = &row {
+            self.servers.insert(key, (Instant::now(), row.clone()));
+        }
+        Ok(row)
+    }
+}
 /// A connection test of a server.
 pub const CHECK_TIMEOUT: Duration = Duration::from_secs(15);
 /// Longest tool output handed to the model, in characters.
@@ -638,7 +684,12 @@ async fn perform_timed(
         call.record(&outcome, None);
         return outcome;
     };
-    let row = match repo::mcp_servers::find_by_name(&ctx.state.db, workspace, server_name).await {
+    let row = match ctx
+        .state
+        .gateway_registry
+        .find(&ctx.state, workspace, server_name)
+        .await
+    {
         Ok(Some(row)) => row,
         Ok(None) => {
             let decision = Decision::deny(
