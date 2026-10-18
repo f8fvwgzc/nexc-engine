@@ -31,6 +31,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `alert_destinations.failures`) tells the admins. `Alert.deliveries` counts the destinations an
   alert reached; the Alerts panel on `/app/secops` shows "sent to N destinations". Metric
   `nexc_alert_deliveries_total{kind, outcome}`.
+- SIEM pull: `GET /workspaces/{wid}/alerts/export?since=&until=&format=ndjson|json` and `GET
+  …/audit/export` stream alerts and audit entries over a window, oldest first, with their stable
+  ids, at most 10,000 per pull, 30 pulls a minute per account; the way a collector pulls without
+  webhooks (`docs/CONTRACT.md` §5, with a signature verification example in Python under §4).
 - `NEXC_PUBLIC_URL` and `NEXC_ALERT_ALLOW_PRIVATE_HOSTS` in `.env.example` and CONTRACT §2.
   A workspace transfer leaves alert destinations and their log behind (their secrets are sealed
   with this server's key); they are registered again on the target.

@@ -39,6 +39,11 @@ const API_PER_USER: Limit = Limit {
     burst: 120,
     per_minute: 600.0,
 };
+/// SIEM pulls (`…/alerts/export`, `…/audit/export`): each answers up to 10,000 entries.
+const EXPORTS_PER_USER: Limit = Limit {
+    burst: 10,
+    per_minute: 30.0,
+};
 
 #[derive(Debug)]
 struct Keyed<K: Eq + Hash> {
@@ -90,6 +95,8 @@ pub struct RateLimiters {
     users: Keyed<Uuid>,
     /// Gateway calls per agent principal.
     gateway: Keyed<String>,
+    /// SIEM export pulls per user.
+    exports: Keyed<Uuid>,
 }
 
 impl Default for RateLimiters {
@@ -109,12 +116,18 @@ impl RateLimiters {
                 burst: (gateway_per_minute / 4).clamp(1, 1000),
                 per_minute: f64::from(gateway_per_minute),
             }),
+            exports: Keyed::new(EXPORTS_PER_USER),
         }
     }
 
     /// Charges one authenticated request to `user`.
     pub fn check_user(&self, user: Uuid) -> Result<(), AppError> {
         self.users.acquire(user)
+    }
+
+    /// Charges one SIEM export pull to `user`.
+    pub fn check_export(&self, user: Uuid) -> Result<(), AppError> {
+        self.exports.acquire(user)
     }
 
     /// Charges one gateway call to the agent `principal`.
@@ -139,6 +152,7 @@ impl RateLimiters {
         self.login_failures.prune(now);
         self.users.prune(now);
         self.gateway.prune(now);
+        self.exports.prune(now);
     }
 }
 

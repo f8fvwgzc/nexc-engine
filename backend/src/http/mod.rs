@@ -37,6 +37,8 @@ pub const UPLOAD_SLACK: usize = 64 * 1024;
         crate::realtime::events::WsMessage,
         // Only used as a path parameter, which does not register a schema by itself.
         crate::domain::insight::MapKind,
+        // Only used as a query parameter, likewise.
+        handlers::exports::ExportFormat,
     )),
     tags(
         (name = "auth", description = "Accounts and sessions"),
@@ -139,6 +141,8 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(approvals::deny))
         .routes(routes!(alerts::list))
         .routes(routes!(alerts::acknowledge))
+        .routes(routes!(exports::alerts))
+        .routes(routes!(exports::audit))
         .routes(routes!(
             alert_destinations::list,
             alert_destinations::create
@@ -300,6 +304,8 @@ mod tests {
             "/api/v1/approvals/{id}/deny",
             "/api/v1/artifacts/{aid}/release",
             "/api/v1/workspaces/{wid}/alerts",
+            "/api/v1/workspaces/{wid}/alerts/export",
+            "/api/v1/workspaces/{wid}/audit/export",
             "/api/v1/workspaces/{wid}/alert-destinations",
             "/api/v1/workspaces/{wid}/alert-destinations/{id}",
             "/api/v1/workspaces/{wid}/alert-destinations/{id}/test",
@@ -428,10 +434,11 @@ mod tests {
                 "DestinationKind" => check::<alert_routing::DestinationKind>(values),
                 "DeliveryStatus" => check::<alert_routing::DeliveryStatus>(values),
                 "DeliveryEvent" => check::<alert_routing::DeliveryEvent>(values),
+                "ExportFormat" => check::<handlers::exports::ExportFormat>(values),
                 _ => continue,
             }
             checked += 1;
         }
-        assert_eq!(checked, 44, "every string enum schema is covered");
+        assert_eq!(checked, 45, "every string enum schema is covered");
     }
 }

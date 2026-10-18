@@ -85,6 +85,35 @@ pub async fn record_system(
     Ok(())
 }
 
+/// Entries of a workspace written after `since` and up to `until`, oldest
+/// first (the SIEM export's order), starting after `(after_at, after_id)`
+/// when given; at most `limit`.
+pub async fn export_page(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+    after: Option<(DateTime<Utc>, Uuid)>,
+    limit: i64,
+) -> Result<Vec<AuditEntry>, sqlx::Error> {
+    let (after_at, after_id) = after.unzip();
+    sqlx::query_as(
+        "SELECT id, action, actor_id, actor_name, subject, detail, created_at
+         FROM audit_log
+         WHERE workspace_id = $1 AND created_at > $2 AND created_at <= $3
+           AND ($4::timestamptz IS NULL OR (created_at, id) > ($4, $5))
+         ORDER BY created_at, id LIMIT $6",
+    )
+    .bind(workspace_id)
+    .bind(since)
+    .bind(until)
+    .bind(after_at)
+    .bind(after_id)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
 /// Entries of a workspace, newest first, older than `before` if given.
 pub async fn list(
     db: impl PgExecutor<'_>,

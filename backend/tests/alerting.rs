@@ -1066,3 +1066,185 @@ async fn a_destination_that_keeps_failing_is_switched_off(pool: PgPool) {
     let progress = nexc::alerting::pass(&app.state).await.unwrap();
     assert_eq!(progress.delivered, 1);
 }
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_siem_pulls_alerts_and_audit_entries_over_a_window(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), &[]).await;
+    let (owner, _) = app.register("owner@example.com").await;
+    let owner_id = user_id(&app, &owner).await;
+    let wid = workspace(&app, &owner).await;
+    let (member, _) = app.register("member@example.com").await;
+    add_member(&app, &owner, &wid, "member@example.com", "member").await;
+    let (outsider, _) = app.register("outsider@example.com").await;
+    let old = raise(&app, &wid, owner_id, Severity::Low, "old").await;
+    let old_id: Uuid = old["id"].as_str().unwrap().parse().unwrap();
+    sqlx::query("UPDATE alerts SET created_at = now() - interval '2 days' WHERE id = $1")
+        .bind(old_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let a = raise(&app, &wid, owner_id, Severity::Medium, "a").await;
+    let b = raise(&app, &wid, owner_id, Severity::High, "b").await;
+    let export = format!("/workspaces/{wid}/alerts/export");
+
+    // The default window is the last day, as NDJSON, oldest first.
+    let r = app
+        .request(Method::GET, &format!("/api/v1{export}"), Some(&owner), None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.headers["content-type"], "application/x-ndjson");
+    let text = r
+        .body
+        .as_str()
+        .expect("NDJSON is not a JSON document")
+        .to_owned();
+    let lines: Vec<Value> = text
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(lines.len(), 2, "{text}");
+    assert_eq!(lines[0]["id"], a["id"]);
+    assert_eq!(lines[1]["id"], b["id"]);
+    assert_eq!(lines[1]["title"], "b");
+    assert_eq!(lines[1]["workspace_id"], wid);
+    assert!(lines[1]["deliveries"].is_number());
+
+    // A wider window as a JSON array takes the old one too; `until` cuts the end.
+    let since = (Utc::now() - chrono::Duration::days(3))
+        .to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
+    let r = app
+        .request(
+            Method::GET,
+            &format!("/api/v1{export}?since={since}&format=json"),
+            Some(&owner),
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert!(
+        r.headers["content-type"]
+            .to_str()
+            .unwrap()
+            .starts_with("application/json")
+    );
+    let ids: Vec<&str> = r
+        .body
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            old["id"].as_str().unwrap(),
+            a["id"].as_str().unwrap(),
+            b["id"].as_str().unwrap()
+        ]
+    );
+    let until = (Utc::now() - chrono::Duration::days(1))
+        .to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
+    let r = app
+        .request(
+            Method::GET,
+            &format!("/api/v1{export}?since={since}&until={until}&format=json"),
+            Some(&owner),
+            None,
+        )
+        .await;
+    assert_eq!(r.body.as_array().unwrap().len(), 1, "{}", r.body);
+    assert_eq!(r.body[0]["title"], "old");
+
+    // What does not fit: a window the wrong way round, an unknown format, other roles.
+    let (status, body) = call(
+        &app,
+        Method::GET,
+        &format!(
+            "{export}?since={}&until={since}",
+            Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
+        ),
+        &owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    let (status, _) = call(
+        &app,
+        Method::GET,
+        &format!("{export}?format=xml"),
+        &owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = call(
+        &app,
+        Method::GET,
+        &format!("{export}?since=yesterday"),
+        &owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = call(&app, Method::GET, &export, &member, None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = call(&app, Method::GET, &export, &outsider, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // The audit log, the same way: the alerts raised are in it.
+    let audit = format!("/workspaces/{wid}/audit/export");
+    let r = app
+        .request(
+            Method::GET,
+            &format!("/api/v1{audit}?format=json"),
+            Some(&owner),
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let entries = r.body.as_array().unwrap();
+    let raised: Vec<&Value> = entries
+        .iter()
+        .filter(|e| e["action"] == "alert_raised")
+        .collect();
+    assert_eq!(raised.len(), 3, "{entries:?}");
+    assert!(raised.iter().all(|e| e["actor_id"] == owner_id.to_string()));
+    assert!(
+        entries
+            .windows(2)
+            .all(|w| w[0]["created_at"].as_str() <= w[1]["created_at"].as_str()),
+        "oldest first"
+    );
+    let r = app
+        .request(Method::GET, &format!("/api/v1{audit}"), Some(&owner), None)
+        .await;
+    assert_eq!(r.headers["content-type"], "application/x-ndjson");
+    assert_eq!(r.body.as_str().unwrap().lines().count(), entries.len());
+    let (status, _) = call(&app, Method::GET, &audit, &member, None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = call(&app, Method::GET, &audit, &outsider, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Pulls are rate limited per account: a burst of ten, then 429 with Retry-After.
+    let (puller, _) = app.register("puller@example.com").await;
+    let own = workspace(&app, &puller).await;
+    let mut limited = None;
+    for n in 0..12 {
+        let r = app
+            .request(
+                Method::GET,
+                &format!("/api/v1/workspaces/{own}/alerts/export"),
+                Some(&puller),
+                None,
+            )
+            .await;
+        if r.status == StatusCode::TOO_MANY_REQUESTS {
+            limited = Some((n, r));
+            break;
+        }
+        assert_eq!(r.status, StatusCode::OK, "pull {n}");
+    }
+    let (n, r) = limited.expect("the burst ran out");
+    assert_eq!(n, 10);
+    assert!(r.headers.contains_key("retry-after"));
+}
