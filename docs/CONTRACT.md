@@ -127,8 +127,9 @@ In Docker/K8s the frontend is served by unprivileged nginx on 8080 which proxies
   free again: the response is kept right after the write commits, so a replica that dies between
   the two leaves a key whose retry, after those 60 s, runs the request again). Server errors (5xx)
   and rate limits (429) are not kept, so their retry runs again;
-  4xx answers are kept like successes. A housekeeping job deletes keys after 24 hours, and a key
-  is free again once it is that old. On other routes the header is ignored. The browser may send
+  4xx answers are kept like successes. Every request with a key, a replay included, counts once
+  against the account's rate limit, which answers 429 before the key is looked up. A
+  housekeeping job deletes keys after 24 hours, and a key is free again once it is that old. On other routes the header is ignored. The browser may send
   it (CORS allows it and exposes `Idempotent-Replayed`).
 
 <!-- #endregion conventions -->

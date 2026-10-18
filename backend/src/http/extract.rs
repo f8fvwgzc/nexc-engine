@@ -38,6 +38,12 @@ pub struct PlatformAdmin {
     pub id: Uuid,
 }
 
+/// Marks a request whose account was already charged one request of its
+/// rate limit (by the `Idempotency-Key` middleware, which answers replays
+/// before any extractor runs): the extractor does not charge it again.
+#[derive(Debug, Clone, Copy)]
+pub struct RateCharged(pub Uuid);
+
 /// Extracts the bearer token from request headers, if any.
 pub fn bearer_token(headers: &HeaderMap) -> Option<&str> {
     let value = headers.get(AUTHORIZATION)?.to_str().ok()?;
@@ -48,8 +54,10 @@ pub fn bearer_token(headers: &HeaderMap) -> Option<&str> {
         .filter(|t| !t.is_empty())
 }
 
-/// The caller of a request: a valid access token that was not ended early.
-fn caller(headers: &HeaderMap, state: &AppState) -> Result<Caller, AppError> {
+/// The caller of a request: a valid access token that was not ended early,
+/// charged one request of its account's rate limit (once per request).
+fn caller(parts: &Parts, state: &AppState) -> Result<Caller, AppError> {
+    let headers = &parts.headers;
     let token = bearer_token(headers).ok_or(AppError::Unauthorized("missing bearer token"))?;
     let claims = state
         .jwt
@@ -58,7 +66,13 @@ fn caller(headers: &HeaderMap, state: &AppState) -> Result<Caller, AppError> {
     if !state.sessions.admits(claims.sub, claims.epoch) {
         return Err(AppError::Unauthorized("invalid or expired token"));
     }
-    state.limiters.check_user(claims.sub)?;
+    let charged = parts
+        .extensions
+        .get::<RateCharged>()
+        .is_some_and(|c| c.0 == claims.sub);
+    if !charged {
+        state.limiters.check_user(claims.sub)?;
+    }
     Ok(Caller {
         id: claims.sub,
         role: claims.role,
@@ -72,7 +86,7 @@ impl FromRequestParts<AppState> for Caller {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        caller(&parts.headers, state)
+        caller(parts, state)
     }
 }
 
@@ -83,7 +97,7 @@ impl FromRequestParts<AppState> for AuthUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        match caller(&parts.headers, state)? {
+        match caller(parts, state)? {
             Caller {
                 role: Role::Admin, ..
             } => Err(AppError::Forbidden(
@@ -102,7 +116,7 @@ impl FromRequestParts<AppState> for PlatformAdmin {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        match caller(&parts.headers, state)? {
+        match caller(parts, state)? {
             Caller {
                 id,
                 role: Role::Admin,

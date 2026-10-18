@@ -65,7 +65,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   JSON, the response's status and body, `created_at`); a retry with the same key and body within
   24 hours gets the first response again with `Idempotent-Replayed: true` and no second effect, the
   same key with another body is 422, and a retry that arrives while the first is still handled is
-  409 with `Retry-After`. Server errors and rate limits are not kept. A housekeeping job deletes
+  409 with `Retry-After`. Server errors and rate limits are not kept. Every keyed request, a
+  replay included, counts once against the account's rate limit, checked before the key is
+  looked up. A housekeeping job deletes
   keys after 24 hours, and deleting an account deletes its keys. The OpenAPI document names the
   header on the five routes (frontend types and the site's copy regenerated).
 - Chaos tests of run takeover (`backend/tests/ha.rs`): two instances of the app share one

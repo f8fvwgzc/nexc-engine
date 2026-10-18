@@ -8,7 +8,8 @@
 //! Keys belong to the account that sent them and to the method and path
 //! they were sent to, and are kept 24 hours (a housekeeping job deletes
 //! them). Server errors and rate limits are not kept: retrying them runs
-//! the request again.
+//! the request again. Every request with a key, a replay included, counts
+//! against its account's rate limit before the key is looked up.
 
 use std::time::Duration;
 
@@ -24,7 +25,7 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::app::router::BODY_LIMIT;
 use crate::domain::AppError;
-use crate::http::extract::bearer_token;
+use crate::http::extract::{RateCharged, bearer_token};
 use crate::http::problem::Problem;
 use crate::repo::idempotency::{self, Claim};
 
@@ -89,7 +90,7 @@ fn account(state: &AppState, headers: &HeaderMap) -> Option<Uuid> {
 
 /// Honours `Idempotency-Key` on the writes of [`ROUTES`]; every other
 /// request passes untouched.
-pub async fn replay(State(state): State<AppState>, req: Request, next: Next) -> Response {
+pub async fn replay(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
     let Some(raw) = req.headers().get(&HEADER) else {
         return next.run(req).await;
     };
@@ -118,6 +119,12 @@ pub async fn replay(State(state): State<AppState>, req: Request, next: Next) -> 
     let Some(user) = account(&state, req.headers()) else {
         return next.run(req).await;
     };
+    // The account pays for the request here, before the database is asked about the key: a
+    // replay never reaches the handler's extractor, which would otherwise charge it.
+    if let Err(limited) = state.limiters.check_user(user) {
+        return limited.into_response();
+    }
+    req.extensions_mut().insert(RateCharged(user));
     let route = format!("{} {}", req.method(), req.uri().path());
     let (parts, body) = req.into_parts();
     let Ok(bytes) = axum::body::to_bytes(body, BODY_LIMIT).await else {

@@ -442,3 +442,49 @@ async fn keys_are_checked_and_expire_after_a_day(pool: PgPool) {
         .unwrap();
     assert_eq!(left, 0);
 }
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_keyed_request_counts_once_against_the_rate_limit_and_so_does_a_replay(pool: PgPool) {
+    // 50 requests a minute per account: a burst of 10.
+    let app = TestApp::new(pool, &[("NEXC_API_CALLS_PER_MINUTE", "50")]).await;
+    let (token, _) = app.register("owner@example.com").await;
+    let gid = app.graph(&token, "Limited").await;
+    let nodes = format!("/graphs/{gid}/nodes");
+    // Each keyed request is charged once, not once by the key's check and again by the handler.
+    for n in 0..8 {
+        let created = send(
+            &app,
+            Method::POST,
+            &nodes,
+            &token,
+            json!({"title": format!("Node {n}")}),
+            Some(&format!("node-{n}")),
+        )
+        .await;
+        assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    }
+    // Replays are answered from the record, but each is a request like any other.
+    let mut statuses = Vec::new();
+    for _ in 0..20 {
+        let again = send(
+            &app,
+            Method::POST,
+            &nodes,
+            &token,
+            json!({"title": "Node 0"}),
+            Some("node-0"),
+        )
+        .await;
+        statuses.push(again.status);
+        if again.status == StatusCode::TOO_MANY_REQUESTS {
+            assert!(!replayed(&again));
+            break;
+        }
+        assert!(replayed(&again), "{}", again.body);
+    }
+    assert_eq!(
+        statuses.last(),
+        Some(&StatusCode::TOO_MANY_REQUESTS),
+        "{statuses:?}"
+    );
+}
