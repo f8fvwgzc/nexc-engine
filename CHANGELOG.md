@@ -34,10 +34,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of testing another checkout's build (`E2E_REUSE_SERVER=1` reuses a server).
   The baselines are rendered in the Playwright image (`mcr.microsoft.com/playwright`, the
   version of `@playwright/test`), which the new CI job **Frontend UI** runs and `make e2e-ui`
-  runs locally through Docker (`scripts/e2e-ui.sh`; `make e2e-ui-update` re-renders the
-  baselines; without Docker the suite runs natively and skips the pixels off Linux). The
-  frontend image's build context leaves out the suite's output and screenshots; it still
-  typechecks `e2e/`.
+  runs locally through Docker (`scripts/e2e-ui.sh`, with a `node_modules` volume per checkout
+  and the files it writes into the checkout handed back to the caller; `make e2e-ui-update`
+  re-renders the baselines; without Docker the suite runs natively and skips the pixels off
+  Linux). The frontend image's build context leaves out the suite's output and screenshots; it
+  still typechecks `e2e/`.
   `pnpm e2e:audit` is the audit tool: every route at 375, 768 and 1280 px, light and dark, both
   data sets, with a full-page screenshot and a record of axe, the layout check, unnamed icon
   controls, silent truncation, headings, empty states, focus visibility and refetches under

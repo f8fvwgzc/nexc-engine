@@ -146,9 +146,11 @@ fails, a filter that matches nothing, and the unread count in the tablet's icon 
 
 The baselines are rendered on Linux, in the Playwright image CI runs: `make e2e-ui` runs the
 suite there (Docker), `make e2e-ui-update` re-renders the baselines after a deliberate change.
-Without Docker, `pnpm e2e` runs it on this machine and skips the pixel comparisons off Linux.
-The suite serves its build on port 4174: set `E2E_PORT` to run a second checkout's suite at the
-same time. A port already in use fails the run instead of testing whatever answers there;
+The container's `node_modules` is a volume of this checkout's own, and what the suite writes
+into the checkout (the build, the results, the baselines) is handed back to your user when it
+ends. Without Docker, `pnpm e2e` runs it on this machine and skips the pixel comparisons off
+Linux. The suite serves its build on port 4174: set `E2E_PORT` to run a second checkout's suite
+at the same time. A port already in use fails the run instead of testing whatever answers there;
 `E2E_REUSE_SERVER=1` reuses a server this checkout left running.
 `pnpm e2e:audit` writes screenshots and findings for every route, width, theme and data set to
 `e2e/.audit/<AUDIT_PHASE>/`; `e2e/AUDIT.md` is what the first audit found and what was done.
