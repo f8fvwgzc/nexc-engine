@@ -334,7 +334,8 @@ executed and reviewable set of deliverables.
 - [x] Six starter templates (research report, REST API, market analysis, blog series, data pipeline, launch plan)
 - [ ] Import/export (Obsidian vaults, Markdown)
 - [x] Per-workspace teams, roles and audit log
-- [ ] Helm chart and OpenTelemetry tracing across backend and runtime
+- [x] OpenTelemetry export of the agent trace (`NEXC_OTLP_ENDPOINT`)
+- [ ] Helm chart
 
 Ideas and votes are welcome in [Discussions](https://github.com/f8fvwgzc/nexc-engine/discussions).
 

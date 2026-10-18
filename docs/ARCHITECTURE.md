@@ -9,8 +9,8 @@ contract wins.
 | Component                    | Tech                                             | Responsibility                                                                                                                                                            |
 | ---------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **frontend**                 | React 19, Vite, TypeScript, TanStack Query, zod  | Graph canvas, plan review, run monitoring, agents, memory, settings. Talks only to `/api/v1`.                                                                             |
-| **backend** (`nexc serve`)   | Rust, axum, sqlx, utoipa                         | Auth, REST API, SSE + WebSocket hub, graph analysis, planner, scheduler, memory, orchestrator, artifact storage.                                                          |
-| **agent-runtime**            | Python 3.12, FastAPI, Anthropic SDK, python-docx | Executes `executor: agent` nodes: agents are born from a spec per request and run a tool loop in a sandboxed workspace.                                                   |
+| **backend** (`nexc serve`)   | Rust, axum, sqlx, utoipa                         | Auth, REST API, SSE + WebSocket hub, graph analysis, planner, scheduler, memory, orchestrator, artifact storage, the tools gateway, the Agent Firewall API (gRPC) and the OTLP export of the trace.                                                          |
+| **agent-runtime**            | Python 3.12, FastAPI + grpclib, Anthropic SDK, python-docx | Executes `executor: agent` nodes: agents are born from a spec per request and run a tool loop in a sandboxed workspace.                                                   |
 | **PostgreSQL 17**            |                                                  | Users, graphs, nodes, edges, plans, runs, artifacts metadata, agents, memories, refresh-token families. `LISTEN/NOTIFY` carries realtime events between backend replicas. |
 | **texc-symphony** (optional) | Rust                                             | Executes `executor: symphony` nodes as Codex coding tasks.                                                                                                                |
 
@@ -25,6 +25,8 @@ flowchart TB
         orchestrator["orchestrator<br/>executor routing + health"]
         memory["memory<br/>BM25 retrieval"]
         kernels["C kernels (FFI)<br/>hash, MinHash, embeddings, SHA-256"]
+        gateway["tools gateway<br/>policy, DLP, rate limit,<br/>tool_call + egress spans"]
+        firewall["Agent Firewall API<br/>gRPC, signed decisions"]
     end
     http --> planner & engine & scheduler & memory
     scheduler --> orchestrator
@@ -33,7 +35,11 @@ flowchart TB
     planner --> realtime
     scheduler --> realtime
     orchestrator -->|llm| provider[(LLM provider)]
-    orchestrator -->|agent| runtime[agent-runtime]
+    orchestrator -->|agent: gRPC stream| runtime[agent-runtime]
+    runtime -.->|tool_request| gateway
+    gateway -->|MCP, fetch_url| mcp[(MCP servers, the web)]
+    external[external agents] -->|gRPC, API token| firewall
+    scheduler -->|spans| otlp[(OTLP collector)]
     orchestrator -->|symphony| symphony[texc-symphony]
     realtime <-->|LISTEN/NOTIFY| pg[(PostgreSQL)]
     http --> pg
@@ -164,8 +170,13 @@ sequenceDiagram
 
 ### The agent runtime protocol
 
-`POST /v1/execute` returns `application/x-ndjson`. The stream always ends with exactly one
-`result` or `error` line; `error.retryable` tells the scheduler whether another attempt may help
+The backend opens one gRPC stream per node attempt (`AgentRuntime/Execute`, the runtime's port
+8095, `NEXC_RUNTIME_PROTOCOL=grpc`, the default): it sends the request as the first command and
+reads the run's events; approval decisions, policy updates and the results of gateway calls go
+down the same stream as commands, so nothing has to find the replica that holds a run. The
+NDJSON endpoint is the same protocol as lines over HTTP and stays for one release
+(`NEXC_RUNTIME_PROTOCOL=ndjson`). `POST /v1/execute` returns `application/x-ndjson`. The stream
+always ends with exactly one `result` or `error` line; `error.retryable` tells the scheduler whether another attempt may help
 (rate limits, 5xx and network errors) or not (refusals, invalid requests, exhausted budgets,
 timeouts). `tokens` lines are per LLM call (incremental); `result` carries the run totals.
 Artifacts are emitted after the agent finishes: every regular file in the run's workspace,
@@ -185,6 +196,19 @@ flowchart LR
     loop -->|refusal, budget, timeout| err["error (retryable flag)"]
 ```
 
+### The tools gateway, the Agent Firewall API and the OTLP export
+
+An agent never reaches the network: a tool that leaves the runtime (an MCP server registered
+for the workspace, `fetch_url`) is a `tool_request` up the stream, and the backend performs it
+after the policy decided the tool and the host, the DLP screen read the arguments and the
+agent's rate limit let it through, under a timeout and a size cap, with a `tool_call` and an
+`egress` span on the record. The Agent Firewall API (`NEXC_GRPC_ADDR`, off by default) offers
+the same decisions and the same trace to agents that run elsewhere, over gRPC with a per-agent
+API token: `AuthorizeAction` answers a signed decision, `ReportSpan` chains their spans into a
+run of their own and re-decides each one, `VerifyTrace` recomputes the chain. With
+`NEXC_OTLP_ENDPOINT` set, every span of the trace is also exported to an OpenTelemetry collector
+(the run is the trace, the workspace the resource). `docs/CONTRACT.md` §8 has the wire.
+
 ## Scaling and state
 
 - **Backend** – stateless apart from `NEXC_DATA_DIR` (artifacts). Realtime events are published
@@ -195,7 +219,10 @@ flowchart LR
   With more than one node, mount the artifact directory on shared (ReadWriteMany) storage.
 - **Agent runtime** – fully stateless (per-run scratch directories are deleted after each run);
   scale freely. Each instance limits concurrent runs (`RUNTIME_MAX_CONCURRENT_RUNS`, default 8) and
-  answers 429 when full.
+  answers 429 (NDJSON) or `RESOURCE_EXHAUSTED` (gRPC) when full. The gRPC channel of a backend
+  instance multiplexes its streams on one connection, so behind a plain ClusterIP Service it
+  sticks to one pod: with several runtime replicas use a headless Service or a gRPC-aware proxy to
+  spread the runs.
 - **PostgreSQL** – the single source of truth; back it up together with `NEXC_MASTER_KEY`.
 
 ## Deleting an account
@@ -238,6 +265,9 @@ from many machines at once.
 | Browser → backend      | JWT + refresh-cookie rotation, CSRF header on cookie endpoints, rate limits, 1 MiB body limit, problem+json errors without internals.                                                                                                                                      |
 | Platform → workspaces  | A platform administrator's token is refused on every workspace route; the console reads counts and members, never content. Its actions (roles, suspensions, owners, deletions) are written to an activity log, and an owner it assigns also to that workspace's audit log. |
 | Backend → runtime      | Shared bearer token (constant-time compare), internal network only, 4 MiB request limit, API keys passed per request and never stored or logged.                                                                                                                           |
+| Agent → network        | The runtime makes no outbound call: MCP servers and `fetch_url` are the backend's gateway, which decides the tool and the host under the policy (private and loopback addresses refused unless named), screens the arguments for data leaving, limits calls per agent, times a call out, caps the answer, starts a stdio server with an empty environment in a scratch directory and records a `tool_call` and an `egress` span. |
+| External agent → backend | The Agent Firewall API is off unless `NEXC_GRPC_ADDR` is set and is never for browsers; per-agent tokens are kept hashed and read on every call with the agent's status (a quarantine ends access at once); decisions are signed with Ed25519; reported spans are checked, bounded and re-decided like a runtime's. |
+| Backend → collector    | The OTLP export (`NEXC_OTLP_ENDPOINT`, off by default) sends what the trace stores: digests, names, hosts, counts and decisions, never arguments, prompts or content. |
 | Agent → filesystem     | Per-run workspace; `safe_path` rejects absolute paths, `..`, NUL/backslashes and symlink escapes; per-file and per-workspace quotas.                                                                                                                                       |
 | Agent → code execution | Disabled by default. When enabled: `python -I`, scrubbed environment, rlimits (CPU, memory, file size, processes, open files), wall-clock timeout that kills the process group, truncated output.                                                                          |
 | Untrusted model input  | Upstream outputs and memories are wrapped in tags and the system prompt marks them as data, not instructions.                                                                                                                                                              |

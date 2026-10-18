@@ -9,6 +9,64 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- gRPC between backend and runtime (AgentSecOps phase 4, `docs/AGENTSECOPS.md`): the
+  vendored `backend/proto/nexc/runtime/v1/runtime.proto` defines `AgentRuntime` with
+  `Execute(stream BackendCommand) returns (stream RuntimeEvent)`, one stream per node attempt
+  that the backend opens; the request is the first command, the events are the NDJSON lines as
+  messages, and `ack`, `cancel`, `approval_decision`, `policy_update` and `tool_result` go down
+  the same stream, so an approval reaches the replica holding the call and a policy change
+  reaches a running agent as a fresh token. The runtime serves it with grpclib on
+  `RUNTIME_GRPC_PORT` (8095) beside FastAPI, reusing the runner, the event stream and the
+  approvals (`make proto-runtime` regenerates its stubs); the backend's tonic client is chosen
+  by `NEXC_RUNTIME_PROTOCOL` (`grpc`, the default, or `ndjson`, kept for one release) and
+  `NEXC_RUNTIME_GRPC_URL`. The backend is the client of the stream, not the runtime as the plan's
+  text had it, so the runtime remains reachable from the backend only.
+- Tools gateway: MCP servers are registered per workspace (`GET/POST/DELETE
+  /workspaces/{wid}/mcp-servers`, `…/check`; stdio or streamable HTTP, an encrypted
+  `Authorization` header, an allow-list of tools, a data clearance `max_label`; registering
+  connects and records the tools listed) and offered to agents as `mcp:<server>/<tool>` under
+  the policy (`mcp:<server>/*` in a tool list names them all), with the built-in `fetch_url`.
+  The runtime sends `tool_request` up the stream and the backend performs the call: the rate
+  limit per agent (`NEXC_GATEWAY_CALLS_PER_MINUTE`, the existing token bucket), the policy on
+  the tool and on the host (private and loopback addresses refused as `egress.private` unless
+  named, redirect hops checked one by one), the DLP screen of the arguments under the context's
+  labels, the timeout (`NEXC_GATEWAY_TIMEOUT_SECS`) and the size cap
+  (`NEXC_GATEWAY_MAX_RESPONSE_BYTES`), recorded as a `tool_call` and an `egress` span. A stdio
+  server runs with an empty environment in a scratch directory for the one call. Settings → MCP
+  servers registers, checks and removes them.
+- Agent Firewall API: `backend/proto/nexc/firewall/v1/firewall.proto` defines `AgentFirewall`
+  (`AuthorizeAction` answering a decision signed with Ed25519, `ReportSpan` chaining an external
+  agent's spans into a verifiable run of its own and re-deciding each of them, `VerifyTrace`,
+  `GetAgentCard`), served by tonic on `NEXC_GRPC_ADDR` with reflection and `grpc.health.v1`,
+  off when unset. Agents of the new runtime `external` hold API tokens (`POST
+  /agents/{id}/tokens`, shown once, stored as a SHA-256 hash, revocable, audited as
+  `agent_token_issued` / `agent_token_revoked`); the token and the agent's status are read on
+  every call, so a quarantine or a revocation ends access at once. `NEXC_FIREWALL_SIGNING_KEY`
+  sets the signing seed (derived from the master key when unset); the public key is on
+  `/admin/infrastructure`.
+- OpenTelemetry export: with `NEXC_OTLP_ENDPOINT` set, a worker sends every span of the trace
+  to the collector over OTLP/gRPC (the run is the trace, the span id the last 8 bytes of the
+  UUID v7, the parent kept, the workspace the resource, attributes as stored) in batches behind
+  a shared cursor (`otlp_export_cursor`). `nexc doctor` and Settings → Infrastructure report the
+  runtime stream, the gateway's limits, the firewall and the collector.
+- `make prove-gateway` measures the gateway's cost per call (the tool excluded) and the stream's
+  per-event latency over gRPC and NDJSON; in-process tonic tests cover the stream (a run with
+  its spans live and its chain sealed, cancellation, an approval asked and decided on the
+  stream, a dropped stream, a gateway request performed and one refused), the gateway
+  (registration, a stdio and an HTTP MCP server, the allow-lists and the rate limit, labels,
+  deny-lists and personal data in arguments), the firewall (signed decisions and a verifiable
+  run, wrong tokens and workspace isolation, reflection and health) and the export (a collector
+  stub); the runtime's tests cover its grpclib service, policy updates included; the worst-case
+  suite reads the new routes from the spec. Recorded on an Apple-silicon release build: gateway overhead per call,
+  500 calls each: an MCP tool over HTTP p50 8 µs, p99 17 µs, max 833 µs (the whole call p50
+  133 µs, p99 387 µs); `fetch_url` p50 7 µs, p99 13 µs, max 17 µs (the whole call p50 53 µs,
+  p99 147 µs). Per-event latency from the runtime's send to the backend's fan-out, 2000 deltas:
+  gRPC p50 56 µs, p99 117 µs, max 167 µs; NDJSON p50 63 µs, p99 128 µs, max 161 µs.
+- Operations: `.env.example`, `docker-compose.yml` (the runtime's gRPC port on the internal
+  network only), the Kubernetes manifests (the runtime's Service and NetworkPolicy admit the
+  backend on 8095; the firewall port is documented for when it is opened to another namespace),
+  `docs/CONTRACT.md` §1, §2, §4, §5 and §8 and `docs/ARCHITECTURE.md` describe the wire, the
+  gateway, the firewall and the export.
 - Ask the audit (AgentSecOps phase 3, `docs/AGENTSECOPS.md` §4.5): the trace becomes ontology
   facts in [onto-intelli](https://github.com/f8fvwgzc/onto-intelli) and audit questions are answered
   from them. `NEXC_ONTO_URL` (its gRPC endpoint; unset keeps the feature off), `NEXC_ONTO_TOKEN`

@@ -42,7 +42,7 @@ spec:
       ports:
         - { port: 8080, protocol: TCP }
 ---
-# agent runtime: only from the backend.
+# agent runtime: only from the backend, on its HTTP port and its gRPC stream.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -57,6 +57,13 @@ spec:
             matchLabels: { app.kubernetes.io/name: backend }
       ports:
         - { port: 8090, protocol: TCP }
+        - { port: 8095, protocol: TCP }
+---
+# The Agent Firewall API (NEXC_GRPC_ADDR, off by default) is service to service: when you
+# turn it on, add its port here for the namespaces of the agent platforms that call it, e.g.
+#   - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: agents } } }]
+#     ports: [{ port: 50052, protocol: TCP }]
+# under the `backend-from-frontend-and-ingress` policy; browsers never reach it.
 ---
 # postgres: only from the backend.
 apiVersion: networking.k8s.io/v1
