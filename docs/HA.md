@@ -129,7 +129,10 @@ for expired leases every 2 s.
 ## Deploying for high availability
 
 Run at least two backend replicas and two runtime replicas against one PostgreSQL that has a
-standby. Every replica gets the same `NEXC_RUN_LEASE_SECS`; each run records the lease its holder
+standby, with one data volume (`NEXC_DATA_DIR`: run artifacts, uploaded documents) that every
+backend replica mounts: on more than one node it must be `ReadWriteMany`, or a replica cannot
+start (a `ReadWriteOnce` volume attaches to one node) and a peer that takes a run over cannot see
+its artifacts. Every replica gets the same `NEXC_RUN_LEASE_SECS`; each run records the lease its holder
 works under (`runs.lease_secs`) and a takeover waits for that one, so a replica set differently
 still takes a dead peer's runs over in time, and logs a warning when it does.
 
@@ -137,7 +140,8 @@ still takes a dead peer's runs over in time, and logs a warning when it does.
 | ---------------------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `NEXC_RUN_LEASE_SECS`                    | `.env`, Helm `backend.runLeaseSecs`      | The lease (1 to 3600 s, default 30). Shorter takes runs over sooner after a crash and renews more often; `NEXC_ENV=production` refuses less than 10 s, which a slow answer of the database would turn into takeovers. |
 | `replicas.backend`, `replicas.runtime`   | Helm values                              | Two each by default.                                                                                                               |
-| `autoscaling.backend`, `autoscaling.runtime` | Helm values                          | Optional HorizontalPodAutoscalers on CPU (off by default). When one is on, `replicas` no longer sets that Deployment's size; keep `minReplicas` at 2 or more. |
+| `backend.dataAccessMode`, `backend.dataStorageClass`, `backend.dataExistingClaim` | Helm values | The backend's data volume. `ReadWriteOnce` (the default) suits a single node; with backend replicas on several nodes (the chart spreads them across nodes, and the autoscaler adds more) set `ReadWriteMany` and a class that offers it (NFS, EFS, Filestore, CephFS), or mount a claim you made. The chart's notes warn when replicas share a `ReadWriteOnce` volume. |
+| `autoscaling.backend`, `autoscaling.runtime` | Helm values                          | Optional HorizontalPodAutoscalers on CPU (off by default). When one is on, `replicas` no longer sets that Deployment's size; keep `minReplicas` at 2 or more, and give the backend a `ReadWriteMany` data volume. |
 | `podDisruptionBudgets.maxUnavailable`    | Helm values                              | How many pods of each tier a node drain may evict at once (default 1).                                                             |
 | `backend.terminationGracePeriodSeconds`  | Helm values                              | Time a backend pod gets to drain on `SIGTERM` (default 60 s; the hand-off itself takes at most 15 s).                              |
 | `docker compose up -d --scale backend=2` | Docker Compose                           | Two backend replicas on one host; restart `frontend` afterwards so its nginx resolves both. Each gets 30 s to drain (`stop_grace_period`). |

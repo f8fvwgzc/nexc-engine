@@ -98,7 +98,16 @@ backend:
   # flight.
   runLeaseSecs: 30
   terminationGracePeriodSeconds: 60
+  # The backend's data volume (NEXC_DATA_DIR: run artifacts, uploaded documents), mounted by every
+  # backend replica. ReadWriteOnce attaches it to one node: fine on a single-node cluster. With
+  # backend replicas on several nodes (the chart spreads them across nodes, and the autoscaler
+  # adds more) use a ReadWriteMany class (NFS, EFS, Filestore, CephFS) in dataStorageClass, so a
+  # replica that takes a run over sees its artifacts; or name a claim you made in
+  # dataExistingClaim, which the chart then mounts instead of creating `backend-data`.
   dataStorage: 5Gi
+  dataAccessMode: ReadWriteOnce
+  dataStorageClass: ""
+  dataExistingClaim: ""
   resources:
     requests: { cpu: 200m, memory: 256Mi }
     limits: { cpu: "2", memory: 1Gi }

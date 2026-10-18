@@ -99,7 +99,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   runtime and the frontend that allow `podDisruptionBudgets.maxUnavailable` evictions at once
   (they required one pod to stay, which blocked node drains with one replica), optional
   HorizontalPodAutoscalers for the backend and the runtime (`autoscaling.*`; `replicas` is left
-  out of an autoscaled Deployment) and `backend.runLeaseSecs`; CI renders the chart with them on.
+  out of an autoscaled Deployment), `backend.runLeaseSecs`, and the backend's data volume as
+  values (`backend.dataAccessMode`, `backend.dataStorageClass`, `backend.dataExistingClaim`;
+  replicas on several nodes need `ReadWriteMany`, and the chart's notes warn when replicas share
+  a `ReadWriteOnce` one); CI renders the chart with them on.
   The kustomize manifests get the same readiness probe and `NEXC_RUN_LEASE_SECS`.
   `docker-compose.yml` documents running two backend replicas (`--scale backend=2`), passes
   `NEXC_RUN_LEASE_SECS` and gives the backend 30 s to drain.

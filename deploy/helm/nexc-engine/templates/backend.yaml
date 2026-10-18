@@ -1,5 +1,6 @@
 # Backend API + scheduler. Stateless apart from the artifact volume; realtime fan-out between
 # replicas goes through PostgreSQL LISTEN/NOTIFY, so it scales horizontally.
+{{- if not .Values.backend.dataExistingClaim }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -9,12 +10,16 @@ metadata:
     {{- include "nexc.labels" . | nindent 4 }}
 spec:
   # ReadWriteOnce works on single-node clusters. With several nodes and more than one replica,
-  # use a ReadWriteMany storage class so every replica sees every artifact.
-  accessModes: [ReadWriteOnce]
+  # use a ReadWriteMany storage class so every replica sees every artifact (backend.dataAccessMode).
+  accessModes: [{{ .Values.backend.dataAccessMode }}]
+  {{- with .Values.backend.dataStorageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
   resources:
     requests:
       storage: {{ .Values.backend.dataStorage }}
 ---
+{{- end }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -112,6 +117,6 @@ spec:
             - { name: tmp, mountPath: /tmp }
       volumes:
         - name: data
-          persistentVolumeClaim: { claimName: backend-data }
+          persistentVolumeClaim: { claimName: {{ .Values.backend.dataExistingClaim | default "backend-data" }} }
         - name: tmp
           emptyDir: {}

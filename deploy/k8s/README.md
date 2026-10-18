@@ -100,9 +100,12 @@ CI lints the chart and renders it with the firewall, the collector and onto-inte
   point `NEXC_DATABASE_URL` at it (`sslmode=require`) and drop `postgres.yaml` from the resources.
 * **Artifact storage** – `backend-data` is `ReadWriteOnce`, which is fine on one node. With several
   nodes and more than one backend replica use a `ReadWriteMany` storage class.
-* **Scaling** – the backend scales horizontally (realtime fan-out over PostgreSQL
-  `LISTEN/NOTIFY`); a run executes on the replica that accepted it (see
-  [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md#scaling-and-state)). The runtime is stateless.
+* **Scaling** – run two or more backend replicas: the backend scales horizontally (realtime
+  fan-out over PostgreSQL `LISTEN/NOTIFY`), any replica's dispatcher claims a queued run and holds
+  it under a lease (`NEXC_RUN_LEASE_SECS`, the same on every replica), and when that replica dies
+  or drains a peer takes the run over and resumes it (see [docs/HA.md](../../docs/HA.md) and
+  [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md#scaling-and-state)). Replicas on several
+  nodes need the `ReadWriteMany` artifact storage above. The runtime is stateless.
 * **Egress** – the policies restrict ingress only. To restrict egress as well, allow DNS, the
   database, the runtime and your LLM provider's endpoints explicitly.
 * **Signups** – set `NEXC_ALLOW_SIGNUP=false` once your users exist.

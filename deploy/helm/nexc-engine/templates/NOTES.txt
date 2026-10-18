@@ -11,6 +11,13 @@ Open http{{ if .Values.ingress.tls }}s{{ end }}://{{ .Values.ingress.host }} onc
 The namespace should carry the restricted Pod Security Standard, as deploy/k8s does:
   kubectl label namespace {{ .Release.Namespace }} pod-security.kubernetes.io/enforce=restricted --overwrite
 
+{{ if and (ne .Values.backend.dataAccessMode "ReadWriteMany") (not .Values.backend.dataExistingClaim) (or .Values.autoscaling.backend.enabled (gt (int .Values.replicas.backend) 1)) -}}
+High availability: every backend replica ({{ if .Values.autoscaling.backend.enabled }}autoscaled{{ else }}{{ .Values.replicas.backend }} of them{{ end }}) mounts the volume
+backend-data, which is {{ .Values.backend.dataAccessMode }}: on more than one node, set
+backend.dataAccessMode=ReadWriteMany with a storage class that offers it (backend.dataStorageClass),
+or a replica cannot attach it and peers cannot see the artifacts of runs they take over (docs/HA.md).
+
+{{ end -}}
 Runtime wire: {{ .Values.backend.runtimeProtocol }} (gRPC stream on {{ .Values.runtime.grpcPort }}).
 Agent Firewall API: {{ if .Values.backend.grpcAddr }}on, {{ .Values.backend.grpcAddr }}, Service port {{ .Values.backend.firewall.port }} (admitted from: {{ join ", " .Values.networkPolicies.firewallFrom | default "no namespace yet: set networkPolicies.firewallFrom" }}){{ else }}off (backend.grpcAddr){{ end }}.
 OTLP export: {{ .Values.backend.otlpEndpoint | default "off (backend.otlpEndpoint)" }}.
