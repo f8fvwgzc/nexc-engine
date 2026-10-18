@@ -21,6 +21,10 @@ use base64::Engine as _;
 use bytes::Bytes;
 use chrono::Utc;
 use common::{RUNTIME_TOKEN, TestApp, collect_until};
+use nexc::domain::capabilities::{Capabilities, DataLabel};
+use nexc::domain::policy::{Action, decide_with};
+use nexc::domain::policy_document::{Policy, PolicyDocument, PolicyScope};
+use nexc::engine::policy::{levels_for, resolve};
 use nexc::security::agent_token::{AgentTokenKeys, derive_key};
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -1772,4 +1776,135 @@ async fn planted_instructions_in_an_upstream_output_are_flagged_or_withheld(pool
     assert_eq!(blocked["status"], "error");
     assert_eq!(blocked["attributes"]["decision"], "deny");
     assert_eq!(blocked["attributes"]["policy_versions"]["workspace"], 1);
+}
+
+/// `make prove-policy`: resolving three levels into one policy (target under 1 ms) and
+/// deciding a tool call under the resolved rules (target p99 < 100 µs), in process.
+#[test]
+#[ignore = "a measurement: run with `make prove-policy`"]
+fn prove_policy() {
+    let wid = Uuid::now_v7();
+    let (team, agent_id) = (Uuid::now_v7(), Uuid::now_v7());
+    let make = |scope: PolicyScope, scope_id: Option<Uuid>, version: i32, doc: Value| Policy {
+        id: Uuid::now_v7(),
+        workspace_id: wid,
+        scope,
+        scope_id,
+        version,
+        document: serde_json::from_value::<PolicyDocument>(doc).unwrap(),
+        author_id: None,
+        author_name: String::new(),
+        created_at: Utc::now(),
+    };
+    let latest = vec![
+        make(
+            PolicyScope::Workspace,
+            None,
+            3,
+            json!({
+                "tools": {"allow": ["write_file", "read_file", "list_files", "make_docx", "finish"], "deny": ["run_python"]},
+                "egress": {"allow": ["api.example.com", "*.internal.example"]},
+                "labels": ["public", "internal", "confidential"],
+                "limits": {"tokens_per_run": 50000, "tokens_per_day": 1000000, "runs_per_hour": 20},
+                "time_windows": [{"days": [1, 2, 3, 4, 5], "start": "07:00", "end": "20:00"}],
+                "require_approval": {"tools": ["make_docx"], "timeout_s": 600},
+                "alerts": {"risk_score": 5.0, "quarantine_risk_score": 8.0},
+                "dlp": {"pii": {"keywords": ["Project Zeus", "Hermes"]}, "labels": {"confidential": {"egress_hosts": ["api.example.com"]}}},
+                "injection": {"action": "flag"},
+            }),
+        ),
+        make(
+            PolicyScope::Team,
+            Some(team),
+            1,
+            json!({
+                "tools": {"allow": ["write_file", "read_file", "make_docx", "finish"]},
+                "limits": {"tokens_per_run": 30000},
+                "require_approval": {"labels": ["confidential"]},
+            }),
+        ),
+        make(
+            PolicyScope::Agent,
+            Some(agent_id),
+            2,
+            json!({
+                "egress": {"deny": ["*.evil.example"]},
+                "limits": {"tool_calls_per_minute": 30},
+                "injection": {"action": "block"},
+            }),
+        ),
+    ];
+    let caps = Capabilities {
+        tools: Some(
+            ["write_file", "read_file", "make_docx", "finish"]
+                .map(String::from)
+                .to_vec(),
+        ),
+        ..Capabilities::default()
+    };
+    const ROUNDS: usize = 10_000;
+    let mut samples = Vec::with_capacity(ROUNDS);
+    let mut resolved = None;
+    for _ in 0..ROUNDS {
+        let start = Instant::now();
+        let levels = levels_for(&latest, Some(team), Some(agent_id));
+        let r = resolve(&levels, Some(&caps));
+        samples.push(start.elapsed());
+        resolved = Some(r);
+    }
+    samples.sort();
+    let at = |s: &[Duration], q: f64| s[((s.len() as f64 * q) as usize).min(s.len() - 1)];
+    println!(
+        "prove-policy (backend, Rust): resolution of 3 levels, {ROUNDS} rounds: p50 {:.1} µs, p99 {:.1} µs, max {:.1} µs",
+        at(&samples, 0.5).as_secs_f64() * 1e6,
+        at(&samples, 0.99).as_secs_f64() * 1e6,
+        samples.last().unwrap().as_secs_f64() * 1e6
+    );
+    assert!(
+        at(&samples, 0.99).as_secs_f64() < 0.001,
+        "resolution p99 is over 1 ms"
+    );
+    let resolved = resolved.unwrap();
+    assert_eq!(resolved.rules.limits.tokens_per_run, Some(30000));
+    let labels = [DataLabel::Internal, DataLabel::Confidential];
+    let actions = [
+        Action::Tool("write_file"),
+        Action::Tool("make_docx"),
+        Action::Tool("run_python"),
+        Action::Tool("finish"),
+        Action::Egress("db.internal.example"),
+        Action::Egress("a.evil.example"),
+        Action::Model("claude-opus-5"),
+        Action::Spawn {
+            role: "researcher",
+            depth: 1,
+            children: 1,
+        },
+    ];
+    const DECISIONS: usize = 100_000;
+    let mut samples = Vec::with_capacity(DECISIONS);
+    let (mut denied, mut held) = (0, 0);
+    for i in 0..DECISIONS {
+        let action = &actions[i % actions.len()];
+        let start = Instant::now();
+        let decision = decide_with(&resolved.capabilities, &resolved.rules, &labels, action);
+        samples.push(start.elapsed());
+        denied += usize::from(decision.verdict() == "deny");
+        held += usize::from(decision.verdict() == "require_approval");
+    }
+    samples.sort();
+    println!(
+        "prove-policy (backend, Rust): {DECISIONS} decisions under the resolved policy ({denied} denied, {held} held for approval): p50 {:.2} µs, p99 {:.2} µs, max {:.2} µs",
+        at(&samples, 0.5).as_secs_f64() * 1e6,
+        at(&samples, 0.99).as_secs_f64() * 1e6,
+        samples.last().unwrap().as_secs_f64() * 1e6
+    );
+    let budget: f64 = std::env::var("NEXC_PROVE_P99_US")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(100.0);
+    assert!(
+        at(&samples, 0.99).as_secs_f64() * 1e6 < budget,
+        "decision p99 is over the {budget} µs target"
+    );
 }

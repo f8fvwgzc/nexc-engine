@@ -90,6 +90,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   risk score and its reasons on the agent card; the run page shows a node waiting for an
   approval, the decision and who took it in the trace, and quarantined artifacts with Release
   for admins; the audit log reads the new actions.
+- Tests (`backend/tests/policy.rs`, `agent-runtime/tests/test_policy.py`,
+  `agent-runtime/tests/test_injection.py`): policies are versioned, audited with their diff and
+  refused when they widen the level above; the resolved policy reaches the token and its versions
+  the run, the node run and the spans; working hours, the day's spend and the pace stop a node
+  before dispatch; a policy that requires an approval pauses a run until an admin approves from
+  the inbox, and a denial reaches the model with its reason; a restricted-derived artifact is
+  quarantined until an admin releases it, a credential keeps a file in, personal data raises an
+  alert, confidential content stays off the wire; a run five times louder than usual raises the
+  risk score and the threshold quarantines the agent; a planted instruction in a tool result or
+  an upstream output is flagged, and withheld when the policy blocks. `make prove-policy` prints
+  the resolution and decision latencies (targets: resolution under 1 ms, decision p99 under
+  100 µs). Apple M2 Pro, release build:
+  - resolution of three levels over the agent's capabilities, 10,000 rounds: p50 3.0 µs,
+    p99 6.4 µs, max 264 µs;
+  - backend decisions under the resolved policy (`decide_with`, a quarter denied, a quarter held
+    for approval), 100,000 of them: p50 0.08 µs, p99 0.25 µs, max 792 µs;
+  - runtime decisions under rules (`decide_tool_with`), 100,000 of them: p50 0.58 µs,
+    p99 1.46 µs, max 44.9 µs.
 - Agent identity and scopes (AgentSecOps phase 1, `docs/AGENTSECOPS.md` §4.1): every agent is a
   principal, `agent://{workspace}/{name}` (`principal_id`, unique, following the name), with an
   owner (`owner_user_id`), a team, a `purpose` and a `capabilities` document: the tools it may

@@ -563,3 +563,36 @@ def test_prove_identity_decisions_take_microseconds() -> None:
     )
     budget = float(os.environ.get("NEXC_PROVE_P99_US", "100"))
     assert p99 < budget, f"p99 {p99:.2f} µs is over the {budget} µs target"
+
+
+@pytest.mark.prove
+def test_prove_policy_decisions_under_rules_take_microseconds() -> None:
+    """Prints the in-process decision latency under resolved rules over 100,000 decisions."""
+    caps = Capabilities.from_dict(
+        {"tools": ["write_file", "read_file", "list_files", "make_docx", "finish"]}
+    )
+    rules = Rules.from_dict(
+        {
+            "tools_denied": ["run_python"],
+            "egress_denied": ["*.evil.example"],
+            "require_approval": {"tools": ["make_docx"], "labels": ["confidential"]},
+            "limits": {"tokens_per_run": 30000, "tool_calls_per_minute": 30},
+        }
+    )
+    labels = ("internal", "confidential")
+    tools = ("write_file", "run_python", "finish", "make_docx", "read_file")
+    samples: list[float] = []
+    for i in range(100_000):
+        tool = tools[i % len(tools)]
+        start = time.perf_counter_ns()
+        decide_tool_with(caps, rules, labels, tool)
+        samples.append((time.perf_counter_ns() - start) / 1_000)
+    samples.sort()
+    p50 = statistics.median(samples)
+    p99 = samples[int(len(samples) * 0.99)]
+    print(
+        f"\nprove-policy (runtime, Python): {len(samples)} decisions under rules: "
+        f"p50 {p50:.2f} µs, p99 {p99:.2f} µs, max {samples[-1]:.2f} µs"
+    )
+    budget = float(os.environ.get("NEXC_PROVE_P99_US", "100"))
+    assert p99 < budget, f"p99 {p99:.2f} µs is over the {budget} µs target"

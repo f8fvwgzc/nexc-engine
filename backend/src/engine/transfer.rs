@@ -140,6 +140,13 @@ const TABLES: &[Table] = &[
     table("labels", IN_WORKSPACE, false),
     table("projects", IN_WORKSPACE, false),
     table("agents", IN_WORKSPACE, false),
+    // The policy history and what each agent usually does travel with the agents.
+    table("policies", IN_WORKSPACE, true),
+    table(
+        "agent_baselines",
+        "t.agent_id IN (SELECT id FROM agents WHERE workspace_id = $1)",
+        false,
+    ),
     table("graphs", IN_WORKSPACE, false),
     table("nodes", OF_ITS_GRAPHS, true),
     table("edges", OF_ITS_GRAPHS, true),
@@ -154,6 +161,9 @@ const TABLES: &[Table] = &[
     table("artifacts", OF_ITS_RUNS, true),
     // The trace travels as it was chained: its hashes still verify on the target.
     table("agent_spans", OF_ITS_RUNS, true),
+    // Decisions and alerts refer to runs, and the inbox refers to them: in that order.
+    table("approvals", IN_WORKSPACE, true),
+    table("alerts", IN_WORKSPACE, true),
     // One statement for all issues: a sub-issue and its parent arrive together.
     table("issues", IN_WORKSPACE, false),
     table("issue_labels", OF_ITS_ISSUES, false),
