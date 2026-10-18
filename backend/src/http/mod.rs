@@ -49,6 +49,7 @@ pub const UPLOAD_SLACK: usize = 64 * 1024;
         (name = "plans", description = "LLM planning"),
         (name = "runs", description = "Execution"),
         (name = "artifacts"), (name = "templates"), (name = "agents"), (name = "memories"),
+        (name = "mcp-servers", description = "MCP servers of a workspace, called through the tools gateway"),
         (name = "policies", description = "Versioned policies and what they resolve to"),
         (name = "approvals", description = "Tool calls that wait for a human"),
         (name = "alerts", description = "What needs a look"),
@@ -206,6 +207,11 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(agents::activity))
         .routes(routes!(agents::quarantine))
         .routes(routes!(agents::release))
+        .routes(routes!(agents::tokens, agents::issue_token))
+        .routes(routes!(agents::revoke_token))
+        .routes(routes!(mcp_servers::list, mcp_servers::create))
+        .routes(routes!(mcp_servers::get, mcp_servers::delete))
+        .routes(routes!(mcp_servers::check))
         .routes(
             routes!(knowledge::upload)
                 .layer(DefaultBodyLimit::max(DOCUMENT_MAX_BYTES + UPLOAD_SLACK)),
@@ -276,6 +282,10 @@ mod tests {
             "/api/v1/approvals/{id}/deny",
             "/api/v1/artifacts/{aid}/release",
             "/api/v1/workspaces/{wid}/alerts",
+            "/api/v1/workspaces/{wid}/mcp-servers",
+            "/api/v1/workspaces/{wid}/mcp-servers/{sid}/check",
+            "/api/v1/agents/{id}/tokens",
+            "/api/v1/agents/{id}/tokens/{tid}",
             "/metrics",
         ] {
             assert!(paths.contains_key(p), "missing {p}");
@@ -387,10 +397,11 @@ mod tests {
                 "InjectionAction" => check::<policy_document::InjectionAction>(values),
                 "ApprovalStatus" => check::<approval::ApprovalStatus>(values),
                 "AlertKind" => check::<alert::AlertKind>(values),
+                "McpTransport" => check::<crate::domain::mcp::McpTransport>(values),
                 _ => continue,
             }
             checked += 1;
         }
-        assert_eq!(checked, 40, "every string enum schema is covered");
+        assert_eq!(checked, 41, "every string enum schema is covered");
     }
 }

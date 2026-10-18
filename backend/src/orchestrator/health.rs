@@ -30,10 +30,11 @@ impl Slot {
     }
 }
 
-/// Cached probes of the agent runtime, texc-symphony and onto-intelli.
+/// Cached probes of the agent runtime (both wires), texc-symphony and onto-intelli.
 #[derive(Debug, Default)]
 pub struct HealthCache {
     runtime: Slot,
+    runtime_grpc: Slot,
     symphony: Slot,
     ontology: Slot,
 }
@@ -50,6 +51,58 @@ impl HealthCache {
                     .bearer_auth(state.settings.runtime_token.expose())
                     .timeout(PROBE_TIMEOUT);
                 probe(req, true, url.clone()).await
+            })
+            .await
+    }
+
+    /// The runtime's gRPC endpoint (`AgentRuntime/Health`), or disabled when
+    /// the backend speaks NDJSON.
+    pub async fn runtime_grpc(&self, state: &AppState) -> BackendHealth {
+        let Some(channel) = state.runtime_grpc.clone() else {
+            return BackendHealth {
+                enabled: false,
+                ok: false,
+                url: None,
+                detail: Some("disabled: NEXC_RUNTIME_PROTOCOL=ndjson".into()),
+            };
+        };
+        let url = state.settings.runtime_grpc_url.clone();
+        self.runtime_grpc
+            .get_or(async {
+                let (ok, detail) = tokio::time::timeout(PROBE_TIMEOUT, async {
+                    let mut client =
+                        crate::rpc::runtime::agent_runtime_client::AgentRuntimeClient::new(channel);
+                    let mut request = tonic::Request::new(crate::rpc::runtime::HealthRequest {});
+                    if let Ok(bearer) =
+                        format!("Bearer {}", state.settings.runtime_token.expose()).parse()
+                    {
+                        request.metadata_mut().insert("authorization", bearer);
+                    }
+                    client.health(request).await
+                })
+                .await
+                .map_or_else(
+                    |_| (false, "no answer within 3 seconds".to_owned()),
+                    |reply| match reply {
+                        Ok(reply) => {
+                            let reply = reply.into_inner();
+                            (
+                                reply.status == "ok",
+                                format!(
+                                    "runtime {} ({} agent(s) live, {} run(s) active)",
+                                    reply.version, reply.agents_loaded, reply.runs_active
+                                ),
+                            )
+                        }
+                        Err(status) => (false, format!("unreachable: {}", status.message())),
+                    },
+                );
+                BackendHealth {
+                    enabled: true,
+                    ok,
+                    url: Some(url.clone()),
+                    detail: Some(detail),
+                }
             })
             .await
     }
