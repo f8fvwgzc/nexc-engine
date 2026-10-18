@@ -4,6 +4,7 @@ than its parent, and the decisions take microseconds (CONTRACT section 8)."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import statistics
@@ -11,21 +12,29 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from nexc_runtime.api.app import create_app
+from nexc_runtime.api.schemas import ExecuteRequest
+from nexc_runtime.config import Settings
 from nexc_runtime.policy import (
     AgentToken,
     Capabilities,
+    Rules,
     TokenError,
     decide_model,
+    decide_model_with,
     decide_spawn,
     decide_tool,
+    decide_tool_with,
     derive_key,
     encode_token,
     verify_token,
 )
+from nexc_runtime.runner import execute
+from nexc_runtime.streaming import EventStream
 
 from .conftest import (
     AGENT_KEY,
@@ -301,6 +310,227 @@ def test_the_demo_provider_is_refused_make_docx_and_still_delivers(
     assert "make_docx" not in [s["name"] for s in _spans(events, "tool_call")]
     assert not any(e["type"] == "artifact" and e["path"].endswith(".docx") for e in events)
     assert any(e["type"] == "log" and "does not allow make_docx" in e["message"] for e in events)
+
+
+# --- rules: deny-lists, approvals and the pace (AgentSecOps phase 2) -----------------------------
+
+SECTIONS = [{"heading": "Intro", "paragraphs": ["Hello"], "bullets": [], "table_rows": []}]
+DOCX = call("make_docx", "c1", filename="r.docx", title="R", sections=SECTIONS)
+
+
+def test_rules_are_read_from_the_token_and_decide_with_the_capabilities() -> None:
+    token = _verified(
+        rules={
+            "tools_denied": ["run_python"],
+            "models_denied": ["gpt-x"],
+            "require_approval": {
+                "tools": ["make_docx"],
+                "labels": ["confidential"],
+                "timeout_s": 30,
+            },
+            "limits": {"tokens_per_run": 5000, "tool_calls_per_minute": 2},
+            "injection": {"action": "block", "model_check": True},
+        },
+        labels=["internal", "confidential"],
+    )
+    rules = token.rules
+    assert rules.tools_denied == ("run_python",)
+    assert rules.approval_tools == ("make_docx",) and rules.approval_timeout_s == 30
+    assert rules.tokens_per_run == 5000 and rules.tool_calls_per_minute == 2
+    assert rules.injection_action == "block" and rules.injection_model_check
+    assert token.labels == ("internal", "confidential")
+    caps = token.capabilities
+    denied = decide_tool_with(caps, rules, token.labels, "run_python")
+    assert (denied.allowed, denied.rule, denied.verdict) == (False, "tools.deny", "deny")
+    held = decide_tool_with(caps, rules, token.labels, "make_docx")
+    assert held.needs_approval and held.rule == "approvals.tools"
+    assert held.verdict == "require_approval" and not held.allowed
+    labelled = decide_tool_with(caps, rules, token.labels, "write_file")
+    assert labelled.needs_approval and labelled.rule == "approvals.labels"
+    assert "confidential" in labelled.reason
+    assert decide_tool_with(caps, rules, token.labels, "read_file").allowed
+    assert decide_tool_with(caps, rules, (), "write_file").allowed, "no labelled data: no hold"
+    assert decide_model_with(caps, rules, "gpt-x").rule == "models.deny"
+    assert decide_model_with(caps, rules, "claude").allowed
+    # A token without rules reads as the defaults; a child keeps its parent's rules and labels.
+    plain = _verified()
+    assert plain.rules == Rules() and plain.labels == ()
+    child = token.child("writer/researcher-1", AGENT_KEY)
+    assert child.rules == rules and child.labels == token.labels
+    again = verify_token(child.raw, AGENT_KEY, run_id="run-1", node_id="node-1")
+    assert again.rules.approval_tools == ("make_docx",)
+    with pytest.raises(TokenError):
+        _verified(rules={"limits": {"tokens_per_run": "lots"}})
+    with pytest.raises(TokenError):
+        _verified(rules={"injection": {"action": "shrug"}})
+
+
+def test_a_denied_tool_and_a_hurried_agent_are_refused_by_their_rule(
+    client_for: ClientFactory,
+) -> None:
+    client, provider = client_for(
+        [
+            Step(calls=[DOCX]),
+            Step(calls=[call("write_file", "c2", path="a.md", content="a")]),
+            Step(calls=[call("write_file", "c3", path="b.md", content="b")]),
+            Step(calls=[call("finish", answer="Done.")]),
+        ]
+    )
+    body = execute_body(
+        rules={"tools_denied": ["make_docx"], "limits": {"tool_calls_per_minute": 1}}
+    )
+    events = parse_ndjson(client.post("/v1/execute", json=body, headers=AUTH).content)
+    rules = [s["attributes"]["rule"] for s in _spans(events, "policy")]
+    assert rules == ["tools.deny", "limits.tool_calls_per_minute"]
+    assert provider.tool_results[0].is_error and "tools.deny" in provider.tool_results[0].content
+    assert not provider.tool_results[1].is_error, "the first call of the minute runs"
+    assert provider.tool_results[2].is_error, "the second is refused"
+    assert "tool_calls_per_minute" in provider.tool_results[2].content
+    assert [s["name"] for s in _spans(events, "tool_call")] == ["write_file", "finish"]
+    paths = [e["path"] for e in events if e["type"] == "artifact"]
+    assert paths == ["a.md"]
+
+
+async def _start(
+    make_settings: Callable[..., Settings], steps: list[Step], body: dict[str, Any]
+) -> tuple[Any, FakeProvider, EventStream, asyncio.Task[None]]:
+    """Runs a request on the runtime itself, with decisions arriving through its HTTP API."""
+    provider = FakeProvider(steps)
+    app = create_app(make_settings(), provider_factory=lambda _r, _s: provider)
+    events = EventStream()
+    task = asyncio.create_task(
+        execute(
+            ExecuteRequest.model_validate(body),
+            settings=app.state.settings,
+            census=app.state.census,
+            events=events,
+            provider_factory=app.state.provider_factory,
+            approvals=app.state.approvals,
+        )
+    )
+    return app, provider, events, task
+
+
+async def _until_request(lines: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    seen: list[dict[str, Any]] = []
+    async for raw in lines:
+        event = json.loads(raw)
+        seen.append(event)
+        if event["type"] == "span" and event["kind"] == "policy":
+            return seen, event
+    raise AssertionError(f"no approval was asked for: {seen}")
+
+
+async def test_a_held_tool_waits_for_the_decision_and_runs_once_approved(
+    make_settings: Callable[..., Settings],
+) -> None:
+    body = execute_body(rules={"require_approval": {"tools": ["make_docx"], "timeout_s": 30}})
+    app, provider, events, task = await _start(
+        make_settings, [Step(calls=[DOCX]), Step(calls=[call("finish", answer="Done.")])], body
+    )
+    lines = events.lines()
+    seen, request = await _until_request(lines)
+    assert request["status"] == "ok" and request["name"] == "make_docx"
+    attrs = request["attributes"]
+    assert attrs["decision"] == "require_approval" and attrs["rule"] == "approvals.tools"
+    assert attrs["action"] == "tool_call" and attrs["subject"] == "make_docx"
+    assert len(attrs["args_sha256"]) == 64 and attrs["policy_version"] == 1
+    approval_id = attrs["approval_id"]
+    assert app.state.approvals.pending == 1
+    assert any(e["type"] == "log" and "waits for an approval" in e["message"] for e in seen)
+    assert not provider.tool_results, "the tool has not run"
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://runtime") as http:
+        decision = {"decision": "approved", "reason": "fine", "decided_by": "Ada"}
+        assert (await http.post(f"/v1/approvals/{approval_id}", json=decision)).status_code == 401
+        unknown = await http.post("/v1/approvals/not-waiting", json=decision, headers=AUTH)
+        assert unknown.status_code == 404
+        bad = await http.post(
+            f"/v1/approvals/{approval_id}", json={"decision": "maybe"}, headers=AUTH
+        )
+        assert bad.status_code == 422
+        delivered = await http.post(f"/v1/approvals/{approval_id}", json=decision, headers=AUTH)
+        assert delivered.status_code == 200 and delivered.json() == {"status": "delivered"}
+        again = await http.post(f"/v1/approvals/{approval_id}", json=decision, headers=AUTH)
+        assert again.status_code == 404, "a decision is delivered once"
+    async for raw in lines:
+        seen.append(json.loads(raw))
+    await task
+    assert seen[-1]["type"] == "result" and seen[-1]["output"] == "Done."
+    assert app.state.approvals.pending == 0
+    (docx,) = [s for s in _spans(seen, "tool_call") if s["name"] == "make_docx"]
+    assert docx["attributes"]["approval_id"] == approval_id, "the call names its approval"
+    assert docx["status"] == "ok"
+    assert [e["path"] for e in seen if e["type"] == "artifact"] == ["r.docx"]
+    assert any(e["type"] == "log" and "approved by Ada" in e["message"] for e in seen)
+
+
+async def test_a_denied_call_is_refused_with_the_reason_and_the_run_goes_on(
+    make_settings: Callable[..., Settings],
+) -> None:
+    body = execute_body(
+        rules={"require_approval": {"tools": ["make_docx"], "timeout_s": 30}},
+        task={"kind": "task"},
+    )
+    app, provider, events, task = await _start(
+        make_settings,
+        [Step(calls=[DOCX]), Step(calls=[call("finish", answer="Wrote nothing.")])],
+        body,
+    )
+    lines = events.lines()
+    seen, request = await _until_request(lines)
+    approval_id = request["attributes"]["approval_id"]
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://runtime") as http:
+        decision = {"decision": "denied", "reason": "not this quarter", "decided_by": "Ada"}
+        assert (
+            await http.post(f"/v1/approvals/{approval_id}", json=decision, headers=AUTH)
+        ).status_code == 200
+    async for raw in lines:
+        seen.append(json.loads(raw))
+    await task
+    assert seen[-1] == {
+        "type": "result",
+        "output": "Wrote nothing.",
+        "tokens_in": seen[-1]["tokens_in"],
+        "tokens_out": seen[-1]["tokens_out"],
+        "tokens_cached": 0,
+    }
+    refused = provider.tool_results[0]
+    assert refused.is_error and refused.content == "make_docx was denied by Ada: not this quarter"
+    assert not any(s["name"] == "make_docx" for s in _spans(seen, "tool_call"))
+    assert not any(e["type"] == "artifact" for e in seen)
+
+
+async def test_a_call_nobody_decides_fails_the_node_when_the_wait_runs_out(
+    make_settings: Callable[..., Settings],
+) -> None:
+    body = execute_body(rules={"require_approval": {"tools": ["make_docx"], "timeout_s": 1}})
+    app, provider, events, task = await _start(make_settings, [Step(calls=[DOCX])], body)
+    seen = [json.loads(raw) async for raw in events.lines()]
+    await task
+    assert seen[-1] == {
+        "type": "error",
+        "message": "approval for make_docx not given within 1s",
+        "retryable": False,
+    }
+    assert app.state.approvals.pending == 0, "the wait is forgotten"
+    assert not provider.tool_results
+
+
+def test_the_document_fallback_never_makes_what_waits_for_an_approval(
+    client_for: ClientFactory,
+) -> None:
+    client, _ = client_for([Step(text="# Report\n\nAll done in text.")])
+    body = execute_body(rules={"require_approval": {"tools": ["make_docx"]}})
+    events = parse_ndjson(client.post("/v1/execute", json=body, headers=AUTH).content)
+    assert events[-1]["type"] == "result"
+    assert not any(e["type"] == "artifact" for e in events), "no .docx behind the approval's back"
+    assert any(
+        e["type"] == "log" and "approvals.tools" in e["message"]
+        for e in events
+        if e["type"] == "log"
+    )
 
 
 # --- the measurement behind `make prove-identity` -------------------------------------------------

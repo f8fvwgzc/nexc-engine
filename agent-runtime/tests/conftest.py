@@ -35,6 +35,8 @@ def mint_token(
     key: bytes = AGENT_KEY,
     now: int | None = None,
     ttl_s: int = 660,
+    rules: dict[str, Any] | None = None,
+    labels: list[str] | None = None,
 ) -> str:
     """A per-run agent token as the backend mints it (`security/agent_token.rs`)."""
     now = int(time.time()) if now is None else now
@@ -54,6 +56,10 @@ def mint_token(
         "policy_version": policy_version,
         "capabilities": capabilities or {},
     }
+    if rules is not None:
+        claims["rules"] = rules
+    if labels is not None:
+        claims["labels"] = labels
     return encode_token(claims, key)
 
 
@@ -164,13 +170,19 @@ def client_for(
         client.close()
 
 
-def execute_body(capabilities: dict[str, Any] | None = None, **overrides: Any) -> dict[str, Any]:
+def execute_body(
+    capabilities: dict[str, Any] | None = None,
+    rules: dict[str, Any] | None = None,
+    labels: list[str] | None = None,
+    **overrides: Any,
+) -> dict[str, Any]:
     """A request as the backend sends it, with a valid token for `capabilities` (default: the
-    unrestricted policy). Pass `token=...` to send another token, `token=None` for none."""
+    unrestricted policy) and `rules` (default: none). Pass `token=...` to send another token,
+    `token=None` for none."""
     body: dict[str, Any] = {
         "run_id": "run-1",
         "node_id": "node-1",
-        "token": mint_token(capabilities=capabilities),
+        "token": mint_token(capabilities=capabilities, rules=rules, labels=labels),
         "agent": {"name": "writer", "role": "writer", "budget_tokens": 200_000},
         "task": {"title": "Quarterly report", "content": "Summarise Q3.", "kind": "document"},
         "context": {"goal": "Inform the board", "upstream": [], "memories": []},

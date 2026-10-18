@@ -1007,6 +1007,7 @@ impl NodeTask {
             target: data.target.clone(),
             force: data.force,
             trace: data.trace.clone(),
+            attempt: std::sync::atomic::AtomicI32::new(0),
         };
         Ok(NodeTask {
             ctx,
@@ -1246,6 +1247,9 @@ impl NodeTask {
     async fn mark_running(&self, attempt: i32, agent_id: Option<Uuid>) -> anyhow::Result<()> {
         let state = &self.ctx.state;
         let node_id = self.ctx.node.id;
+        self.ctx
+            .attempt
+            .store(attempt, std::sync::atomic::Ordering::Relaxed);
         repo::runs::start_node(
             &state.db,
             self.data.run_id,

@@ -50,6 +50,7 @@ pub const UPLOAD_SLACK: usize = 64 * 1024;
         (name = "runs", description = "Execution"),
         (name = "artifacts"), (name = "templates"), (name = "agents"), (name = "memories"),
         (name = "policies", description = "Versioned policies and what they resolve to"),
+        (name = "approvals", description = "Tool calls that wait for a human"),
         (name = "orchestrator"), (name = "realtime"), (name = "health"),
         (name = "admin", description = "The platform console: every workspace and account, for platform administrators only"),
     )
@@ -124,6 +125,10 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(workspaces::audit_log))
         .routes(routes!(policies::list, policies::create))
         .routes(routes!(policies::resolve))
+        .routes(routes!(approvals::list))
+        .routes(routes!(approvals::get))
+        .routes(routes!(approvals::approve))
+        .routes(routes!(approvals::deny))
         .routes(routes!(search::search))
         .routes(routes!(platform::workspaces))
         .routes(routes!(platform::workspace))
@@ -254,6 +259,10 @@ mod tests {
             "/api/v1/agents/{id}/activity",
             "/api/v1/agents/{id}/quarantine",
             "/api/v1/agents/{id}/release",
+            "/api/v1/workspaces/{wid}/policies",
+            "/api/v1/workspaces/{wid}/policies/resolve",
+            "/api/v1/approvals/{id}/approve",
+            "/api/v1/approvals/{id}/deny",
             "/metrics",
         ] {
             assert!(paths.contains_key(p), "missing {p}");
@@ -302,8 +311,9 @@ mod tests {
     #[test]
     fn spec_enum_values_match_the_wire_format() {
         use crate::domain::{
-            account, agent, audit, capabilities, cycle, graph, insight, issue, knowledge, memory,
-            plan, platform, run, search, settings, trace, usage, user, workspace,
+            account, agent, approval, audit, capabilities, cycle, graph, insight, issue, knowledge,
+            memory, plan, platform, policy_document, run, search, settings, trace, usage, user,
+            workspace,
         };
         use serde_json::Value;
 
@@ -356,10 +366,16 @@ mod tests {
                 "SpanKind" => check::<trace::SpanKind>(values),
                 "SpanStatus" => check::<trace::SpanStatus>(values),
                 "DataLabel" => check::<capabilities::DataLabel>(values),
+                "PolicyScope" => check::<policy_document::PolicyScope>(values),
+                "RuleAction" => check::<policy_document::RuleAction>(values),
+                "Severity" => check::<policy_document::Severity>(values),
+                "PiiKind" => check::<policy_document::PiiKind>(values),
+                "InjectionAction" => check::<policy_document::InjectionAction>(values),
+                "ApprovalStatus" => check::<approval::ApprovalStatus>(values),
                 _ => continue,
             }
             checked += 1;
         }
-        assert_eq!(checked, 32, "every string enum schema is covered");
+        assert_eq!(checked, 37, "every string enum schema is covered");
     }
 }

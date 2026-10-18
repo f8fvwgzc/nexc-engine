@@ -6,6 +6,8 @@ pub mod agent;
 pub mod llm;
 pub mod symphony;
 
+use std::sync::atomic::{AtomicI32, Ordering};
+
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use serde_json::{Value, json};
@@ -15,7 +17,7 @@ use crate::app::AppState;
 use crate::domain::agent::{Agent, FALLBACK_SYSTEM_PROMPT};
 use crate::domain::audit::AuditAction;
 use crate::domain::capabilities::{Capabilities, DataLabel};
-use crate::domain::graph::{Executor, GraphNode};
+use crate::domain::graph::{Executor, GraphNode, NodeStatus};
 use crate::domain::ontology::NodeType;
 use crate::domain::policy::{self, Action, Decision, Rules};
 use crate::domain::prompt::UpstreamOutput;
@@ -24,7 +26,7 @@ use crate::domain::settings::LlmProviderKind;
 use crate::domain::trace::{SYSTEM_PRINCIPAL, SpanDraft, SpanKind, SpanStatus};
 use crate::engine::trace::TraceHandle;
 use crate::llm::{LlmError, LlmTarget};
-use crate::realtime::events::{LogLevel, SseEvent};
+use crate::realtime::events::{LogLevel, NodeStatusEvent, SseEvent};
 use crate::repo;
 use crate::repo::audit::Subject;
 
@@ -63,9 +65,54 @@ pub struct ExecContext {
     pub force: bool,
     /// The run's trace: every span of this node goes through it.
     pub trace: TraceHandle,
+    /// The attempt under way (set by the scheduler before each one).
+    pub attempt: AtomicI32,
 }
 
 impl ExecContext {
+    /// A copy for a background task of this node (the approval watcher): the
+    /// same run, node, policy and trace.
+    pub fn clone_light(&self) -> ExecContext {
+        ExecContext {
+            state: self.state.clone(),
+            run_id: self.run_id,
+            graph_id: self.graph_id,
+            workspace_id: self.workspace_id,
+            owner: self.owner,
+            goal: String::new(),
+            node: self.node.clone(),
+            node_type: None,
+            code_exec_allowed: self.code_exec_allowed,
+            upstream: Vec::new(),
+            memories: Vec::new(),
+            documents: Vec::new(),
+            agent: self.agent.clone(),
+            capabilities: self.capabilities.clone(),
+            policy_version: self.policy_version,
+            rules: self.rules.clone(),
+            labels_given: self.labels_given.clone(),
+            target: self.target.clone(),
+            force: self.force,
+            trace: self.trace.clone(),
+            attempt: AtomicI32::new(self.attempt.load(Ordering::Relaxed)),
+        }
+    }
+
+    /// Publishes the node's status for the attempt under way (`node.status`).
+    pub fn publish_status(&self, status: NodeStatus) {
+        self.state.hub.publish(
+            self.graph_id,
+            SseEvent::NodeStatus(NodeStatusEvent {
+                run_id: self.run_id,
+                node_id: self.node.id,
+                status,
+                attempt: self.attempt.load(Ordering::Relaxed),
+                error: None,
+                cached: false,
+            }),
+        );
+    }
+
     /// Who this node's actions are attributed to: its agent's principal
     /// (`agent://{workspace}/{name}`), or the system.
     pub fn principal(&self) -> String {

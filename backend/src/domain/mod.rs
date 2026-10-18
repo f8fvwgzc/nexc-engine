@@ -6,6 +6,7 @@
 
 pub mod account;
 pub mod agent;
+pub mod approval;
 pub mod assistant;
 pub mod audit;
 pub mod capabilities;

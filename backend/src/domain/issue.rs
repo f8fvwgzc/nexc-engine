@@ -270,6 +270,10 @@ string_enum!(
         State => "state",
         /// The issue's due date has arrived (nobody did it: there is no actor).
         Due => "due",
+        /// A tool call of a run waits for the member's approval.
+        Approval => "approval",
+        /// Something about an agent needs a look (a DLP finding, a risk score, an injection).
+        Alert => "alert",
     }
 );
 
@@ -281,12 +285,32 @@ pub struct NotificationIssue {
     pub title: String,
 }
 
+/// The approval an inbox entry asks for, as much as the inbox shows.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct NotificationApproval {
+    pub id: Uuid,
+    pub run_id: Uuid,
+    pub node_id: Uuid,
+    pub graph_id: Uuid,
+    /// The acting principal.
+    pub principal: String,
+    pub tool: String,
+    pub reason: String,
+    pub status: super::approval::ApprovalStatus,
+    pub expires_at: DateTime<Utc>,
+}
+
 /// One entry of a member's inbox.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Notification {
     pub id: Uuid,
     pub kind: NotificationKind,
-    pub issue: NotificationIssue,
+    /// The issue (`assigned`, `comment`, `state`, `due`); `null` for the other kinds.
+    #[schema(required = true)]
+    pub issue: Option<NotificationIssue>,
+    /// The approval to decide (`approval`); `null` for the other kinds.
+    #[schema(required = true)]
+    pub approval: Option<NotificationApproval>,
     /// Who assigned, commented or moved the issue; `null` once the account is gone.
     #[schema(required = true)]
     pub actor: Option<IssuePerson>,

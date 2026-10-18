@@ -9,6 +9,7 @@ from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import Any
 
+from ..approvals import ApprovalRegistry, ApprovalTimeout
 from ..config import Settings
 from ..llm import LLMProvider, ToolCall, ToolResult, Turn
 from ..policy import AgentToken, decide_spawn
@@ -83,6 +84,8 @@ class RunScope:
     token_key: bytes
     kind_description: str = ""
     produces_artifact: bool = False
+    # Where the backend delivers decisions on held tool calls (None: nothing can wait).
+    approvals: ApprovalRegistry | None = None
 
 
 class Agent:
@@ -139,6 +142,7 @@ class Agent:
             produces_artifact=scope.produces_artifact,
             token=self.token,
             principal=self.record.principal,
+            approvals=scope.approvals,
         )
         self._ctx = ctx
         last_text = ""
@@ -247,6 +251,9 @@ class Agent:
         except ToolError as exc:
             self.scope.events.log("warning", f"{self.record.name}: {call.name} failed: {exc}")
             return ToolResult(call.id, str(exc), is_error=True)
+        except ApprovalTimeout as exc:
+            # Nobody decided in time: the node fails rather than the model going on without.
+            raise AgentFailure(str(exc), retryable=False) from None
         except (AgentFailure, SpawnRefused) as exc:
             return ToolResult(call.id, str(exc), is_error=True)
         except OSError as exc:

@@ -263,7 +263,7 @@ pub async fn close_unfinished_nodes(
 ) -> Result<Vec<Uuid>, sqlx::Error> {
     sqlx::query_scalar(
         "UPDATE node_runs SET status = $2, finished_at = now()
-         WHERE run_id = $1 AND status IN ('queued', 'running') RETURNING node_id",
+         WHERE run_id = $1 AND status IN ('queued', 'running', 'waiting_approval') RETURNING node_id",
     )
     .bind(run_id)
     .bind(status.as_str())
@@ -287,7 +287,7 @@ pub async fn quarantined_agents_running(
 ) -> Result<Vec<Uuid>, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT DISTINCT a.id FROM node_runs nr JOIN agents a ON a.id = nr.agent_id
-         WHERE nr.run_id = $1 AND nr.status = 'running' AND a.status = 'quarantined'",
+         WHERE nr.run_id = $1 AND nr.status IN ('running', 'waiting_approval') AND a.status = 'quarantined'",
     )
     .bind(run_id)
     .fetch_all(db)
@@ -366,6 +366,41 @@ pub async fn start_node(
     .execute(db)
     .await?;
     Ok(())
+}
+
+/// Pauses a running node for an approval, or resumes it: the node run and
+/// the node itself change status between `running` and `waiting_approval`.
+pub async fn set_waiting(
+    db: &mut sqlx::PgConnection,
+    run_id: Uuid,
+    node_id: Uuid,
+    waiting: bool,
+) -> Result<bool, sqlx::Error> {
+    let (from, to) = if waiting {
+        ("running", "waiting_approval")
+    } else {
+        ("waiting_approval", "running")
+    };
+    let done = sqlx::query(
+        "UPDATE node_runs SET status = $4 WHERE run_id = $1 AND node_id = $2 AND status = $3",
+    )
+    .bind(run_id)
+    .bind(node_id)
+    .bind(from)
+    .bind(to)
+    .execute(&mut *db)
+    .await?;
+    if done.rows_affected() == 1 {
+        sqlx::query(
+            "UPDATE nodes SET status = $2, updated_at = now() WHERE id = $1 AND status = $3",
+        )
+        .bind(node_id)
+        .bind(to)
+        .bind(from)
+        .execute(&mut *db)
+        .await?;
+    }
+    Ok(done.rows_affected() == 1)
 }
 
 /// Records the workspace policy version that governs a run.
@@ -481,7 +516,7 @@ pub async fn activity(
 ) -> Result<(i64, i64, i64), sqlx::Error> {
     let row = sqlx::query(
         "SELECT count(*) FILTER (WHERE nr.status = 'queued') AS queued,
-                count(*) FILTER (WHERE nr.status = 'running') AS running,
+                count(*) FILTER (WHERE nr.status IN ('running', 'waiting_approval')) AS running,
                 count(DISTINCT r.id) AS runs
          FROM runs r LEFT JOIN node_runs nr ON nr.run_id = r.id
          WHERE r.owner_id = $1 AND r.status IN ('queued', 'running')",

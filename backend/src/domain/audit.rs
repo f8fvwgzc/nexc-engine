@@ -39,6 +39,9 @@ string_enum!(
         PolicyMismatch => "policy_mismatch",
         AgentQuarantined => "agent_quarantined",
         AgentReleased => "agent_released",
+        /// A human let a held tool call go ahead (subject: the principal; detail: the tool and run).
+        ApprovalGranted => "approval_granted",
+        ApprovalDenied => "approval_denied",
         /// A document, topic or memory was given a classification (subject: what; detail: the label).
         ClassificationChanged => "classification_changed",
     }

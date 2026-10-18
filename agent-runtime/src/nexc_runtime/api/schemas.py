@@ -39,6 +39,8 @@ class ContextIn(_Model):
     memories: list[str] = Field(default_factory=list, max_length=100)
     # Passages of the workspace's documents, each headed by its citation in brackets.
     documents: list[str] = Field(default_factory=list, max_length=100)
+    # The classifications of the data the node was given (the token says the same).
+    labels: list[str] = Field(default_factory=list, max_length=8)
 
 
 class LlmIn(_Model):
@@ -67,6 +69,18 @@ class ExecuteRequest(_Model):
     context: ContextIn = Field(default_factory=ContextIn)
     llm: LlmIn = Field(default_factory=LlmIn)
     limits: LimitsIn = Field(default_factory=LimitsIn)
+
+
+class ApprovalDecisionIn(_Model):
+    """`POST /v1/approvals/{id}`: what the backend hands a waiting call."""
+
+    decision: Literal["approved", "denied"]
+    reason: str = Field(default="", max_length=4_000)
+    decided_by: str = Field(default="", max_length=200)
+
+
+class ApprovalDelivered(BaseModel):
+    status: Literal["delivered"] = "delivered"
 
 
 class ParseBlock(BaseModel):

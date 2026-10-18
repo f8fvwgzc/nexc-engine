@@ -32,6 +32,9 @@ DERIVATION_TAG = b"nexc-agent-token-v1:"
 
 LABELS = ("public", "internal", "confidential", "restricted")
 MEMORY_NAMESPACES = ("user", "graph", "node")
+# Tools whose output leaves the run as an artifact: the ones a label-based approval holds.
+OUTBOUND_TOOLS = ("write_file", "make_docx")
+APPROVAL_TIMEOUT_DEFAULT_S = 600
 
 
 class TokenError(Exception):
@@ -148,6 +151,64 @@ class Capabilities:
         return other.narrow(self) == self
 
 
+# --- rules --------------------------------------------------------------------------------------
+
+
+def _small_or_none(raw: Mapping[str, Any], key: str) -> int | None:
+    value = raw.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise TokenError(f"rules.{key} is not a whole number")
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class Rules:
+    """What the resolved policy says beyond the capabilities, as far as this runtime enforces
+    it: deny-lists, which calls wait for a human, the ceilings per run, and what the
+    prompt-injection screen does. Mirrors `backend/src/domain/policy.rs::Rules`."""
+
+    tools_denied: tuple[str, ...] = ()
+    egress_denied: tuple[str, ...] = ()
+    models_denied: tuple[str, ...] = ()
+    approval_tools: tuple[str, ...] = ()
+    approval_labels: tuple[str, ...] = ()
+    approval_timeout_s: int = APPROVAL_TIMEOUT_DEFAULT_S
+    tokens_per_run: int | None = None
+    tool_calls_per_minute: int | None = None
+    injection_action: str = "flag"
+    injection_model_check: bool = False
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any] | None) -> Rules:
+        """The rules as the backend minted them; a token without any reads as the defaults."""
+        raw = raw or {}
+        if not isinstance(raw, Mapping):
+            raise TokenError("rules is not an object")
+        approval = raw.get("require_approval") or {}
+        limits = raw.get("limits") or {}
+        injection = raw.get("injection") or {}
+        if not all(isinstance(part, Mapping) for part in (approval, limits, injection)):
+            raise TokenError("rules.require_approval, .limits or .injection is not an object")
+        timeout = _small_or_none(approval, "timeout_s")
+        action = injection.get("action", "flag")
+        if action not in ("flag", "block"):
+            raise TokenError("rules.injection.action is not flag or block")
+        return cls(
+            tools_denied=_strings(raw, "tools_denied", ()) or (),
+            egress_denied=_strings(raw, "egress_denied", ()) or (),
+            models_denied=_strings(raw, "models_denied", ()) or (),
+            approval_tools=_strings(approval, "tools", ()) or (),
+            approval_labels=_strings(approval, "labels", ()) or (),
+            approval_timeout_s=timeout if timeout else APPROVAL_TIMEOUT_DEFAULT_S,
+            tokens_per_run=_small_or_none(limits, "tokens_per_run"),
+            tool_calls_per_minute=_small_or_none(limits, "tool_calls_per_minute"),
+            injection_action=action,
+            injection_model_check=bool(injection.get("model_check", False)),
+        )
+
+
 # --- decisions ----------------------------------------------------------------------------------
 
 
@@ -156,10 +217,18 @@ class Decision:
     allowed: bool
     rule: str
     reason: str
+    # "" means: as `allowed` says; "require_approval" holds the action for a human.
+    effect: str = ""
 
     @property
     def verdict(self) -> str:
+        if self.effect:
+            return self.effect
         return "allow" if self.allowed else "deny"
+
+    @property
+    def needs_approval(self) -> bool:
+        return self.effect == "require_approval"
 
 
 def decide_tool(caps: Capabilities, name: str) -> Decision:
@@ -183,6 +252,38 @@ def decide_spawn(caps: Capabilities, role: str, *, depth: int, children: int) ->
     if caps.counterparts is not None and role not in caps.counterparts:
         return Decision(False, "counterparts", f"role {role} is not a counterpart")
     return Decision(True, "delegation", f"may spawn a {role} at depth {depth}")
+
+
+def decide_tool_with(
+    caps: Capabilities, rules: Rules, labels: tuple[str, ...], name: str
+) -> Decision:
+    """A deny-list refuses first, then the capabilities, then an approval rule holds the call.
+    `labels` are the classifications of the data the node was given."""
+    if name in rules.tools_denied:
+        return Decision(False, "tools.deny", f"tool {name} is denied by policy")
+    base = decide_tool(caps, name)
+    if not base.allowed:
+        return base
+    if name in rules.approval_tools:
+        return Decision(
+            False, "approvals.tools", f"tool {name} needs an approval", effect="require_approval"
+        )
+    if name in OUTBOUND_TOOLS:
+        held = next((label for label in labels if label in rules.approval_labels), None)
+        if held is not None:
+            return Decision(
+                False,
+                "approvals.labels",
+                f"the node read {held} data; {name} needs an approval",
+                effect="require_approval",
+            )
+    return base
+
+
+def decide_model_with(caps: Capabilities, rules: Rules, model: str) -> Decision:
+    if model in rules.models_denied:
+        return Decision(False, "models.deny", f"model {model} is denied by policy")
+    return decide_model(caps, model)
 
 
 def decide_model(caps: Capabilities, model: str) -> Decision:
@@ -249,6 +350,9 @@ class AgentToken:
     expires_at: int
     claims: Mapping[str, Any]
     raw: str
+    # The resolved rules beside the capabilities, and the labels of the data the node was given.
+    rules: Rules = Rules()
+    labels: tuple[str, ...] = ()
 
     def child(self, principal: str, key: bytes, *, now: float | None = None) -> AgentToken:
         """A token for a sub-agent: the same run and node, one level deeper, and never wider
@@ -274,6 +378,8 @@ class AgentToken:
             expires_at=self.expires_at,
             claims=claims,
             raw=encode_token(claims, key),
+            rules=self.rules,
+            labels=self.labels,
         )
 
 
@@ -329,6 +435,9 @@ def verify_token(
     version = claims.get("policy_version", 0)
     if not isinstance(depth, int) or not isinstance(version, int):
         raise TokenError("token depth or policy version is not an integer")
+    labels = claims.get("labels") or []
+    if not isinstance(labels, list) or not all(isinstance(label, str) for label in labels):
+        raise TokenError("token labels are not a list of strings")
     return AgentToken(
         principal=principal,
         run_id=run_id,
@@ -339,4 +448,6 @@ def verify_token(
         expires_at=int(exp),
         claims=claims,
         raw=token,
+        rules=Rules.from_dict(claims.get("rules")),
+        labels=tuple(labels),
     )

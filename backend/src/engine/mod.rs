@@ -4,6 +4,7 @@
 
 pub mod account;
 pub mod analysis;
+pub mod approvals;
 pub mod artifacts;
 pub mod assistant;
 pub mod credentials;

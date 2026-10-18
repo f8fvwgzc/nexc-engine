@@ -13,9 +13,10 @@ from pathlib import Path
 
 from .agents import Agent, AgentFailure, AgentRegistry, Budget, Census, Meter, RunScope
 from .api.schemas import ExecuteRequest
+from .approvals import ApprovalRegistry
 from .config import Settings
 from .llm import DemoBrief, LLMError, LLMProvider, build_provider, redact
-from .policy import AgentToken, TokenError, decide_model, decide_tool, verify_token
+from .policy import AgentToken, TokenError, decide_model_with, decide_tool_with, verify_token
 from .prompts import Upstream, build_task_prompt
 from .streaming import EventStream, collect_artifacts
 from .tools import Workspace
@@ -60,6 +61,7 @@ async def execute(
     census: Census,
     events: EventStream,
     provider_factory: ProviderFactory = default_provider_factory,
+    approvals: ApprovalRegistry | None = None,
 ) -> None:
     """Run the request to completion. Always ends the stream with exactly one terminal event."""
     # Nothing starts without the backend's token: no workspace, no provider, no agent.
@@ -90,6 +92,7 @@ async def execute(
                 workspace_dir=workspace_dir,
                 events=events,
                 token=token,
+                approvals=approvals,
             )
     except TimeoutError:
         events.error(f"run exceeded its time limit of {timeout}s", retryable=False)
@@ -124,10 +127,11 @@ async def _run(
     workspace_dir: Path,
     events: EventStream,
     token: AgentToken,
+    approvals: ApprovalRegistry | None,
 ) -> None:
     # The backend refuses a model outside the allow-list before dispatch; this is the same
     # rule applied to the model the provider really resolved.
-    verdict = decide_model(token.capabilities, provider.model)
+    verdict = decide_model_with(token.capabilities, token.rules, provider.model)
     if not verdict.allowed:
         raise AgentFailure(f"policy: {verdict.reason}", retryable=False)
     allow_code_exec = settings.runtime_allow_code_exec and request.limits.allow_code_exec
@@ -150,19 +154,24 @@ async def _run(
         max_turns=min(request.limits.max_turns, settings.runtime_max_turns_cap),
         allow_code_exec=allow_code_exec,
         token_key=settings.agent_token_key(),
+        approvals=approvals,
     )
     spec = request.agent
+    # The policy's ceiling per run caps the budget whatever the agent has left.
+    budget_tokens = spec.budget_tokens
+    if token.rules.tokens_per_run is not None:
+        budget_tokens = min(budget_tokens, token.rules.tokens_per_run)
     record = registry.birth(spec.name, spec.role, principal=token.principal)
     events.log(
         "info",
         f"agent {spec.name!r} ({spec.role}) born on {provider.name}/{provider.model} "
-        f"with a budget of {spec.budget_tokens} tokens, as {token.principal} "
+        f"with a budget of {budget_tokens} tokens, as {token.principal} "
         f"under policy version {token.policy_version}",
     )
     root = Agent(
         scope=scope,
         record=record,
-        budget=Budget(spec.budget_tokens),
+        budget=Budget(budget_tokens),
         token=token,
         system_prompt=spec.system_prompt,
         stream_text=True,
@@ -216,16 +225,18 @@ def _ensure_document(
 ) -> None:
     """Nodes whose type produces an artifact always deliver a .docx: when the agent answered in
     text without calling make_docx, its final Markdown answer is converted. Not for an agent
-    whose policy forbids `make_docx`: the runtime makes nothing the agent may not."""
+    whose policy forbids `make_docx` or holds it for an approval: the runtime makes nothing
+    the agent may not."""
     if not _produces_artifact(request) or not output.strip():
         return
     if any(p.suffix.lower() == ".docx" for p in workspace.root.rglob("*") if p.is_file()):
         return
-    if not decide_tool(token.capabilities, "make_docx").allowed:
+    decision = decide_tool_with(token.capabilities, token.rules, token.labels, "make_docx")
+    if not decision.allowed:
         events.log(
             "warning",
-            "no .docx was produced and the agent's policy does not allow make_docx; "
-            "only its final answer is delivered",
+            f"no .docx was produced and the agent's policy does not allow make_docx "
+            f"({decision.rule}); only its final answer is delivered",
         )
         return
     filename = f"{_slug(request.task.title)}.docx"

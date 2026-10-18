@@ -30,6 +30,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   past the agent's starts per hour (a `policy` span of rule `time_windows`,
   `limits.tokens_per_day`, `limits.cost_usd_per_day` or `limits.runs_per_hour`); the ceiling per
   run caps the budget the runtime is given.
+- Decisions beyond allow and deny: a `Decision` now carries an effect, `allow`, `deny`,
+  `require_approval` (with the approvers) or `alert` (with a severity). The runtime decides every
+  tool call from the token's rules as well as its capabilities: a deny-list refuses first
+  (`tools.deny`, `models.deny`), then the capabilities, then an approval rule holds the call.
+  A held call (`require_approval.tools`, or `write_file` and `make_docx` after data of a label in
+  `require_approval.labels`) is reported as a `policy` span with decision `require_approval` and
+  waits; the backend records the request (`approvals`), sets the node to the new status
+  `waiting_approval` while the run stays `running`, asks the approvers in their inbox (the new
+  notification kind `approval`; every admin unless the policy names members) and, once one of
+  them decides with `POST /approvals/{id}/approve` or `/deny` (a reason is required to deny),
+  hands the decision to the runtime (`POST /v1/approvals/{id}`, contract §8), records it as an
+  `approval` span naming who decided and why, audits it (`approval_granted`, `approval_denied`)
+  and sets the node back to `running`. Approved, the tool runs with its approval on the span;
+  denied, the model sees the reason as a tool error and goes on; undecided within the policy's
+  `timeout_s` (default 600 s), the node fails and the approval is `expired`. `GET /approvals/{id}`
+  and `GET /workspaces/{wid}/approvals` show them. The runtime also refuses tool calls past
+  `limits.tool_calls_per_minute` and keeps the automatic Markdown-to-.docx fallback from making
+  what a policy holds or denies.
 - Agent identity and scopes (AgentSecOps phase 1, `docs/AGENTSECOPS.md` §4.1): every agent is a
   principal, `agent://{workspace}/{name}` (`principal_id`, unique, following the name), with an
   owner (`owner_user_id`), a team, a `purpose` and a `capabilities` document: the tools it may
