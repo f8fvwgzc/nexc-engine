@@ -26,7 +26,9 @@ metadata:
     app.kubernetes.io/component: agents
     {{- include "nexc.labels" . | nindent 4 }}
 spec:
+  {{- if not .Values.autoscaling.runtime.enabled }}
   replicas: {{ .Values.replicas.runtime }}
+  {{- end }}
   revisionHistoryLimit: 5
   selector:
     matchLabels: { app.kubernetes.io/name: agent-runtime }

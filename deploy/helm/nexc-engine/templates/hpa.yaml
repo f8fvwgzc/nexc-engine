@@ -1,0 +1,27 @@
+# Optional CPU autoscaling of the backend and the runtime (`autoscaling.*.enabled`). A backend
+# replica scaled away drains like any other: it hands its runs to its peers (docs/HA.md).
+{{- range $name, $target := dict "backend" .Values.autoscaling.backend "agent-runtime" .Values.autoscaling.runtime }}
+{{- if $target.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "nexc.labels" $ | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ $name }}
+  minReplicas: {{ $target.minReplicas }}
+  maxReplicas: {{ $target.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $target.targetCPUUtilizationPercentage }}
+{{- end }}
+{{- end }}

@@ -45,12 +45,16 @@ async fn call(
 
 /// An instance of the app on `pool` whose runtime is the gRPC stand-in at `url`.
 async fn instance(pool: &PgPool, url: &str) -> TestApp {
+    instance_with_lease(pool, url, LEASE_SECS).await
+}
+
+async fn instance_with_lease(pool: &PgPool, url: &str, lease_secs: u64) -> TestApp {
     TestApp::new(
         pool.clone(),
         &[
             ("NEXC_RUNTIME_PROTOCOL", "grpc"),
             ("NEXC_RUNTIME_GRPC_URL", url),
-            ("NEXC_RUN_LEASE_SECS", &LEASE_SECS.to_string()),
+            ("NEXC_RUN_LEASE_SECS", &lease_secs.to_string()),
         ],
     )
     .await
@@ -691,4 +695,93 @@ async fn a_holder_cut_off_from_its_lease_stops_by_itself(pool: PgPool) {
         "A announced no success"
     );
     assert_eq!(verified(&b, &token, &rid).await["ok"], true);
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_replica_that_shuts_down_hands_its_runs_to_a_peer_at_once(pool: PgPool) {
+    // A long lease: the peer takes the run over because it was released, not because it ran out.
+    let (url, seen) = fake_grpc_runtime().await;
+    let a = instance_with_lease(&pool, &url, 30).await;
+    let (token, _) = a.register("owner@example.com").await;
+    scribe(&a, &token).await;
+    let (gid, nodes) = chain_of(&a, &token, &["Outline", "NAP 2500 Draft"]).await;
+    let mut on_a = a.events(&gid);
+    let rid = start_run(&a, &token, &gid).await;
+    until_status(&mut on_a, &nodes[1], "running").await;
+    collect_until(&mut on_a, "node.output").await;
+    let b = instance_with_lease(&pool, &url, 30).await;
+    let ready = a.request(Method::GET, "/api/v1/readyz", None, None).await;
+    assert_eq!(ready.status, StatusCode::OK);
+
+    // SIGTERM: A drains.
+    let handed = nexc::engine::scheduler::hand_off(&a.state, Duration::from_secs(10)).await;
+    assert_eq!(handed, 1);
+    assert_eq!(a.state.engine.active_count(), 0);
+    let ready = a.request(Method::GET, "/api/v1/readyz", None, None).await;
+    assert_eq!(
+        ready.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        ready.body
+    );
+    assert!(ready.body["detail"].as_str().unwrap().contains("draining"));
+    let took = until_held_by(
+        &pool,
+        &rid,
+        b.state.engine.instance(),
+        Duration::from_secs(5),
+    )
+    .await;
+    assert!(took < Duration::from_secs(5), "taken over after {took:?}");
+
+    // A draining replica claims nothing new: the next run goes to B.
+    let next = start_run(&a, &token, &gid).await;
+    until_held_by(
+        &pool,
+        &next,
+        b.state.engine.instance(),
+        Duration::from_secs(5),
+    )
+    .await;
+
+    let run = until_finished(&b, &token, &rid).await;
+    assert_eq!(run["status"], "succeeded", "{run}");
+    assert_eq!(run["node_runs"][0]["attempt"], 1, "the outline is kept");
+    assert_eq!(run["node_runs"][1]["attempt"], 2);
+    let outlines = seen
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|r| r["run_id"] == rid.as_str() && r["task"]["title"] == "Outline")
+        .count();
+    assert_eq!(outlines, 1, "the outline ran once in this run");
+    let events = lease_events(&pool, &rid).await;
+    let (a_id, b_id) = (a.state.engine.instance(), b.state.engine.instance());
+    assert!(
+        events
+            .iter()
+            .any(|e| e.0 == "released" && e.1 == a_id && e.2 == 1),
+        "{events:?}"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| e.0 == "taken_over" && e.1 == b_id && e.2 == 3 && e.3 == Some(a_id)),
+        "released at the next epoch, taken over at the one after: {events:?}"
+    );
+    // Every span A chained before it stopped was written: the chain goes on without a gap.
+    let verification = verified(&b, &token, &rid).await;
+    assert_eq!(verification["ok"], true, "{verification}");
+    let spans = spans_of(&b, &token, &rid).await;
+    let interrupted = spans
+        .iter()
+        .find(|s| s["attributes"]["decision"] == "interrupted")
+        .expect("the handed-off attempt is on the trace");
+    assert_eq!(interrupted["attributes"]["released"], true);
+    assert_eq!(
+        interrupted["attributes"]["previous_instance"],
+        a_id.to_string()
+    );
+    until_finished(&b, &token, &next).await;
 }

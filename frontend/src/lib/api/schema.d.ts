@@ -1460,7 +1460,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Readiness: the database answers. */
+        /** Readiness: the instance is not shutting down and the database answers. */
         get: operations["readyz"];
         put?: never;
         post?: never;
@@ -11049,7 +11049,7 @@ export interface operations {
                     "application/json": components["schemas"]["Health"];
                 };
             };
-            /** @description Database unavailable */
+            /** @description Draining (shutting down, its runs handed to the other replicas) or database unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;

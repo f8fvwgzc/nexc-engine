@@ -5410,7 +5410,7 @@
         "tags": [
           "health"
         ],
-        "summary": "Readiness: the database answers.",
+        "summary": "Readiness: the instance is not shutting down and the database answers.",
         "operationId": "readyz",
         "responses": {
           "200": {
@@ -5423,7 +5423,7 @@
             }
           },
           "503": {
-            "description": "Database unavailable",
+            "description": "Draining (shutting down, its runs handed to the other replicas) or database unavailable",
             "content": {
               "application/json": {
                 "schema": {

@@ -122,3 +122,55 @@ for expired leases every 2 s.
 | Rolling update                           | ≈ 5 s                        | the attempts in flight                   |
 
 <!-- #endregion targets -->
+<!-- #region deploy -->
+## Deploying for high availability
+
+Run at least two backend replicas and two runtime replicas against one PostgreSQL that has a
+standby. Every replica gets the same `NEXC_RUN_LEASE_SECS`.
+
+| Setting                                  | Where                                    | What it does                                                                                                                       |
+| ---------------------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `NEXC_RUN_LEASE_SECS`                    | `.env`, Helm `backend.runLeaseSecs`      | The lease (1 to 3600 s, default 30). Shorter takes runs over sooner after a crash and renews more often; keep it above 10 s in production. |
+| `replicas.backend`, `replicas.runtime`   | Helm values                              | Two each by default.                                                                                                               |
+| `autoscaling.backend`, `autoscaling.runtime` | Helm values                          | Optional HorizontalPodAutoscalers on CPU (off by default). When one is on, `replicas` no longer sets that Deployment's size; keep `minReplicas` at 2 or more. |
+| `podDisruptionBudgets.maxUnavailable`    | Helm values                              | How many pods of each tier a node drain may evict at once (default 1).                                                             |
+| `backend.terminationGracePeriodSeconds`  | Helm values                              | Time a backend pod gets to drain on `SIGTERM` (default 60 s; the hand-off itself takes at most 15 s).                              |
+| `docker compose up -d --scale backend=2` | Docker Compose                           | Two backend replicas on one host; restart `frontend` afterwards so its nginx resolves both. Each gets 30 s to drain (`stop_grace_period`). |
+
+The backend's readiness probe is `/api/v1/readyz`. It answers 503 while the database does not
+answer and from the moment the replica is told to stop, so a load balancer stops sending it
+requests while it hands its runs over. The Helm chart probes it every 2 s and takes the pod out
+of the Service after one failure.
+
+## Shutting down
+
+On `SIGTERM` (or Ctrl-C) a backend replica drains, in this order:
+
+1. `/readyz` answers 503 and the dispatcher claims and takes over nothing more.
+2. Every run it executes stops at once. The node attempts in flight are cancelled on the runtime.
+3. Every span chained so far is written, then the lease is released: it runs out now and its
+   epoch goes up, so nothing the replica still sends is accepted.
+4. A peer's dispatcher takes each run over at its next look (every 2 s) and resumes it.
+5. After the runs are handed off (at most 15 s), the HTTP server stops accepting connections and
+   finishes the requests in flight. Then the process exits.
+
+A replica that is killed without draining (`SIGKILL`, a node that vanished) loses nothing that
+was written: its runs are taken over once their lease runs out.
+
+## Seeing it happen
+
+| Where                                    | What it shows                                                                                                                                                     |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The run's trace                          | A `policy` span named `interrupted` on each node whose attempt was cut short, and `reattached` on each node that waits for an approval again, with the former and the new instance and the epoch. |
+| `nexc_run_lease_events_total{event}`     | Leases `claimed`, `taken_over`, `released`, `lost` and `fenced`, per replica (`/metrics`). A steady rate of `taken_over` means replicas die; any `fenced` means one came back after it was replaced. |
+| `run_lease_events`                       | The table behind it: every event of every run's lease with the instance, the epoch, the former holder and a detail.                                                 |
+| `GET /api/v1/runs/{rid}/trace/verify`    | Still `ok` after a takeover: the chain continues from the last span written.                                                                                        |
+
+## Retrying writes
+
+A client whose request was cut off by a failover may not know whether it took effect. Sending
+`Idempotency-Key` with the write makes the retry safe: starting a run, creating an issue or a
+node, and approving or denying an approval answer a retry with the first response instead of
+doing it twice (the rules are under "Idempotent retries" in [the contract](CONTRACT.md), section 3).
+
+<!-- #endregion deploy -->

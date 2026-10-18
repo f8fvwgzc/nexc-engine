@@ -30,10 +30,18 @@ pub async fn healthz() -> Json<Health> {
     })
 }
 
-/// Readiness: the database answers.
+/// Readiness: the instance is not shutting down and the database answers.
 #[utoipa::path(get, path = "/readyz", tag = "health",
-    responses((status = 200, body = Health), (status = 503, description = "Database unavailable", body = Problem)))]
+    responses((status = 200, body = Health),
+        (status = 503, description = "Draining (shutting down, its runs handed to the other replicas) or database unavailable", body = Problem)))]
 pub async fn readyz(State(state): State<AppState>) -> Response {
+    if state.engine.is_draining() {
+        return Problem::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            Some("draining: this instance is shutting down and hands its runs to its peers".into()),
+        )
+        .into_response();
+    }
     match sqlx::query("SELECT 1").execute(&state.db).await {
         Ok(_) => Json(Health {
             status: "ok",

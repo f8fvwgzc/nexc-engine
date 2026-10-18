@@ -91,6 +91,13 @@ backend:
   llmBreaker:
     failures: 5
     openSecs: 30
+  # High availability of runs (docs/HA.md): the lease a replica holds on a run it executes,
+  # renewed every third of it. When a replica dies, a peer takes its runs over once their lease
+  # ran out (this plus a few seconds). On SIGTERM a replica fails readiness, hands its runs to
+  # its peers at once and exits; the grace period leaves room for that and for HTTP requests in
+  # flight.
+  runLeaseSecs: 30
+  terminationGracePeriodSeconds: 60
   dataStorage: 5Gi
   resources:
     requests: { cpu: 200m, memory: 256Mi }
@@ -165,3 +172,21 @@ networkPolicies:
 
 podDisruptionBudgets:
   enabled: true
+  # At most this many pods of the backend, the runtime and the frontend are evicted at once by a
+  # voluntary disruption (a node drain). A backend pod that goes hands its runs to the others.
+  maxUnavailable: 1
+
+# Optional HorizontalPodAutoscalers on CPU. When one is enabled, `replicas` above no longer sets
+# that Deployment's size; `minReplicas` should stay at 2 or more so a peer is there to take runs
+# over (backend) and to take the next attempt (runtime).
+autoscaling:
+  backend:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+  runtime:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70

@@ -255,6 +255,32 @@ async fn take_over_expired(state: &AppState) {
     }
 }
 
+/// Hands every run executing here to a peer (the instance shuts down): it
+/// stops claiming and fails readiness, each run stops at once, writes its
+/// trace up to here and releases its lease, so a peer's dispatcher takes it
+/// over at its next look instead of when the lease would have run out.
+/// Waits for that at most `limit`; a run still here then is abandoned, and
+/// taken over when its lease runs out. Returns how many runs were handed off.
+pub async fn hand_off(state: &AppState, limit: Duration) -> usize {
+    state.engine.start_draining();
+    let runs = state.engine.hand_off_all();
+    if runs > 0 {
+        tracing::info!(runs, "draining: handing runs to peers");
+    }
+    let deadline = Instant::now() + limit;
+    while state.engine.active_count() > 0 && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let left = state.engine.abandon_all();
+    if left > 0 {
+        tracing::warn!(
+            left,
+            "runs not handed off in time; peers take them over when their lease runs out"
+        );
+    }
+    runs
+}
+
 /// Renews the leases of the runs executing here every third of the lease,
 /// until `shutdown`.
 pub async fn keep_leases(state: AppState, shutdown: CancellationToken) {
@@ -388,6 +414,10 @@ pub async fn execute_claimed(
 async fn execute(state: AppState, row: RunRow, start: Start) {
     let lease = Lease::held(row.id, row.lease_epoch, state.engine.instance());
     let token = state.engine.register_run(lease.clone());
+    // Claimed just as the instance began to shut down: handed on at once.
+    if state.engine.is_draining() {
+        lease.hand_off();
+    }
     let started = Instant::now();
     let tail = match &start {
         Start::Fresh { .. } => {

@@ -6,6 +6,16 @@
 #
 # Only the web UI is published. The backend, the agent runtime and PostgreSQL live on internal
 # networks. Optional texc-symphony executor: `docker compose --profile symphony up -d`.
+#
+# Two backend replicas (docs/HA.md), so a run survives the loss of the one executing it:
+#
+#   docker compose up -d --scale backend=2
+#   docker compose restart frontend     # its nginx resolves every backend replica when it starts
+#
+# The replicas share PostgreSQL and the nexc-data volume. A run executes on one of them; when
+# that one stops (a crash, `docker compose stop`, an upgrade), the other takes the run over:
+# at once after a clean stop, which hands runs over, or once the lease ran out after a crash
+# (NEXC_RUN_LEASE_SECS, 30 s by default, plus a few seconds).
 
 name: nexc
 
@@ -76,6 +86,11 @@ services:
       NEXC_CORS_ORIGINS: http://localhost:${NEXC_HTTP_PORT:-8080}
       NEXC_TRUST_PROXY: "true"
       NEXC_LLM_PROVIDER: ${NEXC_LLM_PROVIDER:-demo}
+      # The lease a replica holds on a run it executes (docs/HA.md); the same on every replica.
+      NEXC_RUN_LEASE_SECS: ${NEXC_RUN_LEASE_SECS:-30}
+    # On SIGTERM the backend fails readiness, hands its runs to the other replicas (their trace
+    # written, their lease released) and lets requests in flight finish: give it the time.
+    stop_grace_period: 30s
     volumes:
       - nexc-data:/data
       - symphony-config:/data/symphony

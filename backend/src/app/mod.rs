@@ -1,5 +1,7 @@
 //! Application wiring: state, router, background workers and the server
-//! lifecycle (graceful shutdown on Ctrl-C / SIGTERM).
+//! lifecycle (graceful shutdown on Ctrl-C / SIGTERM: readiness fails, the
+//! runs executing here are handed to the other replicas, then requests in
+//! flight finish).
 #![forbid(unsafe_code)]
 
 pub mod caches;
@@ -15,7 +17,13 @@ pub use state::{AppState, http_client};
 
 use crate::config::Settings;
 use crate::domain::user::{self, Role};
+use crate::engine::scheduler;
 use crate::{memory, orchestrator, repo, security};
+
+/// Longest a shutting-down instance waits for its runs to be handed to its
+/// peers before it lets them go (they are then taken over when their lease
+/// runs out); well inside the default 60 s grace period of the Helm chart.
+pub const HAND_OFF_LIMIT: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// Connects to the database and applies migrations.
 pub async fn connect_db(settings: &Settings) -> anyhow::Result<sqlx::PgPool> {
@@ -71,8 +79,9 @@ pub async fn seed_missing_workspaces(state: &AppState) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Runs the HTTP server until Ctrl-C / SIGTERM, then drains connections and
-/// cancels local runs.
+/// Runs the HTTP server until Ctrl-C / SIGTERM, then drains: readiness
+/// fails, the runs executing here are handed to the other replicas, and
+/// connections finish.
 pub async fn serve(settings: Settings) -> anyhow::Result<()> {
     let db = connect_db(&settings).await?;
     let addr = SocketAddr::new(settings.host, settings.port);
@@ -109,14 +118,20 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
     let app = router::build(state.clone());
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(%addr, env = ?state.settings.env, "nexc listening");
+    let draining = state.clone();
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
+    .with_graceful_shutdown(async move {
+        shutdown_signal().await;
+        // Readiness fails from here; the runs executing here go to the peers before the
+        // listener closes, and requests in flight finish after (docs/HA.md, rolling update).
+        tracing::info!("draining");
+        scheduler::hand_off(&draining, HAND_OFF_LIMIT).await;
+    })
     .await?;
     tracing::info!("shutting down");
-    state.engine.cancel_all();
     shutdown.cancel();
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     state.db.close().await;

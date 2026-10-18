@@ -191,11 +191,6 @@ impl Engine {
             .is_some()
     }
 
-    /// Cancels every local run.
-    pub fn cancel_all(&self) {
-        self.active_runs.iter().for_each(|a| a.token.cancel());
-    }
-
     /// Hands every run executing here to a peer (shutdown): each stops,
     /// writes its trace and releases its lease. Returns how many.
     pub fn hand_off_all(&self) -> usize {

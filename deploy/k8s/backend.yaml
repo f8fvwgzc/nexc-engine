@@ -77,10 +77,13 @@ spec:
             httpGet: { path: /api/v1/healthz, port: http }
             periodSeconds: 15
             timeoutSeconds: 5
+          # Drain-aware: 503 from the moment the pod is told to stop, while it hands its runs to
+          # the other replicas (docs/HA.md).
           readinessProbe:
             httpGet: { path: /api/v1/readyz, port: http }
-            periodSeconds: 5
-            timeoutSeconds: 5
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 1
           resources:
             requests: { cpu: 200m, memory: 256Mi }
             limits: { cpu: "2", memory: 1Gi }

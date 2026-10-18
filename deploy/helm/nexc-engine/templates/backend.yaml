@@ -44,7 +44,9 @@ metadata:
     app.kubernetes.io/component: api
     {{- include "nexc.labels" . | nindent 4 }}
 spec:
+  {{- if not .Values.autoscaling.backend.enabled }}
   replicas: {{ .Values.replicas.backend }}
+  {{- end }}
   revisionHistoryLimit: 5
   selector:
     matchLabels: { app.kubernetes.io/name: backend }
@@ -58,7 +60,9 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
     spec:
       automountServiceAccountToken: false
-      terminationGracePeriodSeconds: 60
+      # On SIGTERM the backend drains: readiness fails, its runs go to its peers (their trace
+      # written, their lease released), then HTTP requests in flight finish (docs/HA.md).
+      terminationGracePeriodSeconds: {{ .Values.backend.terminationGracePeriodSeconds }}
       securityContext:
         {{- include "nexc.podSecurity" (dict "uid" 10001 "fsGroup" true) | nindent 8 }}
       topologySpreadConstraints:
@@ -90,10 +94,13 @@ spec:
             httpGet: { path: /api/v1/healthz, port: http }
             periodSeconds: 15
             timeoutSeconds: 5
+          # Drain-aware: /readyz answers 503 from the moment the pod is told to stop (and while
+          # the database does not answer), so it leaves the Service at the next probe.
           readinessProbe:
             httpGet: { path: /api/v1/readyz, port: http }
-            periodSeconds: 5
-            timeoutSeconds: 5
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 1
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}
           securityContext:

@@ -1,5 +1,7 @@
 {{- if .Values.podDisruptionBudgets.enabled }}
-# Keep at least one replica of each stateless tier during voluntary disruptions (node drains).
+# Voluntary disruptions (node drains) take at most `maxUnavailable` pods of each stateless tier
+# at once. A backend pod that is evicted drains: it fails readiness and hands its runs to its
+# peers before it exits (docs/HA.md).
 {{- range $name := list "backend" "agent-runtime" "frontend" }}
 ---
 apiVersion: policy/v1
@@ -9,7 +11,7 @@ metadata:
   labels:
     {{- include "nexc.labels" $ | nindent 4 }}
 spec:
-  minAvailable: 1
+  maxUnavailable: {{ $.Values.podDisruptionBudgets.maxUnavailable }}
   selector:
     matchLabels: { app.kubernetes.io/name: {{ $name }} }
 {{- end }}

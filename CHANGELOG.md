@@ -59,6 +59,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   sub-agent recorded while nobody held the run is delivered by the new holder to the sub-agent of
   the same name in the new attempt; an instance that stops renewing (`TestApp::stop_renewing`)
   notices the takeover and stops its copy without writing.
+- Graceful hand-off on shutdown (`docs/HA.md`, shutting down; `docs/CONTRACT.md` §5): on SIGTERM
+  a backend replica drains instead of cancelling its runs. `/readyz` answers 503 (`draining`),
+  its dispatcher claims nothing more, every run it executes stops, writes its trace and releases
+  its lease (a `released` event at the next epoch), so a peer takes it over within one dispatcher
+  poll rather than after the lease; the HTTP server closes after at most 15 s. The Helm chart
+  gets a drain-aware readiness probe (every 2 s, out after one failure), a configurable grace
+  period (`backend.terminationGracePeriodSeconds`), PodDisruptionBudgets for the backend, the
+  runtime and the frontend that allow `podDisruptionBudgets.maxUnavailable` evictions at once
+  (they required one pod to stay, which blocked node drains with one replica), optional
+  HorizontalPodAutoscalers for the backend and the runtime (`autoscaling.*`; `replicas` is left
+  out of an autoscaled Deployment) and `backend.runLeaseSecs`; CI renders the chart with them on.
+  The kustomize manifests get the same readiness probe and `NEXC_RUN_LEASE_SECS`.
+  `docker-compose.yml` documents running two backend replicas (`--scale backend=2`), passes
+  `NEXC_RUN_LEASE_SECS` and gives the backend 30 s to drain.
 - Documentation site (`site/`, VitePress): the repository's Markdown rendered with a sidebar,
   full-text search, a dark theme, mermaid diagrams and the API reference (Scalar over
   `site/public/openapi.json`, a committed export of `nexc openapi`), in six sections: Start,
