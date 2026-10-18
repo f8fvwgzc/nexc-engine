@@ -34,7 +34,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `frontend/e2e/.audit/` (not committed), plus every page while its data loads and when its
   requests fail. Vitest now only collects `src/**/*.test.*`. `frontend/e2e/AUDIT.md` records what
   the audit found: 33 findings on layout, headers, controls, accessibility, empty, loading and
-  error states, and caching.
+  error states, and caching; and what the same audit measures after the fixes (no serious or
+  critical axe violation in 626 page, loading and error states, from 187; refetches on focus
+  from 135 to 47), the five worst before and after (`frontend/e2e/audit-images`), and the three
+  findings deferred in part (F27, F30, F31), with the reasons.
 - Documentation site (`site/`, VitePress): the repository's Markdown rendered with a sidebar,
   full-text search, a dark theme, mermaid diagrams and the API reference (Scalar over
   `site/public/openapi.json`, a committed export of `nexc openapi`), in six sections: Start,
