@@ -3,7 +3,8 @@
 -- `agents.risk_score`; a trigger keeps the history, so scoring does not have
 -- to know about it.
 CREATE TABLE agent_risk_history (
-    id           bigserial PRIMARY KEY,
+    -- A uuid, so a transfer can carry the rows and page them like any other table.
+    id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     agent_id     uuid NOT NULL REFERENCES agents (id) ON DELETE CASCADE,
     workspace_id uuid,
     score        double precision NOT NULL CHECK (score >= 0),

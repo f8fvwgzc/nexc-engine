@@ -147,6 +147,13 @@ const TABLES: &[Table] = &[
         "t.agent_id IN (SELECT id FROM agents WHERE workspace_id = $1)",
         false,
     ),
+    // The console's fourteen days of risk scores and the templates' competency scores too.
+    table("agent_risk_history", IN_WORKSPACE, true),
+    table(
+        "agent_evaluations",
+        "t.agent_id IN (SELECT id FROM agents WHERE workspace_id = $1)",
+        false,
+    ),
     table("graphs", IN_WORKSPACE, false),
     table("nodes", OF_ITS_GRAPHS, true),
     table("edges", OF_ITS_GRAPHS, true),
