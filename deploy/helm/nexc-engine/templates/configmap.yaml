@@ -20,6 +20,7 @@ data:
   NEXC_GATEWAY_TIMEOUT_SECS: {{ .Values.backend.gateway.timeoutSecs | quote }}
   NEXC_GATEWAY_MAX_RESPONSE_BYTES: {{ .Values.backend.gateway.maxResponseBytes | quote }}
   NEXC_A2A_TIMEOUT_SECS: {{ .Values.backend.a2a.timeoutSecs | quote }}
+  NEXC_CACHE_TTL_SECS: {{ .Values.backend.cacheTtlSecs | quote }}
   {{- if .Values.backend.grpcAddr }}
   NEXC_GRPC_ADDR: {{ .Values.backend.grpcAddr | quote }}
   {{- end }}

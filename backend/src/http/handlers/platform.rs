@@ -507,6 +507,7 @@ pub async fn erase_user(
         ));
     }
     crate::engine::account::erase(&state, uid).await?;
+    state.caches.invalidate(crate::app::caches::Key::Agents);
     log(
         &state,
         admin,

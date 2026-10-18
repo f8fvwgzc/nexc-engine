@@ -368,7 +368,7 @@ struct RunData {
     /// The workspace's guardrails, as they stood when the run started.
     policy: Guardrails,
     /// The latest version of every policy of the workspace, as the run started.
-    policies: Vec<Policy>,
+    policies: Arc<Vec<Policy>>,
     workspace_id: Option<Uuid>,
     ontology: Ontology,
     edges: Vec<GraphEdge>,
@@ -450,8 +450,8 @@ impl Execution {
         let resolved = credentials::resolve(state, row.owner_id, graph.workspace_id).await?;
         let (target, credential) = (resolved.target, resolved.scope);
         let policies = match graph.workspace_id {
-            Some(workspace) => repo::policies::latest_all(&state.db, workspace).await?,
-            None => Vec::new(),
+            Some(workspace) => state.caches.policies(&state.db, workspace).await?,
+            None => Arc::new(Vec::new()),
         };
         // The workspace level governs the whole run; each node records every level.
         let versions = policies::versions_of(&policies::levels_for(&policies, None, None));
@@ -697,6 +697,14 @@ async fn record(
     }
     repo::nodes::set_status(&mut *tx, node_id, outcome.status, outcome.output).await?;
     tx.commit().await?;
+    if let Some(agent) = agent
+        && !outcome.cached
+    {
+        // The card shows what the agent spent.
+        state
+            .caches
+            .invalidate(crate::app::caches::Key::Agent(agent.id));
+    }
     if !outcome.cached {
         // Same rule as `ExecContext::agent_target`: an agent's own model applies on Anthropic.
         let model = agent

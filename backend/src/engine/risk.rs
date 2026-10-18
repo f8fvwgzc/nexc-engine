@@ -54,7 +54,9 @@ pub async fn assess(state: &AppState, row: &RunRow) -> Assessed {
             by_agent.entry(agent).or_default().push(span);
         }
     }
-    let policies = repo::policies::latest_all(&state.db, workspace_id)
+    let policies = state
+        .caches
+        .policies(&state.db, workspace_id)
         .await
         .unwrap_or_default();
     for (agent_id, spans) in by_agent {
@@ -87,6 +89,9 @@ pub async fn assess(state: &AppState, row: &RunRow) -> Assessed {
         {
             tracing::error!(%agent_id, error = %err, "risk score not saved");
         }
+        state
+            .caches
+            .invalidate(crate::app::caches::Key::Agent(agent_id));
         done.agents += 1;
         let levels = policies::levels_for(&policies, agent.team_id, Some(agent.id));
         let rules = policies::resolve(&levels, Some(&agent.capabilities)).rules;
@@ -179,6 +184,9 @@ async fn apply_thresholds(
         match repo::agents::quarantine(&state.db, about.workspace_id, agent_id).await {
             Ok(Some(agent)) => {
                 quarantined = true;
+                state
+                    .caches
+                    .invalidate(crate::app::caches::Key::Agent(agent_id));
                 let cancelled = state.engine.quarantine_local(agent_id);
                 let detail = format!(
                     "automatic: risk score {:.1} over {:.1} ({reasons}); policy version {}; {cancelled} running node(s) cancelled here",

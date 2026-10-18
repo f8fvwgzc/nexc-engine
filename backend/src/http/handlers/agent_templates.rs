@@ -295,6 +295,9 @@ pub async fn instantiate(
     )
     .await?;
     tx.commit().await?;
+    state
+        .caches
+        .invalidate(crate::app::caches::Key::Policies(workspace));
     audit(
         &state,
         workspace,
@@ -314,6 +317,9 @@ pub async fn instantiate(
         let scored = evaluate(&state, auth.id, workspace, &agent, template).await;
         if let Some(scored) = &scored {
             repo::agent_evaluations::upsert(&state.db, agent.id, scored).await?;
+            state
+                .caches
+                .invalidate(crate::app::caches::Key::Agent(agent.id));
         }
         scored
     } else {

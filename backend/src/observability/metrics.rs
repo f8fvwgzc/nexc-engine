@@ -134,6 +134,8 @@ pub struct Metrics {
     /// A2A tasks exchanged, by direction (`inbound`, `outbound`) and outcome
     /// (`accepted`, `refused`, `completed`, `failed`).
     pub a2a_tasks: LabeledCounter,
+    /// Hot-read cache lookups, by cache and result (`hit`, `miss`).
+    pub cache_lookups: LabeledCounter,
 }
 
 impl Default for Metrics {
@@ -158,6 +160,7 @@ impl Default for Metrics {
             gateway_calls: LabeledCounter::default(),
             alert_deliveries: LabeledCounter::default(),
             a2a_tasks: LabeledCounter::default(),
+            cache_lookups: LabeledCounter::default(),
         }
     }
 }
@@ -329,6 +332,14 @@ impl Metrics {
             "A2A tasks exchanged, by direction and outcome.",
         );
         self.a2a_tasks.render(&mut out, "nexc_a2a_tasks_total");
+        header(
+            &mut out,
+            "nexc_cache_lookups_total",
+            "counter",
+            "Hot-read cache lookups, by cache and result (hit, miss).",
+        );
+        self.cache_lookups
+            .render(&mut out, "nexc_cache_lookups_total");
         out
     }
 }

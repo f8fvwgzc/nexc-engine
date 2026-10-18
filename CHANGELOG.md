@@ -43,6 +43,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reaches storage (`frontend/src/lib/api/etag-cache.ts`). The worst-case suite sweeps every
   documented read: tagged, answered 304 with no body and the same tag, a changed issue and its
   list retagged, the SSE stream and `/metrics` untagged.
+- Hot-read caches in process (`backend/src/app/caches.rs`): agent cards (the agent, its owner,
+  team and evaluation; the recent spans stay live), resolved policies per agent and policy
+  version, the latest policies of a workspace, workspace guardrails and the workspace's LLM
+  credential are kept per instance and dropped on write: the write drops the entry locally and
+  sends the key over the realtime fan-out (PostgreSQL `NOTIFY`, the channel the events travel
+  on), so every replica drops it at once; `NEXC_CACHE_TTL_SECS` (60) only bounds a missed
+  notification and `0` turns the caches off. The Agent Firewall decides from the shared cache
+  (its own five-second policy cache is gone: a policy edited elsewhere applies the moment the
+  notification lands, and the token and the agent's status are still looked up on every call);
+  the scheduler, the risk scorer, the A2A card and inbound tasks read the latest policies from
+  it. `nexc_cache_lookups_total{cache, result}` counts hits and misses. Tests: the entries, the
+  drop by key and the wire form; two servers on one database, a write on one dropping the entry
+  on the other within the second and the new policy applying there; the caches off. The gain in
+  the table: `GET /workspaces/{wid}/policies/resolve` p50 4.2 ms with the cache, 12.6 ms without;
+  guardrails 3.3 ms against 5.4 ms; the workspace credential 5.2 ms against 5.5 ms; an agent card
+  13 ms against 14 ms (two queries left: the membership and the recent spans).
 - A2A adapter, the console: the agent card gets an **A2A** tab with the switch that publishes
   the agent (admins; disabled for an external agent, with the reason), the addresses of its card,
   its well-known card and its JSON-RPC endpoint under the console's origin with a copy each, and
@@ -861,6 +877,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   server.
 - A tagged read answers `Cache-Control: private, no-cache` instead of `no-store`; untagged
   answers, streams, downloads, the probes and errors keep `no-store`.
+- The Agent Firewall's own five-second cache of resolved policies is replaced by the shared
+  hot-read cache, dropped on every replica the moment a policy or the agent is written.
 - The project is licensed under the MIT License instead of Apache-2.0. No dependency requires a
   stricter licence: every one is MIT, BSD, ISC, Apache-2.0 or similar, with two npm packages
   under MPL-2.0, which only covers changes to those packages' own files.

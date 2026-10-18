@@ -75,6 +75,16 @@ const AGGREGATES: &[&str] = &[
 /// The pool the server runs with by default (`NEXC_DB_MAX_CONNECTIONS`);
 /// the floor row shows what it costs at the callers' concurrency.
 const DEFAULT_DB_CONNECTIONS: u32 = 20;
+/// The reads whose answer the hot-read caches serve; measured again with
+/// the caches off, to show the gain.
+const CACHED_READS: &[&str] = &[
+    "/api/v1/agents/{id}",
+    "/api/v1/workspaces/{wid}/policies/resolve",
+    "/api/v1/workspaces/{wid}/guardrails",
+    "/api/v1/workspaces/{wid}/llm",
+    "/api/v1/settings/llm",
+    "/.well-known/agent.json",
+];
 
 fn read_target(path: &str) -> f64 {
     if AGGREGATES.contains(&path) {
@@ -847,6 +857,23 @@ async fn prove_api(pool: PgPool) {
 
     // --- Every documented read ---------------------------------------------------------------
     rows.extend(sweep_reads(&app, &w, callers, requests, "", None).await);
+
+    // --- The same reads with the hot-read caches off: the gain ----------------------------------
+    let mut uncached = overrides.to_vec();
+    uncached.push(("NEXC_CACHE_TTL_SECS", "0"));
+    let cold = TestApp::with_real_providers(pool.clone(), &uncached).await;
+    rows.extend(
+        sweep_reads(
+            &cold,
+            &w,
+            callers,
+            requests,
+            "(hot-read cache off)",
+            Some(CACHED_READS),
+        )
+        .await,
+    );
+    drop(cold);
 
     // --- The main writes ---------------------------------------------------------------------
     // Issues are numbered per team under a lock, so a team per caller files in parallel; the

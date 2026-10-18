@@ -200,6 +200,12 @@ pub const ENV_VARS: &[EnvVar] = &[
         "authenticated API requests one account may make per minute (burst a fifth of it)",
     ),
     var(
+        "NEXC_CACHE_TTL_SECS",
+        "60",
+        false,
+        "longest a hot-read cache entry lives (agent cards, resolved policies, guardrails, workspace LLM settings); a write drops it on every replica before that; 0 turns the caches off",
+    ),
+    var(
         "NEXC_GATEWAY_CALLS_PER_MINUTE",
         "120",
         false,

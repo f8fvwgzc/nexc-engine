@@ -27,7 +27,6 @@ use crate::domain::graph::{Executor, NodeDraft, NodeOrigin, NodeStatus};
 use crate::domain::policy::{Action, Decision, decide_with};
 use crate::domain::run::RunStatus;
 use crate::domain::trace::{SpanDraft, SpanKind, SpanStatus};
-use crate::engine::policy::{levels_for, resolve, versions_of};
 use crate::engine::{artifacts, knowledge, scheduler};
 use crate::realtime::hub::SseFrame;
 use crate::repo;
@@ -149,12 +148,13 @@ pub async fn send(
         });
     }
     let counterpart = &caller.counterpart.counterpart;
-    let policies = repo::policies::latest_all(&state.db, workspace)
+    let effective = state
+        .caches
+        .resolved(&state.db, workspace, agent)
         .await
         .map_err(internal)?;
-    let levels = levels_for(&policies, agent.team_id, Some(agent.id));
-    let versions = versions_of(&levels);
-    let resolved = resolve(&levels, Some(&agent.capabilities));
+    let versions = effective.versions.clone();
+    let resolved = &effective.resolved;
     // The firewall's decision: no loop, the counterpart on the list, the hop within the depth.
     let decision = if inbound.hops.contains(&agent.principal_id) {
         Decision::deny(

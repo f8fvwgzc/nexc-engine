@@ -7,6 +7,7 @@ use sqlx::PgPool;
 
 use tonic::transport::Channel;
 
+use super::caches::Caches;
 use crate::config::{RuntimeProtocol, Settings};
 use crate::engine::Engine;
 use crate::engine::executor::symphony::SymphonyBridge;
@@ -63,6 +64,8 @@ pub struct AppState {
     pub firewall_signer: Arc<Signer>,
     /// The external agents' decisions sessions open on this instance.
     pub firewall_sessions: Arc<crate::firewall::Sessions>,
+    /// Hot reads kept in memory, dropped on write across replicas.
+    pub caches: Arc<Caches>,
 }
 
 impl AppState {
@@ -115,6 +118,7 @@ impl AppState {
         };
         let firewall_signer = Arc::new(Signer::from_seed(settings.firewall_signing_key.expose())?);
         Ok(AppState {
+            caches: Arc::new(Caches::new(settings.cache_ttl, metrics.clone())),
             runtime_grpc,
             gateway_http: crate::gateway::http_client()?,
             gateway_registry: Arc::default(),

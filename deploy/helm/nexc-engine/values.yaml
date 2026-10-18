@@ -75,6 +75,9 @@ backend:
   # The A2A adapter: the longest one outbound task may take (the remote agent's work included).
   a2a:
     timeoutSecs: 120
+  # Hot-read caches: the longest an entry lives; writes drop entries on every replica through
+  # PostgreSQL NOTIFY. 0 turns them off.
+  cacheTtlSecs: 60
   dataStorage: 5Gi
   resources:
     requests: { cpu: 200m, memory: 256Mi }

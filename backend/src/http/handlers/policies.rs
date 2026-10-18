@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use super::workspaces::{audit, member_of, require};
 use crate::app::AppState;
+use crate::app::caches::Key;
 use crate::domain::AppError;
 use crate::domain::audit::AuditAction;
 use crate::domain::policy_document::{Policy, PolicyDocument, PolicyScope, diff_summary};
@@ -148,6 +149,7 @@ pub async fn create(
         auth.id,
     )
     .await?;
+    state.caches.invalidate(Key::Policies(wid));
     let detail = format!(
         "{} policy version {}: {}",
         req.scope,
@@ -168,6 +170,8 @@ pub async fn create(
 
 /// The effective policy of an agent: its capabilities narrowed by every
 /// level, the rules beside them, and which level set each rule (members).
+/// Resolved once per agent and policy version, from the hot-read cache,
+/// until a policy of the workspace or the agent is written.
 #[utoipa::path(get, path = "/workspaces/{wid}/policies/resolve", tag = "policies", security(("bearer" = [])),
     params(("wid" = Uuid, Path, description = "Workspace id"), ResolveQuery),
     responses((status = 200, body = Resolved), (status = 404, body = Problem)))]
@@ -178,10 +182,11 @@ pub async fn resolve(
     Query(query): Query<ResolveQuery>,
 ) -> Result<Json<Resolved>, AppError> {
     member_of(&state, auth, wid).await?;
-    let agent = repo::agents::find(&state.db, wid, query.agent_id)
+    let core = state
+        .caches
+        .agent_card(&state.db, wid, query.agent_id)
         .await?
         .ok_or(AppError::NotFound("agent"))?;
-    let latest = repo::policies::latest_all(&state.db, wid).await?;
-    let levels = levels_for(&latest, agent.team_id, Some(agent.id));
-    Ok(Json(engine::resolve(&levels, Some(&agent.capabilities))))
+    let resolved = state.caches.resolved(&state.db, wid, &core.agent).await?;
+    Ok(Json((*resolved.resolved).clone()))
 }

@@ -91,6 +91,9 @@ pub struct Settings {
     pub otlp_endpoint: Option<String>,
     /// Authenticated API requests one account may make per minute (burst a fifth of it).
     pub api_calls_per_minute: u32,
+    /// How long a hot-read cache entry may live (zero turns the caches off); a write
+    /// drops the entry on every replica before that.
+    pub cache_ttl: Duration,
     /// Gateway calls one agent may make per minute.
     pub gateway_calls_per_minute: u32,
     /// Longest one gateway call may take, the tool included.
@@ -227,6 +230,7 @@ impl Settings {
             firewall_signing_key: Secret::new(r.firewall_signing_key()),
             otlp_endpoint: r.optional("NEXC_OTLP_ENDPOINT"),
             api_calls_per_minute: r.parse("NEXC_API_CALLS_PER_MINUTE", 600),
+            cache_ttl: Duration::from_secs(r.parse("NEXC_CACHE_TTL_SECS", 60)),
             gateway_calls_per_minute: r.parse("NEXC_GATEWAY_CALLS_PER_MINUTE", 120),
             gateway_timeout: Duration::from_secs(r.parse("NEXC_GATEWAY_TIMEOUT_SECS", 30)),
             gateway_max_response_bytes: r.parse("NEXC_GATEWAY_MAX_RESPONSE_BYTES", 1024 * 1024),
@@ -295,6 +299,9 @@ impl Settings {
         }
         if !(5..=10_000_000).contains(&self.api_calls_per_minute) {
             errors.push("NEXC_API_CALLS_PER_MINUTE must be between 5 and 10000000".into());
+        }
+        if self.cache_ttl > Duration::from_secs(3600) {
+            errors.push("NEXC_CACHE_TTL_SECS must be at most 3600".into());
         }
         if !(1..=10_000).contains(&self.gateway_calls_per_minute) {
             errors.push("NEXC_GATEWAY_CALLS_PER_MINUTE must be between 1 and 10000".into());

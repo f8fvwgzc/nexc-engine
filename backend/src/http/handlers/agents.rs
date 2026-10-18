@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use super::workspaces::audit;
 use crate::app::AppState;
+use crate::app::caches::Key;
 use crate::domain::AppError;
 use crate::domain::agent::{
     AGENT_NAME_MAX, AGENT_TITLE_MAX, Agent, AgentApiToken, AgentCard, AgentRuntime, AgentStatus,
@@ -341,6 +342,8 @@ pub async fn list(
 
 /// An agent's ID card: who it is, who answers for it, what it may do, what
 /// it has left to spend and what it did last (any member of its workspace).
+/// The card's core is served from the hot-read cache until the agent is
+/// written; its recent spans are read live.
 #[utoipa::path(get, path = "/agents/{id}", tag = "agents", security(("bearer" = [])),
     params(("id" = Uuid, Path, description = "Agent id")),
     responses((status = 200, body = AgentCard), (status = 404, body = Problem)))]
@@ -349,21 +352,27 @@ pub async fn get(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<AgentCard>, AppError> {
-    let workspace = workspace_of_agent(&state, auth, id, Access::Read).await?;
-    let agent = repo::agents::find(&state.db, workspace, id)
+    // The core first (from memory after the first read), then the caller's membership of the
+    // agent's workspace: an agent of a workspace the caller is not in is as good as missing.
+    let core = state
+        .caches
+        .agent_card_by_id(&state.db, id)
+        .await?
+        .ok_or(AppError::NotFound("agent"))?;
+    workspace_for(&state, auth, Some(core.workspace_id), Access::Read)
         .await
-        .or_not_found("agent")?;
-    let owner = repo::agents::owner(&state.db, agent.owner_user_id).await?;
-    let team = repo::agents::team(&state.db, agent.team_id).await?;
+        .map_err(|err| match err {
+            AppError::NotFound(_) => AppError::NotFound("agent"),
+            other => other,
+        })?;
     let recent_spans = repo::spans::activity(&state.db, auth.id, id, CARD_SPANS).await?;
-    let evaluation = repo::agent_evaluations::find(&state.db, id).await?;
     Ok(Json(AgentCard {
-        budget_left: agent.budget_left(),
-        agent,
-        owner,
-        team,
+        budget_left: core.agent.budget_left(),
+        agent: core.agent.clone(),
+        owner: core.owner.clone(),
+        team: core.team.clone(),
         recent_spans,
-        evaluation,
+        evaluation: core.evaluation.clone(),
     }))
 }
 
@@ -472,6 +481,7 @@ pub async fn update(
     let agent = repo::agents::update(&state.db, workspace, id, &fields)
         .await
         .or_not_found("agent")?;
+    state.caches.invalidate(Key::Agent(id));
     if policy_changed {
         audit(
             &state,
@@ -519,6 +529,7 @@ pub async fn quarantine(
         .ok_or(AppError::Conflict(
             "the agent is already quarantined".into(),
         ))?;
+    state.caches.invalidate(Key::Agent(id));
     // Nodes running on this instance stop now; other instances notice within a second.
     let cancelled = state.engine.quarantine_local(id);
     audit(
@@ -550,6 +561,7 @@ pub async fn release(
     let agent = repo::agents::release(&state.db, workspace, id)
         .await?
         .ok_or(AppError::Conflict("the agent is not quarantined".into()))?;
+    state.caches.invalidate(Key::Agent(id));
     audit(
         &state,
         workspace,
@@ -573,6 +585,7 @@ pub async fn delete(
 ) -> Result<StatusCode, AppError> {
     let workspace = workspace_of_agent(&state, auth, id, Access::Write).await?;
     if repo::agents::delete(&state.db, workspace, id).await? {
+        state.caches.invalidate(Key::Agent(id));
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(AppError::NotFound("agent"))

@@ -104,9 +104,14 @@ No other service is needed.
 - **Background work** (runs, document ingestion) is queued in PostgreSQL: workers claim rows with
   `SKIP LOCKED`, so several server instances share the work and a crashed worker's rows return to
   the queue.
-- **Caches** are in process and short-lived (a workspace's small memory set for 30 seconds, the
-  list of common words for 10 minutes). Each instance has its own; they expire rather than being
-  invalidated across instances.
+- **Caches** are in process. The hot reads (agent cards, an agent's resolved policy per policy
+  version, a workspace's guardrails and LLM settings) are kept per instance until they are
+  written: the write drops the entry locally and tells every other replica over PostgreSQL
+  `NOTIFY`, the same channel the realtime events travel on; `NEXC_CACHE_TTL_SECS` (60 s) only
+  bounds a missed notification, and `0` turns the caches off. The smaller ones (a workspace's
+  memory set for 30 seconds, the list of common words for 10 minutes) expire on their own. Every
+  JSON read also carries an `ETag`, so a console that asks again gets a `304` with no body
+  (CONTRACT §3).
 
 Redis or an external queue would be additions, not requirements. The Infrastructure page can
 check that a Redis is reachable (`redis://…`), which is as far as the server uses one today.

@@ -577,9 +577,7 @@ pub async fn guardrails(
 ) -> Result<Json<Guardrails>, AppError> {
     member_of(&state, auth, wid).await?;
     Ok(Json(
-        repo::workspaces::guardrails(&state.db, wid)
-            .await?
-            .unwrap_or_default(),
+        (*state.caches.guardrails(&state.db, wid).await?).clone(),
     ))
 }
 
@@ -600,6 +598,9 @@ pub async fn put_guardrails(
         WorkspaceAction::UpdateSettings,
     )?;
     repo::workspaces::set_guardrails(&state.db, wid, auth.id, &req).await?;
+    state
+        .caches
+        .invalidate(crate::app::caches::Key::Guardrails(wid));
     let subject = Subject::Text("Guardrails");
     audit(
         &state,
