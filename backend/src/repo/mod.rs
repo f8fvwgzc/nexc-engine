@@ -94,6 +94,7 @@ pub mod policies;
 pub mod resets;
 pub mod runs;
 pub mod secops;
+pub mod sessions;
 pub mod settings;
 pub mod spans;
 pub mod teams;

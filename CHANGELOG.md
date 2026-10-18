@@ -9,6 +9,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Sessions (`docs/CONTRACT.md` §4, §5): a run seen as a tree. `GET /runs/{id}/sessions` answers
+  `Session`: run → nodes → the agent each node ran as → the sub-agents it spawned (one per `spawn`
+  span) → their turns and tool calls, with status (`queued`, `running`, `waiting_approval`,
+  `succeeded`, `failed`, `cancelled`, `skipped`), started and ended times, duration, tokens in, out
+  and cached, cost, model turns, tool calls, denials and the ids of its spans at every level, plus
+  the run's totals and a breakdown by model. A sub-agent's status follows its parent's
+  `spawn_subagent` call, an operator's cancel or a pending approval of its own; a subtree's cost
+  is estimated from each turn's model and tokens and scaled so the subtrees of a finished node sum
+  to the cost its result recorded. `GET /workspaces/{wid}/sessions?agent=&status=&from=&to=&limit=&before=`
+  lists the workspace's runs with the same rollups and the agents that worked in them, newest
+  first, narrowed by agent, status and time, paged (`node_runs_agent_idx` serves the agent
+  filter). Computed from `agent_spans`, `node_runs` and `llm_usage`; nothing is stored twice.
+  Tests (`backend/tests/sessions.rs`, `domain::session`): nested spawns roll up to their parents
+  with the costs adding up, a cancelled subtree and a waiting approval are told apart, the list
+  narrows by every filter, pages without repeats, clamps its limit, refuses a window the wrong way
+  round, guests and outsiders; the worst-case suite reads the new routes.
 - A2A adapter, the console: the agent card gets an **A2A** tab with the switch that publishes
   the agent (admins; disabled for an external agent, with the reason), the addresses of its card,
   its well-known card and its JSON-RPC endpoint under the console's origin with a copy each, and

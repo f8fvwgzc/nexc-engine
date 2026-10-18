@@ -1531,6 +1531,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runs/{rid}/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The run as a tree: its nodes, the agent each ran as, the sub-agents it
+         *     spawned, with status, times, tokens, cost, calls and denials per subtree
+         *     and the ids to open its spans (whoever may open the run).
+         */
+        get: operations["tree"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs/{rid}/trace": {
         parameters: {
             query?: never;
@@ -2671,6 +2692,26 @@ export interface paths {
          *     paged with `before` (members and above).
          */
         get: operations["spans"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The workspace's recent runs with their rollups, newest first, narrowed
+         *     by agent, status and time; paged with `before` (members and above).
+         */
+        get: operations["list"];
         put?: never;
         post?: never;
         delete?: never;
@@ -5169,6 +5210,21 @@ export interface components {
              */
             released_at: string | null;
         };
+        /** @description Usage of one model across a run. */
+        ModelRollup: {
+            /** Format: double */
+            cost_usd: number;
+            /** Format: int64 */
+            llm_calls: number;
+            model: string;
+            provider: string;
+            /** Format: int64 */
+            tokens_cached: number;
+            /** Format: int64 */
+            tokens_in: number;
+            /** Format: int64 */
+            tokens_out: number;
+        };
         /**
          * @description Who created a node.
          * @enum {string}
@@ -5755,6 +5811,34 @@ export interface components {
          * @enum {string}
          */
         Role: "admin" | "user";
+        /** @description What a subtree spent and did. */
+        Rollup: {
+            /** Format: double */
+            cost_usd: number;
+            /**
+             * Format: int64
+             * @description Policy spans whose decision was `deny`.
+             */
+            denials: number;
+            /**
+             * Format: int64
+             * @description Model turns.
+             */
+            llm_calls: number;
+            /** Format: int64 */
+            spans: number;
+            /**
+             * Format: int64
+             * @description Of `tokens_in`, the ones read from the provider's prompt cache.
+             */
+            tokens_cached: number;
+            /** Format: int64 */
+            tokens_in: number;
+            /** Format: int64 */
+            tokens_out: number;
+            /** Format: int64 */
+            tool_calls: number;
+        };
         /** @description A JSON-RPC request as the endpoint reads it. */
         RpcRequest: {
             id: Record<string, never>;
@@ -6037,6 +6121,137 @@ export interface components {
              */
             next: string | null;
             spans: components["schemas"]["SecopsSpan"][];
+        };
+        /** @description A run as a tree. */
+        Session: {
+            /** @description Usage by model, most costly first. */
+            by_model: components["schemas"]["ModelRollup"][];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: int64 */
+            duration_ms: number | null;
+            /** Format: date-time */
+            finished_at: string | null;
+            /** Format: uuid */
+            graph_id: string;
+            graph_name: string;
+            nodes: components["schemas"]["SessionNode"][];
+            /** @description Whether prompts and completions were being recorded when the run's nodes started. */
+            recording: boolean;
+            rollup: components["schemas"]["Rollup"];
+            /** Format: uuid */
+            run_id: string;
+            /** Format: date-time */
+            started_at: string | null;
+            status: components["schemas"]["RunStatus"];
+            /** Format: uuid */
+            workspace_id: string | null;
+        };
+        /**
+         * @description One agent of a node: the agent the node ran as (depth 0) or a sub-agent
+         *     it spawned, with its own turns and tool calls and what hangs under it.
+         */
+        SessionAgent: {
+            /** Format: uuid */
+            agent_id: string | null;
+            /** @description Whether an operator may stop it now: a sub-agent still working in a node still running. */
+            cancellable: boolean;
+            /** @description The sub-agents it spawned, in birth order. */
+            children: components["schemas"]["SessionAgent"][];
+            /**
+             * Format: int32
+             * @description 0 for the agent the node ran as.
+             */
+            depth: number;
+            /** Format: int64 */
+            duration_ms: number | null;
+            /** Format: date-time */
+            ended_at: string | null;
+            /** @description The agent's own turns and tool calls. */
+            own: components["schemas"]["Rollup"];
+            parent_principal: string | null;
+            /** @description `agent://{workspace}/{name}`, sub-agents `…/{role}-{n}`; `system` for a node without an agent. */
+            principal: string;
+            /** @description The role a sub-agent was spawned as. */
+            role: string | null;
+            /** @description Its own spans in chain order: turns, tool calls, policy decisions, approvals. */
+            span_ids: string[];
+            /**
+             * Format: uuid
+             * @description The `spawn` span a sub-agent was born in (what `POST /runs/{id}/agents/{span_id}/cancel` names); `null` at depth 0.
+             */
+            spawn_span_id: string | null;
+            /** Format: date-time */
+            started_at: string | null;
+            status: components["schemas"]["SessionStatus"];
+            /** @description Its own plus every sub-agent under it. */
+            total: components["schemas"]["Rollup"];
+        };
+        /** @description An agent that worked in a run, as the list names it. */
+        SessionAgentRef: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
+        /** @description One node of the run. */
+        SessionNode: {
+            /** @description The agent the node ran as, with its sub-agents under it. */
+            agents: components["schemas"]["SessionAgent"][];
+            /** Format: int32 */
+            attempt: number;
+            /** @description Served from the result cache: no agent worked. */
+            cached: boolean;
+            /** @description What the node was given before it ran (`data_read`) and what was withheld (`policy` named `context`). */
+            context_span_ids: string[];
+            /** Format: int64 */
+            duration_ms: number | null;
+            /** Format: date-time */
+            ended_at: string | null;
+            error: string | null;
+            executor: components["schemas"]["Executor"];
+            /** Format: uuid */
+            node_id: string;
+            rollup: components["schemas"]["Rollup"];
+            /** Format: date-time */
+            started_at: string | null;
+            status: components["schemas"]["SessionStatus"];
+            title: string;
+        };
+        /** @description A page of a workspace's sessions, newest first. */
+        SessionPage: {
+            /**
+             * Format: uuid
+             * @description Pass as `before` for the next page; `null` on the last.
+             */
+            next: string | null;
+            sessions: components["schemas"]["SessionSummary"][];
+        };
+        /**
+         * @description Where a node or an agent subtree stands.
+         * @enum {string}
+         */
+        SessionStatus: "queued" | "running" | "waiting_approval" | "succeeded" | "failed" | "cancelled" | "skipped";
+        /** @description One row of a workspace's session list: a run with its rollups. */
+        SessionSummary: {
+            /** @description The workspace agents that ran its nodes. */
+            agents: components["schemas"]["SessionAgentRef"][];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: int64 */
+            duration_ms: number | null;
+            /** Format: date-time */
+            finished_at: string | null;
+            /** Format: uuid */
+            graph_id: string;
+            graph_name: string;
+            /** Format: int64 */
+            nodes: number;
+            rollup: components["schemas"]["Rollup"];
+            /** Format: uuid */
+            run_id: string;
+            /** Format: date-time */
+            started_at: string | null;
+            status: components["schemas"]["RunStatus"];
         };
         /** @description The caller's sessions. */
         Sessions: {
@@ -10571,6 +10786,36 @@ export interface operations {
             };
         };
     };
+    tree: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Run id */
+                rid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     trace: {
         parameters: {
             query?: {
@@ -14091,6 +14336,65 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SecopsSpanPage"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list: {
+        parameters: {
+            query?: {
+                /** @description Only runs this agent worked in. */
+                agent?: string | null;
+                /** @description Only runs in this state. */
+                status?: components["schemas"]["RunStatus"] | null;
+                /** @description Only runs created at or after this time. */
+                from?: string | null;
+                /** @description Only runs created before this time. */
+                to?: string | null;
+                /** @description Sessions per page, 1–200 (default 50). */
+                limit?: number | null;
+                /** @description Only runs older than this one (the `next` of the previous page). */
+                before?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionPage"];
                 };
             };
             403: {

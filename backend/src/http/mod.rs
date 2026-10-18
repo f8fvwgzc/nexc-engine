@@ -220,6 +220,8 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(runs::cancel))
         .routes(routes!(trace::trace))
         .routes(routes!(trace::verify))
+        .routes(routes!(sessions::tree))
+        .routes(routes!(sessions::list))
         .routes(routes!(artifacts::list))
         .routes(routes!(artifacts::zip))
         .routes(routes!(artifacts::download))
@@ -303,6 +305,8 @@ mod tests {
             "/api/v1/graphs/{gid}/events",
             "/api/v1/runs/{rid}/trace",
             "/api/v1/runs/{rid}/trace/verify",
+            "/api/v1/runs/{rid}/sessions",
+            "/api/v1/workspaces/{wid}/sessions",
             "/api/v1/agents/{id}/activity",
             "/api/v1/agents/{id}/quarantine",
             "/api/v1/agents/{id}/release",
@@ -387,7 +391,7 @@ mod tests {
         use crate::domain::{
             account, agent, alert, alert_routing, approval, audit, capabilities, cycle, graph,
             insight, issue, knowledge, memory, plan, platform, policy_document, run, search,
-            settings, trace, usage, user, workspace,
+            session, settings, trace, usage, user, workspace,
         };
         use serde_json::Value;
 
@@ -439,6 +443,7 @@ mod tests {
                 "AccountEventKind" => check::<account::AccountEventKind>(values),
                 "SpanKind" => check::<trace::SpanKind>(values),
                 "SpanStatus" => check::<trace::SpanStatus>(values),
+                "SessionStatus" => check::<session::SessionStatus>(values),
                 "DataLabel" => check::<capabilities::DataLabel>(values),
                 "AnswerMode" => check::<crate::ontology::ask::AnswerMode>(values),
                 "PolicyScope" => check::<policy_document::PolicyScope>(values),
@@ -457,6 +462,6 @@ mod tests {
             }
             checked += 1;
         }
-        assert_eq!(checked, 45, "every string enum schema is covered");
+        assert_eq!(checked, 46, "every string enum schema is covered");
     }
 }

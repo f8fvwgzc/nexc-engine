@@ -36,6 +36,7 @@ pub mod risk;
 pub mod run;
 pub mod search;
 pub mod secops;
+pub mod session;
 pub mod settings;
 pub mod status;
 pub mod template;

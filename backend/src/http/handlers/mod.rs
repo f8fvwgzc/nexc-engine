@@ -32,6 +32,7 @@ pub mod realtime;
 pub mod runs;
 pub mod search;
 pub mod secops;
+pub mod sessions;
 pub mod settings;
 pub mod teams;
 pub mod templates;

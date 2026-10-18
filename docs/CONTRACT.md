@@ -833,6 +833,60 @@ interface SecopsSpan { // a span as the trace explorer lists it: the ids and the
   inbound: boolean; // `attributes.inbound`: a tool call that is a task received over A2A (§10)
 }
 
+// Sessions: one run seen as a tree (run → nodes → the agent each node ran as → its sub-agents, one per
+// `spawn` span → their turns and tool calls), computed from `agent_spans`, `node_runs` and `llm_usage`
+// with tokens, cost, calls and denials rolled up at every level. A subtree's cost is estimated from each
+// turn's model and tokens (a `demo` turn costs nothing) and scaled so that the subtrees of a finished node
+// sum to the cost its result recorded. A sub-agent's status follows the `spawn_subagent` call of its parent
+// (ended ok: succeeded; in error: failed), a `policy` span of action `cancel_agent` naming its spawn
+// (cancelled), a pending approval request of its own (waiting_approval), else the node's.
+type SessionStatus = "queued" | "running" | "waiting_approval" | "succeeded" | "failed" | "cancelled" | "skipped";
+interface Rollup {
+  spans: number; llm_calls: number; tool_calls: number;
+  denials: number; // policy spans whose decision was `deny`
+  tokens_in: number; tokens_out: number; tokens_cached: number; cost_usd: number;
+}
+interface SessionAgent {
+  principal: string; // `agent://{workspace}/{name}`, sub-agents `…/{role}-{n}`; `system` for a node without an agent
+  agent_id: string | null;
+  role: string | null; // the role a sub-agent was spawned as
+  depth: number; // 0 for the agent the node ran as
+  spawn_span_id: string | null; // the `spawn` span a sub-agent was born in: what `POST /runs/{id}/agents/{span_id}/cancel` names
+  parent_principal: string | null;
+  status: SessionStatus;
+  started_at: string | null; ended_at: string | null; duration_ms: number | null;
+  own: Rollup; // its own turns and tool calls
+  total: Rollup; // own plus every sub-agent under it
+  span_ids: string[]; // its own spans in chain order (turns, tool calls, policy decisions, approvals)
+  cancellable: boolean; // a sub-agent still working in a node still running
+  children: SessionAgent[]; // in birth order
+}
+interface SessionNode {
+  node_id: string; title: string; executor: Executor; status: SessionStatus; attempt: number;
+  cached: boolean; // served from the result cache: no agent worked
+  error: string | null;
+  started_at: string | null; ended_at: string | null; duration_ms: number | null;
+  rollup: Rollup; // what the result recorded wins where the spans say less (a cached node's tokens, a finished node's cost)
+  context_span_ids: string[]; // the `data_read` span and what the context builder withheld
+  agents: SessionAgent[]; // the agent the node ran as, with its sub-agents under it
+}
+interface Session {
+  run_id: string; graph_id: string; graph_name: string; workspace_id: string | null; status: RunStatus;
+  created_at: string; started_at: string | null; finished_at: string | null; duration_ms: number | null;
+  rollup: Rollup;
+  by_model: { provider: string; model: string; llm_calls: number; tokens_in: number; tokens_out: number; tokens_cached: number; cost_usd: number }[]; // most costly first
+  recording: boolean; // prompts and completions were being recorded when the run's nodes started
+  nodes: SessionNode[];
+}
+interface SessionSummary { // one row of a workspace's session list
+  run_id: string; graph_id: string; graph_name: string; status: RunStatus;
+  created_at: string; started_at: string | null; finished_at: string | null; duration_ms: number | null;
+  nodes: number;
+  agents: { id: string; name: string }[]; // the workspace agents that ran its nodes
+  rollup: Rollup;
+}
+interface SessionPage { sessions: SessionSummary[]; next: string | null }
+
 // Versioned policies (AgentSecOps phase 2). A document only says what it sets; what it leaves out
 // (`null`, `[]`, `{}`) is inherited from the level above. Resolution walks workspace -> team -> agent
 // over the agent's own `Capabilities` and only narrows: allow-lists are met, deny-lists added,
@@ -1123,6 +1177,8 @@ Everything else needs a bearer token: an access token, or for the A2A endpoint (
 | POST `/runs/{rid}/cancel`                                                                                                   | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `Run`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | GET `/runs/{rid}/trace?after=&limit=`                                                                                       | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `TracePage`: the run's spans in id order (UUID v7, so the order they started), `limit` 1–1000 (default 200); pass `next` as `after` for the following page                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | GET `/runs/{rid}/trace/verify`                                                                                              | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `TraceVerification`: the chain recomputed from the stored spans; `ok` only if every span hashes as stored, every link holds and the hash sealed at the end of the run is the last one, else `broken` names the first span that does not fit                                                                                                                                                                                                                                                                                                                                                     |
+| GET `/runs/{rid}/sessions` | — | `Session`: the run as a tree of nodes, the agent each ran as and the sub-agents it spawned, with status, times, tokens, cost, calls and denials per subtree and the ids of their spans (whoever may open the run; others 404) |
+| GET `/workspaces/{wid}/sessions?agent=&status=&from=&to=&limit=&before=` | — | `SessionPage`: the workspace's runs with the same rollups, newest first (by id), across every graph the caller may open (members and above; guests 403; outsiders 404); `agent` keeps the runs that agent worked in, `status` a `RunStatus`, `from`/`to` bound `created_at` (RFC 3339; 422 when the window is the wrong way round), `limit` 1–200 (default 50), `before` continues below the previous page's `next` |
 | GET `/runs/{rid}/artifacts`                                                                                                 | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `Artifact[]`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | GET `/runs/{rid}/artifacts.zip`                                                                                             | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | zip of all artifacts                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | GET `/artifacts/{aid}/download`                                                                                             | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | file, `Content-Disposition: attachment` A quarantined artifact answers 403 with the reason until an admin releases it; `/runs/{rid}/artifacts.zip` leaves quarantined files out |
