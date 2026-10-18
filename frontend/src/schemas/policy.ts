@@ -15,6 +15,9 @@ export type Severity = z.infer<typeof severitySchema>;
 export const PII_KINDS = ['email', 'phone', 'card', 'national_id'] as const;
 export const piiKindSchema = z.enum(PII_KINDS);
 export const injectionActionSchema = z.enum(['flag', 'block']);
+/** What the evidence verifier does with an output that is not verified. */
+export const evidenceActionSchema = z.enum(['mark', 'reject']);
+export type EvidenceAction = z.infer<typeof evidenceActionSchema>;
 
 const listRuleSchema = z.object({
   allow: z.array(z.string()).nullable().default(null),
@@ -90,6 +93,14 @@ export const policyDocumentSchema = z.object({
       model_check: z.boolean().nullable().default(null),
     })
     .prefault({}),
+  /** Evidence-bound outputs: whether the verdict is acted on, the coverage a verified output needs, and what falling short means. */
+  evidence: z
+    .object({
+      required: z.boolean().nullable().default(null),
+      min_coverage: z.number().min(0).max(1).nullable().default(null),
+      action: evidenceActionSchema.nullable().default(null),
+    })
+    .prefault({}),
 });
 export type PolicyDocument = z.infer<typeof policyDocumentSchema>;
 
@@ -155,6 +166,11 @@ export const rulesSchema = z.object({
     ),
   }),
   injection: z.object({ action: injectionActionSchema, model_check: z.boolean() }),
+  evidence: z.object({
+    required: z.boolean(),
+    min_coverage: z.number().min(0).max(1),
+    action: evidenceActionSchema,
+  }),
   versions: policyVersionsSchema,
 });
 export type Rules = z.infer<typeof rulesSchema>;

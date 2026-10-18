@@ -118,6 +118,23 @@ class Sources:
         lines.extend(f"- [{s.id}] {s.title}" for s in cited)
         return "\n".join(lines) + "\n"
 
+    def with_sources(self, text: str) -> str:
+        """`text` with its `## Sources` section appended, when it cites ids and has no such
+        section yet; the text as it is otherwise."""
+        section = self.markdown_section(text)
+        if not section or _has_sources_heading(text):
+            return text
+        return text.rstrip() + "\n\n" + section
+
+
+_SOURCES_HEADING = re.compile(
+    r"^#{1,6}\s+(sources|references|citations|bibliography)\s*:?\s*$", re.I | re.M
+)
+
+
+def _has_sources_heading(text: str) -> bool:
+    return _SOURCES_HEADING.search(text) is not None
+
 
 def _excerpt(text: str, limit: int = 120) -> str:
     text = " ".join(text.split())

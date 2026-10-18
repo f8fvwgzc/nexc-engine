@@ -20,6 +20,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AskAuditPanel } from '@/features/audit/components/ask-audit-panel';
 import { alertsQuery, approvalsQuery } from '@/features/policies/api';
 import { ResolvedPolicyView } from '@/features/policies/components/resolved-policy';
+import { VERDICT_META, coveragePct } from '@/features/runs/evidence';
 import { SPAN_KIND_META } from '@/features/runs/span-kinds';
 import { orderAlerts } from '@/features/secops/alerts';
 import { AlertRow } from '@/features/secops/components/alerts-panel';
@@ -105,6 +106,77 @@ function RecentSpans({ card }: { card: AgentCard }) {
         );
       })}
     </ol>
+  );
+}
+
+/** The verdicts on the agent's last outputs: how often it cited what it was given. */
+function EvidenceSummary({ card }: { card: AgentCard }) {
+  const e = card.evidence;
+  const total = e.verified + e.partial + e.unverified;
+  return (
+    <section className="space-y-1.5" aria-label="Evidence">
+      <h3 className="text-xs font-medium text-muted-foreground">Evidence</h3>
+      {total === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          No verified output yet: the verdicts of its runs land here.
+        </p>
+      ) : (
+        <>
+          <p className="text-sm">
+            <span
+              className={cn(
+                'font-medium tabular-nums',
+                e.verified * 2 < total && 'text-destructive',
+              )}
+            >
+              {e.verified} of {total}
+            </span>
+            <span className="text-muted-foreground">
+              {' '}
+              last outputs verified
+              {e.partial > 0 && ` · ${e.partial} partial`}
+              {e.unverified > 0 && ` · ${e.unverified} unverified`}
+            </span>
+          </p>
+          <ol className="divide-y rounded-lg border text-xs" aria-label="Last verdicts">
+            {e.recent.slice(0, 8).map((output) => (
+              <li key={`${output.run_id}-${output.node_id}`}>
+                <Link
+                  to={`/app/runs/${output.run_id}`}
+                  className="flex items-center gap-2 px-3 py-1.5 outline-none hover:bg-muted/60 focus-visible:bg-muted/60"
+                >
+                  <span
+                    data-verdict={output.verdict}
+                    className={cn(
+                      'w-20 shrink-0 font-medium',
+                      output.verdict === 'verified'
+                        ? 'text-[var(--status-succeeded)]'
+                        : output.verdict === 'partial'
+                          ? 'text-[var(--status-queued)]'
+                          : 'text-destructive',
+                    )}
+                  >
+                    {VERDICT_META[output.verdict].label}
+                  </span>
+                  <span className="tabular-nums">{coveragePct(output.coverage)}%</span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-muted-foreground">
+                    run {output.run_id.slice(0, 8)}
+                  </span>
+                  {output.finished_at && (
+                    <time
+                      dateTime={output.finished_at}
+                      className="shrink-0 text-muted-foreground tabular-nums"
+                    >
+                      {formatRelative(output.finished_at)}
+                    </time>
+                  )}
+                </Link>
+              </li>
+            ))}
+          </ol>
+        </>
+      )}
+    </section>
   );
 }
 
@@ -244,6 +316,7 @@ function Overview({
         </ul>
       </section>
       {shown.runtime === 'external' && <AgentTokens agentId={shown.id} admin={admin} />}
+      {card && <EvidenceSummary card={card} />}
       {card && <Evaluation card={card} />}
     </div>
   );

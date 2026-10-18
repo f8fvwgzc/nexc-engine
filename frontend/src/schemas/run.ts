@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { dataLabelSchema } from './agent';
 import { idSchema, nullableTimestampSchema, timestampSchema } from './common';
+import { evidenceSchema } from './evidence';
 import { executorSchema, nodeStatusSchema } from './graph';
 import { policyVersionsSchema } from './policy';
 
@@ -25,6 +26,8 @@ export const nodeRunSchema = z.object({
   policy_versions: policyVersionsSchema,
   /** The classifications of the data the node was given. */
   context_labels: z.array(dataLabelSchema),
+  /** What the verifier found about the output; null until the node answered. */
+  evidence: evidenceSchema.nullable(),
 });
 export type NodeRun = z.infer<typeof nodeRunSchema>;
 

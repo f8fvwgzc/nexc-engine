@@ -7,6 +7,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use super::agent::AgentStatus;
+use super::evidence::EvidenceVerdict;
 use super::policy_document::{PolicyScope, Severity};
 use super::trace::{SpanKind, SpanStatus};
 
@@ -54,6 +55,30 @@ impl RunCounts {
             "cancelled" => self.cancelled += count,
             _ => self.active += count,
         }
+    }
+}
+
+/// Outputs by evidence verdict (`docs/AGENTSECOPS.md` §2).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, ToSchema)]
+pub struct EvidenceCounts {
+    pub verified: i64,
+    pub partial: i64,
+    pub unverified: i64,
+}
+
+impl EvidenceCounts {
+    /// Adds `count` outputs of `verdict`.
+    pub fn add(&mut self, verdict: EvidenceVerdict, count: i64) {
+        match verdict {
+            EvidenceVerdict::Verified => self.verified += count,
+            EvidenceVerdict::Partial => self.partial += count,
+            EvidenceVerdict::Unverified => self.unverified += count,
+        }
+    }
+
+    /// Outputs that are not verified.
+    pub fn not_verified(&self) -> i64 {
+        self.partial + self.unverified
     }
 }
 
@@ -133,6 +158,8 @@ pub struct SecopsOverview {
     pub alerts_open: Vec<SeverityCount>,
     /// Artifacts the DLP screen kept in and nobody released.
     pub artifacts_quarantined: i64,
+    /// Outputs that answered since midnight UTC, by evidence verdict.
+    pub evidence_today: EvidenceCounts,
     /// The five agents scoring highest, highest first; only agents scored at least once.
     pub top_risk: Vec<RiskyAgent>,
     /// The latest version at every level that has one.
@@ -183,6 +210,10 @@ pub struct SecopsSpan {
     pub tokens_out: Option<i64>,
     /// `attributes.inbound`: a tool call that is a task received over A2A.
     pub inbound: bool,
+    /// `attributes.evidence`: the verdict on an output, on a node's last model
+    /// call and on the policy decision about it.
+    #[schema(required = true)]
+    pub evidence: Option<String>,
 }
 
 /// A page of the trace explorer, newest first.
@@ -213,5 +244,10 @@ mod tests {
             (runs.total, runs.succeeded, runs.failed, runs.active),
             (5, 2, 1, 2)
         );
+        let mut evidence = EvidenceCounts::default();
+        evidence.add(EvidenceVerdict::Verified, 3);
+        evidence.add(EvidenceVerdict::Partial, 1);
+        evidence.add(EvidenceVerdict::Unverified, 2);
+        assert_eq!((evidence.verified, evidence.not_verified()), (3, 3));
     }
 }

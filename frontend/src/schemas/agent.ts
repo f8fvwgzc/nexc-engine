@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { idSchema, nullableTimestampSchema, timestampSchema } from './common';
+import { evidenceVerdictSchema } from './evidence';
 import { spanSchema } from './trace';
 
 export const AGENT_STATUSES = ['active', 'paused', 'over_budget', 'quarantined'] as const;
@@ -147,6 +148,26 @@ export const agentEvaluationSchema = z.object({
 });
 export type AgentEvaluation = z.infer<typeof agentEvaluationSchema>;
 
+/** The verdict on one of an agent's outputs (AGENTSECOPS §2). */
+export const agentOutputEvidenceSchema = z.object({
+  run_id: idSchema,
+  graph_id: idSchema,
+  node_id: idSchema,
+  verdict: evidenceVerdictSchema,
+  coverage: z.number().min(0).max(1),
+  finished_at: nullableTimestampSchema,
+});
+export type AgentOutputEvidence = z.infer<typeof agentOutputEvidenceSchema>;
+
+/** The verdicts on an agent's last outputs, newest first. */
+export const agentEvidenceSchema = z.object({
+  verified: z.number().int().nonnegative(),
+  partial: z.number().int().nonnegative(),
+  unverified: z.number().int().nonnegative(),
+  recent: z.array(agentOutputEvidenceSchema),
+});
+export type AgentEvidence = z.infer<typeof agentEvidenceSchema>;
+
 /** The agent's ID card: who answers for it, its team, what it has left and did last. */
 export const agentCardSchema = z.object({
   agent: agentSchema,
@@ -156,6 +177,8 @@ export const agentCardSchema = z.object({
   recent_spans: z.array(spanSchema),
   /** The score of an agent made from a role template; `null` otherwise. */
   evaluation: agentEvaluationSchema.nullable(),
+  /** The verdicts on the agent's last twenty outputs across the runs the caller may open. */
+  evidence: agentEvidenceSchema,
 });
 export type AgentCard = z.infer<typeof agentCardSchema>;
 

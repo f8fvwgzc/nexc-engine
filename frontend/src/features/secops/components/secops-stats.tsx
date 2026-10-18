@@ -4,6 +4,7 @@ import {
   GavelIcon,
   PackageXIcon,
   PlayIcon,
+  SearchCheckIcon,
   ShieldAlertIcon,
   SirenIcon,
   UserCheckIcon,
@@ -16,27 +17,35 @@ import { formatInteger, formatRelative } from '@/lib/format';
 import { SEVERITY_META } from '@/schemas/policy';
 import type { SecopsOverview } from '@/schemas/secops';
 
-/** The eight numbers at the top of the console. */
+/** The nine numbers at the top of the console. */
 export function SecopsStats({ overview }: { overview: SecopsOverview | undefined }) {
   if (!overview) {
     return (
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8" aria-busy>
-        {Array.from({ length: 8 }, (_, i) => (
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-9" aria-busy>
+        {Array.from({ length: 9 }, (_, i) => (
           <Skeleton key={i} className="h-[5.5rem] rounded-xl" />
         ))}
       </div>
     );
   }
-  const { agents, runs_today: runs, alerts_open, denials_today, last_seal } = overview;
+  const {
+    agents,
+    runs_today: runs,
+    alerts_open,
+    denials_today,
+    last_seal,
+    evidence_today: evidence,
+  } = overview;
   const denials = denials_today.reduce((sum, d) => sum + d.count, 0);
   const alerts = alerts_open.reduce((sum, a) => sum + a.count, 0);
+  const unverified = evidence.unverified + evidence.partial;
   const sideAgents = [
     agents.quarantined > 0 ? `${agents.quarantined} quarantined` : null,
     agents.paused > 0 ? `${agents.paused} paused` : null,
     agents.over_budget > 0 ? `${agents.over_budget} over budget` : null,
   ].filter(Boolean);
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-9">
       <StatTile
         label="Agents"
         value={formatInteger(agents.active)}
@@ -98,6 +107,21 @@ export function SecopsStats({ overview }: { overview: SecopsOverview | undefined
         value={formatInteger(overview.artifacts_quarantined)}
         icon={PackageXIcon}
         hint="kept in by the DLP screen"
+      />
+      <StatTile
+        label="Unverified today"
+        value={formatInteger(unverified)}
+        icon={SearchCheckIcon}
+        hint={
+          evidence.verified + unverified === 0
+            ? 'no output answered yet'
+            : `${evidence.verified} verified · ${evidence.partial} partial · ${evidence.unverified} unverified`
+        }
+        className={
+          unverified > 0
+            ? 'border-[color-mix(in_oklch,var(--status-queued)_45%,transparent)]'
+            : undefined
+        }
       />
       <StatTile
         label="Last seal"

@@ -72,5 +72,14 @@ export function ruleRows(resolved: ResolvedPolicy): { path: string; value: strin
   }
   rows.push({ path: 'injection.action', value: r.injection.action });
   rows.push({ path: 'injection.model_check', value: r.injection.model_check ? 'on' : 'off' });
+  rows.push({
+    path: 'evidence.required',
+    value: r.evidence.required ? 'on' : 'off (recorded only)',
+  });
+  rows.push({
+    path: 'evidence.min_coverage',
+    value: `${Math.round(r.evidence.min_coverage * 100)}% of claims cited`,
+  });
+  rows.push({ path: 'evidence.action', value: r.evidence.action });
   return rows;
 }

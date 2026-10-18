@@ -76,6 +76,14 @@ describe('trace tree', () => {
     ).toBe('turn 2 · 10 in / 3 out');
     expect(
       describeSpan(
+        span('9', {
+          kind: 'llm_call',
+          attributes: { turn: 3, evidence: 'partial', evidence_coverage: 50 },
+        }),
+      ),
+    ).toBe('turn 3 · evidence partial 50%');
+    expect(
+      describeSpan(
         span('9', { kind: 'data_read', attributes: { document_chunk_ids: ['x'], memory_ids: [] } }),
       ),
     ).toBe('1 passages · 0 memories · 0 upstream');

@@ -22,6 +22,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { graphQuery } from '@/features/graphs/api';
 import { runQuery, runTraceQuery } from '@/features/runs/api';
 import { ArtifactsList } from '@/features/runs/components/artifacts-list';
+import { EvidencePanel } from '@/features/runs/components/evidence';
 import { NodeRunsTable } from '@/features/runs/components/node-runs-table';
 import { TraceVerification } from '@/features/runs/components/trace-verification';
 import { TraceWaterfall } from '@/features/runs/components/trace-waterfall';
@@ -139,6 +140,35 @@ function RunDetail({ runId }: { runId: string }) {
         </h2>
         <NodeRunsTable graphId={run.graph_id} nodeRuns={run.node_runs} titles={titles} />
       </section>
+      {run.node_runs.some((nr) => nr.evidence) && (
+        <section className="space-y-3" aria-labelledby="evidence">
+          <h2 id="evidence" className="text-sm font-medium">
+            Evidence
+            <span className="ml-2 font-normal text-muted-foreground">
+              what each output cites of what its node was given
+            </span>
+          </h2>
+          <ul className="divide-y rounded-xl border">
+            {run.node_runs
+              .filter((nr) => nr.evidence)
+              .map((nr) => (
+                <li key={nr.node_id} className="space-y-2 px-3 py-2">
+                  <p className="text-sm font-medium">
+                    {titles.get(nr.node_id) ?? nr.node_id.slice(0, 8)}
+                  </p>
+                  {nr.evidence && (
+                    <EvidencePanel
+                      evidence={nr.evidence}
+                      graphId={run.graph_id}
+                      runId={run.id}
+                      titles={titles}
+                    />
+                  )}
+                </li>
+              ))}
+          </ul>
+        </section>
+      )}
       <section className="space-y-3" aria-labelledby="trace">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 id="trace" className="flex items-center gap-2 text-sm font-medium">

@@ -14,7 +14,7 @@ use uuid::Uuid;
 use super::workspaces::audit;
 use crate::app::AppState;
 use crate::domain::AppError;
-use crate::domain::agent::{AGENT_NAME_MAX, Agent, AgentCard, AgentStatus};
+use crate::domain::agent::{AGENT_NAME_MAX, Agent, AgentCard, AgentEvidence, AgentStatus};
 use crate::domain::agent_template::{
     self, ANSWER_MAX_TOKENS, AgentEvaluation, AgentTemplate, AgentTemplateSpec, DEMO_RUNTIME_MODEL,
     EvaluatedQuestion, excerpt,
@@ -330,6 +330,7 @@ pub async fn instantiate(
             team,
             recent_spans: Vec::new(),
             evaluation,
+            evidence: AgentEvidence::default(),
         }),
     ))
 }

@@ -6,12 +6,13 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from ..approvals import ApprovalRegistry, ApprovalTimeout
 from ..config import Settings
 from ..control import RunControl
+from ..evidence import Sources
 from ..injection import confirm_with_model, screen, withheld_notice
 from ..llm import LLMProvider, ToolCall, ToolResult, Turn
 from ..policy import AgentToken, decide_spawn
@@ -92,6 +93,8 @@ class RunScope:
     control: RunControl | None = None
     # Tools the backend performs for the agents: `(name, description, input schema)`.
     gateway_tools: tuple[tuple[str, str, dict[str, Any]], ...] = ()
+    # What the node was given, by citation id, with a title each.
+    sources: Sources = field(default_factory=Sources)
 
 
 class Agent:
@@ -152,6 +155,7 @@ class Agent:
             principal=self.record.principal,
             approvals=scope.approvals,
             control=scope.control,
+            sources=scope.sources,
         )
         self._ctx = ctx
         last_text = ""

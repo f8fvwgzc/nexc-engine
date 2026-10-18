@@ -16,6 +16,7 @@ from .api.schemas import ExecuteRequest
 from .approvals import ApprovalRegistry
 from .config import Settings
 from .control import RunControl
+from .evidence import Sources
 from .llm import DemoBrief, LLMError, LLMProvider, build_provider, redact
 from .policy import AgentToken, TokenError, decide_model_with, decide_tool_with, verify_token
 from .prompts import Upstream, build_task_prompt
@@ -168,6 +169,11 @@ async def _run(
         gateway_tools=tuple((t.name, t.description, t.input_schema) for t in request.gateway_tools)
         if control is not None
         else (),
+        sources=Sources.from_context(
+            upstream=[(u.node_id, u.title) for u in request.context.upstream],
+            memories=list(request.context.memories),
+            documents=list(request.context.documents),
+        ),
     )
     spec = request.agent
     # The policy's ceiling per run caps the budget whatever the agent has left.
@@ -200,7 +206,9 @@ async def _run(
         memories=request.context.memories,
         documents=request.context.documents,
     )
-    output = await root.run(prompt)
+    # An answer that cites ids names them (`finish` does this; an agent that gave up without
+    # finishing is covered here).
+    output = scope.sources.with_sources(await root.run(prompt))
     _ensure_document(request, scope.workspace, output, events, token)
 
     artifacts, warnings = collect_artifacts(

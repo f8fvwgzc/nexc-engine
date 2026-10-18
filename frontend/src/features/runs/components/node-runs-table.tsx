@@ -14,6 +14,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { durationBetween, formatDuration, formatTokens } from '@/lib/format';
 import type { NodeRun } from '@/schemas/run';
 
+import { EvidenceBadge } from './evidence';
+
 interface NodeRunsTableProps {
   graphId: string;
   nodeRuns: NodeRun[];
@@ -32,6 +34,7 @@ export function NodeRunsTable({ graphId, nodeRuns, titles }: NodeRunsTableProps)
             <TableHead>Executor</TableHead>
             <TableHead className="text-right">Tokens in / out</TableHead>
             <TableHead className="text-right">Duration</TableHead>
+            <TableHead>Evidence</TableHead>
             <TableHead>Error</TableHead>
           </TableRow>
         </TableHeader>
@@ -57,6 +60,13 @@ export function NodeRunsTable({ graphId, nodeRuns, titles }: NodeRunsTableProps)
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
                   {duration === null ? '—' : formatDuration(duration)}
+                </TableCell>
+                <TableCell>
+                  {nr.evidence ? (
+                    <EvidenceBadge evidence={nr.evidence} />
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
                 </TableCell>
                 <TableCell className="max-w-64">
                   {nr.error ? (

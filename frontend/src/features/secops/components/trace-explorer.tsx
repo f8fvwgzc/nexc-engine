@@ -23,6 +23,7 @@ import { qk } from '@/lib/query-keys';
 import { cn } from '@/lib/utils';
 import { displayPrincipal, type Agent } from '@/schemas/agent';
 import {
+  DECISION_LABEL,
   DECISIONS,
   INBOUND_KIND,
   type Decision,
@@ -44,6 +45,7 @@ function What({ span }: { span: SecopsSpan }) {
   if (span.decision)
     parts.push(span.decision === 'require_approval' ? 'waits for approval' : span.decision);
   if (span.rule) parts.push(span.rule);
+  if (span.evidence) parts.push(`evidence ${span.evidence}`);
   return <span className="truncate text-muted-foreground">{parts.join(' · ')}</span>;
 }
 
@@ -126,7 +128,7 @@ export function TraceExplorer({ workspaceId, agents }: TraceExplorerProps) {
             <NativeSelectOption value="">any</NativeSelectOption>
             {DECISIONS.map((d) => (
               <NativeSelectOption key={d} value={d}>
-                {d.replace('_', ' ')}
+                {DECISION_LABEL[d]}
               </NativeSelectOption>
             ))}
           </NativeSelect>

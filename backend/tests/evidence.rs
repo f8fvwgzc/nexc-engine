@@ -329,3 +329,155 @@ async fn a_mark_policy_records_the_verdict_and_lets_the_node_succeed(pool: PgPoo
     assert_eq!(resolved["origins"]["evidence.required"], "agent");
     assert_eq!(resolved["origins"]["evidence.min_coverage"], "agent");
 }
+
+const HANDBOOK: &str = "# Warehouse handbook\n\n## Customs\n\nGoods under 150 EUR are exempt from duty. \
+Invoices for Rotterdam name the customs reference on the first page.\n\n## Returns\n\nReturns go back \
+within thirty days with the original invoice.\n";
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn the_console_the_card_and_the_chips_show_the_verdicts(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let (token, _) = app.register("owner@example.com").await;
+    let (guest, _) = app.register("guest@example.com").await;
+    let wid = workspace(&app, &token).await;
+    let (status, body) = call(
+        &app,
+        Method::POST,
+        &format!("/workspaces/{wid}/members"),
+        &token,
+        Some(json!({"email": "guest@example.com", "role": "guest"})),
+    )
+    .await;
+    assert!(status.is_success(), "{body}");
+    let agent_id = analyst(&app, &token).await;
+    let (gid, research, draft) = graph(&app, &token).await;
+    let finished = run(&app, &token, &gid).await;
+    assert_eq!(finished["status"], "succeeded", "{finished}");
+
+    // The overview counts the day's outputs by verdict.
+    let (status, overview) = call(
+        &app,
+        Method::GET,
+        &format!("/workspaces/{wid}/secops/overview"),
+        &token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{overview}");
+    assert_eq!(
+        overview["evidence_today"],
+        json!({"verified": 0, "partial": 0, "unverified": 2})
+    );
+    // The explorer narrows to the spans carrying a verdict and says it.
+    let (status, page) = call(
+        &app,
+        Method::GET,
+        &format!("/workspaces/{wid}/secops/spans?decision=evidence"),
+        &token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let spans = page["spans"].as_array().unwrap();
+    assert_eq!(spans.len(), 2, "{page}");
+    assert!(
+        spans
+            .iter()
+            .all(|s| s["kind"] == "llm_call" && s["evidence"] == "unverified")
+    );
+    let (status, page) = call(
+        &app,
+        Method::GET,
+        &format!("/workspaces/{wid}/secops/spans?decision=deny"),
+        &token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(page["spans"].as_array().unwrap().len(), 0);
+    let (status, _) = call(
+        &app,
+        Method::GET,
+        &format!("/workspaces/{wid}/secops/spans?decision=evidences"),
+        &token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    // The card sums up the agent's last outputs.
+    let (status, card) = call(
+        &app,
+        Method::GET,
+        &format!("/agents/{agent_id}"),
+        &token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{card}");
+    let evidence = &card["evidence"];
+    assert_eq!(
+        (
+            evidence["verified"].clone(),
+            evidence["partial"].clone(),
+            evidence["unverified"].clone()
+        ),
+        (json!(0), json!(0), json!(2))
+    );
+    let recent = evidence["recent"].as_array().unwrap();
+    assert_eq!(recent.len(), 2);
+    assert_eq!(recent[0]["graph_id"], gid);
+    assert!(
+        recent.iter().any(|o| o["node_id"] == research)
+            && recent.iter().any(|o| o["node_id"] == draft)
+    );
+    assert_eq!(recent[0]["verdict"], "unverified");
+    assert_eq!(recent[0]["coverage"], 0.0);
+    assert!(recent[0]["finished_at"].is_string());
+
+    // A `[doc:<chunk id>]` chip opens the passage it points at.
+    let upload = format!("/api/v1/workspaces/{wid}/documents?name=handbook.md");
+    let r = app.send_bytes(&upload, &token, HANDBOOK.into()).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    nexc::engine::knowledge::work(&app.state).await.unwrap();
+    let (_, found) = call(
+        &app,
+        Method::GET,
+        &format!("/workspaces/{wid}/knowledge/search?q=customs%20reference%20Rotterdam"),
+        &token,
+        None,
+    )
+    .await;
+    let chunk = found[0]["chunk_id"].as_str().unwrap().to_owned();
+    let passages = format!("/workspaces/{wid}/knowledge/passages");
+    let (status, passage) = call(
+        &app,
+        Method::GET,
+        &format!("{passages}/{chunk}"),
+        &token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{passage}");
+    assert_eq!(passage["chunk_id"], chunk);
+    assert_eq!(passage["document_name"], "handbook.md");
+    assert!(passage["content"].as_str().unwrap().contains("Rotterdam"));
+    assert_eq!(passage["score"], 1.0);
+    let (status, _) = call(
+        &app,
+        Method::GET,
+        &format!("{passages}/{}", uuid::Uuid::now_v7()),
+        &token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = call(
+        &app,
+        Method::GET,
+        &format!("{passages}/{chunk}"),
+        &guest,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}

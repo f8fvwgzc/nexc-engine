@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { BrainIcon, ChevronLeftIcon, ChevronRightIcon, SearchIcon } from 'lucide-react';
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
 import { EmptyState } from '@/components/custom-ui/empty-state';
@@ -12,7 +13,12 @@ import { Button } from '@/components/ui/button';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
 import { Spinner } from '@/components/ui/spinner';
 import { graphsQuery } from '@/features/graphs/api';
-import { memoriesQuery, memoryTopicsQuery, rebuildMemoryTopics } from '@/features/memory/api';
+import {
+  memoriesQuery,
+  memoryQuery,
+  memoryTopicsQuery,
+  rebuildMemoryTopics,
+} from '@/features/memory/api';
 import { MemoryDialog } from '@/features/memory/components/memory-dialog';
 import { MemoryList } from '@/features/memory/components/memory-list';
 import { useDeleteMemory } from '@/features/memory/hooks/use-delete-memory';
@@ -32,6 +38,18 @@ export default function MemoryPage() {
   const [graphId, setGraphId] = useState(ALL_GRAPHS);
   const [deleting, setDeleting] = useState<Memory | null>(null);
   const [opened, setOpened] = useState<Memory | null>(null);
+  // A citation chip opens one memory by its address (`?memory=<id>`).
+  const [params, setParams] = useSearchParams();
+  const wantedId = params.get('memory') ?? '';
+  const { data: wanted } = useQuery({
+    ...memoryQuery(wantedId),
+    enabled: wantedId.length > 0 && opened === null,
+  });
+  const closeWanted = () => {
+    const next = new URLSearchParams(params);
+    next.delete('memory');
+    setParams(next, { replace: true });
+  };
   const [page, setPage] = useState(0);
   const [topicId, setTopicId] = useState<string | null>(null);
   const debouncedQ = useDebouncedValue(q.trim(), 300);
@@ -192,6 +210,18 @@ export default function MemoryPage() {
           graphName={opened.graph_id ? graphNames.get(opened.graph_id) : undefined}
           onDelete={() => setDeleting(opened)}
           onClose={() => setOpened(null)}
+        />
+      )}
+      {!opened && wanted && (
+        <MemoryDialog
+          key={`wanted-${wanted.id}`}
+          preview={wanted}
+          graphName={wanted.graph_id ? graphNames.get(wanted.graph_id) : undefined}
+          onDelete={() => {
+            setDeleting(wanted);
+            closeWanted();
+          }}
+          onClose={closeWanted}
         />
       )}
       <ConfirmDialog

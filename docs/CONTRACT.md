@@ -794,6 +794,11 @@ interface AgentCard {
   budget_left: number | null; // null without a budget
   recent_spans: Span[]; // its last 20 spans across the runs the caller may open
   evaluation: AgentEvaluation | null; // the score of an agent made from a role template
+  evidence: AgentEvidence; // the verdicts on its last 20 outputs across the runs the caller may open
+}
+interface AgentEvidence {
+  verified: number; partial: number; unverified: number; // how many of `recent` got each verdict
+  recent: { run_id: string; graph_id: string; node_id: string; verdict: EvidenceVerdict; coverage: number; finished_at: string | null }[]; // newest first
 }
 
 // Role templates (AgentSecOps §4.6): a role with its capabilities, its own policy, the knowledge
@@ -834,6 +839,7 @@ interface SecopsOverview {
   approvals_open: number; // pending
   alerts_open: { severity: Severity; count: number }[]; // unacknowledged, worst first
   artifacts_quarantined: number; // kept in and not released
+  evidence_today: { verified: number; partial: number; unverified: number }; // outputs that answered since midnight UTC, by evidence verdict
   top_risk: { agent_id: string; name: string; principal_id: string; status: AgentStatus; risk_score: number; risk_reasons: string[]; risk_updated_at: string | null }[]; // five, highest first
   policy_versions: { scope: PolicyScope; scope_id: string | null; version: number; created_at: string }[]; // the latest at every level that has one
   last_seal: { run_id: string; graph_id: string; trace_hash: string; sealed_at: string | null } | null;
@@ -851,6 +857,7 @@ interface SecopsSpan { // a span as the trace explorer lists it: the ids and the
   model: string | null; // `attributes.model`
   tokens_in: number | null; tokens_out: number | null;
   inbound: boolean; // `attributes.inbound`: a tool call that is a task received over A2A (§10)
+  evidence: string | null; // `attributes.evidence`: the verdict on an output (a node's last model call, and the policy decision about it)
 }
 
 // Versioned policies (AgentSecOps phase 2). A document only says what it sets; what it leaves out
@@ -1049,7 +1056,7 @@ Everything else needs a bearer token: an access token, or for the A2A endpoint (
 | POST `/workspaces/{wid}/alert-destinations/{id}/test` | — | `DestinationTest` (admins): sends a `test` event at once and says what the destination answered; logged, audited, not counted toward switching the destination off |
 | GET `/workspaces/{wid}/alert-destinations/{id}/deliveries?limit=` | — | `AlertDelivery[]` newest first, `limit` 1–200 (default 50) (admins): the delivery log, test events included |
 | GET `/workspaces/{wid}/secops/overview` | — | `SecopsOverview` (members and above; guests 403; outsiders 404): what the console's top of page shows, in one call |
-| GET `/workspaces/{wid}/secops/spans?agent=&kind=&tool=&host=&run=&from=&to=&decision=&limit=&before=` | — | `{spans: SecopsSpan[], next: string \| null}` newest first (by id) across every run the caller may open (members and above); `kind` is a `SpanKind` or `inbound` (the tool calls that are tasks received over A2A, §10), `decision` one of `allow`, `deny`, `require_approval`, `alert`, `tool` matches `attributes.tool` or the name of a tool call, `host` matches `attributes.egress_host`, `from`/`to` bound `started_at` (RFC 3339, `from` before `to`), `limit` 1–500 (default 100), `before` continues below the previous page's `next`. Unknown kinds, decisions, ids and times are 400 or 422 |
+| GET `/workspaces/{wid}/secops/spans?agent=&kind=&tool=&host=&run=&from=&to=&decision=&limit=&before=` | — | `{spans: SecopsSpan[], next: string \| null}` newest first (by id) across every run the caller may open (members and above); `kind` is a `SpanKind` or `inbound` (the tool calls that are tasks received over A2A, §10), `decision` one of `allow`, `deny`, `require_approval`, `alert`, or `evidence` (the spans carrying an evidence verdict: a node's last model call and the `evidence` policy decision), `tool` matches `attributes.tool` or the name of a tool call, `host` matches `attributes.egress_host`, `from`/`to` bound `started_at` (RFC 3339, `from` before `to`), `limit` 1–500 (default 100), `before` continues below the previous page's `next`. Unknown kinds, decisions, ids and times are 400 or 422 |
 | GET `/workspaces/{wid}/secops/events` | — | `text/event-stream` (members and above; bearer authenticated, no ticket: read it with `fetch`): every `trace.span` and `alert` event (§6 frames) of every graph the caller may open, as one feed, with `retry: 3000` first and a `heartbeat` every 15 s; graphs created while it is open are picked up within ten seconds. Ends when the account's sessions are ended |
 | POST `/artifacts/{aid}/release` | — | `Artifact` (admins of the run's workspace; members 403; others 404; 409 when not quarantined): a quarantined artifact can be downloaded again. Audited as `artifact_released` |
 | POST `/approvals/{id}/approve`, POST `/approvals/{id}/deny` | `{reason?}` (a reason is required to deny) | `Approval` (an approver the policy names, or a workspace admin; other members 403; outsiders 404; 409 once decided). The decision reaches the runtime holding the call within about a second, is recorded as an `approval` span of the run (`decision`, `decided_by`, `decided_by_name`, `reason`, `request_span_id`, `waited_ms`) and audited as `approval_granted` / `approval_denied` (subject: the principal; detail: the tool, the run and the reason); the approvers' inbox entries are marked read |
@@ -1069,6 +1076,7 @@ Everything else needs a bearer token: an access token, or for the A2A endpoint (
 | POST `/workspaces/{wid}/documents?name=`                                                                                    | the file's bytes, `application/octet-stream`, at most 50 MiB                                                                                                                                                                                                                                                                                                                                                                                                                                                        | 201 `Document` (`pending`; parsed, split into passages and embedded in the background), or 200 with the existing document when the workspace already has these bytes                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | GET/PATCH/DELETE `/workspaces/{wid}/documents/{did}` | PATCH (admins) `{label: DataLabel}` | `Document` / `Document` / 204 (delete: whoever uploaded it, or an admin). Classifying is audited as `classification_changed`; only agents cleared for the label are given the document's passages |
 | GET `/workspaces/{wid}/knowledge/search?q=&topic_id=&limit=`                                                                | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `Passage[]` best first (1-20, default 8): `{chunk_id, document_id, document_name, page\|null, section_path, kind: text\|table, content, topic_id\|null, score}`. Candidates are keyword matches (the query's rarest words) plus, when the database has pgvector, the query's nearest neighbours (at least 0.3 similar); they are ordered by fusing keyword rank with embedding similarity                                                                                                                                                                                                       |
+| GET `/workspaces/{wid}/knowledge/passages/{cid}` | — | `Passage` (everyone but guests; outsiders and unknown or not-ready passages 404): one passage by its chunk id, what a `[doc:<chunk id>]` citation points at, with `score` 1 |
 | GET `/workspaces/{wid}/knowledge/topics` | — | `Topic[]` largest first: `{id, label, terms, chunk_count, classification: DataLabel}`. Found without supervision: passages are clustered by their embeddings and each cluster is named by the words that set it apart. They appear once a workspace has about twenty passages; new passages join the nearest topic |
 | PATCH `/workspaces/{wid}/knowledge/topics/{tid}` | (admins) `{classification: DataLabel}` | `Topic`. Every passage under the topic takes the stricter of its document's label and this; audited as `classification_changed` |
 | POST `/workspaces/{wid}/knowledge/topics/rebuild`                                                                           | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | 202; finds the topics afresh in the background (admins and owners)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
@@ -1319,6 +1327,13 @@ The stream always ends with exactly one `result` or `error`. Artifact paths are 
 
 Every `policy` span of the backend also carries `policy_versions` (`PolicyVersions`, §4), as does
 the `data_read` span of a node (with `labels`, what the node was given).
+
+**Sources.** A deliverable keeps the ids it cites readable: `finish` appends a `## Sources` section
+to the final answer naming each cited id with its title (the passage's source, the memory's first
+words, the upstream node's title; an id the agent was never given is named as such), `write_file`
+does the same for a `.md` file, and `make_docx` adds a `Sources` section to the document. None is
+added when the text cites nothing or already has such a section. The backend's verifier does not
+count the section's lines as claims.
 
 **DLP on the way out.** Every artifact a node delivers is stored and then screened: its text
 (plain text as it is, the words of a `.docx`, `.xlsx` or `.pptx`; other binaries are not read) is

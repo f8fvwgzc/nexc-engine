@@ -22,6 +22,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   memory and node ids it already listed. Tests: the ids are rendered in both prompts and never
   leak into the upstream titles the demo provider reads back (`backend/src/domain/prompt.rs`,
   `agent-runtime/tests/test_prompts.py`).
+- Evidence on every surface: the run page's node table shows each output's verdict as a badge
+  with its coverage (hover for the counts), and an **Evidence** section lists per node what the
+  output cites as chips, each opening what it points at (a document passage in a dialog on the
+  Knowledge page, `?passage=<chunk id>`, read from the new `GET
+  /workspaces/{wid}/knowledge/passages/{cid}`; a memory on the Memory page, `?memory=<id>`;
+  an upstream node's panel on the canvas, `?node=<id>`; the audit page for a fact), with the
+  ids the node was never given crossed out and named. The node output view on the canvas
+  shows the verdict and the chips read off the output itself, live. The agent card's Overview
+  gets an **Evidence** section (`AgentCard.evidence`: how many of its last twenty outputs were
+  verified, partial or unverified, and the list, each opening its run). The AgentSecOps
+  overview counts the day's outputs by verdict (`SecopsOverview.evidence_today`; the stat row
+  shows **Unverified today**), the trace explorer's Decision filter gains **evidence verdict**
+  (`decision=evidence`: the spans carrying one, a node's last model call and the policy
+  decision about its output), its rows and the waterfall say the verdict, and the resolved
+  policy view lists the three evidence rules. Deliverables keep their citations readable:
+  the runtime's `finish` appends a `## Sources` section naming every cited id with its title
+  (the passage's source, the memory's first words, the upstream node's title), `write_file`
+  does the same for a `.md` file and `make_docx` adds a `Sources` section to the document
+  (`docs/CONTRACT.md` §8); the verifier does not count those lines as claims. Tests: the chips
+  parse ids as the backend does and link where they should, the badge shows the verdict and
+  the coverage, the unknown ids are listed (`frontend/src/features/runs/components/evidence.test.tsx`);
+  the runtime's Sources sections on the answer, a Markdown file and a `.docx`
+  (`agent-runtime/tests/test_evidence.py`); the overview counts, the explorer filter, the card
+  and the passage endpoint (`backend/tests/evidence.rs`).
 - The evidence verifier (`docs/AGENTSECOPS.md` §2; `docs/CONTRACT.md` §4): once a node
   answered, the backend finds the citations in its output and its Markdown artifacts (an id
   inside a code block or a code span is not a citation; a bracket holding anything but ids,

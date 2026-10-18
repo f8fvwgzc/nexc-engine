@@ -250,6 +250,7 @@ fn v1_routes() -> OpenApiRouter<AppState> {
             knowledge::delete
         ))
         .routes(routes!(knowledge::search))
+        .routes(routes!(knowledge::passage))
         .routes(routes!(knowledge::topics))
         .routes(routes!(knowledge::set_topic_classification))
         .routes(routes!(knowledge::rebuild_topics))

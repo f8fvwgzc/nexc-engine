@@ -69,6 +69,19 @@ export const knowledgeSearchQuery = (workspaceId: string, q: string, topicId?: s
     staleTime: 0,
   });
 
+/** One passage by its chunk id: what a `[doc:…]` citation points at. */
+export const passageQuery = (workspaceId: string, chunkId: string) =>
+  queryOptions({
+    queryKey: qk.knowledge.passage(workspaceId, chunkId),
+    queryFn: ({ signal }) =>
+      apiRequest(
+        `/workspaces/${workspaceId}/knowledge/passages/${encodeURIComponent(chunkId)}`,
+        passageSchema,
+        { signal },
+      ),
+    enabled: chunkId.length > 0,
+  });
+
 /** The workspace's topics, largest first. */
 export const topicsQuery = (workspaceId: string) =>
   queryOptions({

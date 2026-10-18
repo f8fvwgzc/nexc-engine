@@ -8,6 +8,7 @@ use sqlx::{FromRow, PgExecutor, Row};
 use uuid::Uuid;
 
 use super::enum_col;
+use crate::domain::agent::AgentOutputEvidence;
 use crate::domain::capabilities::DataLabel;
 use crate::domain::graph::{Executor, NodeStatus};
 use crate::domain::policy::PolicyVersions;
@@ -472,6 +473,46 @@ pub async fn context_labels_of(
     .fetch_all(db)
     .await?;
     Ok(labels.iter().filter_map(|l| l.parse().ok()).collect())
+}
+
+/// The verdicts on an agent's last `limit` outputs across the graphs `user`
+/// may open, newest first.
+pub async fn evidence_of_agent(
+    db: impl PgExecutor<'_>,
+    user: Uuid,
+    agent_id: Uuid,
+    limit: i64,
+) -> Result<Vec<AgentOutputEvidence>, sqlx::Error> {
+    let rows = sqlx::query(concat!(
+        "SELECT nr.run_id, g.id AS graph_id, nr.node_id, nr.evidence->>'verdict' AS verdict,
+                (nr.evidence->>'coverage')::float8 AS coverage, nr.finished_at
+         FROM node_runs nr JOIN runs r ON r.id = nr.run_id JOIN graphs g ON g.id = r.graph_id
+         WHERE nr.agent_id = $1 AND nr.evidence IS NOT NULL AND ",
+        graph_access!("g", "$2"),
+        " ORDER BY nr.finished_at DESC NULLS LAST, nr.run_id DESC LIMIT $3"
+    ))
+    .bind(agent_id)
+    .bind(user)
+    .bind(limit)
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .iter()
+        .filter_map(|row| {
+            let verdict = row.try_get::<String, _>("verdict").ok()?.parse().ok()?;
+            Some(AgentOutputEvidence {
+                run_id: row.try_get("run_id").ok()?,
+                graph_id: row.try_get("graph_id").ok()?,
+                node_id: row.try_get("node_id").ok()?,
+                verdict,
+                coverage: row
+                    .try_get::<Option<f64>, _>("coverage")
+                    .ok()?
+                    .unwrap_or(0.0),
+                finished_at: row.try_get("finished_at").ok()?,
+            })
+        })
+        .collect())
 }
 
 /// Final outcome of one node.

@@ -1,5 +1,6 @@
 import { useQuery, useSuspenseQuery } from '@tanstack/react-query';
 import { lazy, Suspense, useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
 import { OntologyContext } from '@/components/custom-ui/node-kind-meta';
@@ -51,6 +52,13 @@ export function GraphWorkspace({ graphId }: { graphId: string }) {
   const [showSuggestions, setShowSuggestions] = useState(false);
 
   useLayoutEffect(() => useGraphStore.getState().enterGraph(graphId), [graphId]);
+  // A citation chip opens the canvas at one node (`?node=<id>`): its panel shows its output.
+  const [params] = useSearchParams();
+  const wantedNode = params.get('node');
+  const hasWanted = wantedNode !== null && graph.nodes.some((n) => n.id === wantedNode);
+  useLayoutEffect(() => {
+    if (hasWanted && wantedNode) useGraphStore.getState().selectNode(wantedNode);
+  }, [graphId, hasWanted, wantedNode]);
   useHydrateLatestRun(graphId);
   const sse = useGraphEvents(graphId);
   const socket = useGraphSocket(graphId);
