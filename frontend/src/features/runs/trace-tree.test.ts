@@ -84,6 +84,21 @@ describe('trace tree', () => {
     ).toBe('turn 3 · evidence partial 50%');
     expect(
       describeSpan(
+        span('9', {
+          kind: 'policy',
+          name: 'evidence',
+          attributes: {
+            decision: 'alert',
+            rule: 'evidence.min_coverage',
+            reason: '1 of 2 claims cite what the node was given (50%, 80% required)',
+            evidence: 'partial',
+            evidence_coverage: 50,
+          },
+        }),
+      ),
+    ).toBe('alert · evidence.min_coverage · evidence partial 50%');
+    expect(
+      describeSpan(
         span('9', { kind: 'data_read', attributes: { document_chunk_ids: ['x'], memory_ids: [] } }),
       ),
     ).toBe('1 passages · 0 memories · 0 upstream');

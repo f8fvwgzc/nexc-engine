@@ -83,7 +83,8 @@ async fn run(ctx: &ExecContext) -> Result<ExecOutput, ExecError> {
     match &streamed {
         Ok(stop) => {
             span.attributes["stop_reason"] = json!(stop_name(*stop));
-            // The verdict on the output rides on the call that produced it.
+            // The verdict on the output also rides on the one call that produced
+            // it; the scheduler records it as the node's `evidence` policy span.
             let evidence = evidence::assess(
                 &[out.output.as_str()],
                 &ctx.given,

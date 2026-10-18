@@ -318,14 +318,15 @@ pub struct SpanFilter<'a> {
     pub run_id: Option<Uuid>,
     pub from: Option<DateTime<Utc>>,
     pub to: Option<DateTime<Utc>>,
-    /// A decision of a policy or approval span, or `evidence`: the spans that
-    /// carry an evidence verdict.
+    /// A decision of a policy or approval span, or `evidence`: the `policy`
+    /// spans named `evidence`, the verdict on each node's output.
     pub decision: Option<&'a str>,
     /// Only spans whose id is below this one (the `next` of the previous page).
     pub before: Option<Uuid>,
 }
 
-/// The pseudo-decision of the explorer: spans carrying an evidence verdict.
+/// The pseudo-decision of the explorer: the `evidence` policy spans, one per
+/// node output, whatever their decision.
 pub const EVIDENCE_DECISION: &str = "evidence";
 
 fn text(attributes: &serde_json::Value, key: &str) -> Option<String> {
@@ -359,7 +360,7 @@ pub async fn search_spans(
            AND ($8::timestamptz IS NULL OR s.started_at >= $8)
            AND ($9::timestamptz IS NULL OR s.started_at < $9)
            AND ($10::text IS NULL OR s.attributes->>'decision' = $10
-                OR ($10 = 'evidence' AND jsonb_exists(s.attributes, 'evidence')))
+                OR ($10 = 'evidence' AND s.kind = 'policy' AND s.name = 'evidence'))
            AND ($11::uuid IS NULL OR s.id < $11)
            AND (NOT $13::bool OR s.attributes->>'inbound' = 'true')
          ORDER BY s.id DESC LIMIT $12"

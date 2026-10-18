@@ -153,7 +153,11 @@ export function describeSpan(span: Span): string {
         ? (a.withheld_document_chunk_ids as unknown[]).length +
           (Array.isArray(a.withheld_memory_ids) ? (a.withheld_memory_ids as unknown[]).length : 0)
         : 0;
-      const what = withheld > 0 ? `${withheld} withheld` : text('reason');
+      // The `evidence` span says the verdict on the node's output and its coverage.
+      const verdict = text('evidence');
+      const coverage = num('evidence_coverage');
+      let what = withheld > 0 ? `${withheld} withheld` : text('reason');
+      if (verdict) what = `evidence ${verdict}${coverage === null ? '' : ` ${coverage}%`}`;
       const decision =
         text('decision') === 'require_approval' ? 'waits for approval' : text('decision');
       return [decision, text('rule'), what].filter(Boolean).join(' · ');

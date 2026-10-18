@@ -138,8 +138,8 @@ pub struct SpanQuery {
     /// Only spans started before this time.
     pub to: Option<DateTime<Utc>>,
     /// Only policy and approval spans with this decision (`allow`, `deny`, `require_approval`,
-    /// `alert`), or `evidence`: the spans carrying an evidence verdict (a node's last model
-    /// call and the policy decision about its output).
+    /// `alert`), or `evidence`: the `policy` spans named `evidence`, the verdict on each
+    /// node's output, whatever was decided on it.
     pub decision: Option<String>,
     /// Spans per page, 1–500 (default 100).
     pub limit: Option<i64>,

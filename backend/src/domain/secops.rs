@@ -210,8 +210,8 @@ pub struct SecopsSpan {
     pub tokens_out: Option<i64>,
     /// `attributes.inbound`: a tool call that is a task received over A2A.
     pub inbound: bool,
-    /// `attributes.evidence`: the verdict on an output, on a node's last model
-    /// call and on the policy decision about it.
+    /// `attributes.evidence`: the verdict on an output, on the node's `evidence`
+    /// policy span (and on the built-in executor's one model call).
     #[schema(required = true)]
     pub evidence: Option<String>,
 }

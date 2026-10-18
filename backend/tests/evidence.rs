@@ -1,6 +1,7 @@
 //! Evidence-bound outputs (`docs/AGENTSECOPS.md` §2): every node's output is
 //! verified against what the node was given, the verdict is stored on the
-//! node run and rides on its last `llm_call` span, and the policy's
+//! node run and recorded as the node's own `policy` span named `evidence`
+//! (the built-in executor's one `llm_call` carries it too), and the policy's
 //! `evidence` rule decides what an unverified output means for the node.
 #![forbid(unsafe_code)]
 
@@ -132,20 +133,38 @@ async fn every_output_gets_a_verdict_and_the_default_policy_only_records_it(pool
     assert_eq!(second["evidence"]["unknown"], json!([]));
     assert_eq!(second["evidence"]["min_coverage"], 0.8);
     assert_eq!(second["error"], Value::Null);
-    // The verdict rides on the last model call; no policy decided anything.
+    // The verdict is each node's own `evidence` policy span: recorded as an alert
+    // since nothing is required, the node untouched. The built-in executor's one
+    // call carries it too.
     let rid = finished["id"].as_str().unwrap();
     let spans = spans_of(&app, &token, rid).await;
+    let verdicts: Vec<&Value> = spans
+        .iter()
+        .filter(|s| s["kind"] == "policy" && s["name"] == "evidence")
+        .collect();
+    assert_eq!(verdicts.len(), 2, "one per node: {spans:?}");
+    for verdict in &verdicts {
+        let a = &verdict["attributes"];
+        assert_eq!(a["decision"], "alert", "{verdict}");
+        assert_eq!(a["rule"], "evidence.required");
+        assert_eq!(a["action"], "evidence");
+        assert_eq!(a["evidence_required"], false);
+        assert_eq!(a["evidence_action"], "mark");
+        assert_eq!(a["evidence"], "unverified");
+        assert_eq!(a["evidence_coverage"], 0);
+        assert!(a["evidence_cited_ids"].is_array());
+        assert_eq!(verdict["status"], "ok");
+    }
+    assert!(
+        verdicts.iter().any(|s| s["node_id"] == research)
+            && verdicts.iter().any(|s| s["node_id"] == draft)
+    );
     let calls: Vec<&Value> = spans.iter().filter(|s| s["kind"] == "llm_call").collect();
     assert_eq!(calls.len(), 2);
     for call in &calls {
         assert_eq!(call["attributes"]["evidence"], "unverified", "{call}");
         assert_eq!(call["attributes"]["evidence_coverage"], 0);
-        assert!(call["attributes"]["evidence_cited_ids"].is_array());
     }
-    assert!(
-        !spans.iter().any(|s| s["name"] == "evidence"),
-        "nothing required: {spans:?}"
-    );
     let read = spans
         .iter()
         .find(|s| s["kind"] == "data_read" && s["node_id"] == draft)
@@ -223,18 +242,21 @@ async fn a_reject_policy_fails_the_node_with_the_verdict_as_the_reason(pool: PgP
         .unwrap();
     assert_eq!(node["output"], Value::Null, "{node}");
     assert_eq!(node["status"], "failed");
-    // The decision is a policy span named `evidence`, denied by `evidence.required`.
+    // The decision is the one policy span named `evidence`, denied by `evidence.required`.
     let rid = finished["id"].as_str().unwrap();
     let spans = spans_of(&app, &token, rid).await;
-    let decision = spans
+    let decisions: Vec<&Value> = spans
         .iter()
-        .find(|s| s["kind"] == "policy" && s["name"] == "evidence")
-        .unwrap_or_else(|| panic!("{spans:?}"));
+        .filter(|s| s["kind"] == "policy" && s["name"] == "evidence")
+        .collect();
+    assert_eq!(decisions.len(), 1, "one per attempt: {spans:?}");
+    let decision = decisions[0];
     let a = &decision["attributes"];
     assert_eq!(a["decision"], "deny");
     assert_eq!(a["rule"], "evidence.required");
     assert_eq!(a["action"], "evidence");
     assert_eq!(a["evidence"], "unverified");
+    assert_eq!(a["evidence_required"], true);
     assert_eq!(a["evidence_action"], "reject");
     assert_eq!(decision["status"], "error");
     let turn = spans
@@ -282,7 +304,9 @@ async fn a_mark_policy_records_the_verdict_and_lets_the_node_succeed(pool: PgPoo
     for mark in marks {
         assert_eq!(mark["attributes"]["decision"], "alert");
         assert_eq!(mark["attributes"]["severity"], Value::Null);
+        assert_eq!(mark["attributes"]["evidence_required"], true);
         assert_eq!(mark["attributes"]["evidence_action"], "mark");
+        assert_eq!(mark["attributes"]["evidence"], "unverified");
         assert_eq!(mark["status"], "ok");
     }
     // A policy that would weaken the rule below the workspace's is refused.
@@ -373,7 +397,7 @@ async fn the_console_the_card_and_the_chips_show_the_verdicts(pool: PgPool) {
         overview["evidence_today"],
         json!({"verified": 0, "partial": 0, "unverified": 2})
     );
-    // The explorer narrows to the spans carrying a verdict and says it.
+    // The explorer narrows to the `evidence` policy spans, one per output, and says the verdict.
     let (status, page) = call(
         &app,
         Method::GET,
@@ -385,11 +409,10 @@ async fn the_console_the_card_and_the_chips_show_the_verdicts(pool: PgPool) {
     assert_eq!(status, StatusCode::OK, "{page}");
     let spans = page["spans"].as_array().unwrap();
     assert_eq!(spans.len(), 2, "{page}");
-    assert!(
-        spans
-            .iter()
-            .all(|s| s["kind"] == "llm_call" && s["evidence"] == "unverified")
-    );
+    assert!(spans.iter().all(|s| s["kind"] == "policy"
+        && s["name"] == "evidence"
+        && s["decision"] == "alert"
+        && s["evidence"] == "unverified"));
     let (status, page) = call(
         &app,
         Method::GET,
@@ -568,11 +591,20 @@ async fn the_demo_provider_cites_what_it_was_given(pool: PgPool) {
         decisions
             .iter()
             .find(|s| s["node_id"] == node)
-            .map(|s| s["attributes"]["decision"].clone())
+            .map(|s| s["attributes"].clone())
             .unwrap()
     };
-    assert_eq!(verdict_of(&research), "alert", "marked");
-    assert_eq!(verdict_of(&draft), "allow", "verified under the rule");
+    let marked = verdict_of(&research);
+    assert_eq!(marked["decision"], "alert", "marked");
+    assert_eq!(marked["evidence"], "unverified");
+    let verified = verdict_of(&draft);
+    assert_eq!(verified["decision"], "allow", "verified under the rule");
+    assert_eq!(verified["evidence"], "verified");
+    assert_eq!(verified["evidence_coverage"], 100);
+    assert_eq!(
+        verified["evidence_cited_ids"],
+        json!([format!("node:{research}")])
+    );
     // The run page's node table and the agent card see the same verdicts.
     let (_, card) = call(
         &app,

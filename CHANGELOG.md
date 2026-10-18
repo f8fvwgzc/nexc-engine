@@ -52,9 +52,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   follows. A node given something is `verified` with full coverage; one given nothing is
   `unverified` with nothing forged. `make demo-secops` gains step 3, **Evidence**: the
   board-compensation document is attached as `internal`, the research node cites its passages
-  and is verified (the run page shows the chips, the node's last model call carries the
+  and is verified (the run page shows the chips, the node's `evidence` span carries the
   verdict); relabelled `restricted`, the same node runs without it, the coverage drops to 0 %
-  and the Analyst template's policy marks the output (the `policy` span named `evidence`);
+  and the Analyst template's policy marks the output (the `evidence` span's decision is `alert`);
   the later steps moved down one. Tests: the built-in provider's output verifies against what
   the prompt gave it and declares everything when given nothing (`backend/src/llm/demo.rs`); a
   demo run's downstream node is verified and its first node unverified, with the verdicts on
@@ -73,8 +73,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   verified, partial or unverified, and the list, each opening its run). The AgentSecOps
   overview counts the day's outputs by verdict (`SecopsOverview.evidence_today`; the stat row
   shows **Unverified today**), the trace explorer's Decision filter gains **evidence verdict**
-  (`decision=evidence`: the spans carrying one, a node's last model call and the policy
-  decision about its output), its rows and the waterfall say the verdict, and the resolved
+  (`decision=evidence`: the `evidence` policy spans, one per output, whatever was decided on
+  it), its rows and the waterfall say the verdict, and the resolved
   policy view lists the three evidence rules. Deliverables keep their citations readable:
   the runtime's `finish` appends a `## Sources` section naming every cited id with its title
   (the passage's source, the memory's first words, the upstream node's title), `write_file`
@@ -100,19 +100,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `min_coverage` (0.8 unless set) and nothing was forged, `unverified` when no claim rests on
   what was given, `partial` otherwise. The result is stored on the node run
   (`NodeRun.evidence`: the verdict, the coverage, the counts, the ids cited and the ids never
-  given) and rides as `evidence_*` attributes on the node's last `llm_call` span (the built-in
-  executor's one call; for the agent runtime the spans of a turn are held together, in order
-  of receipt, until the next turn starts or the result arrives, so the last turn can carry
-  the verdict without the chain changing its order). A cached result keeps the verdict it
-  got. The policy document gains `evidence: {required, min_coverage, action: mark | reject}`,
+  given) and recorded as the node's own `policy` span named `evidence`, one per attempt,
+  emitted once the verifier ran: the same `evidence_*` attributes (the verdict, the coverage
+  as a whole percent, the counts, the ids), decision `allow` when verified and `alert`
+  otherwise, with `evidence_required` and `evidence_action` saying what the policy in force
+  asked. The built-in executor's one `llm_call` carries the attributes beside it; the agent
+  runtime's spans are written the moment they arrive, in order, so the sessions tree and the
+  waterfall stay live while a node runs (an approval waited for, a sub-agent at work). A
+  cached result keeps the verdict it got. The policy document gains
+  `evidence: {required, min_coverage, action: mark | reject}`,
   resolved like the other rules (required once any level requires it, the highest coverage,
   reject once any level says so; a version that would weaken the level above is refused):
-  with `required` on, the verdict is a `policy` span named `evidence` (allow when verified;
-  `mark` records an unverified or partial output as decision `alert` and the node succeeds;
-  `reject` fails the node with `policy: evidence <verdict>: <why>` as the reason the run page
-  shows, its output kept off the node and nothing built on it downstream). The default is
-  off, so nothing changes for existing workspaces beyond the verdict being recorded; the
-  Analyst, Researcher and Reviewer templates require evidence and mark what falls short.
+  with `required` on, the `evidence` span is the decision (`mark` leaves an unverified or
+  partial output at decision `alert` and the node succeeds;
+  `reject` denies it and fails the node with `policy: evidence <verdict>: <why>` as the reason
+  the run page shows, its output kept off the node and nothing built on it downstream). The
+  default is off, so nothing changes for existing workspaces beyond the verdict being
+  recorded; the Analyst, Researcher and Reviewer templates require evidence and mark what
+  falls short.
   Tests: the parser and the coverage heuristic (`backend/src/domain/evidence.rs`: ids inside
   code are ignored, duplicates count once, forged ids are violations that keep an output from
   `verified`, declared claims are counted apart, the sources section is not a claim); the

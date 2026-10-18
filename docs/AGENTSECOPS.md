@@ -108,7 +108,8 @@ Three concrete mechanisms, none of them magic:
   its Markdown artifacts (ids in code do not count), checks each against what was given (an id
   never given is forged), approximates the claims as the sentences, bullets and rows of the
   prose, and stores the coverage and the verdict (`verified`, `partial`, `unverified`) on the
-  node run and on the node's last `llm_call` span. The policy's `evidence` rule
+  node run and as the node's own `policy` span named `evidence`, one per output (the built-in
+  executor's one `llm_call` carries it too). The policy's `evidence` rule
   (`required`, `min_coverage`, `action: mark | reject`) decides what falls short means: a mark on
   the trace, or the node failed with the verdict as its reason. The run page, the node output,
   the agent card, the console and the trace explorer show the verdicts and the citations as chips

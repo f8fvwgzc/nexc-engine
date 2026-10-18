@@ -1510,10 +1510,11 @@ impl NodeTask {
 
     /// The evidence verdict on a successful output (`domain::evidence`): the
     /// executor assessed it with its Markdown artifacts, else the output is
-    /// assessed alone here. Under a policy that requires evidence the verdict
-    /// is a `policy` span named `evidence`: `reject` fails the node with the
-    /// verdict as the reason and keeps the output from the graph, `mark`
-    /// records it. Returns the status and the error to finish with.
+    /// assessed alone here. The verdict is the node's `policy` span named
+    /// `evidence`, one per attempt: `allow` when verified, `alert` otherwise,
+    /// and under a policy that requires evidence with `action: reject`,
+    /// `deny`, which fails the node with the verdict as the reason and keeps
+    /// the output from the graph. Returns the status and the error to finish with.
     fn verify(
         &self,
         status: NodeStatus,
@@ -1531,20 +1532,16 @@ impl NodeTask {
                 rule.min_coverage,
             )
         });
-        if !rule.required {
-            return (status, error);
-        }
         let reason = evidence.describe();
-        let decision = match (evidence.meets(), rule.action) {
-            (true, _) => Decision::allow(evidence.rule(), reason),
-            (false, EvidenceAction::Reject) => Decision::deny(evidence.rule(), reason),
-            (false, EvidenceAction::Mark) => {
-                Decision::alert(evidence.rule(), Severity::Low, reason)
-            }
+        let decision = match (evidence.meets(), rule.required, rule.action) {
+            (true, _, _) => Decision::allow(evidence.rule(), reason),
+            (false, true, EvidenceAction::Reject) => Decision::deny(evidence.rule(), reason),
+            (false, _, _) => Decision::alert(evidence.rule(), Severity::Low, reason),
         };
         let mut extra = json!({
             "action": "evidence",
             "turn_span_id": output.span_id,
+            "evidence_required": rule.required,
             "evidence_action": rule.action,
         });
         for (key, value) in evidence.span_attributes() {

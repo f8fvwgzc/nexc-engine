@@ -106,7 +106,7 @@ export const secopsSpanSchema = z.object({
   tokens_out: z.number().int().nullable(),
   /** A tool call that is a task received over A2A (CONTRACT §10). */
   inbound: z.boolean().optional(),
-  /** `attributes.evidence`: the verdict on an output (a node's last model call, the decision about it). */
+  /** `attributes.evidence`: the verdict on an output (the node's `evidence` policy span; the built-in executor's one model call carries it too). */
   evidence: z.string().nullable().optional(),
 });
 export type SecopsSpan = z.infer<typeof secopsSpanSchema>;
@@ -117,7 +117,7 @@ export const secopsSpanPageSchema = z.object({
 });
 export type SecopsSpanPage = z.infer<typeof secopsSpanPageSchema>;
 
-/** The explorer's decisions: the four a policy or approval span takes, plus `evidence`, the spans carrying an evidence verdict. */
+/** The explorer's decisions: the four a policy or approval span takes, plus `evidence`, the `evidence` policy spans (the verdict on each node's output). */
 export const DECISIONS = ['allow', 'deny', 'require_approval', 'alert', 'evidence'] as const;
 export type Decision = (typeof DECISIONS)[number];
 export const DECISION_LABEL: Record<Decision, string> = {

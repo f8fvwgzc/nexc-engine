@@ -347,7 +347,9 @@ pub struct ExecOutput {
     pub evidence: Option<Evidence>,
 }
 
-/// Adds the verdict's attributes to a span's (`evidence`, `evidence_coverage`, …).
+/// Adds the verdict's attributes to a span's (`evidence`, `evidence_coverage`, …):
+/// the built-in executor's one `llm_call` carries them beside the `evidence`
+/// policy span the scheduler records for every node.
 pub fn with_evidence(attributes: &mut Value, evidence: &Evidence) {
     if let Value::Object(map) = attributes {
         for (key, value) in evidence.span_attributes() {

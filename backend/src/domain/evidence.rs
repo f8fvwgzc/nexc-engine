@@ -233,7 +233,8 @@ const SOURCE_HEADINGS: [&str; 4] = ["sources", "references", "citations", "bibli
 const SENTENCE_WORDS: usize = 2;
 
 /// What the verifier found about an output: stored on the node run
-/// (`NodeRun.evidence`) and summarised on its last `llm_call` span.
+/// (`NodeRun.evidence`) and summarised on the node's `policy` span named
+/// `evidence` (the built-in executor's one `llm_call` carries it too).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct Evidence {
     pub verdict: EvidenceVerdict,

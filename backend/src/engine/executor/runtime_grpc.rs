@@ -389,7 +389,7 @@ pub async fn run(ctx: &ExecContext, token: String) -> Result<ExecOutput, ExecErr
             }
         }
     };
-    progress.close(ctx).await;
+    progress.close().await;
     outcome
 }
 
