@@ -126,18 +126,21 @@ async function invisibleFocus(page: Page) {
     page.evaluate(() => {
       const el = document.querySelector('[data-audit-focus]');
       if (!el) return '';
+      // Only what can be seen: an outline whose style is none or whose colour is transparent,
+      // or a shadow of transparent layers, draws nothing whatever its width.
+      const transparent = /rgba\(0, 0, 0, 0\)|transparent/;
       const styles = (node: Element | null) => {
         if (!node) return '';
         const s = getComputedStyle(node);
-        return [
-          s.outlineStyle,
-          s.outlineWidth,
-          s.outlineColor,
-          s.boxShadow,
-          s.borderColor,
-          s.backgroundColor,
-          s.textDecorationLine,
-        ].join('|');
+        const outline =
+          s.outlineStyle === 'none' || s.outlineWidth === '0px' || transparent.test(s.outlineColor)
+            ? 'none'
+            : `${s.outlineStyle} ${s.outlineWidth} ${s.outlineColor}`;
+        const shadow = s.boxShadow
+          .split(/,(?![^(]*\))/)
+          .filter((layer) => layer.trim() !== 'none' && !transparent.test(layer))
+          .join(',');
+        return [outline, shadow, s.borderColor, s.backgroundColor, s.textDecorationLine].join('|');
       };
       return `${styles(el)}#${styles(el.parentElement)}`;
     });
