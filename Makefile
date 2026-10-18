@@ -14,9 +14,9 @@ BACKEND_MANIFEST := backend/Cargo.toml
 LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a;
 
 .PHONY: help init setup dev dev-backend dev-frontend dev-runtime db-up db-down db-shell \
-        backup backup-check restore prove prove-trace prove-identity prove-audit prove-policy test-worst-case \
+        backup backup-check restore prove prove-trace prove-identity prove-audit prove-policy prove-agentsecops test-worst-case \
         build test test-backend test-frontend test-runtime lint fmt check \
-        docker-build docker-up docker-down docker-logs demo demo-onto seed-demo \
+        docker-build docker-up docker-down docker-logs demo demo-onto demo-secops seed-demo \
         minikube-up minikube-down k8s-render openapi doctor clean
 
 help: ## Show this help
@@ -139,6 +139,8 @@ prove-policy: ## Policy resolution (target < 1 ms) and decisions under the resol
 	  | sed -n '/^prove-policy/,$$p' | grep -v '^test \|^$$\|test result'
 	cd agent-runtime && $(UV) run pytest -q -m prove -s tests/test_policy.py -k prove_policy 2>&1 | grep '^prove-policy'
 
+prove-agentsecops: prove-identity prove-policy prove-audit prove-trace ## The AgentSecOps latency table: identity and policy decisions, the audit's asks, the trace spine (needs PostgreSQL)
+
 test-worst-case: ## Every documented route against missing/forged tokens, outsiders, hostile input, races and a 20,000-issue workspace
 	cd backend && cargo test --test worst_case
 
@@ -153,6 +155,12 @@ demo-onto: ## Demo mode plus onto-intelli (built from ../onto-intelli): a demo g
 	$(COMPOSE) -f docker-compose.yml -f docker-compose.demo.yml -f docker-compose.onto.yml --profile onto up -d --build
 	@echo "demo running on http://localhost:$${NEXC_HTTP_PORT:-8080} with onto-intelli; running the audit demo"
 	@python3 scripts/demo-onto.py
+
+demo-secops: ## Demo mode, then the five-minute AgentSecOps script (docs/AGENTSECOPS.md §9): agent from a template, a traced run, an approval, a withheld document, a denial, an alert, a quarantine, the audit questions, the prove targets and the chain verified
+	@[ -f .env ] || scripts/init-env.sh
+	$(COMPOSE) -f docker-compose.yml -f docker-compose.demo.yml up -d --build
+	@echo "demo running on http://localhost:$${NEXC_HTTP_PORT:-8080}; running the AgentSecOps demo (DEMO_ARGS=\"--keep --skip-prove\" to keep what it makes or skip the prove targets)"
+	@python3 scripts/demo-secops.py $(DEMO_ARGS)
 
 docker-down: ## Stop the stack (volumes are kept; add -v manually to wipe data)
 	$(COMPOSE) -f docker-compose.yml -f docker-compose.onto.yml --profile symphony --profile onto down

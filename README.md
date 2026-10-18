@@ -72,6 +72,24 @@ environment.
 | **Agents org chart with token budgets**                                                                 | **Landing page**                                                                                                       |
 | <img src="docs/media/agents.png" alt="Paperclip-style org chart of agents with budgets">                | <img src="docs/media/landing.png" alt="Public landing page">                                                           |
 
+## AgentSecOps
+
+nexc-engine is also an AgentSecOps platform in the shape of SoftBank's AgentSecOps PF: every
+agent is a principal with scopes and a signed per-run token, every action is a span on a hash
+chain, policies are versioned data that only narrow, approvals land in the inbox, DLP and a
+behaviour baseline defend, and the audit is asked through an ontology. The roadmap and the
+design are in [`docs/AGENTSECOPS.md`](docs/AGENTSECOPS.md).
+
+The **AgentSecOps** page (`/app/secops`) is the one screen a CISO wants to see: the agents
+with their risk, a live feed of spans and alerts, approvals and alerts decided in place, risk
+over the last fourteen days, the resolved policy of any agent with a diff between versions,
+the audit's questions, and a trace explorer across every run.
+
+`make demo-secops` plays the five-minute script of the roadmap on the demo provider, no API
+key needed: an Analyst from a role template with its competency score, a traced run, an
+approval, a withheld document, a denial, an alert, a quarantine, the audit questions, the
+latency table (`make prove-agentsecops`) and the chain verified, printing the URLs to open.
+
 ## Features
 
 |                                 |                                                                                                                                                                                                                                                      |

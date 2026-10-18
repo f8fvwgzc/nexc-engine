@@ -577,6 +577,63 @@ interface AgentCard {
   team: { id: string; name: string; key: string } | null;
   budget_left: number | null; // null without a budget
   recent_spans: Span[]; // its last 20 spans across the runs the caller may open
+  evaluation: AgentEvaluation | null; // the score of an agent made from a role template
+}
+
+// Role templates (AgentSecOps §4.6): a role with its capabilities, its own policy, the knowledge
+// topics it is bound to (by term, where the workspace has them) and three competency questions,
+// asked once with the workspace's provider when an agent is made from the template.
+interface CompetencyQuestion { question: string; expected: string[] } // one expected term in the answer passes
+interface AgentTemplate {
+  id: string; // analyst | researcher | reviewer
+  name: string;
+  role: string;
+  title: string;
+  description: string;
+  purpose: string;
+  runtime: "python" | "builtin";
+  budget_tokens: number;
+  capabilities: Capabilities; // the model allow-list is pinned to the agent's model on creation
+  policy: PolicyDocument; // becomes the agent's policy version 1
+  knowledge: string[]; // topic terms
+  questions: CompetencyQuestion[];
+}
+interface AgentEvaluation {
+  template: string;
+  score: number; // questions passed
+  total: number;
+  model: string; // the model that answered
+  questions: { question: string; expected: string[]; passed: boolean; answer: string }[]; // `answer`: the first 300 characters
+  evaluated_at: string;
+}
+
+// The AgentSecOps console (phase 5). Runs, spans, denials and artifacts count only what the caller may open.
+interface SecopsOverview {
+  agents: { total: number; active: number; paused: number; over_budget: number; quarantined: number };
+  runs_today: RunCounts; // created since midnight UTC
+  runs_week: RunCounts; // created in the last seven days
+  spans_today: number;
+  denials_today: { rule: string; count: number }[]; // policy spans with decision `deny`, by rule, most first
+  denials_fortnight: { rule: string; count: number }[];
+  approvals_open: number; // pending
+  alerts_open: { severity: Severity; count: number }[]; // unacknowledged, worst first
+  artifacts_quarantined: number; // kept in and not released
+  top_risk: { agent_id: string; name: string; principal_id: string; status: AgentStatus; risk_score: number; risk_reasons: string[]; risk_updated_at: string | null }[]; // five, highest first
+  policy_versions: { scope: PolicyScope; scope_id: string | null; version: number; created_at: string }[]; // the latest at every level that has one
+  last_seal: { run_id: string; graph_id: string; trace_hash: string; sealed_at: string | null } | null;
+  risk_history: { agent_id: string; day: string; score: number }[]; // highest score per agent per UTC day, last 14 days, oldest first (kept by a trigger on `agents.risk_updated_at`)
+  at: string;
+}
+interface RunCounts { total: number; succeeded: number; failed: number; cancelled: number; active: number }
+interface SecopsSpan { // a span as the trace explorer lists it: the ids and the attributes the table shows
+  id: string; run_id: string; graph_id: string; node_id: string; agent_id: string | null; principal: string;
+  kind: SpanKind; name: string; started_at: string; ended_at: string | null; status: SpanStatus;
+  tool: string | null; // `attributes.tool`, or the name of a tool call
+  host: string | null; // `attributes.egress_host`
+  decision: string | null; // `attributes.decision`
+  rule: string | null; // `attributes.rule`
+  model: string | null; // `attributes.model`
+  tokens_in: number | null; tokens_out: number | null;
 }
 
 // Versioned policies (AgentSecOps phase 2). A document only says what it sets; what it leaves out
@@ -759,8 +816,13 @@ Public: `GET /healthz`, `GET /readyz`, `POST /auth/register`, `POST /auth/login`
 | GET `/approvals/{id}` | — | `Approval` (members of its workspace; others 404) |
 | GET `/workspaces/{wid}/alerts?before=&limit=` | — | `Alert[]` newest first (admins), `before` pages by `created_at`, `limit` 1–200 (default 50) |
 | POST `/alerts/{id}/acknowledge` | — | `Alert` (admins of its workspace; others 404; 409 once acknowledged) |
+| GET `/workspaces/{wid}/secops/overview` | — | `SecopsOverview` (members and above; guests 403; outsiders 404): what the console's top of page shows, in one call |
+| GET `/workspaces/{wid}/secops/spans?agent=&kind=&tool=&host=&run=&from=&to=&decision=&limit=&before=` | — | `{spans: SecopsSpan[], next: string \| null}` newest first (by id) across every run the caller may open (members and above); `kind` is a `SpanKind`, `decision` one of `allow`, `deny`, `require_approval`, `alert`, `tool` matches `attributes.tool` or the name of a tool call, `host` matches `attributes.egress_host`, `from`/`to` bound `started_at` (RFC 3339, `from` before `to`), `limit` 1–500 (default 100), `before` continues below the previous page's `next`. Unknown kinds, decisions, ids and times are 400 or 422 |
+| GET `/workspaces/{wid}/secops/events` | — | `text/event-stream` (members and above; bearer authenticated, no ticket: read it with `fetch`): every `trace.span` and `alert` event (§6 frames) of every graph the caller may open, as one feed, with `retry: 3000` first and a `heartbeat` every 15 s; graphs created while it is open are picked up within ten seconds. Ends when the account's sessions are ended |
 | POST `/artifacts/{aid}/release` | — | `Artifact` (admins of the run's workspace; members 403; others 404; 409 when not quarantined): a quarantined artifact can be downloaded again. Audited as `artifact_released` |
 | POST `/approvals/{id}/approve`, POST `/approvals/{id}/deny` | `{reason?}` (a reason is required to deny) | `Approval` (an approver the policy names, or a workspace admin; other members 403; outsiders 404; 409 once decided). The decision reaches the runtime holding the call within about a second, is recorded as an `approval` span of the run (`decision`, `decided_by`, `decided_by_name`, `reason`, `request_span_id`, `waited_ms`) and audited as `approval_granted` / `approval_denied` (subject: the principal; detail: the tool, the run and the reason); the approvers' inbox entries are marked read |
+| GET `/agent-templates` | — | `AgentTemplate[]`: the built-in role templates (Analyst, Researcher, Reviewer) |
+| POST `/agents/from-template/{name}` | `{workspace_id?, name?, model?, owner_user_id?, team_id?, evaluate?}` (every field optional; `evaluate` defaults to true) | 201 `AgentCard` (members and above; guests 403; outsiders 404; unknown template 404; an agent of that name 409). The agent gets the template's capabilities with its model allow-list pinned to `model` (default: the server's), its knowledge topics bound where the workspace has topics with those terms, and the template's policy as its agent-level version 1 (audited as `policy_changed`; 422 when it would widen the levels above). With a usable provider and `evaluate`, the three competency questions are asked with the agent's system prompt (usage purpose `evaluation`) and scored on `evaluation`; without one, or when the model does not answer, the agent exists and `evaluation` is `null` |
 | POST `/agents/{id}/quarantine`, POST `/agents/{id}/release` | — | `Agent` (workspace admins; members 403; others 404). Quarantine cancels the agent's running nodes (they fail, with a `policy` span of rule `quarantine`), refuses new ones and raises `policy_version` so no earlier token is honoured; release puts it back in service (`active`, or `over_budget`). Audited as `agent_quarantined` / `agent_released`; 409 when already in that state |
 | GET `/memories?workspace_id=&graph_id=&q=&limit=&offset=&preview=`                                                          | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `Memory[]`: what the workspace's graphs learned, limited to graphs the caller can open, plus the caller's own notes; with `q` a hybrid search with `score`. `graph_id` narrows to one graph                                                                                                                                                                                                                                                                                                                                                                                                     |
 | GET `/memories/{id}`                                                                                                        | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `Memory` in full, for those who may read it (404 otherwise). Lists page with `offset` (0-5000) and may carry previews: `preview=N` cuts each `content` to N characters (20-2000) and ends it with `…`                                                                                                                                                                                                                                                                                                                                                                                           |
@@ -869,6 +931,8 @@ from the result cache (`cached: true`) unless `force: true`.
 ## 6. SSE — `GET /api/v1/graphs/{gid}/events?ticket=...`
 
 Frames: `id: <seq>\nevent: <type>\ndata: <json>\n\n`; `retry: 3000` first; `heartbeat` every 15 s.
+The workspace feed of the AgentSecOps console, `GET /api/v1/workspaces/{wid}/secops/events`
+(bearer, §5), carries the `trace.span` and `alert` frames below of every graph the member may open.
 
 | event              | data                                                                                                      |
 | ------------------ | --------------------------------------------------------------------------------------------------------- |

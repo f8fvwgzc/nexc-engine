@@ -9,6 +9,60 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- The AgentSecOps console (phase 5, `docs/AGENTSECOPS.md` §8): **AgentSecOps** in the sidebar
+  (`/app/secops`, members and above) is the one screen a CISO wants: a stat row (agents by
+  status, runs today and this week, spans and denials today, open approvals, unacknowledged
+  alerts by severity, held artifacts, the last sealed trace), a **Registry** of every agent as a
+  row (name, role, owner, team, principal, model, status, risk score with its reasons on hover
+  or focus, policy version, heartbeat, budget left) with text and status filters, quarantine and
+  release at hand and an agent-from-template action; a **Live feed** of every graph's
+  `trace.span` and `alert` events, newest first, filtered by kind and agent, with a pause that
+  holds lines back rather than losing them; **Approvals** decided inline (a denial asks its
+  reason there); **Alerts** acknowledged inline; **Risk**: a line chart of each agent's score
+  over the last fourteen days, the highest-risk agents now and denials by rule; **Policies**:
+  the resolved policy of any agent rule by rule and a diff between any two versions of any
+  level (phase 2's views, reused); **Ask the audit** embedded (phase 3's panel); and a second
+  tab, the **Trace explorer**: spans across every run, narrowed by agent, kind, decision, tool,
+  host, run and time, as a table, paged, a row opening the run's waterfall at that span
+  (`/app/runs/{id}?span=`, which marks and scrolls to it). Everything is reachable by keyboard,
+  works at phone width and in both themes.
+- `GET /workspaces/{wid}/secops/overview` (`SecopsOverview`, one call for the top of the page;
+  runs, spans, denials and artifacts count only what the caller may open), `GET
+  …/secops/spans?agent=&kind=&tool=&host=&run=&from=&to=&decision=&limit=&before=` (the explorer's
+  search: ids plus the attributes the table shows, newest first, paged) and `GET …/secops/events`
+  (the workspace's `trace.span` and `alert` events across every graph the member may open as one
+  bearer-authenticated SSE feed, read with `fetch`; graphs created meanwhile are picked up within
+  ten seconds). Every risk score an agent is given is kept in `agent_risk_history` by a trigger
+  on `agents.risk_updated_at`, so the chart has fourteen days without the engine knowing.
+- The agent card (from the registry and `/app/agents?agent=`) has tabs: **Overview** (purpose,
+  owner, team, scopes, model, budget, risk, policy version, evaluation score), **Activity** (its
+  last spans, each opening its run at the span), **Policy** (the resolved policy with the level
+  that set each rule), **Approvals** and **Alerts** about that agent, decided and acknowledged
+  there, and **Ask** with the agent filled in.
+- Role templates (§4.6): **Analyst**, **Researcher** and **Reviewer** ship as data in
+  `backend/templates/agent-*.json` with capabilities, a policy, knowledge bindings and three
+  competency questions each (`GET /agent-templates`). `POST /agents/from-template/{name}` makes
+  the agent with the template's scopes, its model allow-list pinned to the model it is given,
+  the workspace's matching knowledge topics bound, the template's policy as the agent's version 1
+  (audited), and asks the questions once with the workspace's provider (usage purpose
+  `evaluation`); the score and the answers are kept (`agent_evaluations`) and shown on the card
+  (`AgentCard.evaluation`). The console's registry and the demo make agents this way.
+- `make demo-secops` runs `scripts/demo-secops.py`, the five-minute script of
+  `docs/AGENTSECOPS.md` §9, on the demo provider: an Analyst from the template with its score,
+  a traced run, the policy changed to require an approval for `make_docx` and the approval
+  decided from the inbox, a restricted document withheld, a call outside the allow-list denied
+  with its alert, the agent quarantined with one call while a run is going, the six audit
+  questions, the prove targets (`make prove-agentsecops`: identity, policy, audit and trace in
+  one) and the run's chain verified; every step prints the URLs to open; re-runnable, and it
+  removes what it made unless `--keep` (`DEMO_ARGS="--keep --skip-prove"`).
+- Tests (`backend/tests/secops.rs`, `frontend/src/features/secops/`): the overview counts the
+  workspace's agents, runs, spans, denials, approvals, alerts, risk and seal and nothing a
+  guest or an outsider may see; the explorer narrows by every filter, pages without repeats,
+  refuses bad input and clamps the limit; the live feed carries a run's spans as they happen and
+  nothing else, and refuses guests and outsiders; an agent made from a template arrives with its
+  scopes, its pinned model, its policy version, its audited change, its scored questions and
+  their usage, and conflicts, unknown templates, guests and bad bodies are refused; the feed's
+  frames become lines once each, the risk history lays out day by day, the registry filters.
 - Ask the audit (AgentSecOps phase 3, `docs/AGENTSECOPS.md` §4.5): the trace becomes ontology
   facts in [onto-intelli](https://github.com/f8fvwgzc/onto-intelli) and audit questions are answered
   from them. `NEXC_ONTO_URL` (its gRPC endpoint; unset keeps the feature off), `NEXC_ONTO_TOKEN`
