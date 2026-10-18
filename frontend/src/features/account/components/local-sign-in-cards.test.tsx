@@ -6,7 +6,10 @@ import type { SignInMethods } from '@/schemas/auth';
 
 import { LocalSignInCards } from './local-sign-in-cards';
 
-const { state } = vi.hoisted(() => ({ state: { methods: null as unknown } }));
+const { state } = vi.hoisted(() => {
+  const state: { methods: unknown } = { methods: null };
+  return { state };
+});
 
 vi.mock('@/features/account/api', () => ({
   signInMethodsQuery: () => ({
@@ -36,6 +39,7 @@ function renderWith(methods: SignInMethods) {
 const identity = {
   provider: 'Acme SSO',
   issuer: 'https://idp.example.com/realms/acme',
+  current: true,
   email: 'ada@example.com',
   linked_at: '2026-10-01T10:00:00Z',
   last_login_at: '2026-10-18T09:00:00Z',

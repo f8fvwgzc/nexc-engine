@@ -45,6 +45,7 @@ export const accountEventSchema = z.object({
     'sso_signed_in',
     'sso_linked',
     'sso_provisioned',
+    'sso_unlinked',
   ]),
   ip: z.string().nullable(),
   detail: z.string(),
@@ -58,6 +59,17 @@ export const signInMethodsQuery = () =>
     queryKey: ['account', 'sign-in'] as const,
     queryFn: ({ signal }) => apiRequest('/auth/identities', signInMethodsSchema, { signal }),
   });
+
+/**
+ * Starts linking the single sign-on provider's identity to the signed-in account; the password
+ * confirms it. The browser then goes to the provider and comes back to the profile page.
+ */
+export function linkIdentity(password: string) {
+  return apiRequest('/auth/oidc/link', z.object({ authorization_url: z.string().min(1) }), {
+    method: 'POST',
+    body: { password },
+  });
+}
 
 /** What happened to the signed-in person's access lately, newest first. */
 export const activityQuery = () =>

@@ -42,6 +42,8 @@ export type LoginProviders = z.infer<typeof loginProvidersSchema>;
 export const linkedIdentitySchema = z.object({
   provider: z.string(),
   issuer: z.string(),
+  /** Whether it is an identity of the provider configured now. */
+  current: z.boolean(),
   email: z.string(),
   linked_at: timestampSchema,
   last_login_at: timestampSchema.nullable(),
