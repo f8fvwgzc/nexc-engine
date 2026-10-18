@@ -47,8 +47,9 @@ fn operations() -> Vec<Operation> {
     let spec = serde_json::to_value(nexc::http::openapi()).unwrap();
     let mut out = Vec::new();
     for (path, methods) in spec["paths"].as_object().unwrap() {
-        let stream =
-            path.ends_with("/ws") || path.ends_with("/events") && path.contains("/graphs/");
+        let stream = path.ends_with("/ws")
+            || path.ends_with("/events")
+                && (path.contains("/graphs/") || path.contains("/secops/"));
         if stream || path == "/metrics" {
             continue;
         }

@@ -5,6 +5,7 @@ use serde::Serialize;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use super::agent_template::AgentEvaluation;
 use super::capabilities::Capabilities;
 use super::string_enum;
 use super::trace::Span;
@@ -131,6 +132,9 @@ pub struct AgentCard {
     pub budget_left: Option<i64>,
     /// The agent's last spans across the runs the caller may open, newest first.
     pub recent_spans: Vec<Span>,
+    /// The competency score of an agent made from a role template; `null` otherwise.
+    #[schema(required = true)]
+    pub evaluation: Option<AgentEvaluation>,
 }
 
 /// Template for one agent of the default organisation.

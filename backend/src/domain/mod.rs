@@ -6,6 +6,7 @@
 
 pub mod account;
 pub mod agent;
+pub mod agent_template;
 pub mod alert;
 pub mod approval;
 pub mod assistant;
@@ -31,6 +32,7 @@ pub mod prompt;
 pub mod risk;
 pub mod run;
 pub mod search;
+pub mod secops;
 pub mod settings;
 pub mod status;
 pub mod template;

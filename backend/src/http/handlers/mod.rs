@@ -2,6 +2,7 @@
 //! with `#[utoipa::path]` and every DTO derives `ToSchema`.
 
 pub mod account;
+pub mod agent_templates;
 pub mod agents;
 pub mod alerts;
 pub mod approvals;
@@ -25,6 +26,7 @@ pub mod policies;
 pub mod realtime;
 pub mod runs;
 pub mod search;
+pub mod secops;
 pub mod settings;
 pub mod teams;
 pub mod templates;

@@ -61,6 +61,7 @@ macro_rules! team_visible {
 }
 
 pub mod account_events;
+pub mod agent_evaluations;
 pub mod agents;
 pub mod alerts;
 pub mod approvals;
@@ -85,6 +86,7 @@ pub mod platform;
 pub mod policies;
 pub mod resets;
 pub mod runs;
+pub mod secops;
 pub mod settings;
 pub mod spans;
 pub mod teams;

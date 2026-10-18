@@ -23,6 +23,8 @@ string_enum!(
         Embedding => "embedding",
         /// Summarising a day of the workspace's timeline.
         Summary => "summary",
+        /// Asking an agent made from a template its competency questions.
+        Evaluation => "evaluation",
     }
 );
 

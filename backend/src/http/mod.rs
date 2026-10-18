@@ -55,6 +55,7 @@ pub const UPLOAD_SLACK: usize = 64 * 1024;
         (name = "orchestrator"), (name = "realtime"), (name = "health"),
         (name = "audit", description = "Ask the audit: questions about what agents did, answered from onto-intelli's facts"),
         (name = "admin", description = "The platform console: every workspace and account, for platform administrators only"),
+        (name = "secops", description = "The AgentSecOps console: the workspace's agents, runs, denials, approvals, alerts and risk on one screen"),
     )
 )]
 pub struct ApiDoc;
@@ -136,6 +137,9 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(approvals::deny))
         .routes(routes!(alerts::list))
         .routes(routes!(alerts::acknowledge))
+        .routes(routes!(secops::overview))
+        .routes(routes!(secops::spans))
+        .routes(routes!(secops::events))
         .routes(routes!(artifacts::release))
         .routes(routes!(search::search))
         .routes(routes!(platform::workspaces))
@@ -206,6 +210,8 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(agents::activity))
         .routes(routes!(agents::quarantine))
         .routes(routes!(agents::release))
+        .routes(routes!(agent_templates::list))
+        .routes(routes!(agent_templates::instantiate))
         .routes(
             routes!(knowledge::upload)
                 .layer(DefaultBodyLimit::max(DOCUMENT_MAX_BYTES + UPLOAD_SLACK)),
@@ -276,6 +282,11 @@ mod tests {
             "/api/v1/approvals/{id}/deny",
             "/api/v1/artifacts/{aid}/release",
             "/api/v1/workspaces/{wid}/alerts",
+            "/api/v1/workspaces/{wid}/secops/overview",
+            "/api/v1/workspaces/{wid}/secops/spans",
+            "/api/v1/workspaces/{wid}/secops/events",
+            "/api/v1/agent-templates",
+            "/api/v1/agents/from-template/{name}",
             "/metrics",
         ] {
             assert!(paths.contains_key(p), "missing {p}");

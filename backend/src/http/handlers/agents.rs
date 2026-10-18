@@ -343,12 +343,14 @@ pub async fn get(
     let owner = repo::agents::owner(&state.db, agent.owner_user_id).await?;
     let team = repo::agents::team(&state.db, agent.team_id).await?;
     let recent_spans = repo::spans::activity(&state.db, auth.id, id, CARD_SPANS).await?;
+    let evaluation = repo::agent_evaluations::find(&state.db, id).await?;
     Ok(Json(AgentCard {
         budget_left: agent.budget_left(),
         agent,
         owner,
         team,
         recent_spans,
+        evaluation,
     }))
 }
 
