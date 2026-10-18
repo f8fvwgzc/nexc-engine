@@ -9,8 +9,8 @@ use uuid::Uuid;
 
 use super::enum_col;
 use crate::domain::secops::{
-    AgentCounts, PolicyInForce, RiskPoint, RiskyAgent, RuleCount, RunCounts, SecopsSpan,
-    SeverityCount, TraceSeal,
+    AgentCounts, EvidenceCounts, PolicyInForce, RiskPoint, RiskyAgent, RuleCount, RunCounts,
+    SecopsSpan, SeverityCount, TraceSeal,
 };
 
 /// Most rules listed in a denial breakdown.
@@ -106,6 +106,34 @@ pub async fn denials_by_rule(
         .into_iter()
         .map(|(rule, count)| RuleCount { rule, count })
         .collect())
+}
+
+/// Outputs that answered since `from`, by evidence verdict, across the graphs `user` may open.
+pub async fn evidence_counts(
+    db: impl PgExecutor<'_>,
+    user: Uuid,
+    workspace_id: Uuid,
+    from: DateTime<Utc>,
+) -> Result<EvidenceCounts, sqlx::Error> {
+    let rows: Vec<(String, i64)> = sqlx::query_as(concat!(
+        "SELECT nr.evidence->>'verdict', count(*)
+         FROM node_runs nr JOIN runs r ON r.id = nr.run_id JOIN graphs g ON g.id = r.graph_id
+         WHERE g.workspace_id = $2 AND nr.evidence IS NOT NULL AND nr.finished_at >= $3 AND ",
+        graph_access!("g", "$1"),
+        " GROUP BY 1"
+    ))
+    .bind(user)
+    .bind(workspace_id)
+    .bind(from)
+    .fetch_all(db)
+    .await?;
+    let mut counts = EvidenceCounts::default();
+    for (verdict, count) in rows {
+        if let Ok(verdict) = verdict.parse() {
+            counts.add(verdict, count);
+        }
+    }
+    Ok(counts)
 }
 
 /// Approvals nobody decided yet.
@@ -290,10 +318,15 @@ pub struct SpanFilter<'a> {
     pub run_id: Option<Uuid>,
     pub from: Option<DateTime<Utc>>,
     pub to: Option<DateTime<Utc>>,
+    /// A decision of a policy or approval span, or `evidence`: the spans that
+    /// carry an evidence verdict.
     pub decision: Option<&'a str>,
     /// Only spans whose id is below this one (the `next` of the previous page).
     pub before: Option<Uuid>,
 }
+
+/// The pseudo-decision of the explorer: spans carrying an evidence verdict.
+pub const EVIDENCE_DECISION: &str = "evidence";
 
 fn text(attributes: &serde_json::Value, key: &str) -> Option<String> {
     attributes.get(key)?.as_str().map(str::to_owned)
@@ -325,7 +358,8 @@ pub async fn search_spans(
            AND ($7::uuid IS NULL OR s.run_id = $7)
            AND ($8::timestamptz IS NULL OR s.started_at >= $8)
            AND ($9::timestamptz IS NULL OR s.started_at < $9)
-           AND ($10::text IS NULL OR s.attributes->>'decision' = $10)
+           AND ($10::text IS NULL OR s.attributes->>'decision' = $10
+                OR ($10 = 'evidence' AND jsonb_exists(s.attributes, 'evidence')))
            AND ($11::uuid IS NULL OR s.id < $11)
            AND (NOT $13::bool OR s.attributes->>'inbound' = 'true')
          ORDER BY s.id DESC LIMIT $12"
@@ -376,6 +410,7 @@ pub async fn search_spans(
                     .get("inbound")
                     .and_then(serde_json::Value::as_bool)
                     == Some(true),
+                evidence: text(&attributes, "evidence"),
             })
         })
         .collect()

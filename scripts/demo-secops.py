@@ -10,9 +10,12 @@ Through the public API, as one account, on the demo provider (no API key needed)
 1. an Analyst agent from the role template, with scopes and a model allow-list; its card
    shows the competency score;
 2. a graph run with it, the trace filling in (the console's live feed shows it);
-3. the policy changed to require an approval for make_docx, re-run, the node waiting, the
+3. evidence: a document the Analyst may read is attached, the research node cites its
+   passages and its output is verified; the document is relabelled restricted and the same
+   node runs again without it: the coverage drops and the template's policy marks the output;
+4. the policy changed to require an approval for make_docx, re-run, the node waiting, the
    approval decided from the inbox, the run going on, the approval on the trace;
-4. a restricted document attached to the goal and withheld from the agent; then a call to a
+5. a restricted document attached to the goal and withheld from the agent; then a call to a
    host outside the allow-list: this script starts a local HTTP stub, the research node is
    told to read the figures from it, and the agent's `fetch_url` goes through the backend's
    tools gateway, once with the host named (the egress span shows it, the stub sees the
@@ -20,8 +23,8 @@ Through the public API, as one account, on the demo provider (no API key needed)
    logged, an alert raised, the agent quarantined with one call and its running node
    cancelled. When the runtime runs the NDJSON wire (no gateway tools), the denial is a tool
    the policy does not allow instead; the script prints which variant ran;
-5. the six audit questions (answered when onto-intelli is wired, see `make demo-onto`);
-6. the prove targets' numbers, and the run's trace chain verified.
+6. the six audit questions (answered when onto-intelli is wired, see `make demo-onto`);
+7. the prove targets' numbers, and the run's trace chain verified.
 
 Every step prints the URLs to open. Re-runnable: names are fixed, what exists is reused, and
 what the script made is removed at the end unless --keep. Standard library only.
@@ -329,6 +332,7 @@ def defend_egress(token: str, wid: str, gid: str, agent: dict, figures_url: str)
     agents = sorted({ua for _, ua in Figures.hits})
     say(f"  the stub answered {len(Figures.hits)} request(s), from {', '.join(agents) or 'nobody'}: "
         "the call left the backend, not the runtime")
+    release_if_quarantined(token, agent["id"], "a new tool and a new host strayed from its baseline")
     # The same fetch with the host off the allow-list: refused before any connection is made.
     _, narrowed = api("PATCH", f"/agents/{agent['id']}", token, {
         "capabilities": {**agent["capabilities"], "tools": tools, "egress_hosts": []},
@@ -340,6 +344,15 @@ def defend_egress(token: str, wid: str, gid: str, agent: dict, figures_url: str)
     say(f"{run['status']}: {len(refused)} egress denial(s) on the trace, "
         f"the stub got {len(Figures.hits)} request(s)")
     return rid, spans
+
+
+def release_if_quarantined(token: str, agent_id: str, why: str) -> None:
+    """The risk policy may quarantine the agent on its own once its runs stray from the
+    baseline; the demo releases it to go on and says so."""
+    _, agent = api("GET", f"/agents/{agent_id}", token)
+    if agent["agent"]["status"] == "quarantined":
+        api("POST", f"/agents/{agent_id}/release", token)
+        say(f"  the risk policy quarantined the agent on its own ({why}); released to go on")
 
 
 def defend_tool(token: str, wid: str, gid: str, agent: dict) -> tuple[str, list]:
@@ -354,17 +367,39 @@ def defend_tool(token: str, wid: str, gid: str, agent: dict) -> tuple[str, list]
     return rid, spans
 
 
-def document(token: str, wid: str) -> dict:
+def document(token: str, wid: str, label: str = "restricted") -> dict:
+    """The board-compensation document, uploaded once (the same bytes come back as the same
+    document), classified `label`, and waited for until it is ready."""
     status, doc = api("POST", f"/workspaces/{wid}/documents?name={DOCUMENT}", token, raw=DOCUMENT_TEXT.encode())
     did = doc["id"]
-    if doc.get("label") != "restricted":
-        api("PATCH", f"/workspaces/{wid}/documents/{did}", token, {"label": "restricted"})
+    if doc.get("label") != label:
+        api("PATCH", f"/workspaces/{wid}/documents/{did}", token, {"label": label})
     for _ in range(90):
         _, doc = api("GET", f"/workspaces/{wid}/documents/{did}", token)
         if doc["status"] in ("ready", "failed"):
             break
         time.sleep(1)
     return doc
+
+
+def evidence_of(run: dict, node_id: str) -> dict:
+    """The verdict on one node's output in a run (`NodeRun.evidence`)."""
+    for node in run.get("node_runs", []):
+        if node["node_id"] == node_id:
+            return node.get("evidence") or {}
+    return {}
+
+
+def say_evidence(when: str, evidence: dict) -> None:
+    if not evidence:
+        say(f"{when}: no verdict (did the node answer?)")
+        return
+    cited = ", ".join(evidence.get("cited", [])[:3]) or "nothing"
+    say(f"{when}: {evidence['verdict']}, coverage {round(evidence['coverage'] * 100)}% "
+        f"({evidence['cited_claims']} of {evidence['claims'] - evidence['declared_claims']} claims cite what was given, "
+        f"{evidence['declared_claims']} declared assumptions, {evidence['given']} given); cites {cited}")
+    for unknown in evidence.get("unknown", [])[:3]:
+        say(f"  cited but never given: {unknown}")
 
 
 def prove() -> None:
@@ -430,8 +465,41 @@ def main() -> int:
         spans = spans_of(token, rid)
         say(f"{run['status']}: {len(spans)} spans ({kinds(spans)}), policy mismatches {run.get('policy_mismatches', 0)}")
 
-        # ---- 3. an approval ---------------------------------------------------------------
-        step(3, "Require an approval for make_docx, re-run, approve from the inbox")
+        # ---- 3. evidence ------------------------------------------------------------------
+        step(3, "Evidence: the research node cites what it was given; withheld, the coverage drops and the policy marks it")
+        research = next((n["id"] for n in graph["nodes"] if n["kind"] == "research"), graph["nodes"][0]["id"])
+        doc = document(token, wid, label="internal")
+        did = doc["id"]
+        say(f"document {DOCUMENT}: {doc['status']}, {doc['label']}, {doc.get('chunk_count', '?')} passage(s): "
+            f"the Analyst is cleared for internal data, so the research node is given them")
+        rid_cited = run_graph(token, gid)
+        run_cited = wait_run(token, rid_cited)
+        before = evidence_of(run_cited, research)
+        say_evidence(f"run {rid_cited[:8]}… with the document", before)
+        turn = next((s for s in spans_of(token, rid_cited) if s["kind"] == "llm_call" and s["node_id"] == research
+                     and s["attributes"].get("evidence")), None)
+        if turn:
+            say(f"  the node's last model call carries the verdict: evidence={turn['attributes']['evidence']}, "
+                f"coverage {turn['attributes'].get('evidence_coverage')}%")
+        say(f"  chips on the run page: {url('/app/runs/' + rid_cited)}")
+        api("PATCH", f"/workspaces/{wid}/documents/{did}", token, {"label": "restricted"})
+        say("document relabelled restricted: the Analyst is no longer given it")
+        rid_withheld = run_graph(token, gid)
+        run_withheld = wait_run(token, rid_withheld)
+        after = evidence_of(run_withheld, research)
+        say_evidence(f"run {rid_withheld[:8]}… with the document withheld", after)
+        marks = [s for s in spans_of(token, rid_withheld)
+                 if s["kind"] == "policy" and s["name"] == "evidence" and s["node_id"] == research]
+        for s in marks[:1]:
+            a = s["attributes"]
+            say(f"  the template's policy (evidence required, action mark) decided {a.get('decision')} "
+                f"by {a.get('rule')}: {a.get('reason')}")
+        if before and after:
+            say(f"coverage {round(before['coverage'] * 100)}% -> {round(after['coverage'] * 100)}%, "
+                f"{before['verdict']} -> {after['verdict']}: {url('/app/runs/' + rid_withheld)}")
+
+        # ---- 4. an approval ---------------------------------------------------------------
+        step(4, "Require an approval for make_docx, re-run, approve from the inbox")
         policy = set_policy(token, wid, "agent", agent_id, {
             "require_approval": {"tools": ["make_docx"], "timeout_s": 600},
             "alerts": {"denials_per_run": 1, "risk_score": 5, "quarantine_risk_score": 8},
@@ -456,8 +524,8 @@ def main() -> int:
         approvals = [s for s in spans2 if s["kind"] == "approval"]
         say(f"{run2['status']}: {len(spans2)} spans, {len(approvals)} approval span(s) on the trace")
 
-        # ---- 4. defend --------------------------------------------------------------------
-        step(4, "Defend: a restricted document is withheld; a disallowed call is denied, alerted, the agent quarantined")
+        # ---- 5. defend --------------------------------------------------------------------
+        step(5, "Defend: a restricted document is withheld; a disallowed call is denied, alerted, the agent quarantined")
         doc = document(token, wid)
         did = doc["id"]
         say(f"document {DOCUMENT}: {doc['status']}, restricted, {doc.get('chunk_count', '?')} passages: {url('/app/settings/knowledge')}")
@@ -482,10 +550,14 @@ def main() -> int:
         say_denials(spans3)
         say_alerts(token, wid, (rid3, rid2, rid))
         # One click: quarantine while a run is going, so its running node is cancelled.
+        release_if_quarantined(token, agent_id, "the denial raised its risk score")
         rid4 = run_graph(token, gid)
         time.sleep(1.5)
-        _, quarantined = api("POST", f"/agents/{agent_id}/quarantine", token)
-        say(f"quarantined {quarantined['name']} (policy version {quarantined['policy_version']}); run {rid4} was going")
+        status, quarantined = api("POST", f"/agents/{agent_id}/quarantine", token, ok=(200, 409))
+        if status == 409:
+            say(f"the risk policy quarantined the agent on its own while run {rid4} was going")
+        else:
+            say(f"quarantined {quarantined['name']} (policy version {quarantined['policy_version']}); run {rid4} was going")
         run4 = wait_run(token, rid4, seconds=60)
         cancelled = [n for n in run4.get("node_runs", []) if n["status"] in ("cancelled", "failed")]
         say(f"run {rid4}: {run4['status']}, {len(cancelled)} node(s) stopped: {url('/app/runs/' + rid4)}")
@@ -493,8 +565,8 @@ def main() -> int:
         say(f"risk {card['agent']['risk_score']:.1f} / 10: {card['agent']['risk_reasons'] or 'nothing unusual yet'}")
         say(f"audit log: {url('/app/settings/audit')}  alerts: {url('/app/settings/alerts')}")
 
-        # ---- 5. ask the audit -------------------------------------------------------------
-        step(5, "Ask the audit")
+        # ---- 6. ask the audit -------------------------------------------------------------
+        step(6, "Ask the audit")
         width = max(len(q) for q in QUESTIONS) + 2
         for template in QUESTIONS:
             question = template.replace("{run}", rid3).replace("{agent}", AGENT)
@@ -506,8 +578,8 @@ def main() -> int:
             say(f"{question:<{width}} {mode:<16} {answer['tokens']:>5} tokens {answer['latency_ms']:>8.2f} ms  {len(answer['facts'])} facts")
             say(f"{'':<{width}} {answer['answer'].splitlines()[0][:100]}")
 
-        # ---- 6. prove it ------------------------------------------------------------------
-        step(6, "Prove it")
+        # ---- 7. prove it ------------------------------------------------------------------
+        step(7, "Prove it")
         _, verified = api("GET", f"/runs/{rid3}/trace/verify", token)
         say(f"GET /runs/{rid3[:8]}…/trace/verify: {'chain intact' if verified['ok'] else 'BROKEN'}, "
             f"{verified['spans']} spans, hash {(verified['hash'] or '')[:16]}…")

@@ -31,13 +31,14 @@ use crate::domain::alert::AlertKind;
 use crate::domain::audit::AuditAction;
 use crate::domain::capabilities::{Capabilities, DataLabel};
 use crate::domain::context;
+use crate::domain::evidence::{self, Given};
 use crate::domain::graph::{Executor, GraphEdge, GraphNode, NodeStatus};
 use crate::domain::guardrails::Guardrails;
 use crate::domain::injection::{self, InjectionFinding};
 use crate::domain::ontology::Ontology;
 use crate::domain::policy::{self, Action, Decision};
 use crate::domain::policy_document::Policy;
-use crate::domain::policy_document::{InjectionAction, Severity};
+use crate::domain::policy_document::{EvidenceAction, InjectionAction, Severity};
 use crate::domain::prompt::{AGENT_UPSTREAM_CHARS, UPSTREAM_CHARS, UpstreamOutput};
 use crate::domain::run::{Run, RunStatus, final_status};
 use crate::domain::settings::{ConfigScope, LlmProviderKind};
@@ -663,6 +664,7 @@ async fn skip_node(state: &AppState, data: &RunData, node_id: Uuid) {
         error: Some(error),
         output: None,
         content_hash: None,
+        evidence: None,
     };
     if let Err(err) = record(state, data, node_id, &outcome, None, 0, None).await {
         tracing::error!(%node_id, error = %err, "cannot record skipped node");
@@ -781,6 +783,7 @@ async fn run_node(
                 error: Some(&message),
                 output: None,
                 content_hash: None,
+                evidence: None,
             };
             if let Err(e) = record(&state, &data, node_id, &outcome, None, 0, None).await {
                 tracing::error!(%node_id, error = %e, "cannot record node failure");
@@ -978,14 +981,21 @@ impl NodeTask {
             .collect();
         labels_given.sort_by_key(|l| l.rank());
         labels_given.dedup();
+        // Every piece of context carries the id the model is told to cite it by.
         let memories = recalled
             .into_iter()
-            .map(|m| data.policy.scrub(m.content))
+            .map(|m| evidence::memory_line(m.id, &data.policy.scrub(m.content)))
             .collect();
         let chunk_ids: Vec<Uuid> = passages.iter().map(|p| p.chunk_id).collect();
         let documents: Vec<String> = passages
             .into_iter()
-            .map(|p| data.policy.scrub(p.text))
+            .map(|p| {
+                format!(
+                    "{}\n{}",
+                    evidence::document_head(p.chunk_id, &p.citation),
+                    data.policy.scrub(p.content)
+                )
+            })
             .collect();
         let principal = agent
             .as_ref()
@@ -1145,6 +1155,23 @@ impl NodeTask {
                 .await;
             }
         }
+        // What the node was given, by id: what its citations are checked against. An id
+        // written inside that text (an upstream output citing its sources) is seen, not given.
+        let mut given = Given {
+            documents: chunk_ids.clone(),
+            memories: memory_ids.clone(),
+            nodes: upstream_ids.clone(),
+            facts: Vec::new(),
+            seen: Vec::new(),
+        };
+        for text in upstream_outputs
+            .iter()
+            .map(|u| u.output.as_str())
+            .chain(memories.iter().map(String::as_str))
+            .chain(documents.iter().map(String::as_str))
+        {
+            given.see(text);
+        }
         // What the node was given to read is on the record before it runs.
         data.trace.emit(SpanDraft {
             id: Uuid::now_v7(),
@@ -1161,6 +1188,7 @@ impl NodeTask {
                 "document_chunk_ids": chunk_ids,
                 "memory_ids": memory_ids,
                 "upstream_node_ids": upstream_ids,
+                "citation_ids": given.keys(),
                 "documents": chunk_ids.len(),
                 "memories": memory_ids.len(),
                 "chars_saved": context_saved,
@@ -1181,6 +1209,7 @@ impl NodeTask {
             upstream: upstream_outputs,
             memories,
             documents,
+            given,
             agent,
             capabilities,
             policy_version,
@@ -1231,6 +1260,7 @@ impl NodeTask {
             error: None,
             output: Some(&hit.output),
             content_hash: Some(&self.hash),
+            evidence: hit.evidence.clone(),
         };
         record(state, &self.data, node_id, &outcome, None, 0, None)
             .await
@@ -1455,15 +1485,70 @@ impl NodeTask {
         Ok(())
     }
 
+    /// The evidence verdict on a successful output (`domain::evidence`): the
+    /// executor assessed it with its Markdown artifacts, else the output is
+    /// assessed alone here. Under a policy that requires evidence the verdict
+    /// is a `policy` span named `evidence`: `reject` fails the node with the
+    /// verdict as the reason and keeps the output from the graph, `mark`
+    /// records it. Returns the status and the error to finish with.
+    fn verify(
+        &self,
+        status: NodeStatus,
+        out: &mut Option<ExecOutput>,
+        error: Option<String>,
+    ) -> (NodeStatus, Option<String>) {
+        let Some(output) = out.as_mut().filter(|_| status == NodeStatus::Succeeded) else {
+            return (status, error);
+        };
+        let rule = &self.ctx.rules.evidence;
+        let evidence = output.evidence.get_or_insert_with(|| {
+            evidence::assess(
+                &[output.output.as_str()],
+                &self.ctx.given,
+                rule.min_coverage,
+            )
+        });
+        if !rule.required {
+            return (status, error);
+        }
+        let reason = evidence.describe();
+        let decision = match (evidence.meets(), rule.action) {
+            (true, _) => Decision::allow(evidence.rule(), reason),
+            (false, EvidenceAction::Reject) => Decision::deny(evidence.rule(), reason),
+            (false, EvidenceAction::Mark) => {
+                Decision::alert(evidence.rule(), Severity::Low, reason)
+            }
+        };
+        let mut extra = json!({
+            "action": "evidence",
+            "turn_span_id": output.span_id,
+            "evidence_action": rule.action,
+        });
+        for (key, value) in evidence.span_attributes() {
+            extra[key] = value;
+        }
+        self.ctx.policy_span("evidence", &decision, extra);
+        if decision.allowed {
+            return (status, error);
+        }
+        let message = format!("policy: evidence {}: {}", evidence.verdict, decision.reason);
+        self.ctx.log(LogLevel::Warn, message.clone());
+        (NodeStatus::Failed, Some(message))
+    }
+
     async fn finish(
         &self,
         status: NodeStatus,
         attempt: i32,
-        out: Option<ExecOutput>,
+        mut out: Option<ExecOutput>,
         error: Option<String>,
     ) -> (NodeStatus, Option<String>) {
         let state = &self.ctx.state;
         let node_id = self.ctx.node.id;
+        let (status, error) = self.verify(status, &mut out, error);
+        // An output the evidence policy rejected is on the record (its verdict, its tokens)
+        // but is not handed on: not stored as the node's output, not built on downstream.
+        let delivered = status == NodeStatus::Succeeded;
         let (tokens_in, tokens_out, tokens_cached) = out
             .as_ref()
             .map_or((0, 0, 0), |o| (o.tokens_in, o.tokens_out, o.tokens_cached));
@@ -1485,8 +1570,15 @@ impl NodeTask {
             cost_usd: cost,
             cached: false,
             error: error.as_deref(),
-            output: out.as_ref().map(|o| o.output.as_str()),
-            content_hash: (status == NodeStatus::Succeeded).then_some(self.hash.as_str()),
+            output: out
+                .as_ref()
+                .filter(|_| delivered)
+                .map(|o| o.output.as_str()),
+            content_hash: delivered.then_some(self.hash.as_str()),
+            evidence: out
+                .as_ref()
+                .and_then(|o| o.evidence.as_ref())
+                .and_then(|e| serde_json::to_value(e).ok()),
         };
         if let Err(err) = record(
             state,
@@ -1502,8 +1594,8 @@ impl NodeTask {
             tracing::error!(%node_id, error = %err, "cannot record node outcome");
         }
         publish_status(state, &self.data, node_id, status, attempt, error, false);
-        let output = out.map(|o| o.output);
-        if let Some(text) = output.as_ref().filter(|_| status == NodeStatus::Succeeded) {
+        let output = out.filter(|_| delivered).map(|o| o.output);
+        if let Some(text) = output.as_ref() {
             self.remember(text.clone());
         }
         (status, output)

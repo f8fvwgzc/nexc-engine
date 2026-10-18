@@ -9,7 +9,8 @@ use futures::future::BoxFuture;
 use serde_json::json;
 use uuid::Uuid;
 
-use super::{ExecContext, ExecError, ExecOutput, NodeExecutor, slug};
+use super::{ExecContext, ExecError, ExecOutput, NodeExecutor, slug, with_evidence};
+use crate::domain::evidence;
 use crate::domain::prompt::{NodePrompt, node_prompt};
 use crate::domain::settings::LlmProviderKind;
 use crate::domain::trace::{self, SpanKind, SpanStatus};
@@ -73,7 +74,17 @@ async fn run(ctx: &ExecContext) -> Result<ExecOutput, ExecError> {
         "duration_ns": clock.elapsed().as_nanos() as i64,
     });
     match &streamed {
-        Ok(stop) => span.attributes["stop_reason"] = json!(stop_name(*stop)),
+        Ok(stop) => {
+            span.attributes["stop_reason"] = json!(stop_name(*stop));
+            // The verdict on the output rides on the call that produced it.
+            let evidence = evidence::assess(
+                &[out.output.as_str()],
+                &ctx.given,
+                ctx.rules.evidence.min_coverage,
+            );
+            with_evidence(&mut span.attributes, &evidence);
+            out.evidence = Some(evidence);
+        }
         Err(err) => {
             span.status = SpanStatus::Error;
             span.attributes["error"] = json!(trace::clean_name(&err.message));

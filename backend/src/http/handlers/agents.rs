@@ -12,8 +12,9 @@ use super::workspaces::audit;
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::agent::{
-    AGENT_NAME_MAX, AGENT_TITLE_MAX, Agent, AgentApiToken, AgentCard, AgentRuntime, AgentStatus,
-    CARD_SPANS, IssuedAgentApiToken, PURPOSE_MAX, SYSTEM_PROMPT_MAX, TOKEN_NAME_MAX, is_valid_role,
+    AGENT_NAME_MAX, AGENT_TITLE_MAX, Agent, AgentApiToken, AgentCard, AgentEvidence, AgentRuntime,
+    AgentStatus, CARD_OUTPUTS, CARD_SPANS, IssuedAgentApiToken, PURPOSE_MAX, SYSTEM_PROMPT_MAX,
+    TOKEN_NAME_MAX, is_valid_role,
 };
 use crate::domain::audit::AuditAction;
 use crate::domain::capabilities::Capabilities;
@@ -357,6 +358,7 @@ pub async fn get(
     let team = repo::agents::team(&state.db, agent.team_id).await?;
     let recent_spans = repo::spans::activity(&state.db, auth.id, id, CARD_SPANS).await?;
     let evaluation = repo::agent_evaluations::find(&state.db, id).await?;
+    let outputs = repo::runs::evidence_of_agent(&state.db, auth.id, id, CARD_OUTPUTS).await?;
     Ok(Json(AgentCard {
         budget_left: agent.budget_left(),
         agent,
@@ -364,6 +366,7 @@ pub async fn get(
         team,
         recent_spans,
         evaluation,
+        evidence: AgentEvidence::over(outputs),
     }))
 }
 

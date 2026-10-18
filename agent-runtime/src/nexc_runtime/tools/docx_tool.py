@@ -11,6 +11,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Pt
 from pydantic import Field
 
+from ..evidence import Sources
 from .base import Tool, ToolArgs, ToolContext, ToolError
 
 MAX_SECTIONS = 200
@@ -132,8 +133,36 @@ def markdown_to_docx_args(title: str, markdown: str, filename: str) -> MakeDocxA
     return MakeDocxArgs(filename=filename, title=title, sections=sections[:MAX_SECTIONS])
 
 
+def with_sources_section(args: MakeDocxArgs, sources: Sources) -> MakeDocxArgs:
+    """The document with a `Sources` section naming every id its text cites, unless it has
+    one already or cites none."""
+    text = "\n".join(
+        [args.title]
+        + [
+            "\n".join([s.heading, *s.paragraphs, *s.bullets, *(" ".join(r) for r in s.table_rows)])
+            for s in args.sections
+        ]
+    )
+    cited = sources.cited_in(text)
+    if not cited or any(s.heading.strip().lower() in SOURCES_HEADINGS for s in args.sections):
+        return args
+    section = DocxSection(
+        heading="Sources",
+        paragraphs=[],
+        bullets=[f"[{s.id}] {s.title}" for s in cited],
+        table_rows=[],
+    )
+    return MakeDocxArgs(
+        filename=args.filename, title=args.title, sections=[*args.sections, section]
+    )
+
+
+SOURCES_HEADINGS = frozenset({"sources", "references", "citations", "bibliography"})
+
+
 async def make_docx(ctx: ToolContext, args: MakeDocxArgs) -> str:
     filename = args.filename if args.filename.lower().endswith(".docx") else f"{args.filename}.docx"
+    args = with_sources_section(args, ctx.sources)
     data = render_docx(args)
     target = ctx.workspace.write_bytes(filename, data)
     relative = ctx.workspace.relative(target)

@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from ..approvals import ApprovalOutcome, ApprovalRegistry, ApprovalTimeout
 from ..config import Settings
+from ..evidence import Sources
 
 if TYPE_CHECKING:
     from ..control import RunControl
@@ -67,6 +68,8 @@ class ToolContext:
     # The tool being invoked, and the approval it runs under, for handlers that need them.
     current_tool: str | None = None
     pending_approval_id: str | None = None
+    # What the agent was given, by citation id: deliverables that cite ids get a Sources section.
+    sources: Sources = field(default_factory=Sources)
 
     def __post_init__(self) -> None:
         if not self.principal:

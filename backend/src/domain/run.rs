@@ -6,6 +6,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use super::capabilities::DataLabel;
+use super::evidence::Evidence;
 use super::graph::{Executor, NodeStatus};
 use super::policy::PolicyVersions;
 use super::string_enum;
@@ -56,6 +57,11 @@ pub struct NodeRun {
     pub policy_versions: PolicyVersions,
     /// The classifications of the data the node was given.
     pub context_labels: Vec<DataLabel>,
+    /// What the verifier found about the node's output: the verdict, the
+    /// coverage, the ids it cited and the ones it was never given. `null`
+    /// until the node answered, and for a node that produced no output.
+    #[schema(required = true)]
+    pub evidence: Option<Evidence>,
 }
 
 /// One execution of (part of) a graph.

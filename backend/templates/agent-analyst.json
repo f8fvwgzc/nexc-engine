@@ -19,7 +19,8 @@
   },
   "policy": {
     "alerts": { "denials_per_run": 1, "risk_score": 5, "quarantine_risk_score": 8 },
-    "dlp": { "secrets": "deny", "pii": { "enabled": true, "action": "alert" } }
+    "dlp": { "secrets": "deny", "pii": { "enabled": true, "action": "alert" } },
+    "evidence": { "required": true, "action": "mark" }
   },
   "knowledge": ["finance", "finances", "financial", "budget", "revenue", "invoices"],
   "questions": [

@@ -392,6 +392,25 @@ pub async fn keyword_candidates(
     .await
 }
 
+/// One passage of a ready document of the workspace, by its chunk id.
+pub async fn find_passage(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    chunk_id: Uuid,
+) -> Result<Option<Candidate>, sqlx::Error> {
+    sqlx::query_as(concat!(
+        "SELECT ",
+        candidate_columns!(),
+        " FROM document_chunks c JOIN documents d ON d.id = c.document_id
+         LEFT JOIN knowledge_topics t ON t.id = c.topic_id
+         WHERE c.workspace_id = $1 AND c.id = $2 AND d.status = 'ready'"
+    ))
+    .bind(workspace_id)
+    .bind(chunk_id)
+    .fetch_optional(db)
+    .await
+}
+
 /// The words in more than `share` of all passages (see `repo::memories::common_terms`).
 pub async fn common_terms(db: impl PgExecutor<'_>, share: f64) -> Result<Vec<String>, sqlx::Error> {
     sqlx::query_scalar(

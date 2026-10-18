@@ -24,6 +24,102 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   says how the site is assembled and carries the style guide its pages follow: sentence case,
   one idea per sentence, one sentence of purpose at the top of every page, tables for options,
   no em dashes.
+- Evidence ids in every node's context (`docs/AGENTSECOPS.md` §2, evidence-bound answers;
+  `docs/CONTRACT.md` §4 and §8): every piece of context a node is given carries a stable
+  citation id the model is told to cite it by. A document passage is headed by
+  `[doc:<chunk id>] <source>`, a memory by `[mem:<memory id>]`, an upstream result's heading
+  ends with `[node:<node id>]` (the runtime renders them as the `id` attribute of its
+  `<document>`, `<memory>` and `<upstream_output>` tags), and `[fact:<id>]` is reserved for
+  ontology facts. Both prompt builders (the built-in executor's and the runtime's) tell the
+  model to cite the id in brackets after each claim that rests on it, that several ids may
+  share one bracket, and to end a statement of its own with `[assumption]`. The node's
+  `data_read` span lists the ids it was told to cite (`citation_ids`), beside the chunk,
+  memory and node ids it already listed. Tests: the ids are rendered in both prompts and never
+  leak into the upstream titles the demo provider reads back (`backend/src/domain/prompt.rs`,
+  `agent-runtime/tests/test_prompts.py`).
+- Evidence-bound outputs, tests and docs: the worst-case suite checks the trace explorer's new
+  `decision=evidence` filter like the four decisions before it (a bounded page across the
+  20,000-issue workspace, 422 for anything that only looks like the value, nothing for
+  outsiders; `backend/tests/worst_case.rs`), and `docs/AGENTSECOPS.md` §2's evidence-bound
+  paragraph now says the promise holds for every agent, and how.
+- The demo providers cite what they were given, so the feature shows without an API key:
+  the built-in demo provider reads the passages, memories and upstream results back out of
+  the prompt by their ids and answers with an **Evidence** section quoting each with its id,
+  marks the rest of what it says as assumptions and puts its label and summary in quotes
+  rather than claims; the runtime's demo provider does the same in its final answer, its
+  research notes and its documents (an Evidence section in the `.docx`, each section of the
+  compiled final report citing the upstream node it rests on), and the Sources section
+  follows. A node given something is `verified` with full coverage; one given nothing is
+  `unverified` with nothing forged. `make demo-secops` gains step 3, **Evidence**: the
+  board-compensation document is attached as `internal`, the research node cites its passages
+  and is verified (the run page shows the chips, the node's last model call carries the
+  verdict); relabelled `restricted`, the same node runs without it, the coverage drops to 0 %
+  and the Analyst template's policy marks the output (the `policy` span named `evidence`);
+  the later steps moved down one. Tests: the built-in provider's output verifies against what
+  the prompt gave it and declares everything when given nothing (`backend/src/llm/demo.rs`); a
+  demo run's downstream node is verified and its first node unverified, with the verdicts on
+  the spans and the policy's `allow` on the record (`backend/tests/evidence.rs`); the
+  runtime's demo cites the ids, keeps the Sources section and cites the upstream node in the
+  compiled report (`agent-runtime/tests/test_demo.py`).
+- Evidence on every surface: the run page's node table shows each output's verdict as a badge
+  with its coverage (hover for the counts), and an **Evidence** section lists per node what the
+  output cites as chips, each opening what it points at (a document passage in a dialog on the
+  Knowledge page, `?passage=<chunk id>`, read from the new `GET
+  /workspaces/{wid}/knowledge/passages/{cid}`; a memory on the Memory page, `?memory=<id>`;
+  an upstream node's panel on the canvas, `?node=<id>`; the audit page for a fact), with the
+  ids the node was never given crossed out and named. The node output view on the canvas
+  shows the verdict and the chips read off the output itself, live. The agent card's Overview
+  gets an **Evidence** section (`AgentCard.evidence`: how many of its last twenty outputs were
+  verified, partial or unverified, and the list, each opening its run). The AgentSecOps
+  overview counts the day's outputs by verdict (`SecopsOverview.evidence_today`; the stat row
+  shows **Unverified today**), the trace explorer's Decision filter gains **evidence verdict**
+  (`decision=evidence`: the spans carrying one, a node's last model call and the policy
+  decision about its output), its rows and the waterfall say the verdict, and the resolved
+  policy view lists the three evidence rules. Deliverables keep their citations readable:
+  the runtime's `finish` appends a `## Sources` section naming every cited id with its title
+  (the passage's source, the memory's first words, the upstream node's title), `write_file`
+  does the same for a `.md` file and `make_docx` adds a `Sources` section to the document
+  (`docs/CONTRACT.md` §8); the verifier does not count those lines as claims. Tests: the chips
+  parse ids as the backend does and link where they should, the badge shows the verdict and
+  the coverage, the unknown ids are listed (`frontend/src/features/runs/components/evidence.test.tsx`);
+  the runtime's Sources sections on the answer, a Markdown file and a `.docx`
+  (`agent-runtime/tests/test_evidence.py`); the overview counts, the explorer filter, the card
+  and the passage endpoint (`backend/tests/evidence.rs`).
+- The evidence verifier (`docs/AGENTSECOPS.md` §2; `docs/CONTRACT.md` §4): once a node
+  answered, the backend finds the citations in its output and its Markdown artifacts (an id
+  inside a code block or a code span is not a citation; a bracket holding anything but ids,
+  such as a source name or a link, is not one either), checks each against what the node was
+  given (an id it was neither given nor saw written inside that text, such as an upstream
+  output citing its own sources, is forged; a memory is stored without the citation ids and
+  markers of the output it was read from), approximates the claims as the sentences,
+  bullets and table rows of the prose (headings, block quotes, code and any section whose
+  heading starts with Sources, References, Citations or Bibliography aside; a claim ending
+  with `[assumption]` is the model's own and counted apart),
+  and reads off the coverage (claims citing what was given over the claims not declared the
+  model's own) and a verdict: `verified` when the coverage reaches the policy's
+  `min_coverage` (0.8 unless set) and nothing was forged, `unverified` when no claim rests on
+  what was given, `partial` otherwise. The result is stored on the node run
+  (`NodeRun.evidence`: the verdict, the coverage, the counts, the ids cited and the ids never
+  given) and rides as `evidence_*` attributes on the node's last `llm_call` span (the built-in
+  executor's one call; for the agent runtime the spans of a turn are held together, in order
+  of receipt, until the next turn starts or the result arrives, so the last turn can carry
+  the verdict without the chain changing its order). A cached result keeps the verdict it
+  got. The policy document gains `evidence: {required, min_coverage, action: mark | reject}`,
+  resolved like the other rules (required once any level requires it, the highest coverage,
+  reject once any level says so; a version that would weaken the level above is refused):
+  with `required` on, the verdict is a `policy` span named `evidence` (allow when verified;
+  `mark` records an unverified or partial output as decision `alert` and the node succeeds;
+  `reject` fails the node with `policy: evidence <verdict>: <why>` as the reason the run page
+  shows, its output kept off the node and nothing built on it downstream). The default is
+  off, so nothing changes for existing workspaces beyond the verdict being recorded; the
+  Analyst, Researcher and Reviewer templates require evidence and mark what falls short.
+  Tests: the parser and the coverage heuristic (`backend/src/domain/evidence.rs`: ids inside
+  code are ignored, duplicates count once, forged ids are violations that keep an output from
+  `verified`, declared claims are counted apart, the sources section is not a claim); the
+  rule resolves and narrows like the others; a scheduler run under `reject` fails the node
+  with the reason, skips what depended on it and leaves the verdict on the record, under
+  `mark` succeeds with the verdict as an alert span, and under the default only records it
+  (`backend/tests/evidence.rs`).
 - A2A adapter, the console: the agent card gets an **A2A** tab with the switch that publishes
   the agent (admins; disabled for an external agent, with the reason), the addresses of its card,
   its well-known card and its JSON-RPC endpoint under the console's origin with a copy each, and

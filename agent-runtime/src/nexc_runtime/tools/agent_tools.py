@@ -35,7 +35,8 @@ async def finish(ctx: ToolContext, args: FinishArgs) -> str:
             "nothing has been written to the workspace yet. This task delivers a file: create "
             "it with make_docx (documents) or write_file (everything else), then call finish."
         )
-    ctx.final_answer = args.answer
+    # The answer keeps the ids it cites readable: a Sources section names each.
+    ctx.final_answer = ctx.sources.with_sources(args.answer)
     return "final answer recorded"
 
 

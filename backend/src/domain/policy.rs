@@ -13,9 +13,11 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use super::capabilities::{Capabilities, DataLabel};
+use super::evidence::MIN_COVERAGE_DEFAULT;
 use super::memory::MemoryScope;
 use super::policy_document::{
-    APPROVAL_TIMEOUT_DEFAULT_S, InjectionAction, PiiKind, RuleAction, Severity, TimeWindow,
+    APPROVAL_TIMEOUT_DEFAULT_S, EvidenceAction, InjectionAction, PiiKind, RuleAction, Severity,
+    TimeWindow,
 };
 
 /// Tools whose output leaves the run as an artifact: the ones a label-based
@@ -438,6 +440,26 @@ impl Default for InjectionRules {
     }
 }
 
+/// Evidence-bound outputs, once resolved: whether the verifier acts, the
+/// coverage a verified output needs, and what happens below it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(default)]
+pub struct EvidenceRules {
+    pub required: bool,
+    pub min_coverage: f64,
+    pub action: EvidenceAction,
+}
+
+impl Default for EvidenceRules {
+    fn default() -> Self {
+        EvidenceRules {
+            required: false,
+            min_coverage: MIN_COVERAGE_DEFAULT,
+            action: EvidenceAction::Mark,
+        }
+    }
+}
+
 /// The versions of the policies that governed a node, by level; `null`
 /// where no policy is set.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -468,6 +490,7 @@ pub struct Rules {
     pub alerts: AlertRules,
     pub dlp: DlpRules,
     pub injection: InjectionRules,
+    pub evidence: EvidenceRules,
     pub versions: PolicyVersions,
 }
 
@@ -896,6 +919,9 @@ mod tests {
         assert_eq!(rules.dlp.pii.action, RuleAction::Alert);
         assert_eq!(rules.injection.action, InjectionAction::Flag);
         assert_eq!(rules.require_approval.timeout_s, 600);
+        assert!(!rules.evidence.required);
+        assert_eq!(rules.evidence.min_coverage, MIN_COVERAGE_DEFAULT);
+        assert_eq!(rules.evidence.action, EvidenceAction::Mark);
         // Old tokens without rules parse to the defaults.
         let parsed: Rules = serde_json::from_str("{}").unwrap();
         assert_eq!(parsed, rules);

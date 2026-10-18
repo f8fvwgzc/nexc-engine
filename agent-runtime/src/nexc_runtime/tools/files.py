@@ -24,7 +24,10 @@ class ListFilesArgs(ToolArgs):
 
 
 async def write_file(ctx: ToolContext, args: WriteFileArgs) -> str:
-    data = args.content.encode("utf-8")
+    content = args.content
+    if args.path.lower().endswith((".md", ".markdown")):
+        content = ctx.sources.with_sources(content)
+    data = content.encode("utf-8")
     target = ctx.workspace.write_bytes(args.path, data)
     return f"wrote {ctx.workspace.relative(target)} ({len(data)} bytes)"
 

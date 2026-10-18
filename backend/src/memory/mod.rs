@@ -412,7 +412,17 @@ pub async fn store(
     graph_id: Uuid,
     candidates: &[Candidate],
 ) -> anyhow::Result<Vec<Consolidation>> {
-    // Everyone who runs the graph adds to the same memory.
+    // Everyone who runs the graph adds to the same memory. A memory is a fact, not a quote:
+    // the citation ids and the markers of the output it was read from are not part of it.
+    let candidates: Vec<Candidate> = candidates
+        .iter()
+        .map(|c| Candidate {
+            content: crate::domain::evidence::strip_markers(&c.content),
+            ..c.clone()
+        })
+        .filter(|c| !c.content.is_empty())
+        .collect();
+    let candidates = &candidates;
     let mut existing = memories::of_graph(db, graph_id).await?;
     let mut decisions = Vec::with_capacity(candidates.len());
     // A graph that has learned more than one read holds is not compared in full: the

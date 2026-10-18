@@ -1060,6 +1060,7 @@ async fn prove_gateway(pool: PgPool) {
         upstream: Vec::new(),
         memories: Vec::new(),
         documents: Vec::new(),
+        given: Default::default(),
         agent: Some(agent.clone()),
         capabilities: agent.capabilities.clone(),
         policy_version: 0,

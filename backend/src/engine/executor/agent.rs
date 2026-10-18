@@ -17,8 +17,9 @@ use uuid::Uuid;
 
 use super::super::approvals::{self, Delivery, Granted};
 use super::super::artifacts::MAX_ARTIFACT_BYTES;
-use super::{ExecContext, ExecError, ExecOutput, NodeExecutor};
+use super::{ExecContext, ExecError, ExecOutput, NodeExecutor, with_evidence};
 use crate::config::RuntimeProtocol;
+use crate::domain::evidence;
 use crate::domain::mcp::GatewayTool;
 use crate::domain::policy::{Action, Effect};
 use crate::domain::prompt::UpstreamOutput;
@@ -33,6 +34,9 @@ pub(super) const MAX_TURNS: u32 = 12;
 const MAX_SPANS_PER_ATTEMPT: usize = 20_000;
 /// How far a runtime span id's clock may stray from the attempt's.
 const SPAN_CLOCK_SLACK_MS: i64 = 5 * 60 * 1000;
+/// Largest Markdown artifact verified with the output, and the most of them together.
+const MARKDOWN_FILE_MAX: usize = 512 * 1024;
+const MARKDOWN_TOTAL_MAX: usize = 2 * 1024 * 1024;
 
 /// Executes nodes with `executor: "agent"`.
 pub struct AgentExecutor;
@@ -211,6 +215,13 @@ pub struct Progress {
     /// Whether approvals are asked for by `approval_request` events (gRPC)
     /// rather than by `policy` spans (NDJSON).
     approvals_from_events: bool,
+    /// The turn under way: its `llm_call` span and what followed it, held
+    /// back in order of receipt until the next turn starts or the result
+    /// arrives, so that the verdict on the output rides on the last turn.
+    turn: Vec<SpanDraft>,
+    /// The Markdown artifacts delivered so far: verified with the output.
+    markdown: Vec<String>,
+    markdown_bytes: usize,
 }
 
 impl Progress {
@@ -228,7 +239,62 @@ impl Progress {
             stop: CancellationToken::new(),
             delivery,
             approvals_from_events,
+            turn: Vec::new(),
+            markdown: Vec::new(),
+            markdown_bytes: 0,
         }
+    }
+
+    /// Records `span` in order of receipt. A turn's spans (its `llm_call`
+    /// and what follows it) are held together until the next turn or the
+    /// result, so the chain keeps its order and the last turn can carry the
+    /// verdict on the output.
+    fn record(&mut self, ctx: &ExecContext, span: SpanDraft) {
+        if span.kind == SpanKind::LlmCall {
+            self.flush(ctx);
+            self.turn.push(span);
+        } else if self.turn.is_empty() {
+            ctx.record(span);
+        } else {
+            self.turn.push(span);
+        }
+    }
+
+    /// Emits the held turn, in the order its spans came.
+    fn flush(&mut self, ctx: &ExecContext) {
+        for span in self.turn.drain(..) {
+            ctx.record(span);
+        }
+    }
+
+    /// Keeps a Markdown artifact's text for the verifier (bounded).
+    fn keep_markdown(&mut self, path: &str, mime: Option<&str>, bytes: &[u8]) {
+        let markdown = mime.is_some_and(|m| m.starts_with("text/markdown"))
+            || path.to_ascii_lowercase().ends_with(".md");
+        if markdown
+            && bytes.len() <= MARKDOWN_FILE_MAX
+            && self.markdown_bytes + bytes.len() <= MARKDOWN_TOTAL_MAX
+        {
+            self.markdown_bytes += bytes.len();
+            self.markdown
+                .push(String::from_utf8_lossy(bytes).into_owned());
+        }
+    }
+
+    /// The verdict on `output` and the Markdown delivered with it, put on the
+    /// held turn's `llm_call` span; the turn is then emitted.
+    fn verify(&mut self, ctx: &ExecContext, output: &str) -> evidence::Evidence {
+        let texts: Vec<&str> = std::iter::once(output)
+            .chain(self.markdown.iter().map(String::as_str))
+            .collect();
+        let evidence = evidence::assess(&texts, &ctx.given, ctx.rules.evidence.min_coverage);
+        if let Some(turn) = self.turn.first_mut()
+            && turn.kind == SpanKind::LlmCall
+        {
+            with_evidence(&mut turn.attributes, &evidence);
+        }
+        self.flush(ctx);
+        evidence
     }
 
     /// Keeps a task of the attempt (a gateway call) to end with it.
@@ -237,9 +303,11 @@ impl Progress {
         self.tasks.push(task);
     }
 
-    /// Ends the attempt: a still-pending approval expires (its watcher
-    /// settles first), a gateway call still under way is dropped.
-    pub(super) async fn close(self) {
+    /// Ends the attempt: whatever turn was held is emitted, a still-pending
+    /// approval expires (its watcher settles first), a gateway call still
+    /// under way is dropped.
+    pub(super) async fn close(mut self, ctx: &ExecContext) {
+        self.flush(ctx);
         self.stop.cancel();
         for watcher in self.watchers {
             let _ = watcher.await;
@@ -507,7 +575,7 @@ async fn run_ndjson(ctx: &ExecContext, token: String) -> Result<ExecOutput, Exec
     }
     let mut progress = Progress::new(Delivery::Http);
     let outcome = stream(ctx, resp, &mut progress).await;
-    progress.close().await;
+    progress.close(ctx).await;
     outcome
 }
 
@@ -591,11 +659,12 @@ pub(super) async fn handle_event(
             mime,
             content,
         } => match content {
-            Ok(bytes) => {
-                if let Err(err) = ctx.artifact(&path, mime.as_deref(), &bytes).await {
+            Ok(bytes) => match ctx.artifact(&path, mime.as_deref(), &bytes).await {
+                Ok(_) => progress.keep_markdown(&path, mime.as_deref(), &bytes),
+                Err(err) => {
                     ctx.log(LogLevel::Warn, format!("artifact `{path}` rejected: {err}"));
                 }
-            }
+            },
             Err(err) => ctx.log(LogLevel::Warn, format!("artifact `{path}` rejected: {err}")),
         },
         Event::Result {
@@ -607,15 +676,18 @@ pub(super) async fn handle_event(
             let (tokens_in, tokens_out) = (tokens_in.max(usage.0), tokens_out.max(usage.1));
             let tokens_cached = tokens_cached.max(usage.2);
             ctx.tokens(tokens_in, tokens_out);
+            let evidence = progress.verify(ctx, &output);
             return Ok(Some(ExecOutput {
                 output,
                 tokens_in,
                 tokens_out,
                 tokens_cached,
                 span_id: None,
+                evidence: Some(evidence),
             }));
         }
         Event::Error { message, retryable } => {
+            progress.flush(ctx);
             return Err(ExecError {
                 message: format!("agent runtime: {message}"),
                 retryable,
@@ -668,7 +740,7 @@ pub(super) async fn handle_event(
                                 .to_owned(),
                         )
                     });
-                    ctx.record(span);
+                    progress.record(ctx, span);
                     if let Some((tool, reason)) = injection {
                         ctx.alert(&crate::engine::defend::Finding {
                             span_id: Some(span_id),

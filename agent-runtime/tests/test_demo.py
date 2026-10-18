@@ -110,6 +110,53 @@ async def test_demo_reads_the_briefs_urls_through_the_gateway_when_offered() -> 
     assert [c.name for c in turn.tool_calls] == ["write_file"]
 
 
+CHUNK = "0199a1b2-0000-7000-8000-000000000011"
+MEMORY = "0199a1b2-0000-7000-8000-000000000012"
+NODE = "0199a1b2-0000-7000-8000-000000000013"
+
+
+def test_demo_cites_what_it_was_given_and_keeps_a_sources_section(
+    make_settings: Callable[..., Settings],
+) -> None:
+    context = {
+        "upstream": [{"node_id": NODE, "title": "Findings", "output": "Revenue grew 12%."}],
+        "memories": [f"[mem:{MEMORY}] The team writes in British English. Always."],
+        "documents": [
+            f"[doc:{CHUNK}] customs.pdf, p. 17\nGoods under 150 EUR are exempt from duty.\nMore."
+        ],
+    }
+    events = _run(make_settings, context=context)
+    output = events[-1]["output"]
+    assert f"Goods under 150 EUR are exempt from duty. [doc:{CHUNK}] (customs.pdf, p. 17)" in output
+    assert f"Recalled: The team writes in British English. [mem:{MEMORY}]" in output
+    assert f"Built on “Findings”: its findings feed into this step [node:{NODE}]" in output
+    assert "[assumption]" in output
+    sources = output.split("## Sources", 1)[1]
+    assert f"- [doc:{CHUNK}] customs.pdf, p. 17" in sources
+    assert f"- [node:{NODE}] Findings" in sources
+    (artifact,) = [e for e in events if e["type"] == "artifact"]
+    document = docx.Document(io.BytesIO(base64.b64decode(artifact["content_b64"])))
+    text = [p.text for p in document.paragraphs]
+    assert "Evidence" in text and "Sources" in text
+    assert any(f"[doc:{CHUNK}]" in t for t in text)
+    # Given nothing, the answer declares every claim its own and cites nothing.
+    bare = _run(make_settings)[-1]["output"]
+    assert "[doc:" not in bare and "## Sources" not in bare
+    assert bare.count("[assumption]") == 3
+    # The final deliverable cites each upstream node its sections rest on.
+    compiled = _run(
+        make_settings,
+        task={"title": "Final report", "kind": "output"},
+        context={"upstream": [{"node_id": NODE, "title": "Findings", "output": "Revenue grew."}]},
+    )
+    (artifact,) = [e for e in compiled if e["type"] == "artifact"]
+    document = docx.Document(io.BytesIO(base64.b64decode(artifact["content_b64"])))
+    text = [p.text for p in document.paragraphs]
+    assert "Revenue grew." in text
+    assert f"Rests on the upstream result “Findings” [node:{NODE}]." in text
+    assert f"[node:{NODE}] Findings" in text
+
+
 def test_demo_names_at_most_three_urls_once_each() -> None:
     urls = [f"https://example.com/{n}." for n in range(5)]
     brief = DemoBrief(title="t", kind="research", content=" ".join(urls + urls))

@@ -9,6 +9,7 @@ import {
   UploadIcon,
 } from 'lucide-react';
 import { useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
 import { EmptyState } from '@/components/custom-ui/empty-state';
@@ -18,6 +19,13 @@ import { PageSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
@@ -26,6 +34,7 @@ import {
   documentsQuery,
   knowledgeSearchQuery,
   knowledgeSettingsQuery,
+  passageQuery,
   rebuildTopics,
   saveKnowledgeSettings,
   setDocumentLabel,
@@ -439,6 +448,51 @@ function TrySearch({ workspace }: { workspace: Workspace }) {
   );
 }
 
+/** The passage a citation chip opened (`?passage=<chunk id>`), in a dialog. */
+function PassageDialog({ workspace }: { workspace: Workspace }) {
+  const [params, setParams] = useSearchParams();
+  const chunkId = params.get('passage') ?? '';
+  const { data: passage, error, isPending } = useQuery(passageQuery(workspace.id, chunkId));
+  if (!chunkId) return null;
+  const close = () => {
+    const next = new URLSearchParams(params);
+    next.delete('passage');
+    setParams(next, { replace: true });
+  };
+  return (
+    <Dialog open onOpenChange={(next) => !next && close()}>
+      <DialogContent className="sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <FileTextIcon className="size-4 text-muted-foreground" aria-hidden />
+            {passage ? passage.document_name : 'Passage'}
+          </DialogTitle>
+          <DialogDescription className="font-mono text-xs">
+            doc:{chunkId}
+            {passage && (
+              <span className="ml-2 font-sans">
+                {passage.page !== null && `p. ${passage.page}`}
+                {passage.section_path && ` › ${passage.section_path}`} · {passage.label}
+              </span>
+            )}
+          </DialogDescription>
+        </DialogHeader>
+        {error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {errorMessage(error)}
+          </p>
+        ) : isPending ? (
+          <Skeleton className="h-24 rounded-lg" />
+        ) : (
+          <p className="max-h-96 overflow-auto rounded-lg border bg-muted/40 p-3 text-sm whitespace-pre-wrap">
+            {passage.content}
+          </p>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function draftOf(settings: KnowledgeSettings) {
   return {
     url: settings.embed_base_url ?? '',
@@ -599,6 +653,7 @@ function Knowledge({ workspace }: { workspace: Workspace }) {
   }
   return (
     <div className="space-y-8">
+      <PassageDialog workspace={workspace} />
       <Documents workspace={workspace} />
       <TrySearch workspace={workspace} />
       {settings ? (

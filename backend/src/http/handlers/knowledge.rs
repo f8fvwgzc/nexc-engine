@@ -288,6 +288,36 @@ pub async fn search(
     ))
 }
 
+/// One passage by its chunk id: what a citation `[doc:<chunk id>]` points
+/// at (everyone but guests; a passage of another workspace, or of a document
+/// that is not ready, is not found).
+#[utoipa::path(get, path = "/workspaces/{wid}/knowledge/passages/{cid}", tag = "knowledge", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id"), ("cid" = Uuid, Path, description = "Chunk id")),
+    responses((status = 200, body = Passage), (status = 403, body = Problem), (status = 404, body = Problem)))]
+pub async fn passage(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((wid, cid)): Path<(Uuid, Uuid)>,
+) -> Result<Json<Passage>, AppError> {
+    require_member(&member_of(&state, auth, wid).await?)?;
+    let found = repo::knowledge::find_passage(&state.db, wid, cid)
+        .await
+        .or_not_found("passage")?;
+    Ok(Json(Passage {
+        chunk_id: found.chunk_id,
+        document_id: found.document_id,
+        document_name: found.document_name,
+        page: found.page,
+        section_path: found.section_path,
+        kind: found.kind,
+        content: found.content,
+        topic_id: found.topic_id,
+        label: found.label,
+        topic_label: found.topic_label,
+        score: 1.0,
+    }))
+}
+
 /// The topics of the workspace's documents, largest first. They are found
 /// without supervision: passages are clustered by their embeddings and each
 /// cluster is named by the words that set it apart.

@@ -55,6 +55,12 @@ export const secopsOverviewSchema = z.object({
   approvals_open: z.number().int().nonnegative(),
   alerts_open: z.array(z.object({ severity: severitySchema, count: z.number().int() })),
   artifacts_quarantined: z.number().int().nonnegative(),
+  /** Outputs that answered since midnight UTC, by evidence verdict. */
+  evidence_today: z.object({
+    verified: z.number().int().nonnegative(),
+    partial: z.number().int().nonnegative(),
+    unverified: z.number().int().nonnegative(),
+  }),
   top_risk: z.array(riskyAgentSchema),
   policy_versions: z.array(
     z.object({
@@ -100,6 +106,8 @@ export const secopsSpanSchema = z.object({
   tokens_out: z.number().int().nullable(),
   /** A tool call that is a task received over A2A (CONTRACT §10). */
   inbound: z.boolean().optional(),
+  /** `attributes.evidence`: the verdict on an output (a node's last model call, the decision about it). */
+  evidence: z.string().nullable().optional(),
 });
 export type SecopsSpan = z.infer<typeof secopsSpanSchema>;
 
@@ -109,8 +117,16 @@ export const secopsSpanPageSchema = z.object({
 });
 export type SecopsSpanPage = z.infer<typeof secopsSpanPageSchema>;
 
-export const DECISIONS = ['allow', 'deny', 'require_approval', 'alert'] as const;
+/** The explorer's decisions: the four a policy or approval span takes, plus `evidence`, the spans carrying an evidence verdict. */
+export const DECISIONS = ['allow', 'deny', 'require_approval', 'alert', 'evidence'] as const;
 export type Decision = (typeof DECISIONS)[number];
+export const DECISION_LABEL: Record<Decision, string> = {
+  allow: 'allow',
+  deny: 'deny',
+  require_approval: 'require approval',
+  alert: 'alert',
+  evidence: 'evidence verdict',
+};
 
 /** The explorer's kinds: every span kind, plus the inbound A2A tasks (tool calls marked inbound). */
 export const INBOUND_KIND = 'inbound';

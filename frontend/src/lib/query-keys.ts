@@ -96,6 +96,8 @@ export const qk = {
       ['knowledge', workspaceId, 'documents', filter] as const,
     search: (workspaceId: string, q: string, topicId?: string) =>
       ['knowledge', workspaceId, 'search', q, topicId ?? null] as const,
+    passage: (workspaceId: string, chunkId: string) =>
+      ['knowledge', workspaceId, 'passage', chunkId] as const,
     topics: (workspaceId: string) => ['knowledge', workspaceId, 'topics'] as const,
     settings: (workspaceId: string) => ['knowledge', workspaceId, 'settings'] as const,
   },

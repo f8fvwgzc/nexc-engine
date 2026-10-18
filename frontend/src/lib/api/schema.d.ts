@@ -2192,6 +2192,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{wid}/knowledge/passages/{cid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One passage by its chunk id: what a citation `[doc:<chunk id>]` points
+         *     at (everyone but guests; a passage of another workspace, or of a document
+         *     that is not ready, is not found).
+         */
+        get: operations["passage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{wid}/knowledge/search": {
         parameters: {
             query?: never;
@@ -3226,6 +3247,8 @@ export interface components {
              */
             budget_left: number | null;
             evaluation: components["schemas"]["AgentEvaluation"] | null;
+            /** @description The verdicts on the agent's last twenty outputs across the runs the caller may open. */
+            evidence: components["schemas"]["AgentEvidence"];
             owner: components["schemas"]["AgentOwner"] | null;
             /** @description The agent's last spans across the runs the caller may open, newest first. */
             recent_spans: components["schemas"]["Span"][];
@@ -3273,6 +3296,34 @@ export interface components {
             template: string;
             /** Format: int32 */
             total: number;
+        };
+        /** @description The verdicts on an agent's last outputs (`docs/AGENTSECOPS.md` §2). */
+        AgentEvidence: {
+            /** Format: int64 */
+            partial: number;
+            /** @description The outputs the counts are over, newest first (at most twenty). */
+            recent: components["schemas"]["AgentOutputEvidence"][];
+            /** Format: int64 */
+            unverified: number;
+            /** Format: int64 */
+            verified: number;
+        };
+        /** @description The verdict on one of an agent's outputs. */
+        AgentOutputEvidence: {
+            /**
+             * Format: double
+             * @description 0 to 1.
+             */
+            coverage: number;
+            /** Format: date-time */
+            finished_at: string | null;
+            /** Format: uuid */
+            graph_id: string;
+            /** Format: uuid */
+            node_id: string;
+            /** Format: uuid */
+            run_id: string;
+            verdict: components["schemas"]["EvidenceVerdict"];
         };
         /** @description Who is answerable for an agent, as shown on its card. */
         AgentOwner: {
@@ -4368,6 +4419,92 @@ export interface components {
             question: string;
         };
         /**
+         * @description What the verifier found about an output: stored on the node run
+         *     (`NodeRun.evidence`) and summarised on its last `llm_call` span.
+         */
+        Evidence: {
+            /** @description Distinct ids cited that the node was given (`doc:…`), first cited first. */
+            cited: string[];
+            /** @description Claims that cite at least one thing the node was given. */
+            cited_claims: number;
+            /**
+             * @description The sentences, bullets and table rows of the prose (headings, quotes,
+             *     code and the sources section aside).
+             */
+            claims: number;
+            /**
+             * Format: double
+             * @description Claims citing what the node was given, over the claims not declared the
+             *     model's own; 0 to 1.
+             */
+            coverage: number;
+            /** @description Claims the model declared its own (`[assumption]`) and cited nothing for. */
+            declared_claims: number;
+            /** @description How many things the node was given. */
+            given: number;
+            /**
+             * Format: double
+             * @description The coverage a verified output needed under the policy in force.
+             */
+            min_coverage: number;
+            /** @description Distinct ids cited that the node was never given: forged, or another run's. */
+            unknown: string[];
+            verdict: components["schemas"]["EvidenceVerdict"];
+        };
+        /**
+         * @description What the evidence verifier does with an output that is not verified.
+         * @enum {string}
+         */
+        EvidenceAction: "mark" | "reject";
+        /** @description Outputs by evidence verdict (`docs/AGENTSECOPS.md` §2). */
+        EvidenceCounts: {
+            /** Format: int64 */
+            partial: number;
+            /** Format: int64 */
+            unverified: number;
+            /** Format: int64 */
+            verified: number;
+        };
+        /**
+         * @description Evidence-bound outputs (`docs/AGENTSECOPS.md` §2): whether a node's
+         *     output must cite what the node was given, how much of it, and what
+         *     happens when it does not.
+         */
+        EvidenceRule: {
+            action: components["schemas"]["EvidenceAction"] | null;
+            /**
+             * Format: double
+             * @description The share of claims that must cite what was given for an output to be
+             *     verified, 0 to 1; `null` inherits (default 0.8).
+             */
+            min_coverage: number | null;
+            /**
+             * @description Whether the verifier acts on the verdict; `null` inherits (default: off,
+             *     the verdict is only recorded).
+             */
+            required: boolean | null;
+        };
+        /**
+         * @description Evidence-bound outputs, once resolved: whether the verifier acts, the
+         *     coverage a verified output needs, and what happens below it.
+         */
+        EvidenceRules: {
+            /** @default mark */
+            action: components["schemas"]["EvidenceAction"];
+            /**
+             * Format: double
+             * @default 0.8
+             */
+            min_coverage: number;
+            /** @default false */
+            required: boolean;
+        };
+        /**
+         * @description How much of an output rests on what the node was given.
+         * @enum {string}
+         */
+        EvidenceVerdict: "verified" | "partial" | "unverified";
+        /**
          * @description Which executor runs a node.
          * @enum {string}
          */
@@ -5182,6 +5319,7 @@ export interface components {
             /** @description The classifications of the data the node was given. */
             context_labels: components["schemas"]["DataLabel"][];
             error: string | null;
+            evidence: components["schemas"]["Evidence"] | null;
             executor: components["schemas"]["Executor"];
             /** Format: date-time */
             finished_at: string | null;
@@ -5559,6 +5697,7 @@ export interface components {
             alerts: components["schemas"]["AlertRule"];
             dlp: components["schemas"]["DlpRule"];
             egress: components["schemas"]["ListRule"];
+            evidence: components["schemas"]["EvidenceRule"];
             injection: components["schemas"]["InjectionRule"];
             /** @description The classifications agents under this policy may read; `null` inherits. */
             labels: components["schemas"]["DataLabel"][] | null;
@@ -5836,6 +5975,14 @@ export interface components {
             egress_denied: string[];
             /**
              * @default {
+             *       "action": "mark",
+             *       "min_coverage": 0.8,
+             *       "required": false
+             *     }
+             */
+            evidence: components["schemas"]["EvidenceRules"];
+            /**
+             * @default {
              *       "action": "flag",
              *       "model_check": false
              *     }
@@ -5975,6 +6122,8 @@ export interface components {
             denials_fortnight: components["schemas"]["RuleCount"][];
             /** @description Policy denials since midnight UTC, by the rule that denied. */
             denials_today: components["schemas"]["RuleCount"][];
+            /** @description Outputs that answered since midnight UTC, by evidence verdict. */
+            evidence_today: components["schemas"]["EvidenceCounts"];
             last_seal: components["schemas"]["TraceSeal"] | null;
             /** @description The latest version at every level that has one. */
             policy_versions: components["schemas"]["PolicyInForce"][];
@@ -6000,6 +6149,11 @@ export interface components {
             decision: string | null;
             /** Format: date-time */
             ended_at: string | null;
+            /**
+             * @description `attributes.evidence`: the verdict on an output, on a node's last model
+             *     call and on the policy decision about it.
+             */
+            evidence: string | null;
             /** Format: uuid */
             graph_id: string;
             /** @description `attributes.egress_host`: the host a tool called out to. */
@@ -12554,6 +12708,46 @@ export interface operations {
             };
         };
     };
+    passage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Chunk id */
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Passage"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     search: {
         parameters: {
             query: {
@@ -14069,7 +14263,11 @@ export interface operations {
                 from?: string | null;
                 /** @description Only spans started before this time. */
                 to?: string | null;
-                /** @description Only policy and approval spans with this decision (`allow`, `deny`, `require_approval`, `alert`). */
+                /**
+                 * @description Only policy and approval spans with this decision (`allow`, `deny`, `require_approval`,
+                 *     `alert`), or `evidence`: the spans carrying an evidence verdict (a node's last model
+                 *     call and the policy decision about its output).
+                 */
                 decision?: string | null;
                 /** @description Spans per page, 1–500 (default 100). */
                 limit?: number | null;

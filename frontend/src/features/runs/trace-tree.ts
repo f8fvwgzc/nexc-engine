@@ -129,6 +129,9 @@ export function describeSpan(span: Span): string {
       const tin = num('tokens_in');
       const tout = num('tokens_out');
       if (tin !== null && tout !== null) parts.push(`${tin} in / ${tout} out`);
+      const evidence = typeof a.evidence === 'string' ? a.evidence : '';
+      const coverage = num('evidence_coverage');
+      if (evidence) parts.push(`evidence ${evidence}${coverage === null ? '' : ` ${coverage}%`}`);
       return parts.join(' · ');
     }
     case 'tool_call': {

@@ -18,6 +18,7 @@ use crate::app::AppState;
 use crate::domain::agent::{Agent, FALLBACK_SYSTEM_PROMPT};
 use crate::domain::audit::AuditAction;
 use crate::domain::capabilities::{Capabilities, DataLabel};
+use crate::domain::evidence::{Evidence, Given};
 use crate::domain::graph::{Executor, GraphNode, NodeStatus};
 use crate::domain::ontology::NodeType;
 use crate::domain::policy::{self, Action, Decision, Rules};
@@ -47,9 +48,13 @@ pub struct ExecContext {
     /// Whether the workspace's guardrails let agents execute code at all.
     pub code_exec_allowed: bool,
     pub upstream: Vec<UpstreamOutput>,
+    /// The memories recalled for the node, each headed by its citation id (`[mem:<id>]`).
     pub memories: Vec<String>,
-    /// Passages of the workspace's documents, each headed by its citation.
+    /// Passages of the workspace's documents, each headed by its citation id
+    /// and its source (`[doc:<chunk id>] <source>`).
     pub documents: Vec<String>,
+    /// What the node was given, by id: what its citations are checked against.
+    pub given: Given,
     pub agent: Option<Agent>,
     /// What the node's agent may do: its capabilities, or the unrestricted
     /// policy for a node without one. The per-run token carries a copy.
@@ -87,6 +92,7 @@ impl ExecContext {
             upstream: Vec::new(),
             memories: Vec::new(),
             documents: Vec::new(),
+            given: self.given.clone(),
             agent: self.agent.clone(),
             capabilities: self.capabilities.clone(),
             policy_version: self.policy_version,
@@ -325,6 +331,18 @@ pub struct ExecOutput {
     /// The `llm_call` span of the node, when it made exactly one call (the
     /// built-in executor); usage is booked to it.
     pub span_id: Option<Uuid>,
+    /// What the verifier found about the output, when the executor assessed
+    /// it (the scheduler assesses the output alone otherwise).
+    pub evidence: Option<Evidence>,
+}
+
+/// Adds the verdict's attributes to a span's (`evidence`, `evidence_coverage`, …).
+pub fn with_evidence(attributes: &mut Value, evidence: &Evidence) {
+    if let Value::Object(map) = attributes {
+        for (key, value) in evidence.span_attributes() {
+            map.insert(key.to_owned(), value);
+        }
+    }
 }
 
 /// A failed node attempt.

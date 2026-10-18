@@ -8,6 +8,8 @@ import { StatusBadge } from '@/components/custom-ui/status-badge';
 import { displayStatus } from '@/components/custom-ui/status-meta';
 import { Button } from '@/components/ui/button';
 import { artifactsQuery, downloadArtifact } from '@/features/runs/api';
+import { CitationChips, EvidenceBadge } from '@/features/runs/components/evidence';
+import { parseCitations } from '@/features/runs/evidence';
 import { errorMessage } from '@/lib/api/errors';
 import { formatBytes, formatTokens } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -65,10 +67,17 @@ export function NodeRunOutput({ node }: { node: GraphNode }) {
   const streamed = useGraphStore((s) => s.outputs[node.id]);
   const logs = useGraphStore((s) => s.logs[node.id]);
   const tokens = useGraphStore((s) => s.tokens[node.id]);
-  const preview = run?.node_runs.find((nr) => nr.node_id === node.id)?.output_preview;
+  const nodeRun = run?.node_runs.find((nr) => nr.node_id === node.id);
+  const preview = nodeRun?.output_preview;
   const output = streamed || node.output || preview || '';
   const outputRef = useStickToBottom(output.length);
   const status = live?.status ?? node.status;
+  const evidence = nodeRun?.evidence ?? null;
+  // The chips are read off the text itself, so they show for a live output too; the verdict
+  // and the ids the node was never given come from the verifier once it answered.
+  const citations = parseCitations(output);
+  const unknown = new Set(evidence?.unknown ?? []);
+  const known = citations.filter((c) => !unknown.has(c.key));
 
   return (
     <div className="space-y-5">
@@ -115,6 +124,25 @@ export function NodeRunOutput({ node }: { node: GraphNode }) {
             <span className="ml-0.5 inline-block h-3.5 w-1.5 translate-y-0.5 bg-brand motion-safe:animate-pulse" />
           )}
         </div>
+        {(evidence || known.length > 0) && (
+          <div className="space-y-1.5" data-testid="output-evidence">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              {evidence && <EvidenceBadge evidence={evidence} />}
+              <span>
+                {known.length === 0
+                  ? 'cites nothing it was given'
+                  : `cites ${known.length} of what it was given`}
+                {unknown.size > 0 && ` · ${unknown.size} never given`}
+              </span>
+            </div>
+            <CitationChips
+              cited={known}
+              unknown={[...unknown]}
+              graphId={node.graph_id}
+              runId={run?.id}
+            />
+          </div>
+        )}
       </section>
       {logs && logs.length > 0 && (
         <section className="space-y-2">

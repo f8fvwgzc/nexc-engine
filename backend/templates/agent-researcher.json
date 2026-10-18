@@ -20,7 +20,8 @@
   "policy": {
     "tools": { "allow": null, "deny": ["run_python"] },
     "alerts": { "denials_per_run": 2, "risk_score": 6, "quarantine_risk_score": 9 },
-    "injection": { "action": "flag" }
+    "injection": { "action": "flag" },
+    "evidence": { "required": true, "action": "mark" }
   },
   "knowledge": [],
   "questions": [

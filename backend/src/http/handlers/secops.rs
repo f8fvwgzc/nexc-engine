@@ -84,6 +84,7 @@ pub async fn overview(
         approvals_open,
         alerts_open,
         artifacts_quarantined,
+        evidence_today,
         top_risk,
         policy_versions,
         last_seal,
@@ -92,6 +93,7 @@ pub async fn overview(
         repo::secops::approvals_open(db, wid),
         repo::secops::alerts_open(db, wid),
         repo::secops::artifacts_quarantined(db, user, wid),
+        repo::secops::evidence_counts(db, user, wid, day),
         repo::secops::top_risk(db, wid, TOP_RISK),
         repo::secops::policies_in_force(db, wid),
         repo::secops::last_seal(db, user, wid),
@@ -107,6 +109,7 @@ pub async fn overview(
         approvals_open,
         alerts_open,
         artifacts_quarantined,
+        evidence_today,
         top_risk,
         policy_versions,
         last_seal,
@@ -134,7 +137,9 @@ pub struct SpanQuery {
     pub from: Option<DateTime<Utc>>,
     /// Only spans started before this time.
     pub to: Option<DateTime<Utc>>,
-    /// Only policy and approval spans with this decision (`allow`, `deny`, `require_approval`, `alert`).
+    /// Only policy and approval spans with this decision (`allow`, `deny`, `require_approval`,
+    /// `alert`), or `evidence`: the spans carrying an evidence verdict (a node's last model
+    /// call and the policy decision about its output).
     pub decision: Option<String>,
     /// Spans per page, 1–500 (default 100).
     pub limit: Option<i64>,
@@ -142,7 +147,13 @@ pub struct SpanQuery {
     pub before: Option<Uuid>,
 }
 
-const DECISIONS: [&str; 4] = ["allow", "deny", "require_approval", "alert"];
+const DECISIONS: [&str; 5] = [
+    "allow",
+    "deny",
+    "require_approval",
+    "alert",
+    repo::secops::EVIDENCE_DECISION,
+];
 /// The pseudo-kind of the explorer: tool calls marked `inbound` (A2A tasks received).
 const INBOUND: &str = "inbound";
 
@@ -178,7 +189,7 @@ impl SpanQuery {
         {
             return Err(AppError::field(
                 "decision",
-                "one of allow, deny, require_approval, alert",
+                "one of allow, deny, require_approval, alert, evidence",
             ));
         }
         if let (Some(from), Some(to)) = (self.from, self.to)
@@ -365,9 +376,14 @@ mod tests {
             ..bad_kind
         };
         assert_eq!(ok.kind().unwrap(), (Some(SpanKind::Policy), false));
+        let evidence = SpanQuery {
+            decision: Some("evidence".into()),
+            ..ok
+        };
+        assert!(evidence.check().is_ok(), "the verdict filter");
         let bad_decision = SpanQuery {
             decision: Some("maybe".into()),
-            ..ok
+            ..evidence
         };
         assert!(bad_decision.check().is_err());
         let now = Utc::now();

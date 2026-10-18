@@ -8,6 +8,7 @@ use sqlx::{FromRow, PgExecutor, Row};
 use uuid::Uuid;
 
 use super::enum_col;
+use crate::domain::agent::AgentOutputEvidence;
 use crate::domain::capabilities::DataLabel;
 use crate::domain::graph::{Executor, NodeStatus};
 use crate::domain::policy::PolicyVersions;
@@ -103,6 +104,9 @@ impl FromRow<'_, PgRow> for NodeRun {
                 .iter()
                 .filter_map(|l| l.parse().ok())
                 .collect(),
+            evidence: row
+                .try_get::<Option<serde_json::Value>, _>("evidence")?
+                .and_then(|v| serde_json::from_value(v).ok()),
         })
     }
 }
@@ -114,6 +118,8 @@ pub struct CachedResult {
     pub output: String,
     pub tokens_in: i64,
     pub tokens_out: i64,
+    /// The verdict the output got when it was produced.
+    pub evidence: Option<serde_json::Value>,
 }
 
 /// Inserts a queued run and one queued node result per `(node, executor)`.
@@ -186,7 +192,7 @@ pub async fn find_owned(
 pub async fn node_runs(db: impl PgExecutor<'_>, run_id: Uuid) -> Result<Vec<NodeRun>, sqlx::Error> {
     sqlx::query_as(
         "SELECT node_id, status, attempt, executor, tokens_in, tokens_out, cached, error, started_at, finished_at,
-                left(output, $2) AS output_preview, policy_versions, context_labels
+                left(output, $2) AS output_preview, policy_versions, context_labels, evidence
          FROM node_runs WHERE run_id = $1 ORDER BY position",
     )
     .bind(run_id)
@@ -469,6 +475,46 @@ pub async fn context_labels_of(
     Ok(labels.iter().filter_map(|l| l.parse().ok()).collect())
 }
 
+/// The verdicts on an agent's last `limit` outputs across the graphs `user`
+/// may open, newest first.
+pub async fn evidence_of_agent(
+    db: impl PgExecutor<'_>,
+    user: Uuid,
+    agent_id: Uuid,
+    limit: i64,
+) -> Result<Vec<AgentOutputEvidence>, sqlx::Error> {
+    let rows = sqlx::query(concat!(
+        "SELECT nr.run_id, g.id AS graph_id, nr.node_id, nr.evidence->>'verdict' AS verdict,
+                (nr.evidence->>'coverage')::float8 AS coverage, nr.finished_at
+         FROM node_runs nr JOIN runs r ON r.id = nr.run_id JOIN graphs g ON g.id = r.graph_id
+         WHERE nr.agent_id = $1 AND nr.evidence IS NOT NULL AND ",
+        graph_access!("g", "$2"),
+        " ORDER BY nr.finished_at DESC NULLS LAST, nr.run_id DESC LIMIT $3"
+    ))
+    .bind(agent_id)
+    .bind(user)
+    .bind(limit)
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .iter()
+        .filter_map(|row| {
+            let verdict = row.try_get::<String, _>("verdict").ok()?.parse().ok()?;
+            Some(AgentOutputEvidence {
+                run_id: row.try_get("run_id").ok()?,
+                graph_id: row.try_get("graph_id").ok()?,
+                node_id: row.try_get("node_id").ok()?,
+                verdict,
+                coverage: row
+                    .try_get::<Option<f64>, _>("coverage")
+                    .ok()?
+                    .unwrap_or(0.0),
+                finished_at: row.try_get("finished_at").ok()?,
+            })
+        })
+        .collect())
+}
+
 /// Final outcome of one node.
 #[derive(Debug, Clone)]
 pub struct NodeOutcome<'a> {
@@ -481,6 +527,8 @@ pub struct NodeOutcome<'a> {
     pub error: Option<&'a str>,
     pub output: Option<&'a str>,
     pub content_hash: Option<&'a str>,
+    /// What the verifier found about the output (`Evidence` as JSON), when it answered.
+    pub evidence: Option<serde_json::Value>,
 }
 
 /// Records the outcome of a node and adds its usage to the run totals.
@@ -493,7 +541,7 @@ pub async fn finish_node(
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         "UPDATE node_runs SET status = $3, attempt = $4, tokens_in = $5, tokens_out = $6, cost_usd = $7,
-                cached = $8, error = $9, output = $10, content_hash = $11, finished_at = now()
+                cached = $8, error = $9, output = $10, content_hash = $11, evidence = $12, finished_at = now()
          WHERE run_id = $1 AND node_id = $2",
     )
     .bind(run_id)
@@ -507,6 +555,7 @@ pub async fn finish_node(
     .bind(o.error)
     .bind(o.output)
     .bind(o.content_hash)
+    .bind(&o.evidence)
     .execute(&mut *conn)
     .await?;
     if !o.cached && (o.tokens_in > 0 || o.tokens_out > 0) {
@@ -531,7 +580,7 @@ pub async fn find_cached(
     content_hash: &str,
 ) -> Result<Option<CachedResult>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT nr.run_id, nr.output, nr.tokens_in, nr.tokens_out
+        "SELECT nr.run_id, nr.output, nr.tokens_in, nr.tokens_out, nr.evidence
          FROM node_runs nr JOIN runs r ON r.id = nr.run_id
          WHERE r.graph_id = $1 AND nr.content_hash = $2 AND nr.status = 'succeeded' AND nr.output IS NOT NULL
          ORDER BY nr.finished_at DESC LIMIT 1",

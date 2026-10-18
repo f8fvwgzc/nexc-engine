@@ -15,7 +15,7 @@ use uuid::Uuid;
 use crate::domain::capabilities::{Capabilities, DataLabel, Delegation};
 use crate::domain::policy::{PolicyVersions, Rules};
 use crate::domain::policy_document::{
-    InjectionAction, ListRule, Policy, PolicyDocument, PolicyScope, RuleAction,
+    EvidenceAction, InjectionAction, ListRule, Policy, PolicyDocument, PolicyScope, RuleAction,
 };
 use crate::domain::validation::FieldErrors;
 
@@ -317,6 +317,30 @@ impl Folder {
             self.rules.injection.model_check |= check;
             self.set("injection.model_check", level);
         }
+        // Evidence: once a level requires it, the levels below keep it; the coverage
+        // only rises and reject is never undone.
+        let evidence = &doc.evidence;
+        if let Some(required) = evidence.required {
+            self.rules.evidence.required |= required;
+            self.set("evidence.required", level);
+        }
+        if let Some(min) = evidence.min_coverage {
+            let current = &mut self.rules.evidence.min_coverage;
+            *current = if self.origins.contains_key("evidence.min_coverage") {
+                current.max(min)
+            } else {
+                min
+            };
+            self.set("evidence.min_coverage", level);
+        }
+        if let Some(action) = evidence.action {
+            self.rules.evidence.action = if self.origins.contains_key("evidence.action") {
+                self.rules.evidence.action.stricter(action)
+            } else {
+                action
+            };
+            self.set("evidence.action", level);
+        }
     }
 }
 
@@ -582,6 +606,33 @@ pub fn check_narrowing(parent: &Resolved, child: &PolicyDocument, errors: &mut F
             "dropping a check the level above requires",
         );
     }
+    let evidence = &child.evidence;
+    if evidence.required == Some(false)
+        && spoke("evidence.required")
+        && parent.rules.evidence.required
+    {
+        widen(
+            errors,
+            "evidence.required",
+            "dropping the evidence the level above requires",
+        );
+    }
+    if let Some(min) = evidence.min_coverage
+        && spoke("evidence.min_coverage")
+        && min < parent.rules.evidence.min_coverage
+    {
+        widen(
+            errors,
+            "evidence.min_coverage",
+            "less coverage than the level above requires",
+        );
+    }
+    if evidence.action == Some(EvidenceAction::Mark)
+        && spoke("evidence.action")
+        && parent.rules.evidence.action == EvidenceAction::Reject
+    {
+        widen(errors, "evidence.action", "a weaker action than reject");
+    }
 }
 
 impl Capabilities {
@@ -752,6 +803,58 @@ mod tests {
                 .collect::<Vec<_>>(),
         );
         assert_eq!(versions.team, Some(1));
+    }
+
+    #[test]
+    fn evidence_rules_only_tighten_from_level_to_level() {
+        let workspace = level(
+            PolicyScope::Workspace,
+            1,
+            json!({"evidence": {"required": true, "min_coverage": 0.9, "action": "reject"}}),
+        );
+        let agent = level(
+            PolicyScope::Agent,
+            1,
+            json!({"evidence": {"required": false, "min_coverage": 0.5, "action": "mark"}}),
+        );
+        let resolved = resolve(&[workspace.clone(), agent.clone()], None);
+        let e = &resolved.rules.evidence;
+        assert!(e.required, "required stays required");
+        assert_eq!(e.min_coverage, 0.9, "the coverage only rises");
+        assert_eq!(e.action, EvidenceAction::Reject, "reject is never undone");
+        assert_eq!(resolved.origins["evidence.required"], "agent");
+        // Alone, the agent's document is what it says.
+        let alone = resolve(std::slice::from_ref(&agent), None);
+        assert!(!alone.rules.evidence.required);
+        assert_eq!(alone.rules.evidence.min_coverage, 0.5);
+        assert_eq!(alone.rules.evidence.action, EvidenceAction::Mark);
+        // Nothing set: off, 0.8, mark, with no origin.
+        let none = resolve(&[], None);
+        assert_eq!(
+            none.rules.evidence,
+            crate::domain::policy::EvidenceRules::default()
+        );
+        assert!(!none.origins.contains_key("evidence.required"));
+        // Widening is named rule by rule.
+        let parent = resolve(&[workspace], None);
+        let mut errors = FieldErrors::default();
+        check_narrowing(&parent, &agent.document, &mut errors);
+        let fields: Vec<&String> = errors.as_map().keys().collect();
+        assert_eq!(
+            fields,
+            [
+                "document.evidence.action",
+                "document.evidence.min_coverage",
+                "document.evidence.required",
+            ]
+        );
+        let tighter: PolicyDocument = serde_json::from_value(
+            json!({"evidence": {"required": true, "min_coverage": 1.0, "action": "reject"}}),
+        )
+        .unwrap();
+        let mut errors = FieldErrors::default();
+        check_narrowing(&parent, &tighter, &mut errors);
+        assert!(errors.is_empty(), "{:?}", errors.as_map());
     }
 
     #[test]

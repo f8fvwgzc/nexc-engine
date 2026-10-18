@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use super::agent_template::AgentEvaluation;
 use super::capabilities::Capabilities;
+use super::evidence::EvidenceVerdict;
 use super::string_enum;
 use super::trace::Span;
 
@@ -20,6 +21,47 @@ pub const SYSTEM_PROMPT_MAX: usize = 16 * 1024;
 pub const PURPOSE_MAX: usize = 2_000;
 /// Spans on an agent's card.
 pub const CARD_SPANS: i64 = 20;
+/// Outputs whose verdicts an agent's card sums up.
+pub const CARD_OUTPUTS: i64 = 20;
+
+/// The verdict on one of an agent's outputs.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AgentOutputEvidence {
+    pub run_id: Uuid,
+    pub graph_id: Uuid,
+    pub node_id: Uuid,
+    pub verdict: EvidenceVerdict,
+    /// 0 to 1.
+    pub coverage: f64,
+    #[schema(required = true)]
+    pub finished_at: Option<DateTime<Utc>>,
+}
+
+/// The verdicts on an agent's last outputs (`docs/AGENTSECOPS.md` §2).
+#[derive(Debug, Clone, Default, Serialize, ToSchema)]
+pub struct AgentEvidence {
+    pub verified: i64,
+    pub partial: i64,
+    pub unverified: i64,
+    /// The outputs the counts are over, newest first (at most twenty).
+    pub recent: Vec<AgentOutputEvidence>,
+}
+
+impl AgentEvidence {
+    /// Sums up `recent`.
+    pub fn over(recent: Vec<AgentOutputEvidence>) -> Self {
+        let mut out = AgentEvidence::default();
+        for output in &recent {
+            match output.verdict {
+                EvidenceVerdict::Verified => out.verified += 1,
+                EvidenceVerdict::Partial => out.partial += 1,
+                EvidenceVerdict::Unverified => out.unverified += 1,
+            }
+        }
+        out.recent = recent;
+        out
+    }
+}
 
 string_enum!(
     /// Whether an agent accepts work.
@@ -169,6 +211,8 @@ pub struct AgentCard {
     /// The competency score of an agent made from a role template; `null` otherwise.
     #[schema(required = true)]
     pub evaluation: Option<AgentEvaluation>,
+    /// The verdicts on the agent's last twenty outputs across the runs the caller may open.
+    pub evidence: AgentEvidence,
 }
 
 /// Template for one agent of the default organisation.

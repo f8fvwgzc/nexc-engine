@@ -132,6 +132,17 @@ export const nodeRun: NodeRun = {
   output_preview: 'Found 12 sources',
   policy_versions: { workspace: null, team: null, agent: null },
   context_labels: [],
+  evidence: {
+    verdict: 'verified',
+    coverage: 1,
+    claims: 3,
+    cited_claims: 3,
+    declared_claims: 0,
+    cited: [`node:${ids.nodeB}`],
+    unknown: [],
+    given: 1,
+    min_coverage: 0.8,
+  },
 };
 
 export const run: Run = {
@@ -158,6 +169,7 @@ export const run: Run = {
       started_at: null,
       finished_at: null,
       output_preview: null,
+      evidence: null,
     },
   ],
 };
@@ -314,4 +326,19 @@ export const agentCard: AgentCard = {
   budget_left: 198460,
   recent_spans: [span],
   evaluation: null,
+  evidence: {
+    verified: 1,
+    partial: 0,
+    unverified: 0,
+    recent: [
+      {
+        run_id: ids.run,
+        graph_id: ids.graph,
+        node_id: ids.nodeA,
+        verdict: 'verified',
+        coverage: 1,
+        finished_at: '2026-10-03T12:00:09Z',
+      },
+    ],
+  },
 };
