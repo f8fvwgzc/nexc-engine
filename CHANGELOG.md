@@ -1221,10 +1221,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   catalogues stay fresh 30 minutes, a workspace's setup 5, working lists 1, live state 10
   seconds beside its poll, where every query was stale after 30 seconds. Coming back to a tab
   two minutes later now refetches what is stale on the page (0 to 4 requests, 47 over the 41
-  routes) instead of everything on it (up to 10 on Agents, one per agent card, 135 in all); a
-  graph's runs and an agent's activity, fanned out over a page, are not refetched on focus at
-  all; the orchestrator status is polled by the dashboard only, not on every page for the demo
-  banner.
+  routes) instead of everything on it (up to 10 on Agents, one per agent card, 135 in all); an
+  agent's activity, fanned out over the Agents page, is not refetched on focus, and a graph's
+  runs only while one of them is queued or running, which the Runs page also polls every 10
+  seconds, so a run that finishes shows as finished there (the run-status stream is the
+  canvas's); the orchestrator status is polled by the dashboard only, not on every page for the
+  demo banner.
 - The per-account API rate limit is a setting, `NEXC_API_CALLS_PER_MINUTE` (600, the burst a
   fifth of it, as before), so a load test or an automation account can be given more on its own
   server.

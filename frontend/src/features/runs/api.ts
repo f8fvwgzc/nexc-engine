@@ -5,7 +5,7 @@ import { apiRequest } from '@/lib/api/client';
 import { saveDownload } from '@/lib/api/download';
 import { FRESH } from '@/lib/freshness';
 import { qk } from '@/lib/query-keys';
-import { artifactSchema, isRunActive, runSchema, type Artifact } from '@/schemas/run';
+import { artifactSchema, isRunActive, runSchema, type Artifact, type Run } from '@/schemas/run';
 import { tracePageSchema, traceVerificationSchema, type Span } from '@/schemas/trace';
 
 /** Spans fetched per request, and the most pages read for one run (20,000 spans). */
@@ -52,13 +52,21 @@ export function mergeSpan(spans: Span[] | undefined, span: Span): Span[] | undef
   return rest.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
+/** Whether any of a graph's runs is still queued or running. */
+const runsLive = (query: { state: { data?: Run[] } }) =>
+  query.state.data?.some((r) => isRunActive(r.status)) ?? false;
+
 export const graphRunsQuery = (graphId: string) =>
   queryOptions({
     queryKey: qk.graphs.runs(graphId),
-    staleTime: FRESH.list,
-    // One per graph on the Runs page: a focus must not refetch them all at once.
-    refetchOnWindowFocus: false,
-    queryFn: ({ signal }) => apiRequest(`/graphs/${graphId}/runs`, z.array(runSchema), { signal }),
+    queryFn: ({ signal }): Promise<Run[]> =>
+      apiRequest(`/graphs/${graphId}/runs`, z.array(runSchema), { signal }),
+    // One per graph on the Runs page, so a focus refetches only the graphs with a live run, and
+    // those poll while it lasts: the run-status stream is graph-scoped and only the canvas holds
+    // it, so without this a run that finished would stay "running" on the Runs page.
+    staleTime: (query) => (runsLive(query) ? FRESH.live : FRESH.list),
+    refetchOnWindowFocus: runsLive,
+    refetchInterval: (query) => (runsLive(query) ? FRESH.live : false),
   });
 
 export const runQuery = (runId: string) =>
