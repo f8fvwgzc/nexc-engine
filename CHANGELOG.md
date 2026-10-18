@@ -1170,7 +1170,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the platform console) and one vertical rhythm; `IconButton` and `WithTooltip` name an
   icon-only control and show its name as a tooltip; `ErrorState` is the frame of a failed load,
   with the reason and **Try again**, distinct from `EmptyState`, which gains a heading level
-  and a compact frame; `ScrollRegion` (and the table container) become a focusable, named
+  and a compact frame (a page that fails as a whole shows the route's error in the same
+  `ErrorState`, with a level-1 heading and **Go to dashboard**); `ScrollRegion` (and the table container) become a focusable, named
   group while their content scrolls; `MainLandmark` gives a 404 or an error outside the shells
   a `main`; `PageSkeleton` takes the width of the page it stands for and `ContentSkeleton` is a
   page body's placeholder under a header; placeholders labelled "Loading" are a `status`, where

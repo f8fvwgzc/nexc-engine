@@ -1,4 +1,4 @@
-import { AlertTriangleIcon, RotateCcwIcon } from 'lucide-react';
+import { AlertTriangleIcon } from 'lucide-react';
 import {
   isRouteErrorResponse,
   Link,
@@ -8,6 +8,7 @@ import {
 } from 'react-router-dom';
 
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { ErrorState } from '@/components/custom-ui/error-state';
 import { MainLandmark } from '@/components/custom-ui/main-landmark';
 import { Seo } from '@/components/seo/seo';
 import { Button } from '@/components/ui/button';
@@ -29,29 +30,35 @@ export function RouteError() {
       ? error.statusText
       : errorMessage(error);
 
+  const home = (
+    <Button asChild>
+      <Link to="/app">Go to dashboard</Link>
+    </Button>
+  );
   return (
     <MainLandmark className="flex min-h-[60svh] flex-1 items-center justify-center p-6">
       <Seo title={title} noIndex />
-      <EmptyState
-        icon={AlertTriangleIcon}
-        title={title}
-        headingLevel={1}
-        description={description}
-        className="max-w-lg"
-        action={
-          <div className="flex gap-2">
-            {!notFound && (
-              <Button variant="outline" onClick={() => void navigate(location, { replace: true })}>
-                <RotateCcwIcon />
-                Try again
-              </Button>
-            )}
-            <Button asChild>
-              <Link to="/app">Go to dashboard</Link>
-            </Button>
-          </div>
-        }
-      />
+      {notFound ? (
+        <EmptyState
+          icon={AlertTriangleIcon}
+          title={title}
+          headingLevel={1}
+          description={description}
+          className="max-w-lg"
+          action={home}
+        />
+      ) : (
+        // A failed load looks the same whether the page or a panel of it failed.
+        <ErrorState
+          title={title}
+          headingLevel={1}
+          error={error}
+          description={description}
+          onRetry={() => void navigate(location, { replace: true })}
+          action={home}
+          className="w-full max-w-lg"
+        />
+      )}
     </MainLandmark>
   );
 }

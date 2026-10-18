@@ -17,6 +17,10 @@ interface ErrorStateProps {
   /** What could not be had, e.g. "Couldn't load the inbox". */
   title?: string;
   error: unknown;
+  /** The reason in words, when the error's own message is not the one to show. */
+  description?: string;
+  /** Makes the title a heading of this level, where the error stands in for a whole page. */
+  headingLevel?: 1 | 2 | 3;
   /** Asks again; shown as "Try again". */
   onRetry?: () => void;
   /** Another way out, beside "Try again". */
@@ -33,6 +37,8 @@ interface ErrorStateProps {
 export function ErrorState({
   title = 'Couldn’t load this',
   error,
+  description,
+  headingLevel,
   onRetry,
   action,
   compact = false,
@@ -55,8 +61,10 @@ export function ErrorState({
         >
           <AlertTriangleIcon className="size-5" aria-hidden />
         </EmptyMedia>
-        <EmptyTitle>{title}</EmptyTitle>
-        <EmptyDescription>{errorMessage(error)}</EmptyDescription>
+        <EmptyTitle {...(headingLevel ? { role: 'heading', 'aria-level': headingLevel } : {})}>
+          {title}
+        </EmptyTitle>
+        <EmptyDescription>{description ?? errorMessage(error)}</EmptyDescription>
       </EmptyHeader>
       {(onRetry || action) && (
         <EmptyContent>
