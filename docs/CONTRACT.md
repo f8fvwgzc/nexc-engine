@@ -1348,13 +1348,15 @@ carried to the node's next attempt and delivered when that attempt spawns the su
 principal (its `policy` span carries `carried_from_spawn_span_id`). The lease's history is in
 `run_lease_events` (`claimed`, `taken_over`, `released`, `lost`, `fenced`, with the instance, the
 epoch and the former holder) and counted in `nexc_run_lease_events_total{event}`. Node execution is
-at least once (an attempt cut short is run again); its success, output and usage are recorded once.
-On SIGTERM (or Ctrl-C) a replica drains: `GET /readyz` answers 503 (`detail` starts with
-`draining`), its dispatcher claims and takes over nothing more, every run it executes stops at once,
-its chained spans are written and its lease is released (`lease_expires_at` now, `heartbeat_at`
-cleared, `lease_epoch + 1`, a `released` event), so a peer takes it over at its next look (within 2
-s) instead of when the lease would have run out; after at most 15 s the HTTP server stops accepting
-and finishes the requests in flight.
+at least once (an attempt cut short is run again); its success and output are recorded once, and
+each attempt's provider spend is booked once (an attempt whose outcome is refused books its tokens
+to `llm_usage` and the agent's spend outside the fence, not to the run's totals). On SIGTERM (or
+Ctrl-C) a replica drains: `GET /readyz` answers 503 (`detail` starts with `draining`), its
+dispatcher claims and takes over nothing more, every run it executes stops at once, its chained
+spans are written and its lease is released (`lease_expires_at` now, `heartbeat_at` cleared,
+`lease_epoch + 1`, a `released` event), so a peer takes it over at its next look (within 2 s)
+instead of when the lease would have run out; after at most 15 s the HTTP server stops accepting and
+finishes the requests in flight.
 
 <!-- #endregion endpoints -->
 <!-- #region events -->

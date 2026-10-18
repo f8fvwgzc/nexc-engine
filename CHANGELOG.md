@@ -37,7 +37,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   copy a third of a lease before a peer can take the run over). An artifact's bytes go to a file
   of their own (`artifacts/<run>/<node>/<write id>/<path>`) and its record is pointed at them
   under the fence, so a former holder's late artifact replaces neither the record nor the bytes,
-  and a DLP quarantine applies only to the bytes it screened. The new holder resumes the
+  and a DLP quarantine applies only to the bytes it screened. The tokens a refused attempt spent
+  at the provider are still booked to the usage ledger and the agent's budget (not to the run's
+  totals), so budgets do not undercount after a takeover. The new holder resumes the
   run from what was written: succeeded nodes keep their outputs; a running node is queued again
   with `attempt + 1` and an `interrupted` policy span (an attempt cut short by a release on
   shutdown does not count against `NEXC_MAX_ATTEMPTS`, so a rolling update over several replicas

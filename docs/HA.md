@@ -34,9 +34,11 @@ sub-agent) are addressed to whoever holds the lease: a command the former holder
 taken and delivered by the new one. A run cancelled while nobody held it is cancelled by the new
 holder before any node is queued again: nothing more is sent to the runtime or the provider.
 
-Execution is at least once, recording is exactly once. A node attempt cut short by a crash is
-run again, so a tool it called before the crash may be called twice; its success, its output and
-its usage are recorded once, because the former holder's writes are refused.
+Execution is at least once, recording is exactly once. A node attempt cut short by a crash is run
+again, so a tool it called before the crash may be called twice; its success and its output are
+recorded once, because the former holder's writes are refused. What each attempt spent at the
+provider is booked once to the usage ledger and the agent's budget, a refused attempt's too (tokens
+it spent are spent); the run's totals count the attempts of its holders.
 
 <!-- #endregion model -->
 <!-- #region failure-modes -->

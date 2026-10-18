@@ -1431,24 +1431,7 @@ async fn record(
         repo::agents::add_spent(&mut *tx, agent.id, outcome.tokens_in + outcome.tokens_out).await?;
     }
     repo::nodes::set_status(&mut *tx, node_id, outcome.status, outcome.output).await?;
-    if !outcome.cached && (outcome.tokens_in > 0 || outcome.tokens_out > 0) {
-        // Same rule as `ExecContext::agent_target`: an agent's own model applies on Anthropic.
-        let model = agent
-            .filter(|a| {
-                data.target.provider == LlmProviderKind::Anthropic && a.model.starts_with("claude-")
-            })
-            .map_or(data.target.model.as_str(), |a| a.model.as_str());
-        let mut event = data.usage_event(
-            UsagePurpose::Node,
-            model,
-            outcome.tokens_in,
-            outcome.tokens_out,
-            outcome.cost_usd,
-            context_chars_saved,
-        );
-        event.agent_id = agent.map(|a| a.id);
-        event.node_id = Some(node_id);
-        event.span_id = span_id;
+    if let Some(event) = spend_of(data, node_id, outcome, agent, context_chars_saved, span_id) {
         repo::usage::insert(&mut *tx, &event).await?;
     }
     tx.commit().await?;
@@ -1465,6 +1448,79 @@ async fn record(
         .node_runs
         .add(&[("status", outcome.status.as_str())], 1);
     Ok(())
+}
+
+/// The usage ledger entry of a node outcome that spent tokens at the provider.
+fn spend_of(
+    data: &RunData,
+    node_id: Uuid,
+    outcome: &NodeOutcome<'_>,
+    agent: Option<&Agent>,
+    context_chars_saved: i64,
+    span_id: Option<Uuid>,
+) -> Option<UsageEvent> {
+    if outcome.cached || (outcome.tokens_in <= 0 && outcome.tokens_out <= 0) {
+        return None;
+    }
+    // Same rule as `ExecContext::agent_target`: an agent's own model applies on Anthropic.
+    let model = agent
+        .filter(|a| {
+            data.target.provider == LlmProviderKind::Anthropic && a.model.starts_with("claude-")
+        })
+        .map_or(data.target.model.as_str(), |a| a.model.as_str());
+    let mut event = data.usage_event(
+        UsagePurpose::Node,
+        model,
+        outcome.tokens_in,
+        outcome.tokens_out,
+        outcome.cost_usd,
+        context_chars_saved,
+    );
+    event.agent_id = agent.map(|a| a.id);
+    event.node_id = Some(node_id);
+    event.span_id = span_id;
+    Some(event)
+}
+
+/// Books what a node attempt spent at its provider when its outcome was
+/// refused because another instance holds the run now: the tokens were
+/// spent all the same, so they go to the usage ledger and the agent's
+/// budget (outside the fence), though not to the run's totals, which count
+/// the attempts of whoever holds the run.
+async fn book_refused_spend(
+    state: &AppState,
+    data: &RunData,
+    node_id: Uuid,
+    outcome: &NodeOutcome<'_>,
+    agent: Option<&Agent>,
+    context_chars_saved: i64,
+    span_id: Option<Uuid>,
+) {
+    let Some(event) = spend_of(data, node_id, outcome, agent, context_chars_saved, span_id) else {
+        return;
+    };
+    let booked = async {
+        let mut tx = state.db.begin().await?;
+        repo::usage::insert(&mut *tx, &event).await?;
+        if let Some(agent) = agent {
+            repo::agents::add_spent(&mut *tx, agent.id, outcome.tokens_in + outcome.tokens_out)
+                .await?;
+        }
+        tx.commit().await
+    }
+    .await;
+    match booked {
+        Ok(()) => {
+            if let Some(agent) = agent {
+                state
+                    .caches
+                    .invalidate(crate::app::caches::Key::Agent(agent.id));
+            }
+        }
+        Err(err) => {
+            tracing::error!(run_id = %data.run_id, %node_id, error = %err, "spend of a refused attempt not booked")
+        }
+    }
 }
 
 /// Content hash used for memoization: everything that influences the result.
@@ -2472,18 +2528,33 @@ impl NodeTask {
                 .and_then(|o| o.evidence.as_ref())
                 .and_then(|e| serde_json::to_value(e).ok()),
         };
+        let span_id = out.as_ref().and_then(|o| o.span_id);
+        let agent = self.ctx.agent.as_ref();
         if let Err(err) = record(
             state,
             &self.data,
             node_id,
             &outcome,
-            self.ctx.agent.as_ref(),
+            agent,
             self.context_saved,
-            out.as_ref().and_then(|o| o.span_id),
+            span_id,
         )
         .await
         {
             // Not recorded, so not announced and not built on: whoever holds the run resumes it.
+            // What the attempt spent at the provider is booked all the same.
+            if err.is_fenced() {
+                book_refused_spend(
+                    state,
+                    &self.data,
+                    node_id,
+                    &outcome,
+                    agent,
+                    self.context_saved,
+                    span_id,
+                )
+                .await;
+            }
             write_failed(&self.data, node_id, "node outcome", &err);
             return (NodeStatus::Cancelled, None);
         }
