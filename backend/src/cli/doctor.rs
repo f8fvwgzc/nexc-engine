@@ -354,22 +354,38 @@ async fn check_sso(r: &mut Report, settings: &Settings) {
             }
             match client.get_json(&doc.jwks_uri).await {
                 Ok(jwks) => {
-                    let keys = jwks["keys"].as_array().map_or(0, Vec::len);
-                    let level = if keys == 0 { Level::Fail } else { Level::Ok };
-                    r.line(
-                        level,
-                        "sso",
-                        format!("{}: {keys} signing key(s)", doc.jwks_uri),
-                    );
+                    // Only what a sign-in would verify with counts.
+                    let usable = crate::security::oidc::usable_signing_keys(&jwks);
+                    let listed = jwks["keys"].as_array().map_or(0, Vec::len);
+                    let others = match listed.saturating_sub(usable) {
+                        0 => String::new(),
+                        n => format!("; {n} other key(s) are not used"),
+                    };
+                    if usable == 0 {
+                        r.line(
+                            Level::Fail,
+                            "sso",
+                            format!(
+                                "{}: no RS256 or ES256 (P-256) signing key{others}: every sign-in would fail",
+                                doc.jwks_uri
+                            ),
+                        );
+                    } else {
+                        r.line(
+                            Level::Ok,
+                            "sso",
+                            format!(
+                                "{}: {usable} RS256/ES256 signing key(s){others}",
+                                doc.jwks_uri
+                            ),
+                        );
+                    }
                 }
                 Err(err) => r.line(Level::Fail, "sso", err.to_string()),
             }
         }
-        Err(err) => r.line(
-            Level::Fail,
-            "sso",
-            format!("{}: {err}", client.discovery_url()),
-        ),
+        // The error names the address it failed at.
+        Err(err) => r.line(Level::Fail, "sso", err.to_string()),
     }
     let derived = !std::env::var("NEXC_OIDC_REDIRECT_URL").is_ok_and(|v| !v.trim().is_empty());
     r.line(
@@ -389,20 +405,20 @@ async fn check_sso(r: &mut Report, settings: &Settings) {
     for concern in redirect_concerns(&oidc.redirect_url, &settings.public_url, development) {
         r.line(Level::Warn, "sso", concern);
     }
-    match (oidc.allow_local_login, &oidc.break_glass_email) {
+    let break_glass = oidc
+        .break_glass_email
+        .as_ref()
+        .filter(|_| !oidc.allow_local_login);
+    match (oidc.allow_local_login, break_glass) {
         (true, _) => r.line(Level::Ok, "sso", "passwords sign in too"),
-        (false, Some(email)) => r.line(
-            Level::Ok,
-            "sso",
-            format!("password sign-in is off, except for the break-glass administrator {email}"),
-        ),
+        (false, Some(_)) => {}
         (false, None) => r.line(
             Level::Warn,
             "sso",
             "password sign-in is off and NEXC_OIDC_BREAK_GLASS_EMAIL is unset: while the provider is down nobody signs in",
         ),
     }
-    if oidc.workspace_roles.is_empty() {
+    if oidc.workspace_roles.is_empty() && break_glass.is_none() {
         return;
     }
     let connect = repo::connect(settings.database_url.expose(), 1);
@@ -410,9 +426,26 @@ async fn check_sso(r: &mut Report, settings: &Settings) {
         return r.line(
             Level::Warn,
             "sso",
-            "cannot check NEXC_OIDC_WORKSPACE_ROLES: no database",
+            "cannot check the break-glass administrator nor NEXC_OIDC_WORKSPACE_ROLES: no database",
         );
     };
+    if let Some(email) = break_glass {
+        match crate::engine::sso::break_glass_problem(&pool, email).await {
+            Ok(None) => r.line(
+                Level::Ok,
+                "sso",
+                format!(
+                    "password sign-in is off, except for the break-glass administrator {email}"
+                ),
+            ),
+            Ok(Some(problem)) => r.line(Level::Fail, "sso", problem),
+            Err(err) => r.line(
+                Level::Warn,
+                "sso",
+                format!("cannot check the break-glass administrator: {err}"),
+            ),
+        }
+    }
     for mapping in &oidc.workspace_roles {
         match repo::workspaces::by_ref(&pool, &mapping.workspace).await {
             Ok(Some((_, name))) => r.line(

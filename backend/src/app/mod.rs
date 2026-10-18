@@ -91,6 +91,26 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
         tracing::info!("document vector search is off: the database has no pgvector extension");
     }
     bootstrap_admin(&state).await?;
+    if let Some(oidc) = state
+        .settings
+        .oidc
+        .as_ref()
+        .filter(|o| !o.allow_local_login)
+    {
+        match &oidc.break_glass_email {
+            Some(email) => {
+                if let Some(problem) =
+                    crate::engine::sso::break_glass_problem(&state.db, email).await?
+                {
+                    tracing::warn!("{problem}");
+                }
+            }
+            None => tracing::warn!(
+                "password sign-in is off and NEXC_OIDC_BREAK_GLASS_EMAIL is unset: while the \
+                 identity provider is down nobody signs in"
+            ),
+        }
+    }
     // A workspace that was transferred here brought its files inside the database.
     let restored = crate::engine::transfer::restore_files(&state).await?;
     if restored > 0 {

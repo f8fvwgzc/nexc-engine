@@ -216,6 +216,32 @@ fn signing_keys(set: &Value) -> Vec<SigningKey> {
         .collect()
 }
 
+/// How many keys of a key set a sign-in would verify with (`nexc doctor`).
+pub fn usable_signing_keys(set: &Value) -> usize {
+    signing_keys(set).len()
+}
+
+/// A request that got no answer, with every cause under it: reqwest's own
+/// words ("error sending request") say nothing of why, and repeat the URL.
+fn unreachable(url: &str, err: reqwest::Error) -> OidcError {
+    let mut why: Vec<String> = Vec::new();
+    let mut cause = std::error::Error::source(&err);
+    while let Some(err) = cause {
+        let text = err.to_string();
+        if why.last() != Some(&text) {
+            why.push(text);
+        }
+        cause = err.source();
+    }
+    let what = if err.is_timeout() {
+        "no answer in time".to_owned()
+    } else {
+        err.without_url().to_string()
+    };
+    why.insert(0, what);
+    OidcError::Unavailable(format!("{url}: {}", why.join(": ")))
+}
+
 /// The provider's keys as last fetched.
 #[derive(Default)]
 struct KeyCache {
@@ -650,7 +676,7 @@ impl OidcClient {
             .body(form(&pairs))
             .send()
             .await
-            .map_err(|err| OidcError::Unavailable(format!("{url}: {err}")))?;
+            .map_err(|err| unreachable(url, err))?;
         let status = response.status();
         let body = read_capped(response, TOKEN_ANSWER_MAX_BYTES)
             .await
@@ -815,7 +841,7 @@ impl OidcClient {
             .header(reqwest::header::ACCEPT, "application/json")
             .send()
             .await
-            .map_err(|err| OidcError::Unavailable(format!("{url}: {err}")))?;
+            .map_err(|err| unreachable(url, err))?;
         let status = response.status();
         if !status.is_success() {
             return Err(OidcError::Unavailable(format!("{url} answered {status}")));
@@ -848,7 +874,7 @@ impl OidcClient {
             .header(reqwest::header::ACCEPT, "application/json")
             .send()
             .await
-            .map_err(|err| OidcError::Unavailable(format!("{url}: {err}")))?;
+            .map_err(|err| unreachable(url, err))?;
         let status = response.status();
         if !status.is_success() {
             return Err(OidcError::Unavailable(format!("{url} answered {status}")));
@@ -991,6 +1017,20 @@ mod tests {
             "kept keys wait a minute"
         );
         assert!(keys.due(t1 + RETRY_GAP));
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_provider_is_named_once_with_the_reason() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!(
+            "http://{}/.well-known/openid-configuration",
+            listener.local_addr().unwrap()
+        );
+        drop(listener);
+        let client = OidcClient::new(settings(), false).unwrap();
+        let err = client.get_json(&url).await.unwrap_err().to_string();
+        assert_eq!(err.matches(url.as_str()).count(), 1, "{err}");
+        assert!(err.to_lowercase().contains("refused"), "the reason: {err}");
     }
 
     #[test]

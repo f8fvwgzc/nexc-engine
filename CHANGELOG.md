@@ -91,7 +91,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   checks that the document is the issuer's own, uses usable endpoints and signs with RS256 or
   ES256, names the redirect URL to register (warning when its host is not `NEXC_PUBLIC_URL`'s, or
   is this machine outside development), warns when password sign-in is off without a
-  break-glass administrator, and checks that each mapped workspace exists. `nexc init` quotes
+  break-glass administrator and fails when that address names no account, a suspended one, one
+  without a password or one that is not a platform administrator's (logged at start-up too),
+  counts only the RS256/ES256 keys a sign-in would use, says why an unreachable provider could not
+  be reached (each cause, the URL once), and checks that each mapped workspace exists. `nexc init` quotes
   a default with a space, which `.env` needs (`backend/src/config/oidc.rs`,
   `backend/src/security/oidc.rs`, `backend/src/cli/doctor.rs`).
 - Documentation site (`site/`, VitePress): the repository's Markdown rendered with a sidebar,

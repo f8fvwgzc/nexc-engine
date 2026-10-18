@@ -867,6 +867,29 @@ async fn password_sign_in_can_be_off_but_for_the_break_glass_administrator(pool:
                 .await
         }
     };
+    // `nexc doctor` and the start-up check say whether the break-glass address opens anything.
+    let problem = |email: &'static str| {
+        let pool = pool.clone();
+        async move {
+            nexc::engine::sso::break_glass_problem(&pool, email)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(problem("root@example.com").await, None);
+    assert!(
+        problem("worker@example.com")
+            .await
+            .unwrap()
+            .contains("not a platform administrator")
+    );
+    assert!(
+        problem("rot@example.com")
+            .await
+            .unwrap()
+            .contains("names no account")
+    );
+
     let refused = login("worker@example.com", PASSWORD).await;
     assert_eq!(refused.status, StatusCode::FORBIDDEN);
     assert!(

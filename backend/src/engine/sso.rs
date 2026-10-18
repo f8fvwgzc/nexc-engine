@@ -469,6 +469,32 @@ async fn workspace_roles(
     Ok(())
 }
 
+/// Why the break-glass administrator `email` could not sign in with a
+/// password while password sign-in is off; `None` when they can. Checked by
+/// `nexc doctor` and at start-up: a misspelt address leaves nobody a way in
+/// while the provider is down.
+pub async fn break_glass_problem(
+    db: impl sqlx::PgExecutor<'_>,
+    email: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    let why = |what: &str| {
+        Some(format!(
+            "NEXC_OIDC_BREAK_GLASS_EMAIL {email} {what}: while the provider is down nobody signs in"
+        ))
+    };
+    Ok(match repo::users::credentials(db, email).await? {
+        None => why("names no account (create it with `nexc user create --admin`)"),
+        Some(account) if account.user.role != Role::Admin => {
+            why("is not a platform administrator's account, which is all it opens")
+        }
+        Some(account) if account.suspended => why("names a suspended account"),
+        Some(account) if account.password_hash == "!" => {
+            why("names an account without a password (single sign-on created it)")
+        }
+        Some(_) => None,
+    })
+}
+
 /// Whether the workspace keeps another owner who can sign in if `user` stops
 /// being one (their rows are locked until the transaction ends).
 async fn other_owner(
