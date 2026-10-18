@@ -23,7 +23,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   endpoint that checks the client's HTTP Basic credentials, the redirect URI and the PKCE
   verifier, and userinfo), driving the whole browser trip through the real router
   (`backend/tests/oidc.rs`): an account created at the first sign-in; an existing account linked
-  by a verified address, and not by an unverified one nor a second identity; a bad signature,
+  by a verified address, and not by an unverified one nor a second identity; a platform
+  administrator, an account with two-factor sign-in and the break-glass address refused
+  (`link_required`) and linked from the profile page with the password (another account's
+  identity refused, the break-glass account never); an identity unlinked by an administrator, the
+  account signed out and the re-created identity then linked; a bad signature,
   another audience, several audiences without `azp`, an expired, future, stale or not-yet-valid
   token, another issuer, a nonce mismatch, `alg: none` and HS256 (with the client secret too) all
   refused; a state replayed, finished in another browser, older than ten minutes, made up or
@@ -44,7 +48,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   when it did (`sso_error`). "Create an account" shows only when registration is open, and the register page
   says how accounts are made when it is not. The profile page (the platform console's account
   page too) shows the linked identity, with the provider, the address it gave and the last
-  sign-in, and says when the account has no password (`GET /auth/identities`); such an account sees
+  sign-in, and says when the account has no password (`GET /auth/identities`), and lets an account
+  with a password link the provider there (Single sign-on, *Link*, with the password; a refusal
+  comes back to the page in words); such an account sees
   no password or two-factor forms and no self-delete it could never confirm, only a note that the
   provider checks both, and `POST /auth/2fa/setup` answers 409 for it.
 - Single sign-on with an OpenID Connect provider: `GET /auth/oidc/login` sends the browser to the
@@ -59,8 +65,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   groups come from the ID token, else from userinfo (an address and whether it is verified always
   from the same answer). Accounts are found by a new `(issuer,
   subject)` link table (`user_identities`): a first sign-in links an existing account only by a
-  verified address and only when it has no other identity of the provider, else creates the
-  account (no password; invitations accepted only for a verified address). The admin groups give
+  verified address and only when it has no other identity of the provider, and never a platform
+  administrator's, the break-glass account or one with two-factor sign-in (`link_required`: a
+  provider's word on an address alone would open those, skipping their second factor), else
+  creates the account (no password; invitations accepted only for a verified address; never the
+  break-glass address). Those holders link the identity from their profile page instead:
+  `POST /auth/oidc/link` (their password confirms) starts the same trip, the identity that signs
+  in is linked whatever address it gives, and the browser comes back to the profile page
+  (`identity_taken` when it is another account's). A platform administrator lists an account's
+  identities with their subjects (`GET /admin/users/{uid}/identities`) and unlinks one
+  (`DELETE /admin/users/{uid}/identities/{iid}`: the account is signed out, `identity_unlinked` in
+  the platform's log, `sso_unlinked` in the account's activity), from the Accounts menu's "Single
+  sign-on identities"; the person's next sign-in is a first one again, which lets in someone the
+  provider re-created. Refusals that turn on the account are logged at `warn` with whether an
+  address was given and what `email_verified` said. The admin groups give
   the platform role and the workspace mapping gives workspace roles at every sign-in, and both take
   back what they gave once the group is gone (the role before is restored; a role changed by hand,
   a platform role given in the console and a workspace's last owner are left alone); each workspace

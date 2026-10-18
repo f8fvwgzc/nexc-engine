@@ -8,7 +8,8 @@ mod common;
 
 use axum::http::{Method, StatusCode};
 use common::oidc::{
-    Assertion, CLIENT_SECRET, Signing, Stub, begin, callback, local, session_of, trip,
+    Assertion, CLIENT_SECRET, Signing, Stub, begin, callback, local, session_of, set_cookie, trip,
+    visitor,
 };
 use common::{PASSWORD, TestApp};
 use nexc::domain::user::Role;
@@ -63,6 +64,55 @@ async fn activity(app: &TestApp, token: &str) -> Vec<String> {
 
 async fn count(pool: &PgPool, sql: &'static str) -> i64 {
     sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
+}
+
+/// An access token for an account with the test password.
+async fn password_token(app: &TestApp, email: &str) -> String {
+    let r = app
+        .request_with(
+            Method::POST,
+            "/api/v1/auth/login",
+            None,
+            Some(json!({"email": email, "password": PASSWORD})),
+            &[("x-forwarded-for", &visitor())],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{email}: {}", r.body);
+    r.body["access_token"].as_str().unwrap().to_owned()
+}
+
+/// `POST /auth/oidc/link` with `password`.
+async fn start_link(app: &TestApp, token: &str, password: &str) -> common::Resp {
+    app.request_with(
+        Method::POST,
+        "/api/v1/auth/oidc/link",
+        Some(token),
+        Some(json!({"password": password})),
+        &[("x-forwarded-for", &visitor())],
+    )
+    .await
+}
+
+/// Links the provider's identity to the account of `token` from its page:
+/// `POST /auth/oidc/link`, then the trip through the provider. Returns where
+/// the callback sent the browser, and the refresh cookie it set.
+async fn link(
+    app: &TestApp,
+    stub: &Stub,
+    token: &str,
+    assertion: Assertion,
+) -> (String, Option<String>) {
+    let start = start_link(app, token, PASSWORD).await;
+    assert_eq!(start.status, StatusCode::OK, "{}", start.body);
+    let binding = set_cookie(&start.headers, "nexc_sso").expect("the binding cookie");
+    let url = start.body["authorization_url"].as_str().unwrap();
+    stub.expect(assertion);
+    let back = callback(app, &local(&stub.authorize(url)), &binding).await;
+    assert_eq!(back.status, StatusCode::SEE_OTHER, "{}", back.body);
+    (
+        back.headers["location"].to_str().unwrap().to_owned(),
+        set_cookie(&back.headers, "nexc_refresh"),
+    )
 }
 
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
@@ -271,23 +321,8 @@ fn base32_decode(text: &str) -> Vec<u8> {
 async fn a_verified_address_links_the_existing_account(pool: PgPool) {
     let stub = Stub::start().await;
     let app = app(pool.clone(), &stub, &[]).await;
-    let (password_token, _) = app.register("grace@example.com").await;
-    let (_, me) = call(&app, Method::GET, "/auth/me", &password_token, None).await;
-
-    // The account signs in with a second factor; single sign-on does not ask for it.
-    let (_, setup) = call(&app, Method::POST, "/auth/2fa/setup", &password_token, None).await;
-    let secret = base32_decode(setup["secret"].as_str().unwrap());
-    let step = chrono::Utc::now().timestamp() / nexc::security::totp::PERIOD;
-    let code = nexc::security::totp::code(&secret, step);
-    let (status, _) = call(
-        &app,
-        Method::POST,
-        "/auth/2fa/enable",
-        &password_token,
-        Some(json!({"code": code})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
+    let (registered, _) = app.register("grace@example.com").await;
+    let (_, me) = call(&app, Method::GET, "/auth/me", &registered, None).await;
 
     let (token, user) = signed_in(
         &app,
@@ -314,15 +349,251 @@ async fn a_verified_address_links_the_existing_account(pool: PgPool) {
         1
     );
     // The password still works alongside.
-    let login = app
-        .request(
-            Method::POST,
-            "/api/v1/auth/login",
-            None,
-            Some(json!({"email": "grace@example.com", "password": PASSWORD, "code": nexc::security::totp::code(&secret, step + 1)})),
-        )
-        .await;
-    assert_eq!(login.status, StatusCode::OK, "{}", login.body);
+    password_token(&app, "grace@example.com").await;
+}
+
+/// The accounts a provider's word on an address must not open by itself: a
+/// platform administrator's, the break-glass account, and one with
+/// two-factor sign-in (which single sign-on skips). Their holders link the
+/// identity from the account page, signed in and with their password.
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn guarded_accounts_are_linked_from_their_own_page_only(pool: PgPool) {
+    let stub = Stub::start().await;
+    let app = app(
+        pool.clone(),
+        &stub,
+        &[("NEXC_OIDC_BREAK_GLASS_EMAIL", "glass@example.com")],
+    )
+    .await;
+    let hash = nexc::security::password::hash_password(PASSWORD).unwrap();
+    nexc::http::handlers::auth::create_user(
+        &app.state,
+        "root@example.com",
+        "Root",
+        Role::Admin,
+        &hash,
+    )
+    .await
+    .unwrap();
+    // Grace signs in with a second factor.
+    let (grace, _) = app.register("grace@example.com").await;
+    let (_, setup) = call(&app, Method::POST, "/auth/2fa/setup", &grace, None).await;
+    let secret = base32_decode(setup["secret"].as_str().unwrap());
+    let step = chrono::Utc::now().timestamp() / nexc::security::totp::PERIOD;
+    let code = nexc::security::totp::code(&secret, step);
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        "/auth/2fa/enable",
+        &grace,
+        Some(json!({"code": code})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // A verified address is not enough for either of them; nor does the provider create the
+    // break-glass account, which is for a password, independent of the provider.
+    for (sub, email) in [
+        ("sub-grace", "grace@example.com"),
+        ("sub-root", "root@example.com"),
+        ("sub-glass", "glass@example.com"),
+    ] {
+        let t = trip(&app, &stub, Assertion::person(sub, email), None).await;
+        assert_eq!(t.location, "/login?sso_error=link_required", "{email}");
+        assert!(t.refresh.is_none());
+    }
+    assert_eq!(
+        count(&pool, "SELECT count(*) FROM user_identities").await,
+        0
+    );
+    assert_eq!(count(&pool, "SELECT count(*) FROM users").await, 2);
+
+    // Grace links from her page: her password, then the provider, whatever address it gives.
+    let wrong = start_link(&app, &grace, "not the password at all").await;
+    assert_eq!(
+        wrong.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        wrong.body
+    );
+    let (location, refresh) = link(
+        &app,
+        &stub,
+        &grace,
+        Assertion::person("sub-grace", "g.hopper@corp.example"),
+    )
+    .await;
+    assert_eq!(location, "/app/settings/profile");
+    let session = session_of(&app, &refresh.expect("signed in")).await;
+    assert_eq!(session.body["user"]["email"], "grace@example.com");
+    let token = session.body["access_token"].as_str().unwrap().to_owned();
+    let kinds = activity(&app, &token).await;
+    assert_eq!(&kinds[..2], ["sso_signed_in", "sso_linked"], "{kinds:?}");
+    // From then on the provider signs her in, and asks for its own second factor, not this one.
+    let (_, user) = signed_in(
+        &app,
+        &stub,
+        Assertion::person("sub-grace", "grace@example.com"),
+    )
+    .await;
+    assert_eq!(user["email"], "grace@example.com");
+    let again = start_link(&app, &token, PASSWORD).await;
+    assert_eq!(
+        again.status,
+        StatusCode::CONFLICT,
+        "linked already: {}",
+        again.body
+    );
+
+    // The administrator links an identity, and stays an administrator; not one that is Grace's.
+    let root = password_token(&app, "root@example.com").await;
+    let (location, refresh) = link(
+        &app,
+        &stub,
+        &root,
+        Assertion::person("sub-grace", "root@example.com"),
+    )
+    .await;
+    assert_eq!(location, "/app/settings/profile?sso_error=identity_taken");
+    assert!(refresh.is_none());
+    let (location, _) = link(
+        &app,
+        &stub,
+        &root,
+        Assertion::person("sub-root", "root@example.com"),
+    )
+    .await;
+    assert_eq!(location, "/app/settings/profile");
+    let (_, user) = signed_in(
+        &app,
+        &stub,
+        Assertion::person("sub-root", "root@example.com"),
+    )
+    .await;
+    assert_eq!(user["role"], "admin");
+
+    // The break-glass account stays independent of the provider.
+    nexc::http::handlers::auth::create_user(
+        &app.state,
+        "glass@example.com",
+        "Glass",
+        Role::Admin,
+        &hash,
+    )
+    .await
+    .unwrap();
+    let glass = password_token(&app, "glass@example.com").await;
+    let refused = start_link(&app, &glass, PASSWORD).await;
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.body);
+
+    // Without single sign-on configured there is nothing to link.
+    let off = TestApp::new(pool.clone(), &[]).await;
+    let r = start_link(&off, &glass, PASSWORD).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+}
+
+/// A platform administrator sees an account's identities and unlinks one:
+/// the account is signed out, and the person's next sign-in through the
+/// provider is a first one again. That is how a re-created identity (a new
+/// subject, refused with `email_taken` meanwhile) gets in.
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn an_administrator_unlinks_an_identity(pool: PgPool) {
+    let stub = Stub::start().await;
+    let app = app(pool.clone(), &stub, &[]).await;
+    let hash = nexc::security::password::hash_password(PASSWORD).unwrap();
+    nexc::http::handlers::auth::create_user(
+        &app.state,
+        "root@example.com",
+        "Root",
+        Role::Admin,
+        &hash,
+    )
+    .await
+    .unwrap();
+    let admin = password_token(&app, "root@example.com").await;
+    let (token, user) =
+        signed_in(&app, &stub, Assertion::person("sub-old", "kim@example.com")).await;
+    let uid = user["id"].as_str().unwrap().to_owned();
+    // The provider re-created Kim: a new subject, the same address.
+    let t = trip(
+        &app,
+        &stub,
+        Assertion::person("sub-new", "kim@example.com"),
+        None,
+    )
+    .await;
+    assert_eq!(t.location, "/login?sso_error=email_taken");
+
+    let (status, list) = call(
+        &app,
+        Method::GET,
+        &format!("/admin/users/{uid}/identities"),
+        &admin,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    let identity = &list[0];
+    assert_eq!(
+        (
+            identity["provider"].as_str(),
+            identity["subject"].as_str(),
+            identity["email"].as_str()
+        ),
+        (Some("Acme SSO"), Some("sub-old"), Some("kim@example.com"))
+    );
+    let iid = identity["id"].as_str().unwrap().to_owned();
+    // Not the holder's to see this way, nor anyone else's account's to unlink.
+    let (status, _) = call(
+        &app,
+        Method::GET,
+        &format!("/admin/users/{uid}/identities"),
+        &token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let other = uuid::Uuid::now_v7();
+    let (status, _) = call(
+        &app,
+        Method::DELETE,
+        &format!("/admin/users/{other}/identities/{iid}"),
+        &admin,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (status, body) = call(
+        &app,
+        Method::DELETE,
+        &format!("/admin/users/{uid}/identities/{iid}"),
+        &admin,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let (_, list) = call(
+        &app,
+        Method::GET,
+        &format!("/admin/users/{uid}/identities"),
+        &admin,
+        None,
+    )
+    .await;
+    assert_eq!(list, json!([]));
+    let (status, _) = call(&app, Method::GET, "/auth/me", &token, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "signed out everywhere");
+    let (_, events) = call(&app, Method::GET, "/admin/events", &admin, None).await;
+    assert_eq!(events[0]["action"], "identity_unlinked");
+    assert!(events[0]["detail"].as_str().unwrap().contains("`sub-old`"));
+
+    // The new identity now links by its verified address, to the same account.
+    let (token, user) =
+        signed_in(&app, &stub, Assertion::person("sub-new", "kim@example.com")).await;
+    assert_eq!(user["id"].as_str(), Some(uid.as_str()));
+    let kinds = activity(&app, &token).await;
+    assert!(kinds.contains(&"sso_unlinked".to_owned()), "{kinds:?}");
 }
 
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]

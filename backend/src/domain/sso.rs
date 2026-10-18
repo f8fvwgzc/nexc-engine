@@ -9,6 +9,9 @@ use utoipa::ToSchema;
 /// Where the browser goes after signing in when it named nowhere (or
 /// somewhere it may not go).
 pub const DEFAULT_RETURN_TO: &str = "/app";
+/// Where a sign-in started to link an identity from the account page
+/// (`POST /auth/oidc/link`) comes back to, signed in or refused.
+pub const LINK_RETURN_TO: &str = "/app/settings/profile";
 /// Longest path the browser may ask to come back to.
 pub const RETURN_TO_MAX: usize = 512;
 
@@ -43,11 +46,39 @@ pub struct LinkedIdentity {
     /// The provider's name on the login page (its issuer when it is no longer the one configured).
     pub provider: String,
     pub issuer: String,
+    /// Whether it is an identity of the provider configured now (the one the login page offers).
+    pub current: bool,
     /// The address the provider gave at the last sign-in.
     pub email: String,
     pub linked_at: DateTime<Utc>,
     #[schema(required = true)]
     pub last_login_at: Option<DateTime<Utc>>,
+}
+
+/// An identity linked to an account, as a platform administrator sees it
+/// (`GET /admin/users/{uid}/identities`).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AccountIdentity {
+    pub id: uuid::Uuid,
+    /// The provider's name on the login page (its issuer when it is no longer the one configured).
+    pub provider: String,
+    pub issuer: String,
+    /// Who the person is at the provider: what the provider's ID tokens carry in `sub`.
+    pub subject: String,
+    /// The address the provider gave at the last sign-in.
+    pub email: String,
+    pub linked_at: DateTime<Utc>,
+    #[schema(required = true)]
+    pub last_login_at: Option<DateTime<Utc>>,
+}
+
+/// `POST /auth/oidc/link`: where to send the browser to link the provider's
+/// identity to the signed-in account.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct LinkStart {
+    /// The provider's authorization endpoint, with this sign-in's `state`,
+    /// `nonce` and PKCE challenge. The answer also sets the `nexc_sso` cookie.
+    pub authorization_url: String,
 }
 
 /// How an account signs in.
@@ -79,6 +110,13 @@ pub enum Refusal {
     UnverifiedEmail,
     /// An account has this address and is linked to another identity of the provider.
     EmailTaken,
+    /// An account has this address but is not linked by it: it administers the platform, is the
+    /// break-glass account, or has two-factor sign-in. Its holder links the identity from the
+    /// account page (`POST /auth/oidc/link`).
+    LinkRequired,
+    /// Linking from the account page: the identity is another account's, or the account has
+    /// another identity of the provider.
+    IdentityTaken,
     /// The account is suspended.
     Suspended,
     /// Something failed on this side; the log says what.
@@ -87,7 +125,7 @@ pub enum Refusal {
 
 impl Refusal {
     /// Every code, as the login page knows them.
-    pub const ALL: [Refusal; 9] = [
+    pub const ALL: [Refusal; 11] = [
         Refusal::Unavailable,
         Refusal::Denied,
         Refusal::Expired,
@@ -95,6 +133,8 @@ impl Refusal {
         Refusal::NoEmail,
         Refusal::UnverifiedEmail,
         Refusal::EmailTaken,
+        Refusal::LinkRequired,
+        Refusal::IdentityTaken,
         Refusal::Suspended,
         Refusal::Failed,
     ];
@@ -109,14 +149,18 @@ impl Refusal {
             Refusal::NoEmail => "no_email",
             Refusal::UnverifiedEmail => "unverified_email",
             Refusal::EmailTaken => "email_taken",
+            Refusal::LinkRequired => "link_required",
+            Refusal::IdentityTaken => "identity_taken",
             Refusal::Suspended => "suspended",
             Refusal::Failed => "failed",
         }
     }
 
-    /// Where the browser is sent.
-    pub fn location(self) -> String {
-        format!("/login?sso_error={}", self.code())
+    /// Where the browser is sent: the login page, or the account page when
+    /// the sign-in was started there to link an identity.
+    pub fn location(self, linking: bool) -> String {
+        let page = if linking { LINK_RETURN_TO } else { "/login" };
+        format!("{page}?sso_error={}", self.code())
     }
 }
 
@@ -197,6 +241,10 @@ mod tests {
                 .iter()
                 .all(|c| c.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'))
         );
-        assert_eq!(Refusal::Expired.location(), "/login?sso_error=expired");
+        assert_eq!(Refusal::Expired.location(false), "/login?sso_error=expired");
+        assert_eq!(
+            Refusal::IdentityTaken.location(true),
+            "/app/settings/profile?sso_error=identity_taken"
+        );
     }
 }

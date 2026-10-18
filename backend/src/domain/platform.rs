@@ -27,6 +27,8 @@ string_enum!(
         AccountErased => "account_erased",
         PasswordResetIssued => "password_reset_issued",
         TwoFactorReset => "two_factor_reset",
+        /// A single sign-on identity was unlinked from an account.
+        IdentityUnlinked => "identity_unlinked",
     }
 );
 

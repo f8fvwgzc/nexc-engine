@@ -91,6 +91,7 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(sso::identities))
         .routes(routes!(sso::oidc_login))
         .routes(routes!(sso::oidc_callback))
+        .routes(routes!(sso::oidc_link))
         .routes(routes!(auth::me, account::update_me))
         .routes(routes!(account::change_password))
         .routes(routes!(account::reset_password))
@@ -172,6 +173,8 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(platform::update_user))
         .routes(routes!(platform::erase_user))
         .routes(routes!(platform::issue_password_reset))
+        .routes(routes!(platform::user_identities))
+        .routes(routes!(platform::unlink_identity))
         .routes(routes!(platform::events))
         .routes(routes!(infrastructure::status))
         .routes(routes!(infrastructure::check))
@@ -308,8 +311,11 @@ mod tests {
             "/api/v1/auth/register",
             "/api/v1/auth/oidc/login",
             "/api/v1/auth/oidc/callback",
+            "/api/v1/auth/oidc/link",
             "/api/v1/auth/providers",
             "/api/v1/auth/identities",
+            "/api/v1/admin/users/{uid}/identities",
+            "/api/v1/admin/users/{uid}/identities/{iid}",
             "/api/v1/graphs/{gid}",
             "/api/v1/graphs/{gid}/plans/{pid}/apply",
             "/api/v1/runs/{rid}/artifacts.zip",

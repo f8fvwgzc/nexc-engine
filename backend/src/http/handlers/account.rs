@@ -56,7 +56,7 @@ pub async fn update_me(
 
 /// Checks `given` against the caller's password, off the async workers.
 /// A wrong one counts as a failed sign-in from this address.
-async fn confirm_password(
+pub(super) async fn confirm_password(
     state: &AppState,
     auth: Caller,
     ip: std::net::IpAddr,

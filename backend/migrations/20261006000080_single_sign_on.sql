@@ -27,6 +27,10 @@ CREATE TABLE oidc_logins (
     code_verifier text NOT NULL,
     -- The same-origin path the browser goes to once signed in.
     return_to     text NOT NULL,
+    -- Set when the account's holder started the sign-in from their account page to link the
+    -- provider's identity to it (POST /auth/oidc/link); NULL: the account is found by identity,
+    -- or by verified address.
+    link_user_id  uuid REFERENCES users (id) ON DELETE CASCADE,
     expires_at    timestamptz NOT NULL,
     created_at    timestamptz NOT NULL DEFAULT now()
 );

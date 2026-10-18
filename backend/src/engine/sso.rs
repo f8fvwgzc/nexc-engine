@@ -7,7 +7,12 @@
 //! it is linked to the account with its e-mail address, but only when the
 //! provider says the address is verified and that account has no identity of
 //! this provider yet; with no such account one is created. Anything else is
-//! refused: an address cannot belong to two accounts.
+//! refused: an address cannot belong to two accounts. Nor is an account
+//! linked by address that a provider's word alone must not open: a platform
+//! administrator's, the break-glass account, or one with two-factor sign-in
+//! (which the provider's sign-in would skip). Their holders link the
+//! identity from their account page, signed in and with their password
+//! ([`link_requested`]); the break-glass account is never linked.
 //!
 //! The group mapping only ever takes back what it gave: a workspace role is
 //! recorded as the mapping's (with the role it replaced), and a sign-in
@@ -141,6 +146,17 @@ async fn find_or_create(
             note(state, id, AccountEventKind::SignInFailed, Some(ip), detail).await;
             return Ok(Found::Refused(Refusal::Suspended));
         }
+        let guarded = existing.user.role == Role::Admin
+            || settings.is_break_glass(&email)
+            || repo::two_factor::find(&state.db, id)
+                .await?
+                .is_some_and(|stored| stored.enabled);
+        if guarded {
+            tracing::warn!(user_id = %id, issuer,
+                "single sign-on not linked by address: the account administers the platform, is the \
+                 break-glass account or has two-factor sign-in; its holder links it from the account page");
+            return Ok(Found::Refused(Refusal::LinkRequired));
+        }
         if !repo::sso::link(&state.db, id, issuer, &identity.subject, &given).await? {
             return Ok(Found::Raced);
         }
@@ -152,7 +168,60 @@ async fn find_or_create(
     if settings.require_verified_email && !verified {
         return Ok(Found::Refused(Refusal::UnverifiedEmail));
     }
+    if settings.is_break_glass(&email) {
+        // The break-glass address is for an account with a password, independent of the provider.
+        tracing::warn!(
+            issuer,
+            "single sign-on refused: the identity gives the break-glass address, which names no account yet"
+        );
+        return Ok(Found::Refused(Refusal::LinkRequired));
+    }
     provision(state, settings, identity, &email, verified, ip).await
+}
+
+/// Links the identity to the account whose holder asked for it from their
+/// account page (`POST /auth/oidc/link`, which checked their password),
+/// whatever address the provider gives. `None` once linked (or when it
+/// already was, to this account).
+pub async fn link_requested(
+    state: &AppState,
+    settings: &OidcSettings,
+    identity: &Identity,
+    user_id: Uuid,
+    ip: IpAddr,
+) -> Result<Option<Refusal>, AppError> {
+    let issuer = settings.issuer.as_str();
+    match repo::sso::linked_user(&state.db, issuer, &identity.subject).await? {
+        Some(linked) if linked == user_id => return Ok(None),
+        Some(_) => return Ok(Some(Refusal::IdentityTaken)),
+        None => {}
+    }
+    let Some(account) = repo::sso::account(&state.db, user_id).await? else {
+        // Deleted since the link was asked for.
+        return Ok(Some(Refusal::Suspended));
+    };
+    if settings.is_break_glass(&account.user.email) {
+        return Ok(Some(Refusal::LinkRequired));
+    }
+    let given = identity.profile.email.as_deref().unwrap_or_default();
+    if !repo::sso::link(&state.db, user_id, issuer, &identity.subject, given).await? {
+        // The account has another identity of this provider, or this one was linked meanwhile.
+        return Ok(Some(Refusal::IdentityTaken));
+    }
+    let detail = format!(
+        "{} ({issuer}), from the account page",
+        settings.display_name
+    );
+    note(
+        state,
+        user_id,
+        AccountEventKind::SsoLinked,
+        Some(ip),
+        &detail,
+    )
+    .await;
+    tracing::info!(user_id = %user_id, issuer, "single sign-on identity linked from the account page");
+    Ok(None)
 }
 
 /// Creates the account of an identity's first sign-in. A platform

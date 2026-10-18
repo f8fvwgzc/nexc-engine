@@ -18,6 +18,8 @@ pub struct PendingLogin {
     pub code_verifier: String,
     pub return_to: String,
     pub expires_at: DateTime<Utc>,
+    /// The account whose holder asked to link the identity to it.
+    pub link_user_id: Option<Uuid>,
 }
 
 /// Records an authorization request under the digest of its `state`.
@@ -27,8 +29,9 @@ pub async fn start_login(
     login: &PendingLogin,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO oidc_logins (state_hash, browser_hash, nonce, code_verifier, return_to, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6)",
+        "INSERT INTO oidc_logins
+                (state_hash, browser_hash, nonce, code_verifier, return_to, expires_at, link_user_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
     .bind(state_hash)
     .bind(&login.browser_hash)
@@ -36,6 +39,7 @@ pub async fn start_login(
     .bind(&login.code_verifier)
     .bind(&login.return_to)
     .bind(login.expires_at)
+    .bind(login.link_user_id)
     .execute(db)
     .await?;
     Ok(())
@@ -49,7 +53,7 @@ pub async fn take_login(
 ) -> Result<Option<PendingLogin>, sqlx::Error> {
     sqlx::query_as(
         "DELETE FROM oidc_logins WHERE state_hash = $1
-         RETURNING browser_hash, nonce, code_verifier, return_to, expires_at",
+         RETURNING browser_hash, nonce, code_verifier, return_to, expires_at, link_user_id",
     )
     .bind(state_hash)
     .fetch_optional(db)
@@ -157,6 +161,47 @@ pub async fn identities(
     )
     .bind(user_id)
     .fetch_all(db)
+    .await
+}
+
+/// One identity linked to an account, as a platform administrator sees it.
+#[derive(Debug, Clone, FromRow)]
+pub struct AccountIdentityRow {
+    pub id: Uuid,
+    pub issuer: String,
+    pub subject: String,
+    pub email: String,
+    pub created_at: DateTime<Utc>,
+    pub last_login_at: Option<DateTime<Utc>>,
+}
+
+/// The identities linked to an account, oldest first, with their subjects.
+pub async fn account_identities(
+    db: impl PgExecutor<'_>,
+    user_id: Uuid,
+) -> Result<Vec<AccountIdentityRow>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT id, issuer, subject, email, created_at, last_login_at FROM user_identities
+         WHERE user_id = $1 ORDER BY created_at, id",
+    )
+    .bind(user_id)
+    .fetch_all(db)
+    .await
+}
+
+/// Unlinks one identity of an account; the identity as it was, if there was one.
+pub async fn unlink(
+    db: impl PgExecutor<'_>,
+    user_id: Uuid,
+    identity_id: Uuid,
+) -> Result<Option<AccountIdentityRow>, sqlx::Error> {
+    sqlx::query_as(
+        "DELETE FROM user_identities WHERE id = $1 AND user_id = $2
+         RETURNING id, issuer, subject, email, created_at, last_login_at",
+    )
+    .bind(identity_id)
+    .bind(user_id)
+    .fetch_optional(db)
     .await
 }
 

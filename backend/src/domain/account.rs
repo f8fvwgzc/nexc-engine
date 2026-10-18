@@ -41,6 +41,9 @@ string_enum!(
         SsoLinked => "sso_linked",
         /// The account was created at its first sign-in through the provider.
         SsoProvisioned => "sso_provisioned",
+        /// A platform administrator unlinked an identity of the provider
+        /// (detail: the provider's name).
+        SsoUnlinked => "sso_unlinked",
     }
 );
 

@@ -6,7 +6,10 @@
 //!
 //! The login and the callback are navigations, not API calls: they answer
 //! with redirects, and a sign-in that does not happen sends the browser to
-//! `/login?sso_error=<code>` while the reason goes to the server's log.
+//! `/login?sso_error=<code>` while the reason goes to the server's log. A
+//! signed-in account links the provider's identity with `POST
+//! /auth/oidc/link` (its password confirms it), which starts the same trip;
+//! that one comes back to the account page.
 
 use axum::Json;
 use axum::extract::rejection::QueryRejection;
@@ -15,18 +18,23 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use chrono::Utc;
 use serde::Deserialize;
-use utoipa::IntoParams;
+use utoipa::{IntoParams, ToSchema};
+use uuid::Uuid;
 
+use super::account::confirm_password;
 use super::auth::{cookie, session_config};
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::account::AccountEventKind;
 use crate::domain::sso::{
-    LinkedIdentity, LoginProviders, Refusal, SignInMethods, SsoProvider, safe_return_to,
+    LINK_RETURN_TO, LinkStart, LinkedIdentity, LoginProviders, Refusal, SignInMethods, SsoProvider,
+    safe_return_to,
 };
+use crate::domain::user;
+use crate::domain::validation::{FieldErrors, Validate};
 use crate::engine::account::note;
 use crate::engine::sso::{self, Resolution};
-use crate::http::extract::{Caller, ClientIp};
+use crate::http::extract::{Caller, ClientIp, ValidatedJson};
 use crate::http::middleware::rate_limit::AuthRateLimit;
 use crate::http::problem::Problem;
 use crate::repo;
@@ -109,9 +117,8 @@ pub async fn identities(
         .await?
         .into_iter()
         .map(|row| LinkedIdentity {
-            provider: oidc
-                .filter(|oidc| oidc.issuer == row.issuer)
-                .map_or_else(|| row.issuer.clone(), |oidc| oidc.display_name.clone()),
+            provider: provider_name(&state, &row.issuer),
+            current: oidc.is_some_and(|oidc| oidc.issuer == row.issuer),
             issuer: row.issuer,
             email: row.email,
             linked_at: row.created_at,
@@ -122,6 +129,17 @@ pub async fn identities(
         password: repo::sso::has_password(&state.db, auth.id).await?,
         identities,
     }))
+}
+
+/// The name an identity's provider goes by: the login page's, while it is
+/// the provider configured, else its issuer.
+pub(super) fn provider_name(state: &AppState, issuer: &str) -> String {
+    state
+        .settings
+        .oidc
+        .as_ref()
+        .filter(|oidc| oidc.issuer == issuer)
+        .map_or_else(|| issuer.to_owned(), |oidc| oidc.display_name.clone())
 }
 
 /// The binding cookie: `SameSite=Lax`, because the provider sends the
@@ -151,9 +169,10 @@ fn redirect(location: &str, cookies: impl IntoIterator<Item = HeaderValue>) -> R
     response
 }
 
-/// Back to the login page with the refusal's code; the binding is cleared.
-fn refused(state: &AppState, refusal: Refusal) -> Response {
-    redirect(&refusal.location(), [binding_cookie(state, "", 0)])
+/// Back to the login page (the account page, when linking) with the
+/// refusal's code; the binding is cleared.
+fn refused(state: &AppState, refusal: Refusal, linking: bool) -> Response {
+    redirect(&refusal.location(linking), [binding_cookie(state, "", 0)])
 }
 
 /// The value of cookie `name` in the request.
@@ -170,6 +189,41 @@ fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
         .filter(|v| !v.is_empty() && v.len() <= 128)
 }
 
+/// Keeps a new sign-in for ten minutes and returns the provider's
+/// authorization URL with the cookie that binds the sign-in to this browser.
+/// `Ok(Err(_))` when the provider cannot be reached.
+async fn start(
+    state: &AppState,
+    client: &OidcClient,
+    return_to: String,
+    link_user_id: Option<Uuid>,
+) -> Result<Result<(String, HeaderValue), OidcError>, AppError> {
+    let discovery = match client.discovery().await {
+        Ok(discovery) => discovery,
+        Err(err) => return Ok(Err(err)),
+    };
+    let (request_state, nonce, verifier, browser) = (
+        random_token(),
+        random_token(),
+        random_token(),
+        random_token(),
+    );
+    let url = match client.authorization_url(&discovery, &request_state, &nonce, &verifier) {
+        Ok(url) => url,
+        Err(err) => return Ok(Err(err)),
+    };
+    let pending = PendingLogin {
+        browser_hash: token_digest(&browser),
+        nonce,
+        code_verifier: verifier,
+        return_to,
+        expires_at: Utc::now() + chrono::Duration::seconds(LOGIN_TTL_SECS),
+        link_user_id,
+    };
+    repo::sso::start_login(&state.db, &token_digest(&request_state), &pending).await?;
+    Ok(Ok((url, binding_cookie(state, &browser, LOGIN_TTL_SECS))))
+}
+
 /// Sends the browser to the provider to sign in.
 #[utoipa::path(get, path = "/auth/oidc/login", tag = "auth", params(OidcLoginQuery),
     responses(
@@ -184,38 +238,89 @@ pub async fn oidc_login(
 ) -> Result<Response, AppError> {
     let client = client(&state)?;
     let query = query.map(|Query(q)| q).unwrap_or_default();
-    let discovery = match client.discovery().await {
-        Ok(discovery) => discovery,
+    let return_to = safe_return_to(query.return_to.as_deref());
+    match start(&state, &client, return_to, None).await? {
+        Ok((url, binding)) => Ok(redirect(&url, [binding])),
         Err(err) => {
             tracing::warn!(error = %err, "single sign-on cannot start");
-            return Ok(refused(&state, Refusal::Unavailable));
+            Ok(refused(&state, Refusal::Unavailable, false))
         }
-    };
-    let (request_state, nonce, verifier, browser) = (
-        random_token(),
-        random_token(),
-        random_token(),
-        random_token(),
-    );
-    let url = match client.authorization_url(&discovery, &request_state, &nonce, &verifier) {
-        Ok(url) => url,
+    }
+}
+
+/// `POST /auth/oidc/link` body.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LinkIdentity {
+    /// The account's password: a session left open is not enough to link an identity to it.
+    pub password: String,
+}
+
+impl Validate for LinkIdentity {
+    fn validate(&self, errors: &mut FieldErrors) {
+        if self.password.is_empty() || self.password.chars().count() > user::PASSWORD_MAX {
+            errors.add("password", "enter your password");
+        }
+    }
+}
+
+/// Links the provider's identity to the signed-in account: the answer names
+/// the provider's authorization URL for the browser to go to (with the
+/// `nexc_sso` cookie set, as `GET /auth/oidc/login` sets it). Whoever signs
+/// in there is linked to this account, whatever address the provider gives,
+/// and the browser comes back to the account page. This is how an account
+/// that is never linked by its address (a platform administrator's, or one
+/// with two-factor sign-in) gets single sign-on. The break-glass account is
+/// never linked: it stays independent of the provider.
+#[utoipa::path(post, path = "/auth/oidc/link", tag = "auth", security(("bearer" = [])), request_body = LinkIdentity,
+    responses(
+        (status = 200, description = "Where to send the browser; the `nexc_sso` cookie is set", body = LinkStart),
+        (status = 401, body = Problem),
+        (status = 404, description = "Single sign-on is not configured", body = Problem),
+        (status = 409, description = "The account is linked to an identity of the provider already, or is the break-glass account", body = Problem),
+        (status = 422, description = "Wrong password", body = Problem),
+        (status = 429, description = "Rate limited", body = Problem),
+        (status = 503, description = "The provider cannot be reached", body = Problem),
+    ))]
+pub async fn oidc_link(
+    _limit: AuthRateLimit,
+    State(state): State<AppState>,
+    auth: Caller,
+    ClientIp(ip): ClientIp,
+    ValidatedJson(req): ValidatedJson<LinkIdentity>,
+) -> Result<Response, AppError> {
+    let client = client(&state)?;
+    let settings = client.settings();
+    confirm_password(&state, auth, ip, &req.password, "password").await?;
+    let account = repo::users::find(&state.db, auth.id)
+        .await?
+        .ok_or(AppError::NotFound("user"))?;
+    if settings.is_break_glass(&account.email) {
+        return Err(AppError::Conflict(
+            "the break-glass administrator's account stays independent of the identity provider"
+                .into(),
+        ));
+    }
+    if repo::sso::has_identity_at(&state.db, auth.id, &settings.issuer).await? {
+        return Err(AppError::Conflict(format!(
+            "this account is linked to a {} identity already",
+            settings.display_name
+        )));
+    }
+    match start(&state, &client, LINK_RETURN_TO.to_owned(), Some(auth.id)).await? {
+        Ok((authorization_url, binding)) => Ok((
+            [(header::SET_COOKIE, binding)],
+            Json(LinkStart { authorization_url }),
+        )
+            .into_response()),
         Err(err) => {
             tracing::warn!(error = %err, "single sign-on cannot start");
-            return Ok(refused(&state, Refusal::Unavailable));
+            Err(AppError::Unavailable(format!(
+                "{} cannot be reached; try again in a moment",
+                settings.display_name
+            )))
         }
-    };
-    let pending = PendingLogin {
-        browser_hash: token_digest(&browser),
-        nonce,
-        code_verifier: verifier,
-        return_to: safe_return_to(query.return_to.as_deref()),
-        expires_at: Utc::now() + chrono::Duration::seconds(LOGIN_TTL_SECS),
-    };
-    repo::sso::start_login(&state.db, &token_digest(&request_state), &pending).await?;
-    Ok(redirect(
-        &url,
-        [binding_cookie(&state, &browser, LOGIN_TTL_SECS)],
-    ))
+    }
 }
 
 /// Where the provider sends the browser back: the code is exchanged, the ID
@@ -225,7 +330,7 @@ pub async fn oidc_login(
 /// provider is the one that authenticates.
 #[utoipa::path(get, path = "/auth/oidc/callback", tag = "auth", params(OidcCallbackQuery),
     responses(
-        (status = 303, description = "Signed in: to the `return_to` path given at the start, with the `nexc_refresh` cookie set (the console then calls `POST /auth/refresh`). Not signed in: to `/login?sso_error=` `unavailable` | `denied` | `expired` | `invalid` | `no_email` | `unverified_email` | `email_taken` | `suspended` | `failed`"),
+        (status = 303, description = "Signed in: to the `return_to` path given at the start (the account page after `POST /auth/oidc/link`), with the `nexc_refresh` cookie set (the console then calls `POST /auth/refresh`). Not signed in: to `/login?sso_error=` (`/app/settings/profile?sso_error=` when linking) `unavailable` | `denied` | `expired` | `invalid` | `no_email` | `unverified_email` | `email_taken` | `link_required` | `identity_taken` | `suspended` | `failed`"),
         (status = 404, description = "Single sign-on is not configured", body = Problem),
         (status = 429, description = "Rate limited", body = Problem),
     ))]
@@ -250,7 +355,23 @@ pub async fn oidc_callback(
                 binding_cookie(&state, "", 0),
             ],
         )),
-        Err(refusal) => Ok(refused(&state, refusal)),
+        Err(Refused { refusal, linking }) => Ok(refused(&state, refusal, linking)),
+    }
+}
+
+/// A sign-in that did not happen, and whether it was started to link an
+/// identity from the account page (which it then goes back to).
+struct Refused {
+    refusal: Refusal,
+    linking: bool,
+}
+
+impl From<Refusal> for Refused {
+    fn from(refusal: Refusal) -> Self {
+        Refused {
+            refusal,
+            linking: false,
+        }
     }
 }
 
@@ -281,8 +402,7 @@ async fn complete(
     headers: &HeaderMap,
     query: &OidcCallbackQuery,
     ip: std::net::IpAddr,
-) -> Result<(Session, String), Refusal> {
-    let settings = client.settings();
+) -> Result<(Session, String), Refused> {
     let request_state = query
         .state
         .as_deref()
@@ -293,6 +413,22 @@ async fn complete(
         .await
         .map_err(failed)?
         .ok_or(Refusal::Expired)?;
+    let linking = pending.link_user_id.is_some();
+    finish(state, client, headers, query, pending, ip)
+        .await
+        .map_err(|refusal| Refused { refusal, linking })
+}
+
+/// The rest of [`complete`], once the sign-in the `state` names was taken.
+async fn finish(
+    state: &AppState,
+    client: &OidcClient,
+    headers: &HeaderMap,
+    query: &OidcCallbackQuery,
+    pending: PendingLogin,
+    ip: std::net::IpAddr,
+) -> Result<(Session, String), Refusal> {
+    let settings = client.settings();
     if pending.expires_at <= Utc::now() {
         return Err(Refusal::Expired);
     }
@@ -349,13 +485,28 @@ async fn complete(
             .map_err(provider_refusal)?;
         identity.profile.fill_from(more);
     }
+    if let Some(user_id) = pending.link_user_id
+        && let Some(refusal) = sso::link_requested(state, settings, &identity, user_id, ip)
+            .await
+            .map_err(failed)?
+    {
+        tracing::warn!(code = refusal.code(), %user_id, "single sign-on: the identity was not linked");
+        return Err(refusal);
+    }
     let user = match sso::sign_in(state, settings, &identity, ip)
         .await
         .map_err(failed)?
     {
         Resolution::Account(user) => user,
         Resolution::Refused(refusal) => {
-            tracing::info!(code = refusal.code(), "single sign-on refused");
+            // What decided it, without the address itself.
+            tracing::warn!(
+                code = refusal.code(),
+                issuer = %settings.issuer,
+                email_given = identity.profile.email.is_some(),
+                email_verified = ?identity.profile.email_verified,
+                "single sign-on refused"
+            );
             return Err(refusal);
         }
     };
