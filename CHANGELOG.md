@@ -9,6 +9,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- High availability of runs, failure modes first (`docs/HA.md`): what happens, how it is
+  detected, how the run recovers and the RTO and RPO targets when a replica crashes while a node
+  runs or waits for an approval, when a replica loses PostgreSQL, when the agent runtime crashes,
+  when the LLM provider has an outage, when PostgreSQL fails over and during a rolling update. The
+  model it states (a lease per run with fencing, takeover by a peer, a release on shutdown) is what
+  the backend implements.
 - Documentation site (`site/`, VitePress): the repository's Markdown rendered with a sidebar,
   full-text search, a dark theme, mermaid diagrams and the API reference (Scalar over
   `site/public/openapi.json`, a committed export of `nexc openapi`), in six sections: Start,
