@@ -15,7 +15,7 @@ import {
 import { alertDeliverySchema, alertDestinationSchema } from '../src/schemas/alert-routing';
 import { conversationDetailSchema, conversationSchema } from '../src/schemas/assistant';
 import { auditEntrySchema, cannedQuestionSchema } from '../src/schemas/audit';
-import { userSchema } from '../src/schemas/auth';
+import { loginProvidersSchema, signInMethodsSchema, userSchema } from '../src/schemas/auth';
 import { cycleSchema } from '../src/schemas/cycle';
 import { graphSchema, graphSummarySchema } from '../src/schemas/graph';
 import {
@@ -113,6 +113,7 @@ const SCHEMAS: Partial<Record<keyof Fixtures, z.ZodType>> = {
   labels: many(labelSchema),
   latency: latencyReportSchema,
   llmSettings: llmSettingsSchema,
+  loginProviders: loginProvidersSchema,
   map: workspaceMapSchema,
   mapItems: many(mapItemSchema),
   mapNeighbourhood: mapNeighbourhoodSchema,
@@ -133,6 +134,7 @@ const SCHEMAS: Partial<Record<keyof Fixtures, z.ZodType>> = {
   secopsSpans: secopsSpanPageSchema,
   session: sessionSchema,
   sessions: sessionPageSchema,
+  signInMethods: z.object({ user: signInMethodsSchema, admin: signInMethodsSchema }),
   spanPayloads: spanPayloadsSchema,
   states: byTeam(issueStateSchema),
   teamMembers: many(teamMemberSchema),

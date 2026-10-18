@@ -31,6 +31,7 @@ interface Ctx {
   url: URL;
   params: Record<string, string>;
   mode: DataMode;
+  persona: Persona;
 }
 
 /** The JSON body to answer with; `undefined` answers 404, {@link PENDING} leaves the request open. */
@@ -49,6 +50,14 @@ const handlers: [string, Handler][] = [
   ['GET /auth/sessions', () => fixtures.accountSessions],
   ['GET /auth/activity', ({ mode }) => list(mode, fixtures.accountActivity)],
   ['GET /auth/2fa', () => fixtures.twoFactor],
+  [
+    'GET /auth/identities',
+    ({ mode, persona }) => {
+      const methods = fixtures.signInMethods[persona === 'admin' ? 'admin' : 'user'];
+      return full(mode, methods, { ...methods, identities: [] });
+    },
+  ],
+  ['GET /auth/providers', () => fixtures.loginProviders],
   ['POST /auth/logout', () => ({})],
 
   /* workspaces */
@@ -270,7 +279,12 @@ export async function mockApi(page: Page, options: MockOptions): Promise<MockLog
         const match = regex.exec(path);
         if (!match) continue;
         const params = Object.fromEntries(names.map((name, i) => [name, match[i + 1] ?? '']));
-        const reply = handler({ url, params, mode: options.mode });
+        const reply = handler({
+          url,
+          params,
+          mode: options.mode,
+          persona: options.persona ?? 'member',
+        });
         // A live stream stays open: the request is never answered.
         if (reply === PENDING) return;
         if (reply === undefined)

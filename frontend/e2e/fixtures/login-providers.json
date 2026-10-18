@@ -1,0 +1,11 @@
+{
+  "password": true,
+  "signup": false,
+  "sso": [
+    {
+      "id": "oidc",
+      "display_name": "Acme SSO",
+      "login_url": "/api/v1/auth/oidc/login"
+    }
+  ]
+}

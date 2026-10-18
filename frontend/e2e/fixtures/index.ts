@@ -43,6 +43,7 @@ import knowledgeTopics from './knowledge-topics.json' with { type: 'json' };
 import labels from './labels.json' with { type: 'json' };
 import latency from './latency.json' with { type: 'json' };
 import llmSettings from './llm-settings.json' with { type: 'json' };
+import loginProviders from './login-providers.json' with { type: 'json' };
 import mapItems from './map-items.json' with { type: 'json' };
 import mapNeighbourhood from './map-neighbourhood.json' with { type: 'json' };
 import map from './map.json' with { type: 'json' };
@@ -68,6 +69,7 @@ import secopsOverview from './secops-overview.json' with { type: 'json' };
 import secopsSpans from './secops-spans.json' with { type: 'json' };
 import session from './session.json' with { type: 'json' };
 import sessions from './sessions.json' with { type: 'json' };
+import signInMethods from './sign-in-methods.json' with { type: 'json' };
 import spanPayloads from './span-payloads.json' with { type: 'json' };
 import states from './states.json' with { type: 'json' };
 import teamMembers from './team-members.json' with { type: 'json' };
@@ -147,6 +149,7 @@ export const fixtures = {
   labels: typed<Many<'Label'>>(labels),
   latency: typed<One<'LatencyReport'>>(latency),
   llmSettings: typed<One<'LlmSettings'>>(llmSettings),
+  loginProviders: typed<One<'LoginProviders'>>(loginProviders),
   map: typed<One<'WorkspaceMap'>>(map),
   mapItems: typed<Many<'MapItem'>>(mapItems),
   mapNeighbourhood: typed<One<'MapNeighbourhood'>>(mapNeighbourhood),
@@ -172,6 +175,7 @@ export const fixtures = {
   secopsSpans: typed<One<'SecopsSpanPage'>>(secopsSpans),
   session: typed<One<'Session'>>(session),
   sessions: typed<One<'SessionPage'>>(sessions),
+  signInMethods: typed<{ user: One<'SignInMethods'>; admin: One<'SignInMethods'> }>(signInMethods),
   spanPayloads: typed<One<'SpanPayloads'>>(spanPayloads),
   states: typed<ByTeam<'IssueState'>>(states),
   teamMembers: typed<Many<'TeamMember'>>(teamMembers),
