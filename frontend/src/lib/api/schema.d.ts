@@ -1480,6 +1480,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runs/{rid}/agents/{sid}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stops one sub-agent of a running run, named by the `spawn` span it was
+         *     born in; the run goes on. The runtime cancels the sub-agent's task and its
+         *     parent sees the tool error "cancelled by an operator"; the stop is a
+         *     `policy` span of decision `cancelled` on the trace and an
+         *     `agent_cancelled` entry in the audit log (whoever may cancel the run).
+         */
+        post: operations["cancel_agent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs/{rid}/artifacts": {
         parameters: {
             query?: never;
@@ -3255,6 +3278,27 @@ export interface components {
             /** Format: date-time */
             revoked_at: string | null;
         };
+        /** @description What stopping a sub-agent recorded. */
+        AgentCancel: {
+            /**
+             * @description Whether the runtime was told at once (the run executes on this instance); otherwise
+             *     the instance executing it tells the runtime within a second.
+             */
+            delivered: boolean;
+            /** Format: uuid */
+            node_id: string;
+            /** @description The sub-agent's principal. */
+            principal: string;
+            /** Format: date-time */
+            requested_at: string;
+            /** Format: uuid */
+            run_id: string;
+            /**
+             * Format: uuid
+             * @description The `spawn` span the sub-agent was born in.
+             */
+            spawn_span_id: string;
+        };
         /**
          * @description The agent's ID card: the agent, who answers for it, its team, what it
          *     has left to spend and what it did last.
@@ -3709,7 +3753,7 @@ export interface components {
          * @description What an audit entry records.
          * @enum {string}
          */
-        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned" | "trace_sealed" | "policy_changed" | "policy_mismatch" | "agent_quarantined" | "agent_released" | "approval_granted" | "approval_denied" | "artifact_quarantined" | "artifact_released" | "alert_raised" | "alert_destination_changed" | "classification_changed" | "mcp_server_added" | "mcp_server_removed" | "agent_token_issued" | "agent_token_revoked" | "agent_a2a_changed" | "a2a_counterpart_added" | "a2a_counterpart_removed";
+        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned" | "trace_sealed" | "policy_changed" | "policy_mismatch" | "agent_quarantined" | "agent_released" | "agent_cancelled" | "approval_granted" | "approval_denied" | "artifact_quarantined" | "artifact_released" | "alert_raised" | "alert_destination_changed" | "classification_changed" | "mcp_server_added" | "mcp_server_removed" | "agent_token_issued" | "agent_token_revoked" | "agent_a2a_changed" | "a2a_counterpart_added" | "a2a_counterpart_removed";
         /** @description An answer from the audit. */
         AuditAnswer: {
             answer: string;
@@ -3800,6 +3844,11 @@ export interface components {
              * @description The first span that does not fit the chain.
              */
             span_id: string;
+        };
+        /** @description `POST /runs/{rid}/agents/{sid}/cancel` body. */
+        CancelAgentBody: {
+            /** @description Why, for the trace and the audit log. */
+            reason?: string;
         };
         /** @description One of the questions offered as a chip. */
         CannedQuestion: {
@@ -10677,6 +10726,60 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    cancel_agent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Run id */
+                rid: string;
+                /** @description The sub-agent's spawn span id */
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CancelAgentBody"];
+            };
+        };
+        responses: {
+            /** @description The stop is recorded and on its way */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentCancel"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The run is not running */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

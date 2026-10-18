@@ -31,19 +31,29 @@ class HealthReply(_message.Message):
     ) -> None: ...
 
 class BackendCommand(_message.Message):
-    __slots__ = ("execute", "ack", "cancel", "approval_decision", "policy_update", "tool_result")
+    __slots__ = (
+        "execute",
+        "ack",
+        "cancel",
+        "approval_decision",
+        "policy_update",
+        "tool_result",
+        "cancel_agent",
+    )
     EXECUTE_FIELD_NUMBER: _ClassVar[int]
     ACK_FIELD_NUMBER: _ClassVar[int]
     CANCEL_FIELD_NUMBER: _ClassVar[int]
     APPROVAL_DECISION_FIELD_NUMBER: _ClassVar[int]
     POLICY_UPDATE_FIELD_NUMBER: _ClassVar[int]
     TOOL_RESULT_FIELD_NUMBER: _ClassVar[int]
+    CANCEL_AGENT_FIELD_NUMBER: _ClassVar[int]
     execute: ExecuteRequest
     ack: Ack
     cancel: Cancel
     approval_decision: ApprovalDecision
     policy_update: PolicyUpdate
     tool_result: ToolResult
+    cancel_agent: CancelAgent
     def __init__(
         self,
         execute: _Optional[_Union[ExecuteRequest, _Mapping]] = ...,
@@ -52,6 +62,7 @@ class BackendCommand(_message.Message):
         approval_decision: _Optional[_Union[ApprovalDecision, _Mapping]] = ...,
         policy_update: _Optional[_Union[PolicyUpdate, _Mapping]] = ...,
         tool_result: _Optional[_Union[ToolResult, _Mapping]] = ...,
+        cancel_agent: _Optional[_Union[CancelAgent, _Mapping]] = ...,
     ) -> None: ...
 
 class ExecuteRequest(_message.Message):
@@ -275,6 +286,16 @@ class ToolResult(_message.Message):
         request_id: _Optional[str] = ...,
         output: _Optional[str] = ...,
         is_error: _Optional[bool] = ...,
+    ) -> None: ...
+
+class CancelAgent(_message.Message):
+    __slots__ = ("spawn_span_id", "reason")
+    SPAWN_SPAN_ID_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    spawn_span_id: str
+    reason: str
+    def __init__(
+        self, spawn_span_id: _Optional[str] = ..., reason: _Optional[str] = ...
     ) -> None: ...
 
 class RuntimeEvent(_message.Message):

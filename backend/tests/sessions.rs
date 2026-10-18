@@ -339,6 +339,244 @@ async fn a_waiting_approval_shows_on_the_tree_until_it_is_decided(pool: PgPool) 
 }
 
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_sub_agent_is_stopped_while_the_run_goes_on(pool: PgPool) {
+    let (url, seen) = fake_grpc_runtime().await;
+    let app = grpc_app(pool, &url).await;
+    let (token, _) = app.register("owner@example.com").await;
+    let wid = workspace(&app, &token).await;
+    agent(&app, &token, "Analyst", "analyst").await;
+    let gid = app.graph(&token, "Prove the stop").await;
+    let node = app
+        .node(
+            &token,
+            &gid,
+            json!({"title": "STOPPABLE research", "kind": "task", "executor": "agent", "agent_role": "analyst"}),
+        )
+        .await;
+    let mut rx = app.events(&gid);
+    let (status, body) = call(
+        &app,
+        Method::POST,
+        &format!("/graphs/{gid}/runs"),
+        &token,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let rid = body["id"].as_str().unwrap().to_owned();
+    // The sub-agent is born and working: its spawn and its first turn reached the stream.
+    let mut spawn_id: Option<String> = None;
+    let mut turns = 0;
+    while spawn_id.is_none() || turns < 2 {
+        for (event, data) in collect_until(&mut rx, "trace.span").await {
+            if event != "trace.span" {
+                continue;
+            }
+            if data["span"]["kind"] == "spawn" {
+                spawn_id = data["span"]["id"].as_str().map(str::to_owned);
+            }
+            if data["span"]["kind"] == "llm_call" {
+                turns += 1;
+            }
+        }
+    }
+    let spawn_id = spawn_id.unwrap();
+    // While it works, the tree says so and offers the stop.
+    let (status, session) = call(
+        &app,
+        Method::GET,
+        &format!("/runs/{rid}/sessions"),
+        &token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{session}");
+    let researcher = &session["nodes"][0]["agents"][0]["children"][0];
+    assert_eq!(researcher["status"], "running", "{researcher}");
+    assert_eq!(researcher["cancellable"], true);
+    assert_eq!(researcher["spawn_span_id"], spawn_id);
+    // A span that is no spawn, and a stranger, are not found; a guest may not.
+    let turn_id = session["nodes"][0]["agents"][0]["span_ids"][0]
+        .as_str()
+        .unwrap();
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &format!("/runs/{rid}/agents/{turn_id}/cancel"),
+        &token,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (outsider, _) = app.register("outsider@example.com").await;
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &format!("/runs/{rid}/agents/{spawn_id}/cancel"),
+        &outsider,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &format!("/runs/{rid}/agents/{spawn_id}/cancel"),
+        &token,
+        Some(json!({"reason": "x".repeat(600)})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    // The stop: accepted, delivered down the stream, on the trace and in the audit log.
+    let (status, stopped) = call(
+        &app,
+        Method::POST,
+        &format!("/runs/{rid}/agents/{spawn_id}/cancel"),
+        &token,
+        Some(json!({"reason": "going in circles"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{stopped}");
+    assert_eq!(stopped["run_id"], rid);
+    assert_eq!(stopped["node_id"], node);
+    assert_eq!(stopped["spawn_span_id"], spawn_id);
+    assert_eq!(
+        stopped["principal"],
+        format!("agent://{wid}/Analyst/researcher-1")
+    );
+    assert_eq!(stopped["delivered"], true, "the run executes here");
+    let events = collect_until(&mut rx, "run.finished").await;
+    let finished = &events.last().unwrap().1["run"];
+    assert_eq!(
+        finished["status"], "succeeded",
+        "the run went on: {finished}"
+    );
+    assert!(
+        finished["node_runs"][0]["output_preview"]
+            .as_str()
+            .unwrap()
+            .contains("went on without"),
+        "{finished}"
+    );
+    assert_eq!(
+        seen.cancelled_agents.lock().unwrap().as_slice(),
+        std::slice::from_ref(&spawn_id)
+    );
+    assert!(
+        events.iter().any(|(e, d)| e == "node.log"
+            && d["message"]
+                .as_str()
+                .unwrap()
+                .contains("stopped by an operator")),
+        "the stop was announced"
+    );
+    let (status, session) = call(
+        &app,
+        Method::GET,
+        &format!("/runs/{rid}/sessions"),
+        &token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{session}");
+    let root = &session["nodes"][0]["agents"][0];
+    assert_eq!(root["status"], "succeeded");
+    let researcher = &root["children"][0];
+    assert_eq!(researcher["status"], "cancelled", "{researcher}");
+    assert_eq!(researcher["cancellable"], false);
+    assert!(researcher["ended_at"].is_string());
+    assert_eq!(researcher["own"]["llm_calls"], 1);
+    assert_eq!(root["total"]["llm_calls"], 3);
+    let (_, trace) = call(
+        &app,
+        Method::GET,
+        &format!("/runs/{rid}/trace?limit=100"),
+        &token,
+        None,
+    )
+    .await;
+    let stop_span = trace["spans"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["kind"] == "policy" && s["attributes"]["action"] == "cancel_agent")
+        .expect("the stop is a policy span");
+    assert_eq!(stop_span["attributes"]["decision"], "cancelled");
+    assert_eq!(stop_span["attributes"]["spawn_span_id"], spawn_id);
+    assert_eq!(stop_span["attributes"]["rule"], "operator");
+    assert!(
+        stop_span["attributes"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("going in circles")
+    );
+    assert_eq!(stop_span["principal"], researcher["principal"]);
+    assert_eq!(stop_span["parent_id"], spawn_id);
+    assert_eq!(stop_span["status"], "error");
+    assert!(
+        researcher["span_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|id| *id == stop_span["id"])
+    );
+    let (_, audit) = call(
+        &app,
+        Method::GET,
+        &format!("/workspaces/{wid}/audit"),
+        &token,
+        None,
+    )
+    .await;
+    let entry = audit
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["action"] == "agent_cancelled")
+        .expect("audited");
+    assert_eq!(entry["subject"], researcher["principal"]);
+    assert!(
+        entry["detail"]
+            .as_str()
+            .unwrap()
+            .contains("going in circles")
+    );
+    assert!(entry["detail"].as_str().unwrap().contains(&rid));
+    // The whole run's cancel is unchanged, and a finished run has no agents to stop.
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &format!("/runs/{rid}/agents/{spawn_id}/cancel"),
+        &token,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let (status, run) = call(
+        &app,
+        Method::POST,
+        &format!("/runs/{rid}/cancel"),
+        &token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{run}");
+    assert_eq!(
+        run["status"], "succeeded",
+        "a finished run stays as it ended"
+    );
+    let (_, verified) = call(
+        &app,
+        Method::GET,
+        &format!("/runs/{rid}/trace/verify"),
+        &token,
+        None,
+    )
+    .await;
+    assert_eq!(verified["ok"], true, "{verified}");
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
 async fn the_list_narrows_pages_and_keeps_its_bounds(pool: PgPool) {
     let (url, _) = fake_grpc_runtime().await;
     let app = grpc_app(pool, &url).await;

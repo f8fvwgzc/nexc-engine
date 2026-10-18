@@ -39,6 +39,9 @@ string_enum!(
         PolicyMismatch => "policy_mismatch",
         AgentQuarantined => "agent_quarantined",
         AgentReleased => "agent_released",
+        /// An operator stopped one sub-agent of a run while the run went on
+        /// (subject: the sub-agent's principal; detail: the run, the node, the spawn and the reason).
+        AgentCancelled => "agent_cancelled",
         /// A human let a held tool call go ahead (subject: the principal; detail: the tool and run).
         ApprovalGranted => "approval_granted",
         ApprovalDenied => "approval_denied",

@@ -9,6 +9,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Stop one subtree: `POST /runs/{id}/agents/{span_id}/cancel` `{reason?}` stops the sub-agent
+  born in that `spawn` span while the run goes on (whoever may cancel the run; 202 with
+  `AgentCancel`; 404 for a span that is no spawn, 409 for a run that is not running). The
+  command is recorded (`run_commands`, copied by a transfer) and goes down the node attempt's
+  gRPC stream as the new `cancel_agent` command at once when the run executes on this instance,
+  else by the instance executing it within a second (the run's cancel watcher takes what was
+  recorded elsewhere, `SKIP LOCKED`, so no command is delivered twice). The runtime cancels the
+  sub-agent's task (its own sub-agents with it): the parent's `spawn_subagent` call ends as the
+  tool error `sub-agent … was cancelled by an operator[: reason]`, its `tool_call` span in error,
+  and the parent continues; a spawn naming no live sub-agent changes nothing. On the trace the
+  stop is a `policy` span of the sub-agent's principal under its spawn (`decision: cancelled`,
+  `rule: operator`, `action: cancel_agent`, `spawn_span_id`, `requested_by`, `delivered`), the
+  session tree shows the subtree `cancelled`, and the audit log records `agent_cancelled`
+  (subject the sub-agent's principal; detail the run, the node, the spawn and the reason). The
+  whole run's cancel is unchanged. `docs/CONTRACT.md` §5 and §8; `make proto-runtime`
+  regenerated the runtime's stubs. Tests: the runtime stops one sub-agent on the command and the
+  parent finishes with the tool error, a cancel naming nobody changes nothing
+  (`agent-runtime/tests/test_grpc.py`); over the stream the stop is accepted, delivered, on the
+  trace, in the audit log and on the tree, refused for a span that is no spawn, an outsider, an
+  oversized reason and a finished run, and the chain still verifies (`backend/tests/sessions.rs`).
 - Sessions (`docs/CONTRACT.md` §4, §5): a run seen as a tree. `GET /runs/{id}/sessions` answers
   `Session`: run → nodes → the agent each node ran as → the sub-agents it spawned (one per `spawn`
   span) → their turns and tool calls, with status (`queued`, `running`, `waiting_approval`,

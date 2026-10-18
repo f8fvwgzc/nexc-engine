@@ -120,6 +120,23 @@ pub async fn page(
     .await
 }
 
+/// One span of a run, by id.
+pub async fn find(
+    db: impl PgExecutor<'_>,
+    run_id: Uuid,
+    id: Uuid,
+) -> Result<Option<Span>, sqlx::Error> {
+    sqlx::query_as(concat!(
+        "SELECT ",
+        span_columns!(),
+        " FROM agent_spans WHERE run_id = $1 AND id = $2"
+    ))
+    .bind(run_id)
+    .bind(id)
+    .fetch_optional(db)
+    .await
+}
+
 /// Every span of a run in chain order.
 pub async fn chain(db: impl PgExecutor<'_>, run_id: Uuid) -> Result<Vec<Span>, sqlx::Error> {
     sqlx::query_as(concat!(

@@ -2,7 +2,7 @@
 and `Health`. The stream's first command is the execute request (validated as the NDJSON body
 is); the run then goes through the same runner, `EventStream` and approval registry, its events
 sent up as messages, while a reader takes the backend's commands: `ack`, `cancel`,
-`approval_decision`, `policy_update`, `tool_result`."""
+`approval_decision`, `policy_update`, `tool_result`, `cancel_agent`."""
 
 from __future__ import annotations
 
@@ -150,6 +150,14 @@ class AgentRuntimeService(AgentRuntimeBase):
                     control.tools.ack(command.ack.request_id)
                 elif kind == "policy_update":
                     self._update_policy(request, control, command.policy_update.token)
+                elif kind == "cancel_agent":
+                    stop = command.cancel_agent
+                    if not control.cancel_agent(stop.spawn_span_id, stop.reason or None):
+                        log.info(
+                            "cancel_agent for run %s names no live sub-agent (%s)",
+                            request.run_id,
+                            stop.spawn_span_id,
+                        )
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # a broken stream ends the run, never the server

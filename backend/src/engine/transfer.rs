@@ -181,6 +181,8 @@ const TABLES: &[Table] = &[
         page: Page::ByOrder("t.run_id, t.node_id"),
         overlay: None,
     },
+    // What operators sent into runs (a sub-agent stopped) is part of their record.
+    table("run_commands", OF_ITS_RUNS, true),
     table("artifacts", OF_ITS_RUNS, true),
     // The tasks received over A2A refer to their runs and to the agents.
     table("a2a_tasks", IN_WORKSPACE, true),

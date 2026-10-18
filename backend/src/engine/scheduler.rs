@@ -624,6 +624,8 @@ fn spawn_cancel_watcher(
                     state.engine.quarantine_local(agent);
                 }
             }
+            // An operator's command recorded on another instance (the cancel of a sub-agent).
+            super::commands::deliver(&state, run_id).await;
         }
     });
     done

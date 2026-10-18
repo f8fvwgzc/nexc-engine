@@ -218,6 +218,7 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(runs::create, runs::list))
         .routes(routes!(runs::get))
         .routes(routes!(runs::cancel))
+        .routes(routes!(runs::cancel_agent))
         .routes(routes!(trace::trace))
         .routes(routes!(trace::verify))
         .routes(routes!(sessions::tree))
@@ -306,6 +307,7 @@ mod tests {
             "/api/v1/runs/{rid}/trace",
             "/api/v1/runs/{rid}/trace/verify",
             "/api/v1/runs/{rid}/sessions",
+            "/api/v1/runs/{rid}/agents/{sid}/cancel",
             "/api/v1/workspaces/{wid}/sessions",
             "/api/v1/agents/{id}/activity",
             "/api/v1/agents/{id}/quarantine",

@@ -385,11 +385,29 @@ class Agent:
             token=child_token,
             parent_span_id=spawn_id,
         )
+        # The child runs as a task of its own, so that an operator can stop it (`cancel_agent`
+        # down the stream) without stopping this agent.
+        work = asyncio.create_task(
+            child.run(build_subagent_prompt(parent_role=self.record.role, task=task))
+        )
+        control = scope.control
+        if control is not None:
+            control.watch_child(spawn_id, work)
         try:
-            answer = await child.run(build_subagent_prompt(parent_role=self.record.role, task=task))
+            answer = await work
+        except asyncio.CancelledError:
+            reason = control.cancelled_reason(spawn_id) if control is not None else None
+            current = asyncio.current_task()
+            if reason is None or (current is not None and current.cancelling()):
+                # The run itself is being cancelled: this agent goes down with its child.
+                raise
+            scope.events.log("warning", f"{name} stopped: {reason}")
+            raise ToolError(f"sub-agent {name} was {reason}") from None
         except AgentFailure as exc:
             raise ToolError(f"sub-agent {name} failed: {exc}") from None
         finally:
+            if control is not None:
+                control.forget_child(spawn_id)
             scope.registry.retire(record)
         scope.events.log("info", f"{name} finished (spent {budget.spent} tokens)")
         return answer

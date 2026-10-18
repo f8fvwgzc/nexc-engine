@@ -5,8 +5,11 @@
 //! decision, `DROP` ends the stream without a terminal event, `TOOL <name>`
 //! asks the gateway to perform `<name>` with the request's arguments and
 //! reports what came back, `BURST <n>` sends `n` deltas as fast as it can
-//! (for `make prove-gateway`), and anything else is a well-behaved run of
-//! one turn, one tool call, one artifact and a result.
+//! (for `make prove-gateway`), `TREE` spawns a researcher who spawns a qa
+//! (a family of three with turns, tool calls and a denial), `STOPPABLE`
+//! spawns a researcher who works until a `cancel_agent` arrives, and
+//! anything else is a well-behaved run of one turn, one tool call, one
+//! artifact and a result.
 #![allow(dead_code)]
 
 use std::pin::Pin;
@@ -37,6 +40,8 @@ pub struct Seen {
     pub tool_results: Mutex<Vec<(String, String, bool)>>,
     /// When each delta of a `BURST` was sent, in order.
     pub burst_sent: Mutex<Vec<Instant>>,
+    /// The spawn span ids of the `cancel_agent` commands a `STOPPABLE` run received.
+    pub cancelled_agents: Mutex<Vec<String>>,
 }
 
 #[derive(Clone)]
@@ -187,6 +192,9 @@ impl AgentRuntime for Stub {
                                         "policy_update"
                                     }
                                     Some(backend_command::Command::ToolResult(_)) => "tool_result",
+                                    Some(backend_command::Command::CancelAgent(_)) => {
+                                        "cancel_agent"
+                                    }
                                     Some(backend_command::Command::Execute(_)) => "execute",
                                     None => "empty",
                                 };
@@ -296,6 +304,77 @@ impl AgentRuntime for Stub {
                     tokens_in: 100,
                     tokens_out: 10,
                     tokens_cached: 10,
+                }))
+                .await;
+                return;
+            }
+            if title.contains("STOPPABLE") {
+                // The root spawns a researcher who works until an operator stops it (or 20 s
+                // pass); the root then sees the tool error and finishes the node.
+                let child = format!("{agent}/researcher-1");
+                let spawn_a = span(
+                    "spawn",
+                    &child,
+                    &agent,
+                    &turn_id,
+                    json!({"child": child, "role": "researcher", "depth": 1, "budget_tokens": 50_000}),
+                );
+                let spawn_a_id = spawn_a.id.clone();
+                send(runtime_event::Event::Span(spawn_a)).await;
+                let a_turn = span(
+                    "llm_call",
+                    "claude-sonnet-5",
+                    &child,
+                    &spawn_a_id,
+                    json!({"provider": "anthropic", "model": "claude-sonnet-5", "turn": 1,
+                        "tokens_in": 50, "tokens_out": 5, "tokens_cached": 0}),
+                );
+                send(runtime_event::Event::Span(a_turn)).await;
+                let stopped =
+                    tokio::time::timeout(Duration::from_secs(20), next_command(&["cancel_agent"]))
+                        .await;
+                let (is_error, output) = match stopped {
+                    Ok(Some(BackendCommand {
+                        command: Some(backend_command::Command::CancelAgent(cancel)),
+                    })) => {
+                        seen.cancelled_agents
+                            .lock()
+                            .unwrap()
+                            .push(cancel.spawn_span_id.clone());
+                        send(runtime_event::Event::Log(pb::Log {
+                            level: "warning".into(),
+                            message: format!(
+                                "{child} stopped: cancelled by an operator{}",
+                                if cancel.reason.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!(": {}", cancel.reason)
+                                }
+                            ),
+                        }))
+                        .await;
+                        (true, format!("[runtime] went on without {child}"))
+                    }
+                    _ => (false, format!("[runtime] {child} finished on its own")),
+                };
+                send(runtime_event::Event::Span(span(
+                    "tool_call",
+                    "spawn_subagent",
+                    &agent,
+                    &turn_id,
+                    json!({"tool": "spawn_subagent", "args_sha256": "ef".repeat(32), "args_bytes": 40,
+                        "result_bytes": 30, "is_error": is_error, "duration_ns": 9000}),
+                )))
+                .await;
+                let mut second = span("llm_call", "claude-sonnet-5", &agent, "", json!({}));
+                second.attributes = Some(json::to_struct(&json!({"provider": "anthropic",
+                    "model": "claude-sonnet-5", "turn": 2, "tokens_in": 30, "tokens_out": 3, "tokens_cached": 0})));
+                send(runtime_event::Event::Span(second)).await;
+                send(runtime_event::Event::Result(pb::Result {
+                    output,
+                    tokens_in: 80,
+                    tokens_out: 8,
+                    tokens_cached: 0,
                 }))
                 .await;
                 return;
