@@ -315,9 +315,12 @@ async fn the_runtime_receives_a_token_that_carries_the_agents_capabilities(pool:
         spans.iter().all(|s| s["principal"] == principal),
         "{spans:?}"
     );
+    // The verdict on the output is the node's one policy span; nothing was refused.
     assert!(
-        !spans.iter().any(|s| s["kind"] == "policy"),
-        "nothing was refused"
+        !spans
+            .iter()
+            .any(|s| s["kind"] == "policy" && s["name"] != "evidence"),
+        "nothing was refused: {spans:?}"
     );
 
     // The card: who it is, who answers for it, what it has left, what it did last.
@@ -605,7 +608,13 @@ async fn a_restricted_document_never_reaches_an_internal_agent(pool: PgPool) {
     assert!(head.starts_with("[doc:"), "{head}");
     assert!(head.contains("] handbook.md"), "{head}");
     let spans = spans_of(&app, &owner, &rid).await;
-    assert!(!spans.iter().any(|s| s["kind"] == "policy"), "{spans:?}");
+    // Nothing withheld: the verdict on the output is the only policy span.
+    assert!(
+        !spans
+            .iter()
+            .any(|s| s["kind"] == "policy" && s["name"] != "evidence"),
+        "{spans:?}"
+    );
     let read = spans.iter().find(|s| s["kind"] == "data_read").unwrap();
     let chunk_ids = read["attributes"]["document_chunk_ids"].as_array().unwrap();
     assert_eq!(chunk_ids.len(), documents.len());

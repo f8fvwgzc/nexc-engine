@@ -556,12 +556,21 @@ async fn hostile_span_lines_are_contained(pool: PgPool) {
     let t = traced_run(pool, "HOSTILE research").await;
     let (app, token, rid) = (&t.app, t.token.as_str(), t.rid.as_str());
     let stored = all_spans(app, token, rid, 1000).await;
-    let mut runtime: Vec<&Value> = stored
+    let mut of_node: Vec<&Value> = stored
         .iter()
-        .filter(|s| s["node_id"] == t.agent_node && s["kind"] != "data_read")
+        .filter(|s| s["node_id"] == t.agent_node)
         .collect();
     // In chain order: the order the backend received them.
-    runtime.sort_by_key(|s| s["seq"].as_i64());
+    of_node.sort_by_key(|s| s["seq"].as_i64());
+    // The backend's own spans frame what the runtime reported: what the node was
+    // given first, the verdict on its output last, once the result arrived.
+    let is_verdict = |s: &&Value| s["kind"] == "policy" && s["name"] == "evidence";
+    assert!(is_verdict(of_node.last().unwrap()), "{of_node:?}");
+    let runtime: Vec<&Value> = of_node
+        .iter()
+        .copied()
+        .filter(|s| s["kind"] != "data_read" && !is_verdict(s))
+        .collect();
     let names: Vec<&str> = runtime
         .iter()
         .map(|s| s["name"].as_str().unwrap())
