@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { AlertTriangleIcon } from 'lucide-react';
 import {
   isRouteErrorResponse,
@@ -19,6 +20,17 @@ export function RouteError() {
   const error = useRouteError();
   const navigate = useNavigate();
   const location = useLocation();
+  const queryClient = useQueryClient();
+
+  // A page reads its data with suspense: remounted as it is, it would rethrow the cached error
+  // without asking again. The failed reads that never had data are cleared first, so the page
+  // fetches them anew (those that have data never threw to here).
+  const retry = () => {
+    void queryClient.resetQueries({
+      predicate: (query) => query.state.status === 'error' && query.state.data === undefined,
+    });
+    void navigate(location, { replace: true });
+  };
 
   const notFound =
     (isRouteErrorResponse(error) && error.status === 404) ||
@@ -54,7 +66,7 @@ export function RouteError() {
           headingLevel={1}
           error={error}
           description={description}
-          onRetry={() => void navigate(location, { replace: true })}
+          onRetry={retry}
           action={home}
           className="w-full max-w-lg"
         />
