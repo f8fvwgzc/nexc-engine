@@ -215,7 +215,10 @@ export async function runAxe(page: Page): Promise<AxeFinding[]> {
     id: v.id,
     impact: v.impact ?? 'unknown',
     help: v.help,
-    nodes: v.nodes.slice(0, 6).map((n) => n.target.join(' ')),
+    nodes: v.nodes.slice(0, 6).map((n) => {
+      const why = n.any[0]?.message ?? n.all[0]?.message ?? '';
+      return `${n.target.join(' ')}${why ? ` (${why.slice(0, 160)})` : ''}`;
+    }),
   }));
 }
 

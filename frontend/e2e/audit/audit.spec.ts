@@ -31,7 +31,10 @@ const MODES: DataMode[] = ['full', 'empty'];
 /** Visible controls without visible text, and whether anything names them on hover. */
 async function iconOnlyControls(page: Page) {
   return page.evaluate(() =>
+    // Switches and checkboxes are labelled by the text beside them; canvas nodes draw theirs.
     [...document.querySelectorAll('button, a[href], [role="button"]')]
+      .filter((el) => !['switch', 'checkbox'].includes(el.getAttribute('role') ?? ''))
+      .filter((el) => !el.closest('svg, .graph-canvas'))
       .filter((el) => {
         const r = el.getBoundingClientRect();
         if (r.width < 2 || r.height < 2 || el.closest('[aria-hidden="true"]')) return false;
@@ -45,12 +48,13 @@ async function iconOnlyControls(page: Page) {
           el.getAttribute('title') ??
           '',
         title: el.hasAttribute('title'),
-        // A Radix tooltip trigger carries data-state but no popup semantics of its own.
+        // A Radix tooltip trigger is marked as one, or carries data-state but no popup of its own.
         tooltip:
-          el.hasAttribute('data-state') &&
-          !el.hasAttribute('aria-haspopup') &&
-          !el.hasAttribute('aria-expanded') &&
-          !el.hasAttribute('role'),
+          el.getAttribute('data-slot') === 'tooltip-trigger' ||
+          (el.hasAttribute('data-state') &&
+            !el.hasAttribute('aria-haspopup') &&
+            !el.hasAttribute('aria-expanded') &&
+            !el.hasAttribute('role')),
         menu: el.hasAttribute('aria-haspopup'),
         html: el.outerHTML.slice(0, 160),
       })),
@@ -62,7 +66,8 @@ async function silentTruncation(page: Page) {
   return page.evaluate(() => {
     const found: string[] = [];
     for (const el of document.querySelectorAll<HTMLElement>('body *')) {
-      if (el.children.length > 3) continue;
+      // A field shows its whole value while it is edited.
+      if (el.children.length > 3 || el instanceof HTMLInputElement) continue;
       const style = getComputedStyle(el);
       const clamped = style.webkitLineClamp !== 'none' && style.webkitLineClamp !== '';
       const ellipsis = style.textOverflow === 'ellipsis';
@@ -115,13 +120,15 @@ async function invisibleFocus(page: Page) {
     .locator('body')
     .click({ position: { x: 1, y: 1 } })
     .catch(() => undefined);
-  for (let i = 0; i < 30; i++) {
-    await page.keyboard.press('Tab');
-    const result = await page.evaluate(() => {
-      const el = document.activeElement as HTMLElement | null;
-      if (!el || el === document.body) return null;
-      const look = () => {
-        const s = getComputedStyle(el);
+  // The look of the focused control and of its parent (a card that rings when its link has
+  // focus counts), measured a frame after each change so transitions have ended.
+  const look = () =>
+    page.evaluate(() => {
+      const el = document.querySelector('[data-audit-focus]');
+      if (!el) return '';
+      const styles = (node: Element | null) => {
+        if (!node) return '';
+        const s = getComputedStyle(node);
         return [
           s.outlineStyle,
           s.outlineWidth,
@@ -129,18 +136,30 @@ async function invisibleFocus(page: Page) {
           s.boxShadow,
           s.borderColor,
           s.backgroundColor,
+          s.textDecorationLine,
         ].join('|');
       };
-      const focused = look();
-      el.blur();
-      const rest = look();
-      el.focus();
-      return {
-        name: `${el.tagName.toLowerCase()}[${el.getAttribute('aria-label') ?? el.innerText?.trim().slice(0, 30) ?? ''}]`,
-        visible: focused !== rest,
-      };
+      return `${styles(el)}#${styles(el.parentElement)}`;
     });
-    if (result && !result.visible) missing.push(result.name);
+  const settle = () => page.waitForTimeout(40);
+  for (let i = 0; i < 30; i++) {
+    await page.keyboard.press('Tab');
+    const name = await page.evaluate(() => {
+      document.querySelector('[data-audit-focus]')?.removeAttribute('data-audit-focus');
+      const el = document.activeElement as HTMLElement | null;
+      if (!el || el === document.body) return null;
+      el.setAttribute('data-audit-focus', '');
+      return `${el.tagName.toLowerCase()}[${el.getAttribute('aria-label') ?? el.innerText?.trim().slice(0, 30) ?? ''}]`;
+    });
+    if (!name) continue;
+    await settle();
+    const focused = await look();
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await settle();
+    const rest = await look();
+    // Back where the keyboard was, so the next Tab moves on from it.
+    await page.evaluate(() => document.querySelector<HTMLElement>('[data-audit-focus]')?.focus());
+    if (focused === rest) missing.push(name);
   }
   return [...new Set(missing)];
 }

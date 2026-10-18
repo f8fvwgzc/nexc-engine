@@ -115,7 +115,11 @@ const handlers: [string, Handler][] = [
   /* agents and AgentSecOps */
   ['GET /agents', ({ mode }) => list(mode, fixtures.agents)],
   ['GET /agents/:aid', () => fixtures.agentCard],
-  ['GET /agents/:aid/activity', ({ mode }) => list(mode, fixtures.agentActivity)],
+  [
+    'GET /agents/:aid/activity',
+    ({ mode, url }) =>
+      list(mode, fixtures.agentActivity).slice(0, Number(url.searchParams.get('limit') ?? 50)),
+  ],
   ['GET /agents/:aid/tokens', ({ mode }) => list(mode, fixtures.agentTokens)],
   ['GET /agents/:aid/a2a/tasks', ({ mode }) => list(mode, fixtures.a2aTasks)],
   ['GET /agent-templates', () => fixtures.agentTemplates],
