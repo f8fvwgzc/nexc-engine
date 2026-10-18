@@ -12,7 +12,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 [ -f .env ] && { set -a; . ./.env; set +a; }
 SOURCE="${1:?usage: scripts/restore.sh <backup-dir>}"
-[ -f "$SOURCE/database.dump" ] && [ -f "$SOURCE/files.tar.gz" ] || { echo "not a backup: $SOURCE" >&2; exit 1; }
+if [ ! -f "$SOURCE/database.dump" ] || [ ! -f "$SOURCE/files.tar.gz" ]; then echo "not a backup: $SOURCE" >&2; exit 1; fi
 ( cd "$SOURCE" && shasum -a 256 -c SHA256SUMS >/dev/null ) || { echo "the backup's files do not match their checksums" >&2; exit 1; }
 USER_="${POSTGRES_USER:-nexc}"; DB="${POSTGRES_DB:-nexc}"
 if [ "${NEXC_BACKUP_COMPOSE:-}" = "1" ]; then

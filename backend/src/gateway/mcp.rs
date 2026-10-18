@@ -65,13 +65,17 @@ pub enum Target<'a> {
     },
 }
 
+/// A child speaking JSON-RPC over its pipes; boxed so that `Transport`'s
+/// variants stay close in size (a `Child` is large on Linux).
+struct StdioTransport {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+    scratch: PathBuf,
+}
+
 enum Transport {
-    Stdio {
-        child: Child,
-        stdin: ChildStdin,
-        stdout: BufReader<ChildStdout>,
-        scratch: PathBuf,
-    },
+    Stdio(Box<StdioTransport>),
     Http {
         client: reqwest::Client,
         url: String,
@@ -125,12 +129,12 @@ impl Session {
                     .stdout
                     .take()
                     .ok_or_else(|| McpError::Spawn("no stdout".into()))?;
-                Transport::Stdio {
+                Transport::Stdio(Box::new(StdioTransport {
                     child,
                     stdin,
                     stdout: BufReader::new(stdout),
                     scratch: scratch.to_path_buf(),
-                }
+                }))
             }
             Target::Http {
                 client,
@@ -248,10 +252,10 @@ impl Session {
 
     /// Ends the session; a child is killed.
     pub async fn close(self) {
-        if let Transport::Stdio {
-            mut child, scratch, ..
-        } = self.transport
-        {
+        if let Transport::Stdio(stdio) = self.transport {
+            let StdioTransport {
+                mut child, scratch, ..
+            } = *stdio;
             let _ = child.start_kill();
             let _ = child.wait().await;
             let _ = tokio::fs::remove_dir_all(scratch).await;
@@ -272,7 +276,8 @@ impl Session {
         let id = self.next_id;
         let message = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
         let (reply, bytes) = match &mut self.transport {
-            Transport::Stdio { stdin, stdout, .. } => {
+            Transport::Stdio(stdio) => {
+                let StdioTransport { stdin, stdout, .. } = &mut **stdio;
                 write_line(stdin, &message).await?;
                 read_reply(stdin, stdout, id, self.max_bytes).await?
             }
@@ -338,7 +343,7 @@ impl Session {
     async fn notify(&mut self, method: &str, params: Value) -> Result<(), McpError> {
         let message = json!({"jsonrpc": "2.0", "method": method, "params": params});
         match &mut self.transport {
-            Transport::Stdio { stdin, .. } => write_line(stdin, &message).await,
+            Transport::Stdio(stdio) => write_line(&mut stdio.stdin, &message).await,
             Transport::Http {
                 client,
                 url,

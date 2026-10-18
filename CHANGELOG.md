@@ -610,6 +610,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- CI on `main` is green again: the MCP gateway's stdio transport is boxed so that `Transport`'s
+  variants are close in size (clippy's `large_enum_variant` fires on Linux, where a `Child` is
+  large, and not on macOS), and `scripts/restore.sh` checks for a backup with an `if` rather
+  than `A && B || C` (shellcheck SC2015).
 - Costs were overstated for long agent sessions: tokens the provider read from its prompt cache
   were priced as fresh input. They are now reported separately end to end and priced at a tenth,
   which is what they cost. A three-node coding issue that showed $3.99 is nearer $1.
