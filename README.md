@@ -103,6 +103,22 @@ latency table (`make prove-agentsecops`) and the chain verified, printing the UR
 | **Trace explorer**                                                                                                                                       |                                                                                                                                   |
 | <img src="docs/media/secops-explorer.png" alt="Trace explorer: spans across every run, narrowed by agent, kind, decision, tool, host, run and time">      |                                                                                                                                   |
 
+## Sessions
+
+Every run is also a **session**: the run, its nodes, the agent each node ran as, the sub-agents
+it spawned and their turns and tool calls, with status, duration, tokens, cost and denials rolled
+up at every level and a breakdown by model (`GET /runs/{id}/sessions`,
+`GET /workspaces/{wid}/sessions`). The **Sessions** page (`/app/sessions`) lists the workspace's
+runs and opens one as an outline that updates live; a row shows its spans as a timeline, and one
+sub-agent can be stopped while the run goes on (`POST /runs/{id}/agents/{span_id}/cancel`, on
+the trace and in the audit log).
+
+Spans carry digests only unless the workspace opts in: Settings → Guardrails → Recording keeps
+prompts, completions and tool input and output, after the secret scrubber and the redaction of
+the labels you name, encrypted under the master key, for the retention you set (30 days by
+default), readable by the run's owner and the workspace's admins and audited when read
+(`GET /spans/{id}/payload`). Off by default; a transfer leaves recordings behind.
+
 ## Features
 
 |                                 |                                                                                                                                                                                                                                                      |
@@ -113,6 +129,7 @@ latency table (`make prove-agentsecops`) and the chain verified, printing the UR
 | **DAG execution engine**        | Topological scheduling with concurrency limits, retries, timeouts, cancellation, critical-path analysis and a content-hash result cache that skips unchanged nodes.                                                                                  |
 | **Agents from birth**           | Each agent node spawns a role-specific agent in the Python runtime with its own token budget; agents may delegate to sub-agents (bounded depth and fan-out).                                                                                         |
 | **A2A on the firewall**         | Exposed agents publish an agent card and take tasks over the Agent-to-Agent protocol; counterparts are principals with tokens; outbound tasks go through the gateway under the policy; hops and loops are bounded across platforms.                 |
+| **Sessions and recording**      | Every run as a tree of nodes, agents and sub-agents with tokens, cost and duration rolled up at every level, updated live; one sub-agent stopped while the run goes on; prompts, completions and tool calls recorded only when a workspace opts in, scrubbed, redacted, encrypted and expiring. |
 | **Real deliverables**           | Agents write files into a sandboxed workspace: `.docx` reports via python-docx, source code, Markdown research. Download per artifact or as a zip.                                                                                                   |
 | **Memory**                      | Mem0/Hindsight-style: facts are extracted from node outputs, consolidated (add / update / skip near-duplicates) and retrieved by a hybrid score (embedding cosine + BM25 + recency × importance) as context for future nodes and plans.              |
 | **Data structures that matter** | Graph algorithms (Kahn topological order, levels, cycles, components via union-find), priority scheduling, token-bucket rate limiting, LRU caches.                                                                                                   |
