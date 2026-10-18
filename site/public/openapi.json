@@ -5380,6 +5380,92 @@
         ]
       }
     },
+    "/api/v1/runs/{rid}/agents/{sid}/cancel": {
+      "post": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Stops one sub-agent of a running run, named by the `spawn` span it was\nborn in; the run goes on. The runtime cancels the sub-agent's task and its\nparent sees the tool error \"cancelled by an operator\"; the stop is a\n`policy` span of decision `cancelled` on the trace and an\n`agent_cancelled` entry in the audit log (whoever may cancel the run).",
+        "operationId": "cancel_agent",
+        "parameters": [
+          {
+            "name": "rid",
+            "in": "path",
+            "description": "Run id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "sid",
+            "in": "path",
+            "description": "The sub-agent's spawn span id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelAgentBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "The stop is recorded and on its way",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentCancel"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The run is not running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/runs/{rid}/artifacts": {
       "get": {
         "tags": [
@@ -5516,6 +5602,52 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Run"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/runs/{rid}/sessions": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "The run as a tree: its nodes, the agent each ran as, the sub-agents it\nspawned, with status, times, tokens, cost, calls and denials per subtree\nand the ids to open its spans (whoever may open the run).",
+        "operationId": "tree",
+        "parameters": [
+          {
+            "name": "rid",
+            "in": "path",
+            "description": "Run id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
                 }
               }
             }
@@ -5815,6 +5947,61 @@
           },
           "422": {
             "description": "The provider could not be asked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/spans/{sid}/payload": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "The recorded payloads of a span (the run's owner and the workspace's\nadmins; other members 403; outsiders 404). Reading is audited as\n`payload_viewed` when there was something to read; a span recorded\nnothing answers with no payloads.",
+        "operationId": "payload",
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "description": "Span id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpanPayloads"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
             "content": {
               "application/json": {
                 "schema": {
@@ -8308,7 +8495,7 @@
         "tags": [
           "workspaces"
         ],
-        "summary": "Sets the guardrails of a workspace (admins and owners): monthly token\nbudgets, allowed providers, code execution and secret redaction.",
+        "summary": "Sets the guardrails of a workspace (admins and owners): monthly token\nbudgets, allowed providers, code execution, secret redaction and what is\nrecorded of what agents say and hear (a change of the recording is audited\nas `recording_changed` on top of `guardrails_changed`).",
         "operationId": "put_guardrails",
         "parameters": [
           {
@@ -11404,6 +11591,151 @@
         ]
       }
     },
+    "/api/v1/workspaces/{wid}/sessions": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "The workspace's recent runs with their rollups, newest first, narrowed\nby agent, status and time; paged with `before` (members and above).",
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "wid",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "agent",
+            "in": "query",
+            "description": "Only runs this agent worked in.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Only runs in this state.",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/RunStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Only runs created at or after this time.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Only runs created before this time.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Sessions per page, 1–200 (default 50).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "description": "Only runs older than this one (the `next` of the previous page).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionPage"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/workspaces/{wid}/teams": {
       "get": {
         "tags": [
@@ -13858,6 +14190,45 @@
           }
         }
       },
+      "AgentCancel": {
+        "type": "object",
+        "description": "What stopping a sub-agent recorded.",
+        "required": [
+          "run_id",
+          "node_id",
+          "spawn_span_id",
+          "principal",
+          "requested_at",
+          "delivered"
+        ],
+        "properties": {
+          "delivered": {
+            "type": "boolean",
+            "description": "Whether the runtime was told at once (the run executes on this instance); otherwise\nthe instance executing it tells the runtime within a second."
+          },
+          "node_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "principal": {
+            "type": "string",
+            "description": "The sub-agent's principal."
+          },
+          "requested_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "spawn_span_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The `spawn` span the sub-agent was born in."
+          }
+        }
+      },
       "AgentCard": {
         "type": "object",
         "description": "The agent's ID card: the agent, who answers for it, its team, what it\nhas left to spend and what it did last.",
@@ -15171,6 +15542,9 @@
           "policy_mismatch",
           "agent_quarantined",
           "agent_released",
+          "recording_changed",
+          "payload_viewed",
+          "agent_cancelled",
           "approval_granted",
           "approval_denied",
           "artifact_quarantined",
@@ -15405,6 +15779,17 @@
             "description": "The first span that does not fit the chain."
           }
         }
+      },
+      "CancelAgentBody": {
+        "type": "object",
+        "description": "`POST /runs/{rid}/agents/{sid}/cancel` body.",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "Why, for the trace and the audit log."
+          }
+        },
+        "additionalProperties": false
       },
       "CannedQuestion": {
         "type": "object",
@@ -17618,7 +18003,8 @@
           "allow_code_exec",
           "redact_secrets",
           "memory_limit",
-          "memory_forget_after_days"
+          "memory_forget_after_days",
+          "recording"
         ],
         "properties": {
           "allow_code_exec": {
@@ -17663,6 +18049,10 @@
             ],
             "format": "int64",
             "description": "Tokens (in + out) the workspace may spend per calendar month (UTC);\n`null` for no limit. New plans, runs and assistant calls are refused\nonce it is reached; work already running finishes."
+          },
+          "recording": {
+            "$ref": "#/components/schemas/Recording",
+            "description": "What is kept of what agents say and hear; off by default."
           },
           "redact_secrets": {
             "type": "boolean",
@@ -19166,6 +19556,47 @@
           }
         }
       },
+      "ModelRollup": {
+        "type": "object",
+        "description": "Usage of one model across a run.",
+        "required": [
+          "provider",
+          "model",
+          "llm_calls",
+          "tokens_in",
+          "tokens_out",
+          "tokens_cached",
+          "cost_usd"
+        ],
+        "properties": {
+          "cost_usd": {
+            "type": "number",
+            "format": "double"
+          },
+          "llm_calls": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "model": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "tokens_cached": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "tokens_in": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "tokens_out": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "NodeOrigin": {
         "type": "string",
         "description": "Who created a node.",
@@ -19833,6 +20264,16 @@
             ]
           }
         }
+      },
+      "PayloadKind": {
+        "type": "string",
+        "description": "What a payload holds.",
+        "enum": [
+          "prompt",
+          "completion",
+          "tool_input",
+          "tool_output"
+        ]
       },
       "PiiKind": {
         "type": "string",
@@ -20625,6 +21066,41 @@
           }
         }
       },
+      "Recording": {
+        "type": "object",
+        "description": "What is kept of what agents say and hear, off by default: the prompt and\nthe completion of every model turn, the input and output of every tool\ncall, each for `retention_days`, with the passages and memories of the\nlabels in `redact_labels` replaced by their citation before anything is\nwritten (`domain::recording`).",
+        "required": [
+          "prompts",
+          "completions",
+          "tool_io",
+          "retention_days",
+          "redact_labels"
+        ],
+        "properties": {
+          "completions": {
+            "type": "boolean"
+          },
+          "prompts": {
+            "type": "boolean"
+          },
+          "redact_labels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DataLabel"
+            },
+            "description": "Labels whose passages and memories are replaced by their citation id in every payload."
+          },
+          "retention_days": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Days a payload is kept (1–3650; default 30); a worker deletes older ones."
+          },
+          "tool_io": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
       "RecoveryCodes": {
         "type": "object",
         "description": "Recovery codes, shown once.",
@@ -20837,6 +21313,57 @@
           "admin",
           "user"
         ]
+      },
+      "Rollup": {
+        "type": "object",
+        "description": "What a subtree spent and did.",
+        "required": [
+          "spans",
+          "llm_calls",
+          "tool_calls",
+          "denials",
+          "tokens_in",
+          "tokens_out",
+          "tokens_cached",
+          "cost_usd"
+        ],
+        "properties": {
+          "cost_usd": {
+            "type": "number",
+            "format": "double"
+          },
+          "denials": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Policy spans whose decision was `deny`."
+          },
+          "llm_calls": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Model turns."
+          },
+          "spans": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "tokens_cached": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Of `tokens_in`, the ones read from the provider's prompt cache."
+          },
+          "tokens_in": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "tokens_out": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "tool_calls": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
       },
       "RpcRequest": {
         "type": "object",
@@ -21472,6 +21999,417 @@
           }
         }
       },
+      "Session": {
+        "type": "object",
+        "description": "A run as a tree.",
+        "required": [
+          "run_id",
+          "graph_id",
+          "graph_name",
+          "workspace_id",
+          "status",
+          "created_at",
+          "started_at",
+          "finished_at",
+          "duration_ms",
+          "rollup",
+          "by_model",
+          "recording",
+          "nodes"
+        ],
+        "properties": {
+          "by_model": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelRollup"
+            },
+            "description": "Usage by model, most costly first."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "graph_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "graph_name": {
+            "type": "string"
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SessionNode"
+            }
+          },
+          "recording": {
+            "type": "boolean",
+            "description": "Whether prompts and completions were being recorded when the run's nodes started."
+          },
+          "rollup": {
+            "$ref": "#/components/schemas/Rollup"
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunStatus"
+          },
+          "workspace_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "SessionAgent": {
+        "type": "object",
+        "description": "One agent of a node: the agent the node ran as (depth 0) or a sub-agent\nit spawned, with its own turns and tool calls and what hangs under it.",
+        "required": [
+          "principal",
+          "agent_id",
+          "role",
+          "depth",
+          "spawn_span_id",
+          "parent_principal",
+          "status",
+          "started_at",
+          "ended_at",
+          "duration_ms",
+          "own",
+          "total",
+          "span_ids",
+          "cancellable",
+          "children"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "cancellable": {
+            "type": "boolean",
+            "description": "Whether an operator may stop it now: a sub-agent still working in a node still running."
+          },
+          "children": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SessionAgent"
+            },
+            "description": "The sub-agents it spawned, in birth order."
+          },
+          "depth": {
+            "type": "integer",
+            "format": "int32",
+            "description": "0 for the agent the node ran as."
+          },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "ended_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "own": {
+            "$ref": "#/components/schemas/Rollup",
+            "description": "The agent's own turns and tool calls."
+          },
+          "parent_principal": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "principal": {
+            "type": "string",
+            "description": "`agent://{workspace}/{name}`, sub-agents `…/{role}-{n}`; `system` for a node without an agent."
+          },
+          "role": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The role a sub-agent was spawned as."
+          },
+          "span_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Its own spans in chain order: turns, tool calls, policy decisions, approvals."
+          },
+          "spawn_span_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The `spawn` span a sub-agent was born in (what `POST /runs/{id}/agents/{span_id}/cancel` names); `null` at depth 0."
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SessionStatus"
+          },
+          "total": {
+            "$ref": "#/components/schemas/Rollup",
+            "description": "Its own plus every sub-agent under it."
+          }
+        }
+      },
+      "SessionAgentRef": {
+        "type": "object",
+        "description": "An agent that worked in a run, as the list names it.",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "SessionNode": {
+        "type": "object",
+        "description": "One node of the run.",
+        "required": [
+          "node_id",
+          "title",
+          "executor",
+          "status",
+          "attempt",
+          "cached",
+          "error",
+          "started_at",
+          "ended_at",
+          "duration_ms",
+          "rollup",
+          "context_span_ids",
+          "agents"
+        ],
+        "properties": {
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SessionAgent"
+            },
+            "description": "The agent the node ran as, with its sub-agents under it."
+          },
+          "attempt": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "cached": {
+            "type": "boolean",
+            "description": "Served from the result cache: no agent worked."
+          },
+          "context_span_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "What the node was given before it ran (`data_read`) and what was withheld (`policy` named `context`)."
+          },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "ended_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "executor": {
+            "$ref": "#/components/schemas/Executor"
+          },
+          "node_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "rollup": {
+            "$ref": "#/components/schemas/Rollup"
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SessionStatus"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "SessionPage": {
+        "type": "object",
+        "description": "A page of a workspace's sessions, newest first.",
+        "required": [
+          "sessions",
+          "next"
+        ],
+        "properties": {
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Pass as `before` for the next page; `null` on the last."
+          },
+          "sessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SessionSummary"
+            }
+          }
+        }
+      },
+      "SessionStatus": {
+        "type": "string",
+        "description": "Where a node or an agent subtree stands.",
+        "enum": [
+          "queued",
+          "running",
+          "waiting_approval",
+          "succeeded",
+          "failed",
+          "cancelled",
+          "skipped"
+        ]
+      },
+      "SessionSummary": {
+        "type": "object",
+        "description": "One row of a workspace's session list: a run with its rollups.",
+        "required": [
+          "run_id",
+          "graph_id",
+          "graph_name",
+          "status",
+          "created_at",
+          "started_at",
+          "finished_at",
+          "duration_ms",
+          "nodes",
+          "agents",
+          "rollup"
+        ],
+        "properties": {
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SessionAgentRef"
+            },
+            "description": "The workspace agents that ran its nodes."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "graph_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "graph_name": {
+            "type": "string"
+          },
+          "nodes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "rollup": {
+            "$ref": "#/components/schemas/Rollup"
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunStatus"
+          }
+        }
+      },
       "Sessions": {
         "type": "object",
         "description": "The caller's sessions.",
@@ -21681,6 +22619,82 @@
           "policy",
           "approval"
         ]
+      },
+      "SpanPayload": {
+        "type": "object",
+        "description": "One recorded payload of a span, decrypted.",
+        "required": [
+          "kind",
+          "content",
+          "size",
+          "redactions",
+          "created_at"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PayloadKind"
+          },
+          "redactions": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Passages and memories replaced by their citation, plus credentials scrubbed."
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes of the content as kept."
+          }
+        }
+      },
+      "SpanPayloads": {
+        "type": "object",
+        "description": "What `GET /spans/{id}/payload` answers: the span's payloads with the\nclassifications of the data its node was given, for the banner.",
+        "required": [
+          "span_id",
+          "run_id",
+          "node_id",
+          "kind",
+          "labels",
+          "payloads"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/SpanKind"
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DataLabel"
+            },
+            "description": "The classifications of the data the node was given: what the content may be derived from."
+          },
+          "node_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "payloads": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SpanPayload"
+            },
+            "description": "Whether anything was recorded for the span; empty when recording was off."
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "span_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
       },
       "SpanStatus": {
         "type": "string",
