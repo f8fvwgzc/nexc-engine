@@ -49,9 +49,9 @@ class DemoBrief:
     memories: tuple[tuple[str, str], ...] = field(default_factory=tuple)
 
     def evidence_lines(self) -> list[str]:
-        """What the answer cites, one claim per thing given, each ending with its id."""
+        """What the answer rests on: one claim per passage and upstream result given, each
+        ending with its id. Memories are recalled context, quoted rather than claimed."""
         lines = [f"{sentence} [{cid}] ({source})" for cid, source, sentence in self.documents]
-        lines += [f"Recalled: {text} [{cid}]" for cid, text in self.memories]
         for title, node_id in zip(self.upstream_titles, self.upstream_ids, strict=False):
             if node_id:
                 lines.append(
@@ -300,7 +300,7 @@ class DemoProvider:
             DEMO_BANNER,
             "",
             "## Question",
-            _first_sentence(b.content) or b.title,
+            f"> {_first_sentence(b.content) or b.title}",
             "",
             "## Sources to consult",
             *[f"- {url} (read through the platform's gateway)" for url in self.urls()],
@@ -326,6 +326,7 @@ class DemoProvider:
         if b.upstream_titles:
             about += " · built on: " + ", ".join(b.upstream_titles)
         parts = [DEMO_BANNER, "", f"## {b.title}", "", about]
+        parts += [f"> Recalled: {text} [{cid}]" for cid, text in b.memories]
         if b.evidence_lines():
             parts += ["", "### Evidence", *[f"- {line}" for line in b.evidence_lines()]]
         parts += [

@@ -202,8 +202,9 @@ fn text_output(prompt: &str) -> String {
         for (key, source, sentence) in &context.documents {
             out.push_str(&format!("- {sentence} [{key}] ({source})\n"));
         }
+        // Memories are recalled context, quoted rather than claimed.
         for (key, text) in &context.memories {
-            out.push_str(&format!("- Recalled: {text} [{key}]\n"));
+            out.push_str(&format!("> Recalled: {text} [{key}]\n"));
         }
     }
     if context == Context::default() {
@@ -807,6 +808,7 @@ mod tests {
             memories: vec![memory],
             nodes: vec![node],
             facts: Vec::new(),
+            seen: Vec::new(),
         };
         let evidence = assess(&[&out], &given, 0.8);
         assert_eq!(

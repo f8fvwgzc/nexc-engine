@@ -434,9 +434,11 @@ interface NodeRun {
 }
 // Evidence-bound outputs (AGENTSECOPS §2): once a node answered, the backend finds the citations in
 // its output and its Markdown artifacts (ids inside code are not citations), checks each against what
-// the `data_read` span lists (an id the node was never given is forged), approximates the claims as
-// the sentences, bullets and table rows of the prose (headings, block quotes, code and a `Sources`-like
-// section aside), and reads a coverage figure and a verdict off them. A claim ending with
+// the `data_read` span lists (an id the node was neither given nor saw inside the text it was given,
+// such as an upstream output citing its own sources, is forged), approximates the claims as
+// the sentences, bullets and table rows of the prose (headings, block quotes, code and any section whose
+// heading starts with Sources, References, Citations or Bibliography aside), and reads a coverage figure and
+// a verdict off them. A claim ending with
 // `[assumption]` (or `[own reasoning]`, `[inference]`) is the model's own: counted apart, not cited.
 type EvidenceVerdict = "verified" | "partial" | "unverified";
 interface Evidence {

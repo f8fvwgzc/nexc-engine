@@ -80,6 +80,8 @@ impl std::fmt::Display for Citation {
 
 /// Longest id a citation may carry.
 pub const ID_MAX: usize = 120;
+/// Most ids remembered as seen inside a node's context.
+pub const SEEN_MAX: usize = 256;
 
 fn is_id_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':' | '/')
@@ -97,6 +99,12 @@ pub struct Given {
     pub nodes: Vec<Uuid>,
     /// Ontology facts, by their entity id (`agent:…`, `document:…`).
     pub facts: Vec<String>,
+    /// Ids that appear inside the text the node was given (an upstream output
+    /// citing its own sources, a memory quoting a passage), as `kind:id`:
+    /// citing one is not forging, since the node saw it; they are not what
+    /// the node was given and do not count toward `len`.
+    #[serde(default)]
+    pub seen: Vec<String>,
 }
 
 impl Given {
@@ -113,14 +121,26 @@ impl Given {
         self.documents.len() + self.memories.len() + self.nodes.len() + self.facts.len()
     }
 
-    /// Whether `citation` names something the node was given.
+    /// Whether `citation` names something the node was given, or saw in it.
     pub fn contains(&self, citation: &Citation) -> bool {
         let uuid = || citation.id.parse::<Uuid>().ok();
-        match citation.kind {
+        let given = match citation.kind {
             CitationKind::Doc => uuid().is_some_and(|id| self.documents.contains(&id)),
             CitationKind::Mem => uuid().is_some_and(|id| self.memories.contains(&id)),
             CitationKind::Node => uuid().is_some_and(|id| self.nodes.contains(&id)),
             CitationKind::Fact => self.facts.contains(&citation.id),
+        };
+        given || self.seen.contains(&citation.key())
+    }
+
+    /// Notes every citation written inside `text` (what the node was given)
+    /// as seen, at most [`SEEN_MAX`] of them.
+    pub fn see(&mut self, text: &str) {
+        for citation in citations_in(text) {
+            let key = citation.key();
+            if self.seen.len() < SEEN_MAX && !self.seen.contains(&key) {
+                self.seen.push(key);
+            }
         }
     }
 
@@ -206,14 +226,9 @@ pub const MIN_COVERAGE_DEFAULT: f64 = 0.8;
 pub const IDS_MAX: usize = 64;
 /// Markers that declare a claim the model's own; counted, never cited.
 pub const DECLARED_MARKERS: [&str; 3] = ["[assumption]", "[own reasoning]", "[inference]"];
-/// Headings under which the ids are listed rather than claimed.
-const SOURCE_HEADINGS: [&str; 5] = [
-    "sources",
-    "references",
-    "citations",
-    "bibliography",
-    "evidence",
-];
+/// Headings (by their first word) under which the ids are listed rather than
+/// claimed: `Sources`, `References`, `Sources to consult`, …
+const SOURCE_HEADINGS: [&str; 4] = ["sources", "references", "citations", "bibliography"];
 /// Words a sentence needs to count as a claim; a bullet or a table row needs one.
 const SENTENCE_WORDS: usize = 2;
 
@@ -605,8 +620,12 @@ pub fn claims_in(text: &str) -> Vec<Claim> {
         }
         if let Some(heading) = heading_text(trimmed) {
             flush(&mut paragraph, &mut pending_row, &mut claims);
-            let name = heading.trim_end_matches(':').trim().to_lowercase();
-            in_sources = SOURCE_HEADINGS.contains(&name.as_str());
+            let first = heading
+                .split(|c: char| c.is_whitespace() || c == ':')
+                .next()
+                .unwrap_or_default()
+                .to_lowercase();
+            in_sources = SOURCE_HEADINGS.contains(&first.as_str());
             continue;
         }
         if in_sources || trimmed.starts_with('>') || is_rule(trimmed) {
@@ -647,6 +666,43 @@ pub fn claims_in(text: &str) -> Vec<Claim> {
     }
     flush(&mut paragraph, &mut pending_row, &mut claims);
     claims
+}
+
+/// `text` without its citation brackets and declared markers, for what is
+/// kept as a fact rather than quoted (a memory): the ids belonged to the
+/// output they were written in, not to the fact.
+pub fn strip_markers(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find('[') {
+        let after = &rest[open + 1..];
+        let Some(close) = after.find(['[', ']', '\n']) else {
+            break;
+        };
+        if !after[close..].starts_with(']') {
+            out.push_str(&rest[..open + 1 + close]);
+            rest = &after[close..];
+            continue;
+        }
+        let inner = &after[..close];
+        let marker = bracket_citations(inner).is_some()
+            || DECLARED_MARKERS.contains(&format!("[{}]", inner.trim().to_lowercase()).as_str());
+        if marker {
+            out.push_str(&rest[..open]);
+            let kept = out.trim_end_matches(' ').len();
+            out.truncate(kept);
+            rest = &after[close + 1..];
+            // A marker before a full stop leaves the stop where it was.
+            if !rest.starts_with(['.', ',', ';', ':', '!', '?']) && !out.is_empty() {
+                out.push(' ');
+            }
+        } else {
+            out.push_str(&rest[..open + 1 + close + 1]);
+            rest = &after[close + 1..];
+        }
+    }
+    out.push_str(rest);
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn push_unique(into: &mut Vec<String>, key: String) {
@@ -715,6 +771,7 @@ mod tests {
             memories: vec![memory],
             nodes: vec![node],
             facts: Vec::new(),
+            seen: Vec::new(),
         };
         (given, chunk, memory, node)
     }
@@ -870,6 +927,13 @@ mod tests {
         );
         let evidence = assess(&[&output], &given, 1.0);
         assert_eq!(evidence.claims, 1, "the sources list is not a claim");
+        let consult =
+            format!("{output}\n\n## Sources to consult\n\n- The annual report\n- The filings");
+        assert_eq!(
+            assess(&[&consult], &given, 1.0).claims,
+            1,
+            "nor a list of sources to consult"
+        );
         assert_eq!(evidence.cited.len(), 2, "but its ids are on record");
         assert_eq!(evidence.verdict, EvidenceVerdict::Verified);
         // A Markdown artifact is verified with the output; an id it forges counts.
@@ -895,6 +959,43 @@ mod tests {
         assert_eq!(json["verdict"], "partial");
         let back: Evidence = serde_json::from_value(json).unwrap();
         assert_eq!(back, evidence);
+        // A section named Evidence is where the claims are, not a list of sources.
+        let findings = format!("## Evidence\n\n- Revenue grew [doc:{chunk}].\n- Costs fell.");
+        let evidence = assess(&[&findings], &given, 0.5);
+        assert_eq!((evidence.claims, evidence.cited_claims), (2, 1));
+        assert_eq!(evidence.verdict, EvidenceVerdict::Verified);
+    }
+
+    #[test]
+    fn ids_seen_inside_the_context_are_not_forged_and_memories_keep_none() {
+        let (mut given, chunk, _, node) = given();
+        let other = Uuid::now_v7();
+        // An upstream output cites its own sources; the node quotes it: not forged.
+        let upstream = format!(
+            "Revenue grew [doc:{other}]. See `[doc:{}]`.",
+            Uuid::now_v7()
+        );
+        given.see(&upstream);
+        assert_eq!(given.seen, vec![format!("doc:{other}")], "code is not seen");
+        assert_eq!(given.len(), 3, "seen ids are not what was given");
+        let text = format!("Revenue grew [doc:{other}] [node:{node}]. Costs fell [doc:{chunk}].");
+        let evidence = assess(&[&text], &given, 0.8);
+        assert!(evidence.unknown.is_empty(), "{evidence:?}");
+        assert_eq!(evidence.verdict, EvidenceVerdict::Verified);
+        assert!(evidence.cited.contains(&format!("doc:{other}")));
+        // Markers are stripped from what is kept as a fact.
+        assert_eq!(
+            strip_markers(&format!(
+                "Revenue grew [doc:{chunk}] [node:{node}]. Growth continues [assumption]. See [1] and [a, b]."
+            )),
+            "Revenue grew. Growth continues. See [1] and [a, b]."
+        );
+        assert_eq!(
+            strip_markers("[doc:x] Goods are exempt"),
+            "Goods are exempt"
+        );
+        assert_eq!(strip_markers("plain [unclosed"), "plain [unclosed");
+        assert_eq!(strip_markers("  spaced   out  "), "spaced out");
     }
 
     #[test]
@@ -907,6 +1008,7 @@ mod tests {
             memories: vec![memory],
             nodes: vec![node],
             facts: vec!["document:0199".into()],
+            seen: Vec::new(),
         };
         assert_eq!(given.len(), 4);
         assert!(!given.is_empty() && Given::default().is_empty());

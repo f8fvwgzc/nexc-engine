@@ -332,6 +332,7 @@ def defend_egress(token: str, wid: str, gid: str, agent: dict, figures_url: str)
     agents = sorted({ua for _, ua in Figures.hits})
     say(f"  the stub answered {len(Figures.hits)} request(s), from {', '.join(agents) or 'nobody'}: "
         "the call left the backend, not the runtime")
+    release_if_quarantined(token, agent["id"], "a new tool and a new host strayed from its baseline")
     # The same fetch with the host off the allow-list: refused before any connection is made.
     _, narrowed = api("PATCH", f"/agents/{agent['id']}", token, {
         "capabilities": {**agent["capabilities"], "tools": tools, "egress_hosts": []},
@@ -343,6 +344,15 @@ def defend_egress(token: str, wid: str, gid: str, agent: dict, figures_url: str)
     say(f"{run['status']}: {len(refused)} egress denial(s) on the trace, "
         f"the stub got {len(Figures.hits)} request(s)")
     return rid, spans
+
+
+def release_if_quarantined(token: str, agent_id: str, why: str) -> None:
+    """The risk policy may quarantine the agent on its own once its runs stray from the
+    baseline; the demo releases it to go on and says so."""
+    _, agent = api("GET", f"/agents/{agent_id}", token)
+    if agent["agent"]["status"] == "quarantined":
+        api("POST", f"/agents/{agent_id}/release", token)
+        say(f"  the risk policy quarantined the agent on its own ({why}); released to go on")
 
 
 def defend_tool(token: str, wid: str, gid: str, agent: dict) -> tuple[str, list]:
@@ -540,10 +550,14 @@ def main() -> int:
         say_denials(spans3)
         say_alerts(token, wid, (rid3, rid2, rid))
         # One click: quarantine while a run is going, so its running node is cancelled.
+        release_if_quarantined(token, agent_id, "the denial raised its risk score")
         rid4 = run_graph(token, gid)
         time.sleep(1.5)
-        _, quarantined = api("POST", f"/agents/{agent_id}/quarantine", token)
-        say(f"quarantined {quarantined['name']} (policy version {quarantined['policy_version']}); run {rid4} was going")
+        status, quarantined = api("POST", f"/agents/{agent_id}/quarantine", token, ok=(200, 409))
+        if status == 409:
+            say(f"the risk policy quarantined the agent on its own while run {rid4} was going")
+        else:
+            say(f"quarantined {quarantined['name']} (policy version {quarantined['policy_version']}); run {rid4} was going")
         run4 = wait_run(token, rid4, seconds=60)
         cancelled = [n for n in run4.get("node_runs", []) if n["status"] in ("cancelled", "failed")]
         say(f"run {rid4}: {run4['status']}, {len(cancelled)} node(s) stopped: {url('/app/runs/' + rid4)}")

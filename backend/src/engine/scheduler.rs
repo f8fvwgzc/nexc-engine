@@ -997,12 +997,6 @@ impl NodeTask {
                 )
             })
             .collect();
-        let given = Given {
-            documents: chunk_ids.clone(),
-            memories: memory_ids.clone(),
-            nodes: upstream_ids.clone(),
-            facts: Vec::new(),
-        };
         let principal = agent
             .as_ref()
             .map_or_else(|| SYSTEM_PRINCIPAL.to_owned(), |a| a.principal_id.clone());
@@ -1160,6 +1154,23 @@ impl NodeTask {
                 )
                 .await;
             }
+        }
+        // What the node was given, by id: what its citations are checked against. An id
+        // written inside that text (an upstream output citing its sources) is seen, not given.
+        let mut given = Given {
+            documents: chunk_ids.clone(),
+            memories: memory_ids.clone(),
+            nodes: upstream_ids.clone(),
+            facts: Vec::new(),
+            seen: Vec::new(),
+        };
+        for text in upstream_outputs
+            .iter()
+            .map(|u| u.output.as_str())
+            .chain(memories.iter().map(String::as_str))
+            .chain(documents.iter().map(String::as_str))
+        {
+            given.see(text);
         }
         // What the node was given to read is on the record before it runs.
         data.trace.emit(SpanDraft {

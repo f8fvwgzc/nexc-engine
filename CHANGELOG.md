@@ -74,9 +74,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   answered, the backend finds the citations in its output and its Markdown artifacts (an id
   inside a code block or a code span is not a citation; a bracket holding anything but ids,
   such as a source name or a link, is not one either), checks each against what the node was
-  given (an id it was never given is forged), approximates the claims as the sentences,
-  bullets and table rows of the prose (headings, block quotes, code and a `Sources`-like
-  section aside; a claim ending with `[assumption]` is the model's own and counted apart),
+  given (an id it was neither given nor saw written inside that text, such as an upstream
+  output citing its own sources, is forged; a memory is stored without the citation ids and
+  markers of the output it was read from), approximates the claims as the sentences,
+  bullets and table rows of the prose (headings, block quotes, code and any section whose
+  heading starts with Sources, References, Citations or Bibliography aside; a claim ending
+  with `[assumption]` is the model's own and counted apart),
   and reads off the coverage (claims citing what was given over the claims not declared the
   model's own) and a verdict: `verified` when the coverage reaches the policy's
   `min_coverage` (0.8 unless set) and nothing was forged, `unverified` when no claim rests on
