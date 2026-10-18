@@ -48,6 +48,7 @@ const VERB: Record<AuditAction, string> = {
   artifact_quarantined: 'saw the DLP screen keep in the artifact of',
   artifact_released: 'released the artifact',
   alert_raised: 'saw an alert about',
+  alert_destination_changed: 'changed the alert destination',
 };
 
 /** Actions whose subject is a thing of the workspace, not a name: it reads on in lower case. */

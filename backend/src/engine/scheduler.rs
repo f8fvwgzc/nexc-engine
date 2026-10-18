@@ -1057,7 +1057,7 @@ impl NodeTask {
                         run_id: Some(data.run_id),
                         node_id: Some(node.id),
                         graph_id: Some(data.graph_id),
-                        actor: data.owner,
+                        actor: Some(data.owner),
                     },
                     &Finding {
                         span_id: Some(span_id),

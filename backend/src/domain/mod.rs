@@ -8,6 +8,7 @@ pub mod account;
 pub mod agent;
 pub mod agent_template;
 pub mod alert;
+pub mod alert_routing;
 pub mod approval;
 pub mod assistant;
 pub mod audit;

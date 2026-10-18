@@ -22,6 +22,7 @@ const alert: Alert = {
   created_at: '2026-10-03T12:00:02Z',
   acknowledged_at: null,
   acknowledged_by: null,
+  deliveries: 0,
 };
 
 describe('parseFeedFrame', () => {

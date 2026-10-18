@@ -170,6 +170,18 @@ pub const ENV_VARS: &[EnvVar] = &[
         "OTLP/gRPC endpoint the trace is exported to (http://host:4317); empty keeps it off",
     ),
     var(
+        "NEXC_PUBLIC_URL",
+        "http://localhost:8080",
+        false,
+        "where the console is reached from outside; the links alert deliveries carry",
+    ),
+    var(
+        "NEXC_ALERT_ALLOW_PRIVATE_HOSTS",
+        "false",
+        false,
+        "let alert destinations name private and loopback hosts (development only)",
+    ),
+    var(
         "NEXC_GATEWAY_CALLS_PER_MINUTE",
         "120",
         false,

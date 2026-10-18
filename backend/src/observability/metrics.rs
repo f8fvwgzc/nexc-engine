@@ -129,6 +129,8 @@ pub struct Metrics {
     pub firewall_decisions: LabeledCounter,
     /// Gateway calls performed, by tool kind (`fetch_url`, `mcp`) and outcome.
     pub gateway_calls: LabeledCounter,
+    /// Alert deliveries attempted, by destination kind and outcome (`delivered`, `retry`, `failed`).
+    pub alert_deliveries: LabeledCounter,
 }
 
 impl Default for Metrics {
@@ -151,6 +153,7 @@ impl Default for Metrics {
             onto_asks: LabeledCounter::default(),
             firewall_decisions: LabeledCounter::default(),
             gateway_calls: LabeledCounter::default(),
+            alert_deliveries: LabeledCounter::default(),
         }
     }
 }
@@ -307,6 +310,14 @@ impl Metrics {
         );
         self.gateway_calls
             .render(&mut out, "nexc_gateway_calls_total");
+        header(
+            &mut out,
+            "nexc_alert_deliveries_total",
+            "counter",
+            "Alert deliveries attempted, by destination kind and outcome.",
+        );
+        self.alert_deliveries
+            .render(&mut out, "nexc_alert_deliveries_total");
         out
     }
 }

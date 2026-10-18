@@ -1565,6 +1565,87 @@ export interface paths {
         patch: operations["update"];
         trace?: never;
     };
+    "/api/v1/workspaces/{wid}/alert-destinations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The alert destinations of a workspace (admins). */
+        get: operations["list"];
+        put?: never;
+        /**
+         * Registers a destination (admins). The signing secret is in the answer
+         *     once and never shown again; the URL is kept encrypted.
+         */
+        post: operations["create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/alert-destinations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One destination (admins). */
+        get: operations["get"];
+        put?: never;
+        post?: never;
+        /** Removes a destination and its delivery log (admins). */
+        delete: operations["delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Changes a destination (admins): name, URL, filters, on or off. Enabling
+         *     one the platform switched off clears its failure count.
+         */
+        patch: operations["update"];
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/alert-destinations/{id}/deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The delivery log of a destination, newest first (admins). */
+        get: operations["deliveries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/alert-destinations/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sends a test event to the destination at once and says what it answered
+         *     (admins). The attempt is in the destination's log; it does not count
+         *     toward switching the destination off.
+         */
+        post: operations["send_test"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{wid}/alerts": {
         parameters: {
             query?: never;
@@ -1574,6 +1655,27 @@ export interface paths {
         };
         /** The alerts of a workspace, newest first (admins). */
         get: operations["list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/alerts/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The alerts of a workspace over a window, oldest first, for a SIEM that
+         *     pulls (admins; 30 pulls a minute per account). At most 10,000 per pull:
+         *     a pull that answered that many has more, from `since` = the last `created_at`.
+         */
+        get: operations["alerts"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1717,6 +1819,27 @@ export interface paths {
          *     question from a member, arrives as one `done` event.
          */
         post: operations["ask_stream"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/audit/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The audit log of a workspace over a window, oldest first, for a SIEM
+         *     that pulls (admins; 30 pulls a minute per account); same shape and
+         *     paging as the alerts export.
+         */
+        get: operations["audit"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2909,6 +3032,11 @@ export interface components {
             agent_id: string | null;
             /** Format: date-time */
             created_at: string;
+            /**
+             * Format: int64
+             * @description Destinations the alert was delivered to (alert routing); 0 until the worker sent it.
+             */
+            deliveries: number;
             detail: string;
             /** Format: uuid */
             graph_id: string | null;
@@ -2931,6 +3059,100 @@ export interface components {
             title: string;
             /** Format: uuid */
             workspace_id: string;
+        };
+        /** @description One delivery to a destination: an entry of its log. */
+        AlertDelivery: {
+            /** Format: uuid */
+            alert_id: string | null;
+            /** Format: uuid */
+            approval_id: string | null;
+            /** Format: int32 */
+            attempts: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            delivered_at: string | null;
+            /** Format: uuid */
+            destination_id: string;
+            event: components["schemas"]["DeliveryEvent"];
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            last_attempt_at: string | null;
+            last_error: string;
+            /**
+             * Format: int32
+             * @description The HTTP status of the last attempt, when one came back.
+             */
+            last_status: number | null;
+            /**
+             * Format: date-time
+             * @description When the next attempt is due, while pending.
+             */
+            next_attempt_at: string | null;
+            status: components["schemas"]["DeliveryStatus"];
+        };
+        /** @description A destination, as shown: the URL's host only, the secret never. */
+        AlertDestination: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            created_by: string | null;
+            /** @description Why the platform switched it off, when it did. */
+            disabled_reason: string;
+            enabled: boolean;
+            /**
+             * Format: int32
+             * @description Deliveries that failed in a row; at 50 the destination is switched off.
+             */
+            failures: number;
+            /** @description The host of the URL; the URL itself is kept encrypted (a Slack URL carries its token). */
+            host: string;
+            /** Format: uuid */
+            id: string;
+            /** @description Whether approvals requested and decided are sent too. */
+            include_approvals: boolean;
+            kind: components["schemas"]["DestinationKind"];
+            /** @description Alert kinds sent; empty means every kind. */
+            kinds: components["schemas"]["AlertKind"][];
+            /** Format: date-time */
+            last_delivered_at: string | null;
+            /** @description What the last failed delivery said. */
+            last_error: string;
+            /** @description The least severity sent. */
+            min_severity: components["schemas"]["Severity"];
+            name: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: uuid */
+            workspace_id: string;
+        };
+        /** @description The fields a destination is registered with. */
+        AlertDestinationInput: {
+            /** @description On by default. */
+            enabled?: boolean | null;
+            include_approvals?: boolean;
+            kind: components["schemas"]["DestinationKind"];
+            /** @description Alert kinds sent; empty (the default) sends every kind. */
+            kinds?: components["schemas"]["AlertKind"][];
+            min_severity?: components["schemas"]["Severity"] | null;
+            name: string;
+            /**
+             * @description An http(s) URL; private and loopback hosts are refused unless the
+             *     server allows them (`NEXC_ALERT_ALLOW_PRIVATE_HOSTS`).
+             */
+            url: string;
+        };
+        /** @description What `PATCH` changes; a field left out stays as it is. */
+        AlertDestinationPatch: {
+            /** @description Enabling clears a reason the platform switched it off with and its failure count. */
+            enabled?: boolean | null;
+            include_approvals?: boolean | null;
+            kinds?: components["schemas"]["AlertKind"][] | null;
+            min_severity?: components["schemas"]["Severity"] | null;
+            name?: string | null;
+            /** @description A new URL (the secret stays). */
+            url?: string | null;
         };
         /**
          * @description What raised the alert.
@@ -3153,7 +3375,7 @@ export interface components {
          * @description What an audit entry records.
          * @enum {string}
          */
-        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned" | "trace_sealed" | "policy_changed" | "policy_mismatch" | "agent_quarantined" | "agent_released" | "approval_granted" | "approval_denied" | "artifact_quarantined" | "artifact_released" | "alert_raised" | "classification_changed" | "mcp_server_added" | "mcp_server_removed" | "agent_token_issued" | "agent_token_revoked";
+        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned" | "trace_sealed" | "policy_changed" | "policy_mismatch" | "agent_quarantined" | "agent_released" | "approval_granted" | "approval_denied" | "artifact_quarantined" | "artifact_released" | "alert_raised" | "alert_destination_changed" | "classification_changed" | "mcp_server_added" | "mcp_server_removed" | "agent_token_issued" | "agent_token_revoked";
         /** @description An answer from the audit. */
         AuditAnswer: {
             answer: string;
@@ -3700,6 +3922,33 @@ export interface components {
             /** @description The workspace's name, exactly: deleting cannot be undone. */
             confirm: string;
         };
+        /**
+         * @description What a delivery carries.
+         * @enum {string}
+         */
+        DeliveryEvent: "alert.raised" | "approval.requested" | "approval.decided" | "test";
+        /**
+         * @description Where a delivery stands.
+         * @enum {string}
+         */
+        DeliveryStatus: "pending" | "delivered" | "failed";
+        /**
+         * @description What a destination speaks.
+         * @enum {string}
+         */
+        DestinationKind: "webhook" | "slack";
+        /** @description What `POST …/test` found. */
+        DestinationTest: {
+            detail: string;
+            /** Format: int64 */
+            latency_ms: number;
+            ok: boolean;
+            /**
+             * Format: int32
+             * @description The HTTP status the destination answered, when it answered.
+             */
+            status: number | null;
+        };
         /** @description `POST /auth/2fa/disable` body. */
         DisableTwoFactor: {
             /** @description The app's current code, or a recovery code. */
@@ -3830,6 +4079,11 @@ export interface components {
          * @enum {string}
          */
         Executor: "llm" | "agent" | "symphony";
+        /**
+         * @description How an export is written.
+         * @enum {string}
+         */
+        ExportFormat: "ndjson" | "json";
         /** @description An issue the assistant filed, as remembered with the conversation. */
         FiledIssue: {
             /** Format: uuid */
@@ -4232,6 +4486,12 @@ export interface components {
             /** @description `nexc_agt_…`; keep it, it is not shown again. */
             secret: string;
             token: components["schemas"]["AgentApiToken"];
+        };
+        /** @description A destination with its secret: the answer to its creation, and nowhere else. */
+        IssuedAlertDestination: {
+            destination: components["schemas"]["AlertDestination"];
+            /** @description `nexc_whs_…`: the key of `X-Nexc-Signature` on every delivery. Shown once. */
+            secret: string;
         };
         /** @description A password reset link's token, shown once. */
         IssuedReset: {
@@ -10194,6 +10454,324 @@ export interface operations {
     };
     list: {
         parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertDestination"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AlertDestinationInput"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssuedAlertDestination"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Destination id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertDestination"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Destination id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Destination id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AlertDestinationPatch"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertDestination"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    deliveries: {
+        parameters: {
+            query?: {
+                /** @description Entries to return, 1–200 (default 50). */
+                limit?: number | null;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Destination id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertDelivery"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    send_test: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Destination id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DestinationTest"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list: {
+        parameters: {
             query?: {
                 /** @description Only alerts older than this. */
                 before?: string | null;
@@ -10226,6 +10804,68 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    alerts: {
+        parameters: {
+            query?: {
+                /** @description Entries after this time (exclusive); default: 24 hours before `until`. */
+                since?: string | null;
+                /** @description Entries up to this time (inclusive); default: now. */
+                until?: string | null;
+                /** @description `ndjson` (default) or `json`. */
+                format?: components["schemas"]["ExportFormat"] | null;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The alerts, one JSON object per line (`application/x-ndjson`) or one array (`application/json`) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-ndjson": components["schemas"]["Alert"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10574,6 +11214,68 @@ export interface operations {
             };
             /** @description Ask the audit is off, or onto-intelli does not answer */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    audit: {
+        parameters: {
+            query?: {
+                /** @description Entries after this time (exclusive); default: 24 hours before `until`. */
+                since?: string | null;
+                /** @description Entries up to this time (inclusive); default: now. */
+                until?: string | null;
+                /** @description `ndjson` (default) or `json`. */
+                format?: components["schemas"]["ExportFormat"] | null;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The entries, one JSON object per line (`application/x-ndjson`) or one array (`application/json`) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-ndjson": components["schemas"]["AuditEntry"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

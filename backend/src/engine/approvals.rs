@@ -19,6 +19,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::executor::ExecContext;
+use crate::domain::alert_routing::DeliveryEvent;
 use crate::domain::approval::{Approval, ApprovalStatus};
 use crate::domain::graph::NodeStatus;
 use crate::domain::trace::{SpanDraft, SpanKind, SpanStatus};
@@ -141,6 +142,8 @@ pub async fn open(
     {
         tracing::error!(approval = %approval.id, error = %err, "approvers were not told");
     }
+    crate::alerting::enqueue_approval(&ctx.state, &approval, DeliveryEvent::ApprovalRequested)
+        .await;
     pause(ctx, true).await;
     ctx.log(
         LogLevel::Info,
@@ -206,7 +209,7 @@ impl Watch {
             tokio::select! {
                 _ = self.stop.cancelled() => {
                     // The attempt ended (its result, an error, a cancellation) before anyone decided.
-                    if repo::approvals::expire(&self.ctx.state.db, self.approval_id).await.unwrap_or(false) {
+                    if self.expire().await {
                         self.settle(ApprovalStatus::Expired, None).await;
                     }
                     return;
@@ -223,10 +226,7 @@ impl Watch {
             };
             match approval.status {
                 ApprovalStatus::Pending if Utc::now() > approval.expires_at => {
-                    if repo::approvals::expire(&self.ctx.state.db, self.approval_id)
-                        .await
-                        .unwrap_or(false)
-                    {
+                    if self.expire().await {
                         self.settle(ApprovalStatus::Expired, None).await;
                         return;
                     }
@@ -245,6 +245,27 @@ impl Watch {
                 }
             }
         }
+    }
+
+    /// Marks the approval expired if it is still pending, and tells the
+    /// alert destinations that take approvals; whether it was.
+    async fn expire(&self) -> bool {
+        let db = &self.ctx.state.db;
+        if !repo::approvals::expire(db, self.approval_id)
+            .await
+            .unwrap_or(false)
+        {
+            return false;
+        }
+        if let Ok(Some(expired)) = repo::approvals::find(db, self.approval_id).await {
+            crate::alerting::enqueue_approval(
+                &self.ctx.state,
+                &expired,
+                DeliveryEvent::ApprovalDecided,
+            )
+            .await;
+        }
+        true
     }
 
     /// Hands the decision to the runtime holding the call.

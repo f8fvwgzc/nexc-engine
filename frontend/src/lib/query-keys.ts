@@ -83,6 +83,12 @@ export const qk = {
     all: ['mcp'] as const,
     list: (workspaceId: string) => ['mcp', workspaceId] as const,
   },
+  alertDestinations: {
+    all: ['alert-destinations'] as const,
+    list: (workspaceId: string) => ['alert-destinations', workspaceId] as const,
+    deliveries: (workspaceId: string, destinationId: string) =>
+      ['alert-destinations', workspaceId, 'deliveries', destinationId] as const,
+  },
   /** Not copied to browser storage: document names and passages stay on the server. */
   knowledge: {
     all: ['knowledge'] as const,

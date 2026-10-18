@@ -28,8 +28,9 @@ pub struct About<'a> {
     pub run_id: Option<Uuid>,
     pub node_id: Option<Uuid>,
     pub graph_id: Option<Uuid>,
-    /// Who the audit entry is written by: whoever started the run.
-    pub actor: Uuid,
+    /// Who the audit entry is written by: whoever started the run; `None`
+    /// when the platform itself raises it (a worker, with no run behind it).
+    pub actor: Option<Uuid>,
 }
 
 /// What an alert says.
@@ -44,7 +45,8 @@ pub struct Finding<'a> {
 }
 
 /// Raises an alert: recorded, put in every admin's inbox, published on the
-/// graph's stream and audited. Never fails the work that raised it.
+/// graph's stream, audited, and queued for every alert destination that
+/// wants it. Never fails the work that raised it.
 pub async fn raise(state: &AppState, about: &About<'_>, finding: &Finding<'_>) -> Option<Alert> {
     let (kind, severity, title) = (finding.kind, finding.severity, finding.title);
     let new = NewAlert {
@@ -89,18 +91,34 @@ pub async fn raise(state: &AppState, about: &About<'_>, finding: &Finding<'_>) -
             },
         );
     }
-    if let Err(err) = repo::audit::record(
-        &state.db,
-        about.workspace_id,
-        about.actor,
-        AuditAction::AlertRaised,
-        Subject::Text(about.principal),
-        &format!("{severity} {kind}: {title}"),
-    )
-    .await
-    {
+    let detail = format!("{severity} {kind}: {title}");
+    let audited = match about.actor {
+        Some(actor) => {
+            repo::audit::record(
+                &state.db,
+                about.workspace_id,
+                actor,
+                AuditAction::AlertRaised,
+                Subject::Text(about.principal),
+                &detail,
+            )
+            .await
+        }
+        None => {
+            repo::audit::record_system(
+                &state.db,
+                about.workspace_id,
+                AuditAction::AlertRaised,
+                about.principal,
+                &detail,
+            )
+            .await
+        }
+    };
+    if let Err(err) = audited {
         tracing::error!(alert = %alert.id, error = %err, "alert not audited");
     }
+    crate::alerting::enqueue_alert(state, &alert).await;
     Some(alert)
 }
 
@@ -117,7 +135,7 @@ impl ExecContext {
                 run_id: Some(self.run_id),
                 node_id: Some(self.node.id),
                 graph_id: Some(self.graph_id),
-                actor: self.owner,
+                actor: Some(self.owner),
             },
             principal,
         ))

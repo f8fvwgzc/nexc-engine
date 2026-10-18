@@ -9,6 +9,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Alert routing: a workspace's alerts and approvals reach the outside. Admins register
+  **alert destinations** (Settings → Alert destinations, `GET/POST
+  /workspaces/{wid}/alert-destinations`, `GET/PATCH/DELETE …/{id}`, `POST …/{id}/test`, `GET
+  …/{id}/deliveries`): a signed JSON webhook or a Slack incoming webhook, with filters (alert
+  kinds, the least severity, approvals too). The URL is kept encrypted under the master key and
+  only its host is shown; a private or loopback host is refused as the gateway refuses it
+  (`NEXC_ALERT_ALLOW_PRIVATE_HOSTS=true` allows it in development); a signing secret
+  (`nexc_whs_…`) is generated, shown once and kept encrypted. Every change is audited as
+  `alert_destination_changed`.
+- Delivery: when an alert is raised or an approval is requested, decided or expires, a delivery
+  per matching destination goes into the `alert_deliveries` outbox; a worker takes due rows with
+  `SKIP LOCKED`, posts the JSON envelope (`id` as idempotency id, `event`, `timestamp`, the
+  workspace and agent, the alert or approval as the API returns it, links into the console at
+  `NEXC_PUBLIC_URL`) with `X-Nexc-Signature: sha256=<HMAC-SHA256 of the body>` and
+  `X-Nexc-Timestamp`, or a Block Kit message for Slack (severity colour, title, agent, rule,
+  link buttons); 10 s per attempt, retried after 30 s doubling up to an hour for 24 hours, 4xx
+  (and redirects, which are not followed) failing for good. Each destination keeps a log with
+  status, attempts, the last response code and error. A destination that fails fifty times in a
+  row is switched off, audited by `system`, and an alert of kind `policy` (rule
+  `alert_destinations.failures`) tells the admins. `Alert.deliveries` counts the destinations an
+  alert reached; the Alerts panel on `/app/secops` shows "sent to N destinations". Metric
+  `nexc_alert_deliveries_total{kind, outcome}`.
+- SIEM pull: `GET /workspaces/{wid}/alerts/export?since=&until=&format=ndjson|json` and `GET
+  …/audit/export` stream alerts and audit entries over a window, oldest first, with their stable
+  ids, at most 10,000 per pull, 30 pulls a minute per account; the way a collector pulls without
+  webhooks (`docs/CONTRACT.md` §5, with a signature verification example in Python under §4).
+- `NEXC_PUBLIC_URL` and `NEXC_ALERT_ALLOW_PRIVATE_HOSTS` in `.env.example` and CONTRACT §2.
+  A workspace transfer leaves alert destinations and their log behind (their secrets are sealed
+  with this server's key); they are registered again on the target.
 - The AgentSecOps console (phase 5, `docs/AGENTSECOPS.md` §8): **AgentSecOps** in the sidebar
   (`/app/secops`, members and above) is the one screen a CISO wants: a stat row (agents by
   status, runs today and this week, spans and denials today, open approvals, unacknowledged

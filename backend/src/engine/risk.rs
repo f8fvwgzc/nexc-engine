@@ -97,7 +97,7 @@ pub async fn assess(state: &AppState, row: &RunRow) -> Assessed {
             run_id: Some(row.id),
             node_id: None,
             graph_id: Some(row.graph_id),
-            actor: row.owner_id,
+            actor: Some(row.owner_id),
         };
         let raised = apply_thresholds(state, &about, &rules, &run, &scored, &baseline).await;
         done.alerts += raised.0;
@@ -186,16 +186,30 @@ async fn apply_thresholds(
                     thresholds.quarantine_risk_score.unwrap_or_default(),
                     agent.policy_version
                 );
-                if let Err(err) = repo::audit::record(
-                    &state.db,
-                    about.workspace_id,
-                    about.actor,
-                    AuditAction::AgentQuarantined,
-                    Subject::Text(&agent.principal_id),
-                    &detail,
-                )
-                .await
-                {
+                let audited = match about.actor {
+                    Some(actor) => {
+                        repo::audit::record(
+                            &state.db,
+                            about.workspace_id,
+                            actor,
+                            AuditAction::AgentQuarantined,
+                            Subject::Text(&agent.principal_id),
+                            &detail,
+                        )
+                        .await
+                    }
+                    None => {
+                        repo::audit::record_system(
+                            &state.db,
+                            about.workspace_id,
+                            AuditAction::AgentQuarantined,
+                            &agent.principal_id,
+                            &detail,
+                        )
+                        .await
+                    }
+                };
+                if let Err(err) = audited {
                     tracing::error!(%agent_id, error = %err, "automatic quarantine not audited");
                 }
                 let title = format!("quarantined: risk score {:.1}", scored.score);

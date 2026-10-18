@@ -4,6 +4,7 @@
 pub mod account;
 pub mod agent_templates;
 pub mod agents;
+pub mod alert_destinations;
 pub mod alerts;
 pub mod approvals;
 pub mod artifacts;
@@ -11,6 +12,7 @@ pub mod audit;
 pub mod auth;
 pub mod cycles;
 pub mod edges;
+pub mod exports;
 pub mod graphs;
 pub mod health;
 pub mod infrastructure;

@@ -52,4 +52,6 @@ pub struct Alert {
     pub acknowledged_at: Option<DateTime<Utc>>,
     #[schema(required = true)]
     pub acknowledged_by: Option<Uuid>,
+    /// Destinations the alert was delivered to (alert routing); 0 until the worker sent it.
+    pub deliveries: i64,
 }

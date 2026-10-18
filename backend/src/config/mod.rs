@@ -95,6 +95,11 @@ pub struct Settings {
     pub gateway_timeout: Duration,
     /// Largest response a gateway call brings back.
     pub gateway_max_response_bytes: usize,
+    /// Where the console is reached from outside (`https://nexc.example.com`):
+    /// the links alert deliveries carry.
+    pub public_url: String,
+    /// Lets alert destinations name private and loopback hosts (development only).
+    pub alert_allow_private_hosts: bool,
 }
 
 /// The wire between the backend and the agent runtime.
@@ -218,6 +223,11 @@ impl Settings {
             gateway_calls_per_minute: r.parse("NEXC_GATEWAY_CALLS_PER_MINUTE", 120),
             gateway_timeout: Duration::from_secs(r.parse("NEXC_GATEWAY_TIMEOUT_SECS", 30)),
             gateway_max_response_bytes: r.parse("NEXC_GATEWAY_MAX_RESPONSE_BYTES", 1024 * 1024),
+            public_url: r
+                .string("NEXC_PUBLIC_URL", "http://localhost:8080")
+                .trim_end_matches('/')
+                .to_owned(),
+            alert_allow_private_hosts: r.parse("NEXC_ALERT_ALLOW_PRIVATE_HOSTS", false),
         };
         let mut errors = r.errors;
         settings.check_invariants(&mut errors);
@@ -270,6 +280,9 @@ impl Settings {
             && !(url.starts_with("http://") || url.starts_with("https://"))
         {
             errors.push("NEXC_OTLP_ENDPOINT must start with http:// or https://".into());
+        }
+        if !(self.public_url.starts_with("http://") || self.public_url.starts_with("https://")) {
+            errors.push("NEXC_PUBLIC_URL must start with http:// or https://".into());
         }
         if !(1..=10_000).contains(&self.gateway_calls_per_minute) {
             errors.push("NEXC_GATEWAY_CALLS_PER_MINUTE must be between 1 and 10000".into());

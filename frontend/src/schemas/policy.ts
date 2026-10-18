@@ -226,6 +226,8 @@ export const alertSchema = z.object({
   created_at: timestampSchema,
   acknowledged_at: nullableTimestampSchema,
   acknowledged_by: idSchema.nullable(),
+  /** Destinations the alert was delivered to (alert routing); 0 until the worker sent it. */
+  deliveries: z.number().int().nonnegative(),
 });
 export type Alert = z.infer<typeof alertSchema>;
 

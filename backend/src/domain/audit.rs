@@ -47,6 +47,9 @@ string_enum!(
         ArtifactReleased => "artifact_released",
         /// An alert was raised (subject: the principal; detail: the title).
         AlertRaised => "alert_raised",
+        /// An alert destination was added, changed, tested, removed or switched off
+        /// (subject: `alerts:<name>`; detail: what changed).
+        AlertDestinationChanged => "alert_destination_changed",
         /// A document, topic or memory was given a classification (subject: what; detail: the label).
         ClassificationChanged => "classification_changed",
         /// An MCP server was registered for the workspace's agents (subject: `mcp:<name>`).
