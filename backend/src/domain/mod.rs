@@ -21,6 +21,7 @@ pub mod injection;
 pub mod insight;
 pub mod issue;
 pub mod knowledge;
+pub mod mcp;
 pub mod memory;
 pub mod ontology;
 pub mod plan;

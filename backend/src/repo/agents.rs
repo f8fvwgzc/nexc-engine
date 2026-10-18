@@ -125,6 +125,19 @@ pub async fn find(
         .await
 }
 
+/// The agent of a workspace with `principal` (`agent://{workspace}/{name}`).
+pub async fn find_by_principal(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    principal: &str,
+) -> Result<Option<Agent>, sqlx::Error> {
+    sqlx::query_as("SELECT * FROM agents WHERE workspace_id = $1 AND principal_id = $2")
+        .bind(workspace_id)
+        .bind(principal)
+        .fetch_optional(db)
+        .await
+}
+
 /// The agent with `role`, preferring active ones, then the oldest.
 pub async fn find_by_role(
     db: impl PgExecutor<'_>,

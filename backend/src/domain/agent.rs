@@ -32,12 +32,43 @@ string_enum!(
 );
 
 string_enum!(
-    /// Where an agent runs: the Python agent runtime or the built-in LLM executor.
+    /// Where an agent runs: the Python agent runtime, the built-in LLM
+    /// executor, or somewhere else entirely (it uses nexc as its policy and
+    /// trace service through the Agent Firewall API).
     AgentRuntime {
         Python => "python",
         Builtin => "builtin",
+        External => "external",
     }
 );
+
+/// Longest name of an API token.
+pub const TOKEN_NAME_MAX: usize = 100;
+
+/// An API token of an external agent, as listed (the token itself is shown once).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AgentApiToken {
+    pub id: Uuid,
+    pub agent_id: Uuid,
+    /// The token's first characters, to tell tokens apart.
+    pub prefix: String,
+    pub name: String,
+    #[schema(required = true)]
+    pub created_by: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+    #[schema(required = true)]
+    pub last_used_at: Option<DateTime<Utc>>,
+    #[schema(required = true)]
+    pub revoked_at: Option<DateTime<Utc>>,
+}
+
+/// A token just issued: the only time its value is given out.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct IssuedAgentApiToken {
+    pub token: AgentApiToken,
+    /// `nexc_agt_…`; keep it, it is not shown again.
+    pub secret: String,
+}
 
 /// An agent in the user's organisation.
 #[derive(Debug, Clone, Serialize, ToSchema)]

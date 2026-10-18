@@ -49,6 +49,12 @@ string_enum!(
         AlertRaised => "alert_raised",
         /// A document, topic or memory was given a classification (subject: what; detail: the label).
         ClassificationChanged => "classification_changed",
+        /// An MCP server was registered for the workspace's agents (subject: `mcp:<name>`).
+        McpServerAdded => "mcp_server_added",
+        McpServerRemoved => "mcp_server_removed",
+        /// An API token was issued to an external agent (subject: the principal; detail: the prefix).
+        AgentTokenIssued => "agent_token_issued",
+        AgentTokenRevoked => "agent_token_revoked",
     }
 );
 
