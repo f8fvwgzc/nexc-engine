@@ -12,8 +12,8 @@ use super::workspaces::audit;
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::agent::{
-    AGENT_NAME_MAX, AGENT_TITLE_MAX, Agent, AgentCard, AgentRuntime, AgentStatus, CARD_SPANS,
-    PURPOSE_MAX, SYSTEM_PROMPT_MAX, is_valid_role,
+    AGENT_NAME_MAX, AGENT_TITLE_MAX, Agent, AgentApiToken, AgentCard, AgentRuntime, AgentStatus,
+    CARD_SPANS, IssuedAgentApiToken, PURPOSE_MAX, SYSTEM_PROMPT_MAX, TOKEN_NAME_MAX, is_valid_role,
 };
 use crate::domain::audit::AuditAction;
 use crate::domain::capabilities::Capabilities;
@@ -24,6 +24,7 @@ use crate::http::problem::Problem;
 use crate::repo::agents::AgentFields;
 use crate::repo::audit::Subject;
 use crate::repo::{self, OrNotFound};
+use crate::security::api_token;
 
 fn double_option<'de, T: Deserialize<'de>, D: Deserializer<'de>>(
     d: D,
@@ -525,4 +526,109 @@ pub async fn delete(
     } else {
         Err(AppError::NotFound("agent"))
     }
+}
+
+// --- API tokens of external agents (the Agent Firewall API) ---------------------------------
+
+/// `POST /agents/{id}/tokens` body.
+#[derive(Debug, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct IssueToken {
+    /// What the token is for, to tell tokens apart.
+    #[serde(default)]
+    pub name: String,
+}
+
+impl Validate for IssueToken {
+    fn validate(&self, errors: &mut FieldErrors) {
+        check_max_len(errors, "name", &self.name, TOKEN_NAME_MAX);
+    }
+}
+
+/// The API tokens of an external agent (workspace admins): prefixes and
+/// dates, never the tokens.
+#[utoipa::path(get, path = "/agents/{id}/tokens", tag = "agents", security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Agent id")),
+    responses((status = 200, body = [AgentApiToken]), (status = 403, body = Problem), (status = 404, body = Problem)))]
+pub async fn tokens(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<AgentApiToken>>, AppError> {
+    workspace_of_agent(&state, auth, id, Access::Admin).await?;
+    Ok(Json(repo::agent_tokens::list(&state.db, id).await?))
+}
+
+/// Issues an API token to an external agent (workspace admins). The token
+/// is in the answer once and kept as a hash; audited as `agent_token_issued`.
+#[utoipa::path(post, path = "/agents/{id}/tokens", tag = "agents", security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Agent id")), request_body = IssueToken,
+    responses((status = 201, body = IssuedAgentApiToken), (status = 403, body = Problem), (status = 404, body = Problem),
+        (status = 422, description = "The agent is not an external one", body = Problem)))]
+pub async fn issue_token(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+    ValidatedJson(req): ValidatedJson<IssueToken>,
+) -> Result<(StatusCode, Json<IssuedAgentApiToken>), AppError> {
+    let workspace = workspace_of_agent(&state, auth, id, Access::Admin).await?;
+    let agent = repo::agents::find(&state.db, workspace, id)
+        .await
+        .or_not_found("agent")?;
+    if agent.runtime != AgentRuntime::External {
+        return Err(AppError::Unprocessable(
+            "only an agent with runtime `external` holds an API token".into(),
+        ));
+    }
+    let secret = api_token::generate();
+    let token = repo::agent_tokens::insert(
+        &state.db,
+        id,
+        &api_token::hash(&secret),
+        &api_token::prefix_of(&secret),
+        req.name.trim(),
+        auth.id,
+    )
+    .await?;
+    audit(
+        &state,
+        workspace,
+        auth.id,
+        AuditAction::AgentTokenIssued,
+        Subject::Text(&agent.principal_id),
+        &format!("token {} ({})", token.prefix, token.name),
+    )
+    .await;
+    Ok((
+        StatusCode::CREATED,
+        Json(IssuedAgentApiToken { token, secret }),
+    ))
+}
+
+/// Revokes an API token (workspace admins); audited as `agent_token_revoked`.
+#[utoipa::path(delete, path = "/agents/{id}/tokens/{tid}", tag = "agents", security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Agent id"), ("tid" = Uuid, Path, description = "Token id")),
+    responses((status = 204, description = "Revoked"), (status = 403, body = Problem), (status = 404, body = Problem)))]
+pub async fn revoke_token(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((id, tid)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, AppError> {
+    let workspace = workspace_of_agent(&state, auth, id, Access::Admin).await?;
+    let agent = repo::agents::find(&state.db, workspace, id)
+        .await
+        .or_not_found("agent")?;
+    let token = repo::agent_tokens::revoke(&state.db, id, tid)
+        .await?
+        .ok_or(AppError::NotFound("token"))?;
+    audit(
+        &state,
+        workspace,
+        auth.id,
+        AuditAction::AgentTokenRevoked,
+        Subject::Text(&agent.principal_id),
+        &format!("token {} ({})", token.prefix, token.name),
+    )
+    .await;
+    Ok(StatusCode::NO_CONTENT)
 }
