@@ -308,7 +308,8 @@ def defend_egress(token: str, wid: str, gid: str, agent: dict, figures_url: str)
     """The gateway variant: the research node reads the figures from the stub through
     `fetch_url`, once with the host on the allow-list and once with it off. Returns the denied
     run and its spans, or None when the runtime offered no gateway tool (the NDJSON wire)."""
-    tools = [*agent["capabilities"]["tools"], "fetch_url"]
+    allowed = agent["capabilities"]["tools"]
+    tools = None if allowed is None else [*allowed, "fetch_url"]  # None: no tool restriction
     _, named = api("PATCH", f"/agents/{agent['id']}", token, {
         "capabilities": {**agent["capabilities"], "tools": tools, "egress_hosts": [STUB_HOST]},
     })
@@ -466,7 +467,7 @@ def main() -> int:
         # read_file, list_files, write_file, make_docx and finish, and no host at all.
         stub, figures_url = start_stub()
         say(f"a local HTTP stub started by this script answers {figures_url}")
-        research = next(n["id"] for n in graph["nodes"] if n["kind"] == "research")
+        research = next((n["id"] for n in graph["nodes"] if n["kind"] == "research"), graph["nodes"][0]["id"])
         api("PATCH", f"/graphs/{gid}/nodes/{research}", token,
             {"content": f"Read the quarterly figures from {figures_url} first. {RESEARCH}"})
         denied_run = defend_egress(token, wid, gid, agent, figures_url)

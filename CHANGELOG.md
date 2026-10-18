@@ -70,7 +70,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   falls back to a tool the policy does not allow and prints which variant ran. The demo
   provider reads the http(s) URLs a node's brief names (up to three) through `fetch_url` when
   the gateway offers it, and lists them under the research notes' sources; it still never
-  touches the network itself.
+  touches the network itself. Run on the compose stack (`docker compose -f docker-compose.yml
+  -f docker-compose.demo.yml up -d --build --wait`, then `scripts/smoke.sh` passed, then `make
+  demo-secops`), it printed: step 1 `competency questions: 1 / 3`; step 2 `succeeded: 8 spans
+  (2 data_read, 4 llm_call, 2 tool_call), policy mismatches 0`; step 3 `node … waits: the
+  approval is in the inbox`, `approved make_docx by Sam Secops; the run goes on`,
+  `succeeded: 10 spans, 1 approval span(s) on the trace`; step 4 `document
+  board-compensation.md: ready, restricted, 1 passages`, `a local HTTP stub started by this
+  script answers http://host.docker.internal:56741/quarterly-figures.json`, `succeeded: 1
+  fetch_url call(s) through the gateway, 1 egress span(s)`, `egress host.docker.internal HTTP
+  200, 86 bytes in`, `the stub answered 1 request(s), from nexc-engine-gateway/0.1.0`, then
+  with the allow-list empty `succeeded: 1 egress denial(s) on the trace, the stub got 0
+  request(s)`, `variant: a host outside the allow-list, refused by the gateway`, `denied egress
+  host.docker.internal by egress.hosts: host host.docker.internal is not allowed`, `alert
+  [medium] risk alerts.denials_per_run: 3 policy denials in one run`, `alert [high] dlp
+  egress.hosts: fetch_url refused for host.docker.internal`, `quarantined Analyst (demo)
+  (policy version 3)`, `run …: failed, 1 node(s) stopped`; step 5 the six questions answered
+  `onto-intelli is not wired (make demo-onto)`; step 6 `chain intact, 14 spans`, `overview: 6
+  agents (1 quarantined), 5 runs today, 59 spans, 9 denials, 1 approvals open, 5 alerts open`,
+  then the prove targets: identity p99 0.25 µs (backend) and 1.71 µs (runtime), policy
+  resolution p99 6.3 µs and decisions p99 0.21 µs (backend) and 2.00 µs (runtime), audit asks
+  p99 3.5–6.9 ms in process and 5.0 ms over gRPC, trace fan-out p99 25 µs over 10,000 spans,
+  durable 389.8 ms after the last emit, verify 45.1 ms (the chain alone 8.8 ms).
 - Tests (`backend/tests/secops.rs`, `frontend/src/features/secops/`): the overview counts the
   workspace's agents, runs, spans, denials, approvals, alerts, risk and seal and nothing a
   guest or an outsider may see; the explorer narrows by every filter, pages without repeats,
