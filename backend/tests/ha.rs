@@ -700,6 +700,70 @@ async fn a_run_cancelled_while_nobody_holds_it_runs_nothing_more_on_takeover(poo
 }
 
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_run_claimed_by_a_replica_of_the_earlier_version_is_taken_over_once_it_is_silent(
+    pool: PgPool,
+) {
+    let (url, seen) = fake_grpc_runtime().await;
+    let a = instance(&pool, &url).await;
+    let (token, _) = a.register("owner@example.com").await;
+    scribe(&a, &token).await;
+    let (gid, nodes) = chain_of(&a, &token, &["NAP 3000 Draft"]).await;
+    let mut on_a = a.events(&gid);
+    let rid = start_run(&a, &token, &gid).await;
+    until_status(&mut on_a, &nodes[0], "running").await;
+    collect_until(&mut on_a, "node.output").await;
+    a.crash();
+    // As a replica of the version before leases leaves a run it claimed: a holder and a
+    // heartbeat, no lease.
+    let run_id: Uuid = rid.parse().unwrap();
+    let heartbeat = |pool: PgPool| async move {
+        sqlx::query("UPDATE runs SET lease_expires_at = NULL, heartbeat_at = now() WHERE id = $1")
+            .bind(run_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    };
+    heartbeat(pool.clone()).await;
+    let b = instance(&pool, &url).await;
+    let a_id = a.state.engine.instance();
+    // While it sends heartbeats it keeps the run, for longer than a lease.
+    for _ in 0..8 {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        heartbeat(pool.clone()).await;
+        let holder: Option<Uuid> = sqlx::query_scalar("SELECT claimed_by FROM runs WHERE id = $1")
+            .bind(run_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            holder,
+            Some(a_id),
+            "taken from a holder that sends heartbeats"
+        );
+    }
+    // Silent for a lease: taken over and finished.
+    until_held_by(
+        &pool,
+        &rid,
+        b.state.engine.instance(),
+        Duration::from_secs(LEASE_SECS + 5),
+    )
+    .await;
+    let run = until_finished(&b, &token, &rid).await;
+    assert_eq!(run["status"], "succeeded", "{run}");
+    assert_eq!(run["node_runs"][0]["attempt"], 2);
+    assert_eq!(executed(&seen)["NAP 3000 Draft"], 2);
+    let events = lease_events(&pool, &rid).await;
+    assert!(
+        events
+            .iter()
+            .any(|e| e.0 == "taken_over" && e.3 == Some(a_id) && e.4.contains("stopped renewing")),
+        "{events:?}"
+    );
+    assert_eq!(verified(&b, &token, &rid).await["ok"], true);
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
 async fn a_holder_cut_off_from_its_lease_stops_by_itself(pool: PgPool) {
     let (url, seen) = fake_grpc_runtime().await;
     let a = instance(&pool, &url).await;

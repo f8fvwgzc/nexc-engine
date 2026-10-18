@@ -38,7 +38,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   watcher also takes its first look at once instead of after a second).
   A failed write stops the run on that replica instead of letting it go on from a state the
   database does not have, span batches are retried with back-off for two minutes (a database
-  failover), and runs are no longer failed as orphans after 60 s without a heartbeat. The
+  failover), and runs are no longer failed as orphans after 60 s without a heartbeat: a run
+  claimed during the rollout by a replica of the version before leases (which sets no lease) is
+  taken over once its heartbeat is older than a lease. The
   history of every lease is kept in `run_lease_events` and counted in
   `nexc_run_lease_events_total{event}`.
 - `Idempotency-Key` on the writes a client retries after a failover (`docs/CONTRACT.md` §3):

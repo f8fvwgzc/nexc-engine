@@ -1308,8 +1308,9 @@ Run leases (`docs/HA.md`). The replica executing a run holds a lease on it: `run
 takes the next epoch; the holder renews every lease it holds every third of `NEXC_RUN_LEASE_SECS`
 in one statement, and a renewal that finds the epoch moved (or a database that did not confirm a
 lease for a whole lease) stops the run on that replica. Every replica's dispatcher looks every 2 s
-for a running run whose lease ran out and takes it over with one `UPDATE` that sets `claimed_by`,
-a fresh `lease_expires_at` and `lease_epoch + 1`. Every write the executor makes for the run (node
+for a running run whose lease ran out (or, claimed by a replica of a version before leases, has
+no lease and a heartbeat older than a lease) and takes it over with one `UPDATE` that sets
+`claimed_by`, a fresh `lease_expires_at` and `lease_epoch + 1`. Every write the executor makes for the run (node
 results and statuses, outputs, spans, usage, the run's counters and status) runs in a transaction
 that first locks the run row at the epoch it holds (`FOR SHARE`, or `FOR NO KEY UPDATE` when the
 write changes the run row itself; span batches do it in their one statement): a former holder's write

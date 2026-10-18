@@ -297,7 +297,10 @@ impl FromRow<'_, PgRow> for Takeover {
 /// `instance`, in one statement that raises its epoch: from then on the
 /// former holder's writes are refused. Runs in `local` (executing here) are
 /// left alone. A holder that still sends heartbeats (an instance of an
-/// earlier version, which knows no leases) is never taken over.
+/// earlier version, which knows no leases) is never taken over; a run such
+/// an instance claimed has no lease at all, and is taken over once its
+/// heartbeat is older than a lease. An external agent's session (claimed
+/// by nobody) is never taken over.
 pub async fn take_over(
     db: impl PgExecutor<'_>,
     instance: Uuid,
@@ -307,7 +310,8 @@ pub async fn take_over(
     sqlx::query_as(
         "WITH expired AS (
              SELECT id, claimed_by, heartbeat_at IS NULL AS released FROM runs
-             WHERE status = 'running' AND lease_expires_at < now()
+             WHERE status = 'running'
+               AND (lease_expires_at < now() OR (lease_expires_at IS NULL AND claimed_by IS NOT NULL))
                AND (heartbeat_at IS NULL OR heartbeat_at < now() - make_interval(secs => $2))
                AND NOT (id = ANY($3))
              ORDER BY lease_expires_at FOR UPDATE SKIP LOCKED LIMIT 1)
