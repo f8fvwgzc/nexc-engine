@@ -322,6 +322,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agents/{id}/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The API tokens of an external agent (workspace admins): prefixes and
+         *     dates, never the tokens.
+         */
+        get: operations["tokens"];
+        put?: never;
+        /**
+         * Issues an API token to an external agent (workspace admins). The token
+         *     is in the answer once and kept as a hash; audited as `agent_token_issued`.
+         */
+        post: operations["issue_token"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/{id}/tokens/{tid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revokes an API token (workspace admins); audited as `agent_token_revoked`. */
+        delete: operations["revoke_token"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/alerts/{id}/acknowledge": {
         parameters: {
             query?: never;
@@ -2037,6 +2078,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{wid}/mcp-servers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The MCP servers of a workspace (members and above). */
+        get: operations["list"];
+        put?: never;
+        /**
+         * Registers an MCP server for the workspace's agents (admins). The server
+         *     is connected to at once and its tools recorded; a server that does not
+         *     answer is still registered, with the failure on it.
+         */
+        post: operations["create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/mcp-servers/{sid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One MCP server of the workspace. */
+        get: operations["get"];
+        put?: never;
+        post?: never;
+        /** Removes a server (admins); its tools stop being offered at the next run. */
+        delete: operations["delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/mcp-servers/{sid}/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Connects to a server again and records the tools it lists (admins). */
+        post: operations["check"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{wid}/members": {
         parameters: {
             query?: never;
@@ -2591,6 +2689,24 @@ export interface components {
             team_id: string | null;
             title: string;
         };
+        /** @description An API token of an external agent, as listed (the token itself is shown once). */
+        AgentApiToken: {
+            /** Format: uuid */
+            agent_id: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            created_by: string | null;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            last_used_at: string | null;
+            name: string;
+            /** @description The token's first characters, to tell tokens apart. */
+            prefix: string;
+            /** Format: date-time */
+            revoked_at: string | null;
+        };
         /**
          * @description The agent's ID card: the agent, who answers for it, its team, what it
          *     has left to spend and what it did last.
@@ -2614,10 +2730,12 @@ export interface components {
             name: string;
         };
         /**
-         * @description Where an agent runs: the Python agent runtime or the built-in LLM executor.
+         * @description Where an agent runs: the Python agent runtime, the built-in LLM
+         *     executor, or somewhere else entirely (it uses nexc as its policy and
+         *     trace service through the Agent Firewall API).
          * @enum {string}
          */
-        AgentRuntime: "python" | "builtin";
+        AgentRuntime: "python" | "builtin" | "external";
         /**
          * @description Whether an agent accepts work.
          * @enum {string}
@@ -2884,7 +3002,7 @@ export interface components {
          * @description What an audit entry records.
          * @enum {string}
          */
-        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned" | "trace_sealed" | "policy_changed" | "policy_mismatch" | "agent_quarantined" | "agent_released" | "approval_granted" | "approval_denied" | "artifact_quarantined" | "artifact_released" | "alert_raised" | "classification_changed";
+        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned" | "trace_sealed" | "policy_changed" | "policy_mismatch" | "agent_quarantined" | "agent_released" | "approval_granted" | "approval_denied" | "artifact_quarantined" | "artifact_released" | "alert_raised" | "classification_changed" | "mcp_server_added" | "mcp_server_removed" | "agent_token_issued" | "agent_token_revoked";
         /** @description An answer from the audit. */
         AuditAnswer: {
             answer: string;
@@ -3554,6 +3672,15 @@ export interface components {
             identifier: string;
             title: string;
         };
+        /** @description The status of the firewall, for the operator. */
+        FirewallStatus: {
+            addr: string | null;
+            enabled: boolean;
+            /** @description Decisions sessions open on this instance. */
+            open_sessions: number;
+            /** @description Hex of the Ed25519 public key decisions are signed with. */
+            public_key: string;
+        };
         /** @description `POST /graphs/from-template` body. */
         FromTemplate: {
             /** @description Graph name (default: the template's name, plus the topic when given). */
@@ -3574,6 +3701,15 @@ export interface components {
              * @description Workspace to create the graph in (default: the caller's first workspace).
              */
             workspace_id?: string | null;
+        };
+        /** @description The tools gateway's limits. */
+        GatewayStatus: {
+            /** Format: int32 */
+            calls_per_minute: number;
+            /** Format: int64 */
+            max_response_bytes: number;
+            /** Format: int64 */
+            timeout_secs: number;
         };
         /** @description A full graph with its nodes and edges. */
         Graph: {
@@ -3739,13 +3875,22 @@ export interface components {
             database: components["schemas"]["DatabaseStatus"];
             /** @description The server's embedding model (`builtin-hash-256` when none is configured). */
             embedding_model: string;
+            /** @description The Agent Firewall API: where it listens and the key it signs with. */
+            firewall: components["schemas"]["FirewallStatus"];
+            gateway: components["schemas"]["GatewayStatus"];
             /** @description The onto-intelli the audit's facts go to ("ask the audit"); disabled when none is configured. */
             ontology: components["schemas"]["BackendHealth"];
+            /** @description The OpenTelemetry export of the trace. */
+            otlp: components["schemas"]["OtlpStatus"];
             /**
              * @description Where background work is queued and what caches there are: all in
              *     PostgreSQL and in process, with no other service to run.
              */
             queue: string;
+            /** @description The runtime's gRPC endpoint and whether it answers (disabled on `ndjson`). */
+            runtime_grpc: components["schemas"]["BackendHealth"];
+            /** @description `grpc` or `ndjson`: the wire the backend speaks to the runtime. */
+            runtime_protocol: string;
             runtime_reachable: boolean;
             /** @description Where the agent runtime is expected, and whether it answers. */
             runtime_url: string;
@@ -3887,6 +4032,17 @@ export interface components {
             position: number;
             /** Format: uuid */
             team_id: string;
+        };
+        /** @description `POST /agents/{id}/tokens` body. */
+        IssueToken: {
+            /** @description What the token is for, to tell tokens apart. */
+            name?: string;
+        };
+        /** @description A token just issued: the only time its value is given out. */
+        IssuedAgentApiToken: {
+            /** @description `nexc_agt_…`; keep it, it is not shown again. */
+            secret: string;
+            token: components["schemas"]["AgentApiToken"];
         };
         /** @description A password reset link's token, shown once. */
         IssuedReset: {
@@ -4125,6 +4281,73 @@ export interface components {
             /** @description The notifications to mark read; all of them when left out. */
             ids?: string[] | null;
         };
+        /** @description What a connection test found. */
+        McpCheck: {
+            detail: string;
+            /**
+             * Format: int64
+             * @description How long the server took to answer `initialize` and `tools/list`.
+             */
+            latency_ms: number;
+            ok: boolean;
+            tools: components["schemas"]["McpTool"][];
+        };
+        /** @description A registered server, as shown (the auth header never). */
+        McpServer: {
+            /** @description Tools agents may call; empty means every tool the server lists. */
+            allowed_tools: string[];
+            args: string[];
+            command: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            created_by: string | null;
+            /** @description Whether an `Authorization` header is kept for the server. */
+            has_auth_header: boolean;
+            /** Format: uuid */
+            id: string;
+            last_check_detail: string;
+            last_check_ok: boolean | null;
+            /** Format: date-time */
+            last_checked_at: string | null;
+            /** @description The strictest classification of data that may be sent to the server. */
+            max_label: components["schemas"]["DataLabel"];
+            name: string;
+            /** @description The tools the server listed at the last connection test. */
+            tools: components["schemas"]["McpTool"][];
+            transport: components["schemas"]["McpTransport"];
+            /** Format: date-time */
+            updated_at: string;
+            url: string | null;
+            /** Format: uuid */
+            workspace_id: string;
+        };
+        /** @description The fields a server is registered with. */
+        McpServerInput: {
+            allowed_tools?: string[];
+            args?: string[];
+            /** @description `http`: an `Authorization` header value, kept encrypted and never shown again. */
+            auth_header?: string | null;
+            /** @description `stdio`: the executable to start. */
+            command?: string | null;
+            max_label?: components["schemas"]["DataLabel"];
+            name: string;
+            transport: components["schemas"]["McpTransport"];
+            /** @description `http`: where the server listens. */
+            url?: string | null;
+        };
+        /** @description A tool as a server lists it. */
+        McpTool: {
+            description?: string;
+            /** @description JSON Schema of the arguments. */
+            input_schema?: Record<string, never>;
+            name: string;
+        };
+        /**
+         * @description How the backend reaches a server.
+         * @enum {string}
+         */
+        McpTransport: "stdio" | "http";
         /** @description A stored memory. `score` is set only for search results. */
         Memory: {
             /** Format: int64 */
@@ -4355,6 +4578,23 @@ export interface components {
             queue_depth: number;
             /** Format: int64 */
             running_nodes: number;
+        };
+        /** @description Where the export stands, for the operator. */
+        OtlpStatus: {
+            /**
+             * Format: int64
+             * @description Spans written that have not gone out yet.
+             */
+            behind: number;
+            enabled: boolean;
+            endpoint: string | null;
+            last_error: string | null;
+            /** Format: date-time */
+            last_exported_at: string | null;
+            /** @description Whether the collector accepted a connection just now. */
+            reachable: boolean;
+            /** Format: int64 */
+            spans_exported: number;
         };
         /** @description Where content of one label may go. */
         Outbound: {
@@ -6427,6 +6667,134 @@ export interface operations {
             };
             /** @description Not quarantined */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    tokens: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentApiToken"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    issue_token: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IssueToken"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssuedAgentApiToken"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The agent is not an external one */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    revoke_token: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                id: string;
+                /** @description Token id */
+                tid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11009,6 +11377,205 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MapNeighbourhood"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServer"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpServerInput"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServer"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Server id */
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServer"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Server id */
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    check: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Server id */
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpCheck"];
                 };
             };
             403: {

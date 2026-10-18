@@ -7,7 +7,7 @@ export const AGENT_STATUSES = ['active', 'paused', 'over_budget', 'quarantined']
 export const agentStatusSchema = z.enum(AGENT_STATUSES);
 export type AgentStatus = z.infer<typeof agentStatusSchema>;
 
-export const agentRuntimeSchema = z.enum(['python', 'builtin']);
+export const agentRuntimeSchema = z.enum(['python', 'builtin', 'external']);
 export type AgentRuntime = z.infer<typeof agentRuntimeSchema>;
 
 /** Classification of documents, topics and memories; the clearance an agent holds. */

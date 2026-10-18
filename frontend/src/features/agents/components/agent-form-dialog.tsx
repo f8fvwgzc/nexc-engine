@@ -204,6 +204,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, agents }: AgentForm
                     options={[
                       { value: 'python', label: 'Python agent runtime' },
                       { value: 'builtin', label: 'Built-in' },
+                      { value: 'external', label: 'External (Agent Firewall API)' },
                     ]}
                   />
                 )}

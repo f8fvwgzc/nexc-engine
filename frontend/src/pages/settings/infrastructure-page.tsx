@@ -56,6 +56,61 @@ function Status() {
           {data.runtime_reachable ? 'answers' : 'not reachable'}
         </Badge>
       </Row>
+      <Row name="Runtime stream">
+        {data.runtime_grpc.enabled ? (
+          <>
+            <span className="font-mono text-xs">{data.runtime_grpc.url}</span>{' '}
+            <Badge variant={data.runtime_grpc.ok ? 'outline' : 'destructive'}>
+              {data.runtime_grpc.ok ? 'gRPC answers' : 'gRPC not reachable'}
+            </Badge>
+            {data.runtime_grpc.detail && (
+              <span className="text-muted-foreground"> · {data.runtime_grpc.detail}</span>
+            )}
+          </>
+        ) : (
+          `NDJSON over HTTP (NEXC_RUNTIME_PROTOCOL=${data.runtime_protocol}); the gRPC stream is the default and NDJSON is kept for one release`
+        )}
+      </Row>
+      <Row name="Tools gateway">
+        {data.gateway.calls_per_minute} calls per minute per agent · {data.gateway.timeout_secs} s
+        per call · responses up to {formatBytes(data.gateway.max_response_bytes)}
+      </Row>
+      <Row name="Agent Firewall API">
+        {data.firewall.enabled ? (
+          <>
+            <span className="font-mono text-xs">{data.firewall.addr}</span>{' '}
+            <Badge variant="outline">
+              {data.firewall.open_sessions} open session
+              {data.firewall.open_sessions === 1 ? '' : 's'}
+            </Badge>
+            <span className="text-muted-foreground">
+              {' '}
+              · signs with Ed25519 key{' '}
+              <span className="font-mono text-xs">{data.firewall.public_key.slice(0, 16)}…</span>
+            </span>
+          </>
+        ) : (
+          'Off: set NEXC_GRPC_ADDR to serve external agents over gRPC'
+        )}
+      </Row>
+      <Row name="OpenTelemetry">
+        {data.otlp.enabled ? (
+          <>
+            <span className="font-mono text-xs">{data.otlp.endpoint}</span>{' '}
+            <Badge variant={data.otlp.reachable ? 'outline' : 'destructive'}>
+              {data.otlp.reachable ? 'collector answers' : 'collector not reachable'}
+            </Badge>
+            <span className="text-muted-foreground">
+              {' '}
+              · {data.otlp.spans_exported} spans exported
+              {data.otlp.behind > 0 && `, ${data.otlp.behind} behind`}
+              {data.otlp.last_error && ` · ${data.otlp.last_error}`}
+            </span>
+          </>
+        ) : (
+          'Off: set NEXC_OTLP_ENDPOINT to export the trace as OpenTelemetry spans'
+        )}
+      </Row>
       <Row name="Embedding model">{data.embedding_model}</Row>
       <Row name="Audit graph">
         {data.ontology.enabled ? (
