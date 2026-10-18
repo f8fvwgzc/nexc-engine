@@ -774,8 +774,11 @@ export function IssueExplorer({
   );
   const issues = issuesResult.data;
   const isPending = issuesResult.isPending || teamsResult.isPending;
-  // A list that could not be read is not an empty one.
-  const loadError = teamsResult.error ?? issuesResult.error;
+  // A list that could not be read is not an empty one. One that was read stays on screen when a
+  // later refetch fails (the toast says so).
+  const loadError =
+    (teamsResult.data ? null : teamsResult.error) ??
+    (issuesResult.data ? null : issuesResult.error);
   const retry = () => {
     if (teamsResult.error) void teamsResult.refetch();
     if (issuesResult.error) void issuesResult.refetch();

@@ -222,7 +222,8 @@ function TransferForm({ workspace }: { workspace: Workspace }) {
           </p>
         )}
         {history.isPending && <Skeleton className="h-16 w-full rounded-lg" />}
-        {history.error && (
+        {/* A failed poll keeps the list it had; only a list never read becomes an error. */}
+        {history.error && !history.data && (
           <ErrorState
             compact
             title="Couldn’t load the earlier transfers"

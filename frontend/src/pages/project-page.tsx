@@ -175,7 +175,9 @@ function ProjectHeader({ workspace, project }: { workspace: Workspace; project: 
 function ProjectView({ workspace, projectId }: { workspace: Workspace; projectId: string }) {
   const { data: projects, isPending, error, refetch } = useQuery(projectsQuery(workspace.id));
   if (isPending) return <PageSkeleton />;
-  if (error) {
+  // Only a project list that was never read stands in for the page: once read, it stays on
+  // screen when a later refetch fails.
+  if (!projects) {
     return (
       <PageContainer>
         <h1 className="sr-only">Project</h1>
