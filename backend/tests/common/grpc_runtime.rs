@@ -1,7 +1,8 @@
 //! An in-process stand-in for the Python agent runtime that speaks the gRPC
 //! wire of CONTRACT §8 (`AgentRuntime/Execute`). The node title picks its
 //! behaviour: `SLOW` keeps the stream open until a `cancel` arrives (or 20 s
-//! pass), `APPROVAL` asks for an approval of `make_docx` and waits for the
+//! pass), `NAP <ms>` works that long and then answers (a `cancel` ends it
+//! early), `APPROVAL` asks for an approval of `make_docx` and waits for the
 //! decision, `DROP` ends the stream without a terminal event, `TOOL <name>`
 //! asks the gateway to perform `<name>` with the request's arguments and
 //! reports what came back, `BURST <n>` sends `n` deltas as fast as it can
@@ -414,6 +415,37 @@ impl AgentRuntime for Stub {
                     }
                     _ => send(result).await,
                 }
+                return;
+            }
+            if let Some(rest) = title.strip_prefix("NAP ") {
+                // Works for the given milliseconds, then answers normally; a cancel ends it.
+                let ms = rest
+                    .split_whitespace()
+                    .next()
+                    .and_then(|n| n.parse().ok())
+                    .unwrap_or(1000);
+                send(runtime_event::Event::Delta(pb::Delta {
+                    text: "napping".into(),
+                }))
+                .await;
+                let cancelled =
+                    tokio::time::timeout(Duration::from_millis(ms), next_command(&["cancel"]))
+                        .await;
+                if let Ok(Some(_)) = cancelled {
+                    send(runtime_event::Event::Error(pb::Error {
+                        message: "run cancelled: the backend asked".into(),
+                        retryable: true,
+                    }))
+                    .await;
+                    return;
+                }
+                send(runtime_event::Event::Tokens(pb::Tokens {
+                    input: 10,
+                    output: 5,
+                    cached: 0,
+                }))
+                .await;
+                send(result).await;
                 return;
             }
             if title.contains("DROP") {

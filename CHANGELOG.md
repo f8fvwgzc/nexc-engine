@@ -47,6 +47,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   409 with `Retry-After`. Server errors and rate limits are not kept. A housekeeping job deletes
   keys after 24 hours, and deleting an account deletes its keys. The OpenAPI document names the
   header on the five routes (frontend types and the site's copy regenerated).
+- Chaos tests of run takeover (`backend/tests/ha.rs`): two instances of the app share one
+  database and the gRPC stand-in runtime (which gains a `NAP <ms>` behaviour). The instance
+  executing a three-node run has its dispatcher, its lease renewal and its runs aborted mid-node
+  with no graceful shutdown (`TestApp::crash`); the other takes the run over within the lease and
+  5 s, the interrupted node runs again as attempt 2, the run succeeds, every node succeeds once (on
+  the wire of both instances and in the usage ledger), the trace verifies with no span missing and
+  the lease history names both holders. Further tests: a former holder that comes back has its
+  node write and its spans refused and recorded as `fenced`; a node waiting for an approval waits
+  on across the takeover and resumes with the decision carried to its new request; a cancel of a
+  sub-agent recorded while nobody held the run is delivered by the new holder to the sub-agent of
+  the same name in the new attempt; an instance that stops renewing (`TestApp::stop_renewing`)
+  notices the takeover and stops its copy without writing.
 - Documentation site (`site/`, VitePress): the repository's Markdown rendered with a sidebar,
   full-text search, a dark theme, mermaid diagrams and the API reference (Scalar over
   `site/public/openapi.json`, a committed export of `nexc openapi`), in six sections: Start,
