@@ -32,7 +32,7 @@ use crate::domain::policy::{self, Action, Decision, PolicyVersions};
 use crate::domain::run::RunStatus;
 use crate::domain::trace::{self as trace_domain, SpanDraft, SpanKind, SpanStatus};
 use crate::engine::executor::agent::{Progress, recheck_with, span_from_wire};
-use crate::engine::policy::{Resolved, levels_for, resolve, versions_of};
+use crate::engine::policy::{Resolved, levels_for, versions_of};
 use crate::engine::trace::{self, TraceHandle, TraceSink};
 use crate::engine::{approvals::Delivery, scheduler};
 use crate::ontology::json;
@@ -43,11 +43,6 @@ use crate::rpc::firewall::agent_firewall_server::{AgentFirewall, AgentFirewallSe
 use crate::rpc::firewall::{self as pb};
 use crate::security::api_token;
 
-/// How long an agent's resolved policy is kept between calls: the token and
-/// the agent's status are looked up on every call (a revoked token or a
-/// quarantine takes effect at once); a policy edited meanwhile applies
-/// within this long.
-const POLICY_TTL: Duration = Duration::from_secs(5);
 /// A decisions session is sealed after this long without a call.
 pub const SESSION_IDLE: Duration = Duration::from_secs(600);
 /// Spans accepted on one reported run.
@@ -196,16 +191,11 @@ async fn close_run(
     Some(sealed)
 }
 
-/// A resolved policy, kept for [`POLICY_TTL`] since the instant.
-type CachedPolicy = (Instant, Arc<Resolved>, PolicyVersions);
-
 /// The service.
 #[derive(Clone)]
 pub struct FirewallService {
     state: AppState,
     sessions: Arc<Sessions>,
-    /// Resolved policies by agent and policy version.
-    policies: Arc<DashMap<(Uuid, i32), CachedPolicy>>,
 }
 
 impl FirewallService {
@@ -213,11 +203,14 @@ impl FirewallService {
         FirewallService {
             sessions: state.firewall_sessions.clone(),
             state,
-            policies: Arc::default(),
         }
     }
 
-    /// The caller a request's bearer token names.
+    /// The caller a request's bearer token names. The token and the agent's
+    /// status are looked up on every call (a revoked token or a quarantine
+    /// takes effect at once); the resolved policy comes from the hot-read
+    /// cache, dropped on every replica the moment a policy or the agent is
+    /// written.
     async fn authenticate(&self, metadata: &MetadataMap) -> Result<Caller, Status> {
         let presented = metadata
             .get("authorization")
@@ -243,35 +236,17 @@ impl FirewallService {
         let Some(workspace_id) = repo_workspace(&agent) else {
             return Err(Status::permission_denied("the agent is in no workspace"));
         };
-        let key = (agent.id, agent.policy_version);
-        let cached = self
-            .policies
-            .get(&key)
-            .filter(|c| c.0.elapsed() < POLICY_TTL)
-            .map(|c| (c.1.clone(), c.2.clone()));
-        let (resolved, versions) = match cached {
-            Some(found) => found,
-            None => {
-                let policies = repo::policies::latest_all(&self.state.db, workspace_id)
-                    .await
-                    .map_err(internal)?;
-                let levels = levels_for(&policies, agent.team_id, Some(agent.id));
-                let versions = versions_of(&levels);
-                let resolved = Arc::new(resolve(&levels, Some(&agent.capabilities)));
-                self.policies
-                    .insert(key, (Instant::now(), resolved.clone(), versions.clone()));
-                if self.policies.len() > 10_000 {
-                    self.policies
-                        .retain(|_, (at, _, _)| at.elapsed() < POLICY_TTL);
-                }
-                (resolved, versions)
-            }
-        };
+        let effective = self
+            .state
+            .caches
+            .resolved(&self.state.db, workspace_id, &agent)
+            .await
+            .map_err(internal)?;
         Ok(Caller {
             agent,
             workspace_id,
-            resolved,
-            versions,
+            resolved: effective.resolved.clone(),
+            versions: effective.versions.clone(),
         })
     }
 
@@ -672,7 +647,10 @@ impl AgentFirewall for FirewallService {
                     .await
                     .map_err(internal)?
                     .ok_or_else(|| Status::not_found("agent"))?;
-            let policies = repo::policies::latest_all(&self.state.db, caller.workspace_id)
+            let policies = self
+                .state
+                .caches
+                .policies(&self.state.db, caller.workspace_id)
                 .await
                 .map_err(internal)?;
             let versions = versions_of(&levels_for(&policies, agent.team_id, Some(agent.id)));
@@ -820,7 +798,9 @@ impl Drop for Running {
 }
 
 /// Serves the firewall, reflection and `grpc.health.v1` on `addr` (port 0
-/// for a free one) until stopped.
+/// for a free one) until stopped, with HTTP/2 keepalive as `NEXC_GRPC_*`
+/// say, so an agent platform's idle connection stays open and a dead one
+/// is noticed.
 pub async fn serve(state: AppState, addr: SocketAddr) -> std::io::Result<Running> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let addr = listener.local_addr()?;
@@ -834,9 +814,13 @@ pub async fn serve(state: AppState, addr: SocketAddr) -> std::io::Result<Running
     health_reporter
         .set_serving::<AgentFirewallServer<FirewallService>>()
         .await;
+    let keepalive = state.settings.grpc_channel();
     let service = FirewallService::new(state);
     let task = tokio::spawn(async move {
         let result = tonic::transport::Server::builder()
+            .tcp_nodelay(true)
+            .http2_keepalive_interval(Some(keepalive.keepalive))
+            .http2_keepalive_timeout(Some(keepalive.keepalive_timeout))
             .add_service(health)
             .add_service(reflection)
             .add_service(AgentFirewallServer::new(service))

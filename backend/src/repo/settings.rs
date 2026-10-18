@@ -8,7 +8,7 @@ use super::enum_col;
 use crate::domain::settings::LlmProviderKind;
 
 /// The stored row.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StoredLlmSettings {
     pub provider: LlmProviderKind,
     pub model: String,

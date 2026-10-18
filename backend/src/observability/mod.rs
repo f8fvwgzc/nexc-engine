@@ -1,6 +1,8 @@
-//! Logging / tracing setup and Prometheus metrics.
+//! Logging / tracing setup, Prometheus metrics and the latency window of
+//! the operator's panel.
 #![forbid(unsafe_code)]
 
+pub mod latency;
 pub mod metrics;
 
 use tracing_subscriber::EnvFilter;

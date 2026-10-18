@@ -53,7 +53,7 @@ async fn checked_host(state: &AppState, wid: Uuid, url: &str) -> Result<String, 
             ),
         ));
     }
-    let policies = repo::policies::latest_all(&state.db, wid).await?;
+    let policies = state.caches.policies(&state.db, wid).await?;
     let resolved = resolve(&levels_for(&policies, None, None), None);
     let decision = decide_with(
         &resolved.capabilities,
@@ -312,6 +312,9 @@ pub async fn delete(
         return Err(AppError::NotFound("a2a counterpart"));
     }
     tx.commit().await?;
+    state
+        .caches
+        .invalidate(crate::app::caches::Key::Agent(row.counterpart.agent_id));
     audit(
         &state,
         wid,

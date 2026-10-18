@@ -9,12 +9,11 @@ use crate::domain::settings::LlmProviderKind;
 use crate::repo;
 
 /// The policy of a workspace; the permissive default when it set none, or
-/// for work that belongs to no workspace.
+/// for work that belongs to no workspace. A hot read: kept in memory until
+/// the guardrails are written.
 pub async fn load(state: &AppState, workspace_id: Option<Uuid>) -> Result<Guardrails, AppError> {
     match workspace_id {
-        Some(id) => Ok(repo::workspaces::guardrails(&state.db, id)
-            .await?
-            .unwrap_or_default()),
+        Some(id) => Ok((*state.caches.guardrails(&state.db, id).await?).clone()),
         None => Ok(Guardrails::default()),
     }
 }

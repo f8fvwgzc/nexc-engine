@@ -3,7 +3,8 @@
 //! * register / login / refresh / logout: 60 per minute per IP (burst 20);
 //! * failed logins: 5 per minute per IP — the sixth failure within a minute
 //!   gets `429` until the bucket refills;
-//! * authenticated API calls: 600 per minute per user (burst 120);
+//! * authenticated API calls: `NEXC_API_CALLS_PER_MINUTE` per user (600 by
+//!   default, burst a fifth of it);
 //! * gateway calls (MCP tools, `fetch_url`): `NEXC_GATEWAY_CALLS_PER_MINUTE`
 //!   per agent principal (burst a quarter of it).
 
@@ -34,10 +35,6 @@ const AUTH_PER_IP: Limit = Limit {
 const LOGIN_FAILURES_PER_IP: Limit = Limit {
     burst: 5,
     per_minute: 5.0,
-};
-const API_PER_USER: Limit = Limit {
-    burst: 120,
-    per_minute: 600.0,
 };
 /// SIEM pulls (`…/alerts/export`, `…/audit/export`): each answers up to 10,000 entries.
 const EXPORTS_PER_USER: Limit = Limit {
@@ -101,17 +98,21 @@ pub struct RateLimiters {
 
 impl Default for RateLimiters {
     fn default() -> Self {
-        Self::new(120)
+        Self::new(120, 600)
     }
 }
 
 impl RateLimiters {
-    /// Limiters with `gateway_per_minute` gateway calls per agent.
-    pub fn new(gateway_per_minute: u32) -> Self {
+    /// Limiters with `gateway_per_minute` gateway calls per agent and
+    /// `api_per_minute` authenticated requests per account.
+    pub fn new(gateway_per_minute: u32, api_per_minute: u32) -> Self {
         RateLimiters {
             auth: Keyed::new(AUTH_PER_IP),
             login_failures: Keyed::new(LOGIN_FAILURES_PER_IP),
-            users: Keyed::new(API_PER_USER),
+            users: Keyed::new(Limit {
+                burst: (api_per_minute / 5).max(1),
+                per_minute: f64::from(api_per_minute),
+            }),
             gateway: Keyed::new(Limit {
                 burst: (gateway_per_minute / 4).clamp(1, 1000),
                 per_minute: f64::from(gateway_per_minute),
@@ -200,7 +201,7 @@ mod tests {
 
     #[test]
     fn gateway_calls_are_limited_per_agent() {
-        let l = RateLimiters::new(8);
+        let l = RateLimiters::new(8, 600);
         for _ in 0..2 {
             assert!(l.check_gateway("agent://w/a").is_ok());
         }
@@ -209,5 +210,19 @@ mod tests {
             Err(AppError::RateLimited { .. })
         ));
         assert!(l.check_gateway("agent://w/b").is_ok(), "another agent");
+    }
+
+    #[test]
+    fn api_calls_are_limited_per_account_at_a_fifth_burst() {
+        let l = RateLimiters::new(120, 10);
+        let user = Uuid::now_v7();
+        for _ in 0..2 {
+            assert!(l.check_user(user).is_ok());
+        }
+        assert!(matches!(
+            l.check_user(user),
+            Err(AppError::RateLimited { .. })
+        ));
+        assert!(l.check_user(Uuid::now_v7()).is_ok(), "another account");
     }
 }

@@ -2,6 +2,7 @@
 //! lifecycle (graceful shutdown on Ctrl-C / SIGTERM).
 #![forbid(unsafe_code)]
 
+pub mod caches;
 pub mod router;
 mod state;
 pub mod workers;

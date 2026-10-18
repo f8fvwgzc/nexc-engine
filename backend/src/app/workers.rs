@@ -24,7 +24,12 @@ const FORGET_EVERY: Duration = Duration::from_secs(3600);
 
 /// Starts every background worker; they stop when `shutdown` is cancelled.
 pub fn spawn(state: &AppState, shutdown: CancellationToken) {
-    realtime::fanout::spawn(state.hub.clone(), state.db.clone(), shutdown.clone());
+    realtime::fanout::spawn(
+        state.hub.clone(),
+        state.caches.clone(),
+        state.db.clone(),
+        shutdown.clone(),
+    );
     tokio::spawn(scheduler::dispatcher(state.clone(), shutdown.clone()));
     if export::spawn(state, shutdown.clone()) {
         tracing::info!(
@@ -130,5 +135,6 @@ async fn housekeeping(state: &AppState) -> anyhow::Result<()> {
     state.limiters.prune();
     state.engine.prune_dispatches();
     state.gateway_registry.prune();
+    state.caches.prune();
     Ok(())
 }

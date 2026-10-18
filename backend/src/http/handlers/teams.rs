@@ -223,6 +223,7 @@ pub async fn update(
     let team = visible_team(&state, auth, wid, tid).await?.0;
     let subject = Subject::Text(&team.name);
     audit(&state, wid, auth.id, AuditAction::TeamUpdated, subject, "").await;
+    state.caches.invalidate(crate::app::caches::Key::Agents);
     Ok(Json(team))
 }
 
@@ -247,6 +248,7 @@ pub async fn delete(
     repo::teams::delete(&state.db, tid).await?;
     let subject = Subject::Text(&team.name);
     audit(&state, wid, auth.id, AuditAction::TeamDeleted, subject, "").await;
+    state.caches.invalidate(crate::app::caches::Key::Agents);
     Ok(StatusCode::NO_CONTENT)
 }
 

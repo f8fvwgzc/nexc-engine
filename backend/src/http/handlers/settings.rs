@@ -262,6 +262,9 @@ pub async fn put_workspace_llm(
         key,
     )
     .await?;
+    state
+        .caches
+        .invalidate(crate::app::caches::Key::WorkspaceLlm(wid));
     // The provider and model are noted; the key never is.
     let detail = format!("{} · {}", req.provider, req.model.trim());
     let subject = Subject::Text("Workspace credential");
@@ -295,6 +298,9 @@ pub async fn delete_workspace_llm(
         WorkspaceAction::UpdateSettings,
     )?;
     repo::settings::delete_for_workspace(&state.db, wid).await?;
+    state
+        .caches
+        .invalidate(crate::app::caches::Key::WorkspaceLlm(wid));
     let subject = Subject::Text("Workspace credential");
     audit(
         &state,

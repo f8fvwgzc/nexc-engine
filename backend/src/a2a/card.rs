@@ -9,8 +9,6 @@ use super::endpoint_url;
 use crate::app::AppState;
 use crate::domain::agent::Agent;
 use crate::domain::agent_template;
-use crate::engine::policy::{levels_for, resolve};
-use crate::repo;
 
 /// What a built-in tool does, for the card's skills.
 fn tool_description(tool: &str) -> String {
@@ -40,11 +38,11 @@ pub async fn build(state: &AppState, agent: &Agent, workspace_id: Uuid) -> anyho
             .bind(workspace_id)
             .fetch_optional(&state.db)
             .await?;
-    let policies = repo::policies::latest_all(&state.db, workspace_id).await?;
-    let resolved = resolve(
-        &levels_for(&policies, agent.team_id, Some(agent.id)),
-        Some(&agent.capabilities),
-    );
+    let resolved = state
+        .caches
+        .resolved(&state.db, workspace_id, agent)
+        .await?;
+    let resolved = &resolved.resolved;
     let template = agent_template::builtin()
         .iter()
         .find(|t| t.role == agent.role);

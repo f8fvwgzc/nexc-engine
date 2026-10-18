@@ -208,6 +208,125 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with the costs adding up, a cancelled subtree and a waiting approval are told apart, the list
   narrows by every filter, pages without repeats, clamps its limit, refuses a window the wrong way
   round, guests and outsiders; the worst-case suite reads the new routes.
+- `make prove-api`: the API's latency per endpoint under load, measured and gated. A Rust
+  measurement test (`backend/tests/api_latency.rs`, `--ignored`, run in release like the other
+  prove targets) seeds a workspace with one of everything on the demo provider, then drives every
+  documented `GET` and the main writes (an issue filed, a node added, a run started) with 64
+  concurrent callers for a fixed number of requests each through the real router in process
+  (no socket between the caller and axum, so the figures are the server's own, PostgreSQL
+  included), and measures the three gRPC services over loopback: the runtime's `Execute` stream
+  against the stand-in runtime, onto-intelli's `Ask` against the stub server, and the Agent
+  Firewall's `AuthorizeAction` in process and over the wire, with `grpc.health.v1/Check` on the
+  same server as the transport alone. Every row is the best of two rounds and shows p50, p99 and
+  max; the targets at p99 are 20 ms for reads (200 ms for the whole-workspace aggregates, the
+  SecOps overview, search, the map, usage, the day summary, transfers, knowledge search and
+  memory topics, and for the server's status page, which probes what it runs on), 50 ms for
+  writes and 1 ms for the gRPC calls with the work itself excluded, and a
+  missed target fails the test, so the table gates CI. The first rows show the floor under every
+  read, PostgreSQL's own round trip at one caller and at 64 with the harness's pool and with the
+  server's default pool of 20. `NEXC_PROVE_API_CALLERS`, `NEXC_PROVE_API_REQUESTS`,
+  `NEXC_PROVE_API_ROUNDS`, `NEXC_PROVE_API_DB_CONNECTIONS` and `NEXC_PROVE_API_TARGET_SCALE`
+  size it for a smaller machine. The table, the machine and the build it was taken on are in
+  `docs/PERFORMANCE.md`; the API's per-account rate limit became a setting on the way
+  (`NEXC_API_CALLS_PER_MINUTE`, 600 as before) so a load test can lift it on its own server.
+  Recorded at the end of the roadmap, the whole table in `docs/PERFORMANCE.md`: Apple M2 Pro,
+  release build, PostgreSQL 18.3 native on the same machine (in Docker Desktop its round trip is
+  0.65 ms instead of 0.05 ms), 64 callers × 8 requests, the best of two rounds; every gated row
+  met its target.
+
+  | endpoint | calls | status | p50 ms | p99 ms | max ms | target p99 | result |
+  | --- | ---: | --- | ---: | ---: | ---: | ---: | --- |
+  | PostgreSQL round trip, SELECT 1 through the pool (1 caller) | 512 | OK | 0.05 | 0.10 | 0.17 | — | info |
+  | PostgreSQL round trip, SELECT 1 through the pool (64 callers, 64 connections) | 512 | OK | 1.66 | 2.11 | 2.20 | — | info |
+  | PostgreSQL round trip, SELECT 1 through the pool (64 callers, 20 connections, the server's default pool) | 512 | OK | 1.53 | 3.67 | 3.71 | — | info |
+  | gRPC AgentRuntime/Execute round trip, stand-in runtime (1 caller) | 512 | OK | 0.07 | 0.08 | 0.09 | 1 ms | pass |
+  | gRPC IntelliService/Ask, stub onto-intelli (1 caller) | 512 | OK | 0.05 | 0.06 | 0.13 | 1 ms | pass |
+  | gRPC AgentFirewall/AuthorizeAction in process: the work (token lookup, decision, span; 1 caller) | 512 | OK | 0.15 | 0.32 | 0.34 | — | info |
+  | gRPC AgentFirewall/AuthorizeAction over the wire, whole call (1 caller) | 512 | OK | 0.21 | 0.38 | 0.39 | — | info |
+  | gRPC grpc.health.v1/Check on the firewall server: the transport, no work (1 caller) | 512 | OK | 0.03 | 0.05 | 0.06 | 1 ms | pass |
+  | GET /.well-known/agent.json | 512 | 200 | 6.19 | 7.06 | 7.23 | 20 ms | pass |
+  | GET /api/v1/admin/infrastructure | 512 | 200 | 33.39 | 62.26 | 71.77 | 200 ms | pass |
+  | GET /api/v1/agents/{id} | 512 | 200 | 5.67 | 6.52 | 6.69 | 20 ms | pass |
+  | GET /api/v1/auth/me | 512 | 200 | 3.24 | 3.79 | 3.84 | 20 ms | pass |
+  | GET /api/v1/graphs/{gid} | 512 | 200 | 10.03 | 11.40 | 11.85 | 20 ms | pass |
+  | GET /api/v1/issues/{iid} | 512 | 200 | 3.67 | 4.23 | 4.67 | 20 ms | pass |
+  | GET /api/v1/runs/{rid} | 512 | 200 | 8.41 | 9.33 | 9.56 | 20 ms | pass |
+  | GET /api/v1/runs/{rid}/trace | 512 | 200 | 7.17 | 8.15 | 8.70 | 20 ms | pass |
+  | GET /api/v1/workspaces/{wid} | 512 | 200 | 3.19 | 3.93 | 4.08 | 20 ms | pass |
+  | GET /api/v1/workspaces/{wid}/guardrails | 512 | 200 | 3.38 | 3.94 | 4.00 | 20 ms | pass |
+  | GET /api/v1/workspaces/{wid}/issues | 512 | 200 | 6.02 | 7.57 | 7.91 | 20 ms | pass |
+  | GET /api/v1/workspaces/{wid}/llm | 512 | 200 | 3.10 | 3.52 | 3.54 | 20 ms | pass |
+  | GET /api/v1/workspaces/{wid}/map | 512 | 200 | 6.39 | 7.60 | 8.26 | 200 ms | pass |
+  | GET /api/v1/workspaces/{wid}/policies/resolve | 512 | 200 | 4.09 | 4.77 | 4.99 | 20 ms | pass |
+  | GET /api/v1/workspaces/{wid}/search | 512 | 200 | 14.99 | 16.18 | 16.72 | 200 ms | pass |
+  | GET /api/v1/workspaces/{wid}/secops/overview | 512 | 200 | 42.09 | 45.41 | 48.04 | 200 ms | pass |
+  | GET /.well-known/agent.json (hot-read cache off) | 512 | 200 | 8.59 | 9.57 | 9.77 | — | info |
+  | GET /api/v1/agents/{id} (hot-read cache off) | 512 | 200 | 14.28 | 15.54 | 15.83 | — | info |
+  | GET /api/v1/workspaces/{wid}/guardrails (hot-read cache off) | 512 | 200 | 5.31 | 6.23 | 6.32 | — | info |
+  | GET /api/v1/workspaces/{wid}/llm (hot-read cache off) | 512 | 200 | 5.12 | 5.74 | 6.09 | — | info |
+  | GET /api/v1/workspaces/{wid}/policies/resolve (hot-read cache off) | 512 | 200 | 12.53 | 13.63 | 13.83 | — | info |
+  | POST /api/v1/workspaces/{wid}/teams/{tid}/issues (a team per caller) | 512 | 201 | 15.49 | 16.71 | 17.17 | 50 ms | pass |
+  | POST /api/v1/workspaces/{wid}/teams/{tid}/issues (64 callers on one team: the numbering lock) | 512 | 201 | 17.80 | 98.18 | 142.54 | — | info |
+  | POST /api/v1/graphs/{gid}/nodes | 512 | 201 | 13.53 | 15.06 | 16.29 | 50 ms | pass |
+  | POST /api/v1/graphs/{gid}/runs | 512 | 202 | 35.36 | 37.74 | 39.55 | 50 ms | pass |
+- Conditional reads (`docs/CONTRACT.md` §3): every `GET` that answers JSON carries a strong
+  `ETag` (the first 128 bits of the body's SHA-256; `GET /graphs/{gid}` keeps its own tag over
+  the graph and its version) and `Cache-Control: private, no-cache`; a `GET` with `If-None-Match`
+  naming the current tag is answered `304 Not Modified` with no body; a changed resource gets a
+  new tag; streams, downloads, the probes and `/metrics` carry none and keep `no-store`. One
+  middleware does it inside the metrics (a 304 is counted as one) and inside compression (the tag
+  is the body's, whatever encoding it travels in). The console's fetch layer keeps the tag and
+  the body of every GET by URL for the page, sends `If-None-Match` on the next request and reuses
+  the kept body on a 304; the lists query-persist keeps between visits are kept with their tags
+  too, per account and build, so the first refetch of a visit is a 304 as well; nothing else
+  reaches storage (`frontend/src/lib/api/etag-cache.ts`). The worst-case suite sweeps every
+  documented read: tagged, answered 304 with no body and the same tag, a changed issue and its
+  list retagged, the SSE stream and `/metrics` untagged.
+- Hot-read caches in process (`backend/src/app/caches.rs`): agent cards (the agent, its owner,
+  team and evaluation; the recent spans stay live), resolved policies per agent and policy
+  version, the latest policies of a workspace, workspace guardrails and the workspace's LLM
+  credential are kept per instance and dropped on write: the write drops the entry locally and
+  sends the key over the realtime fan-out (PostgreSQL `NOTIFY`, the channel the events travel
+  on), so every replica drops it at once; `NEXC_CACHE_TTL_SECS` (60) only bounds a missed
+  notification and `0` turns the caches off. The Agent Firewall decides from the shared cache
+  (its own five-second policy cache is gone: a policy edited elsewhere applies the moment the
+  notification lands, and the token and the agent's status are still looked up on every call);
+  the scheduler, the risk scorer, the A2A card and inbound tasks read the latest policies from
+  it. `nexc_cache_lookups_total{cache, result}` counts hits and misses. Tests: the entries, the
+  drop by key and the wire form; two servers on one database, a write on one dropping the entry
+  on the other within the second and the new policy applying there; the caches off. The gain in
+  the table: `GET /workspaces/{wid}/policies/resolve` p50 4.2 ms with the cache, 12.6 ms without;
+  guardrails 3.3 ms against 5.4 ms; the workspace credential 5.2 ms against 5.5 ms; an agent card
+  13 ms against 14 ms (two queries left: the membership and the recent spans).
+- Service to service. Every gRPC channel the backend opens (the runtime's stream, onto-intelli,
+  the OTLP collector) is built by `rpc::channel`: `NEXC_GRPC_POOL_SIZE` (2) connections per
+  channel with HTTP/2 keepalive (`NEXC_GRPC_KEEPALIVE_SECS` 30, dropped after
+  `NEXC_GRPC_KEEPALIVE_TIMEOUT_SECS` 10 unanswered), requests and streams balanced over them,
+  kept for the life of the process (the OTLP export used to open a channel per pass); the Agent
+  Firewall server pings its clients the same way; `docker-compose.yml` and the Helm chart
+  (`backend.grpc`) carry the settings with the reason to shorten them behind a NAT or a mesh.
+  `nexc_grpc_client_latency_seconds{service, method}` times every call this backend makes (the
+  runtime stream's opening, each onto-intelli call, each OTLP export). Calls to a network LLM
+  provider go through a circuit breaker per endpoint (`llm::breaker`, keyed `provider@base_url`):
+  after `NEXC_LLM_BREAKER_FAILURES` (5) consecutive provider failures (429, 5xx, no connection)
+  the circuit opens and every call fails at once with the retryable `LlmError::CircuitOpen` for
+  `NEXC_LLM_BREAKER_OPEN_SECS` (30), so a dead provider fails fast instead of each call waiting on
+  its own retries and timeouts; then one probe goes out and its outcome closes the circuit or
+  opens it again; `nexc_llm_breaker_total{provider, event}` counts the events and `0` failures
+  turns it off. Tests: the breaker's states, one probe at a time, a dead endpoint opening its
+  circuit through the router while another endpoint's stays closed.
+- The latency panel: `GET /admin/latency` (platform administrators) answers p50, p99 and max per
+  endpoint over the last five minutes from this instance's in-process histograms (every HTTP
+  route by its template, every gRPC call the backend made; a log-spaced histogram per route and
+  minute, percentiles read to within a 20 % bucket), slowest p99 first; the Infrastructure page
+  shows it as a small table under the server's status, refreshed every 30 seconds.
+  `deploy/grafana/nexc-engine.json` is a Grafana dashboard over the existing Prometheus metrics
+  (HTTP rate, status and latency, the share of reads answered 304, the gRPC client latencies,
+  runs, nodes, spans and the fan-out, firewall decisions, gateway calls, LLM tokens, the circuit
+  breaker, the cache hit ratios, alert deliveries, A2A tasks), with a README on importing it; CI
+  checks that it is valid JSON.
+- CI runs `make prove-api` as a smoke on every push (8 callers × 4 requests, one round, the
+  targets scaled ten times for a shared runner) and writes the table to the job summary.
 - A2A adapter, the console: the agent card gets an **A2A** tab with the switch that publishes
   the agent (admins; disabled for an external agent, with the reason), the addresses of its card,
   its well-known card and its JSON-RPC endpoint under the console's origin with a copy each, and
@@ -1021,6 +1140,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- The per-account API rate limit is a setting, `NEXC_API_CALLS_PER_MINUTE` (600, the burst a
+  fifth of it, as before), so a load test or an automation account can be given more on its own
+  server.
+- A tagged read answers `Cache-Control: private, no-cache` instead of `no-store`; untagged
+  answers, streams, downloads, the probes and errors keep `no-store`.
+- The Agent Firewall's own five-second cache of resolved policies is replaced by the shared
+  hot-read cache, dropped on every replica the moment a policy or the agent is written.
 - The project is licensed under the MIT License instead of Apache-2.0. No dependency requires a
   stricter licence: every one is MIT, BSD, ISC, Apache-2.0 or similar, with two npm packages
   under MPL-2.0, which only covers changes to those packages' own files.

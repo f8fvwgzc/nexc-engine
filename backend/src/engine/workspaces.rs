@@ -22,6 +22,13 @@ pub async fn erase(state: &AppState, wid: Uuid) -> Result<(), AppError> {
     .await?;
     repo::workspaces::delete(&state.db, wid).await?;
     state.memories.invalidate(wid);
+    for key in [
+        crate::app::caches::Key::Policies(wid),
+        crate::app::caches::Key::Guardrails(wid),
+        crate::app::caches::Key::WorkspaceLlm(wid),
+    ] {
+        state.caches.invalidate(key);
+    }
     super::artifacts::remove_runs(state, &runs).await;
     for id in documents {
         let _ = tokio::fs::remove_file(state.settings.documents_dir().join(id.to_string())).await;

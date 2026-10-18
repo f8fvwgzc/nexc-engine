@@ -46,11 +46,12 @@ pub async fn update_me(
     auth: Caller,
     ValidatedJson(req): ValidatedJson<UpdateProfile>,
 ) -> Result<Json<User>, AppError> {
-    Ok(Json(
-        repo::users::set_name(&state.db, auth.id, req.name.trim())
-            .await
-            .or_not_found("user")?,
-    ))
+    let user = repo::users::set_name(&state.db, auth.id, req.name.trim())
+        .await
+        .or_not_found("user")?;
+    // The name is on the card of every agent the account answers for.
+    state.caches.invalidate(crate::app::caches::Key::Agents);
+    Ok(Json(user))
 }
 
 /// Checks `given` against the caller's password, off the async workers.

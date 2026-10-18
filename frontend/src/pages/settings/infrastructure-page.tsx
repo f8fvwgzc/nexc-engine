@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { checkConnection, infrastructureQuery } from '@/features/insight/api';
+import { checkConnection, infrastructureQuery, latencyQuery } from '@/features/insight/api';
 import { errorMessage } from '@/lib/api/errors';
 import { formatBytes } from '@/lib/format';
 import { useAuthStore } from '@/stores/auth-store';
@@ -133,6 +133,76 @@ function Status() {
   );
 }
 
+function ms(value: number): string {
+  return value >= 100 ? value.toFixed(0) : value >= 10 ? value.toFixed(1) : value.toFixed(2);
+}
+
+/** Most rows shown; the rest are summed up in a line. */
+const LATENCY_ROWS = 40;
+
+/** p50, p99 and max per endpoint over the last five minutes, from the instance that answers. */
+function Latency() {
+  const { data, isPending, error } = useQuery(latencyQuery());
+  if (isPending) return <Skeleton className="h-40 w-full rounded-lg" />;
+  if (error) {
+    return (
+      <p role="alert" className="text-sm text-destructive">
+        {errorMessage(error)}
+      </p>
+    );
+  }
+  const shown = data.rows.slice(0, LATENCY_ROWS);
+  const hidden = data.rows.length - shown.length;
+  const minutes = Math.round(data.window_secs / 60);
+  return (
+    <section aria-label="Latency" className="space-y-3 rounded-lg border p-4">
+      <div className="space-y-1">
+        <h2 className="text-[13px] font-medium">Latency, last {minutes} minutes</h2>
+        <p className="text-[13px] text-muted-foreground">
+          Per endpoint, from this server instance's own histograms (behind a load balancer, one
+          replica's). gRPC rows are the calls the server made to the runtime, onto-intelli and the
+          collector. The same figures over time: the Grafana dashboard in deploy/grafana.
+        </p>
+      </div>
+      {shown.length === 0 ? (
+        <p className="text-[13px] text-muted-foreground">Nothing answered in the window yet.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-[13px]">
+            <thead className="text-left text-muted-foreground">
+              <tr>
+                <th className="py-1 pr-3 font-medium">Endpoint</th>
+                <th className="py-1 pr-3 text-right font-medium">Calls</th>
+                <th className="py-1 pr-3 text-right font-medium">p50 ms</th>
+                <th className="py-1 pr-3 text-right font-medium">p99 ms</th>
+                <th className="py-1 text-right font-medium">max ms</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map((row) => (
+                <tr key={`${row.method} ${row.route}`} className="border-t">
+                  <td className="py-1 pr-3 font-mono text-xs">
+                    <span className="text-muted-foreground">{row.method}</span> {row.route}
+                  </td>
+                  <td className="py-1 pr-3 text-right tabular-nums">{row.count}</td>
+                  <td className="py-1 pr-3 text-right tabular-nums">{ms(row.p50_ms)}</td>
+                  <td className="py-1 pr-3 text-right tabular-nums">{ms(row.p99_ms)}</td>
+                  <td className="py-1 text-right tabular-nums">{ms(row.max_ms)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {hidden > 0 && (
+            <p className="pt-2 text-[13px] text-muted-foreground">
+              {hidden} more endpoint{hidden === 1 ? '' : 's'} with a lower p99.
+            </p>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 /** Asks the server whether it can reach another PostgreSQL or Redis. Nothing is changed or kept. */
 function Check() {
   const [url, setUrl] = useState('');
@@ -204,6 +274,7 @@ export default function InfrastructurePage() {
       {admin ? (
         <>
           <Status />
+          <Latency />
           <Check />
         </>
       ) : (

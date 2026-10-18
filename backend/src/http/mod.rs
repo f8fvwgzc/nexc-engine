@@ -171,6 +171,7 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(platform::events))
         .routes(routes!(infrastructure::status))
         .routes(routes!(infrastructure::check))
+        .routes(routes!(latency::report))
         .routes(routes!(transfer::list, transfer::start))
         .routes(routes!(transfer::check))
         .routes(routes!(insight::timeline))
@@ -347,6 +348,7 @@ mod tests {
             "/a2a/agents/{principal}",
             "/a2a/tasks/{tid}/artifacts/{aid}",
             "/metrics",
+            "/api/v1/admin/latency",
         ] {
             assert!(paths.contains_key(p), "missing {p}");
         }

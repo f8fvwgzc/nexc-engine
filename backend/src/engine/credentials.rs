@@ -64,8 +64,13 @@ pub async fn resolve(
     if stored.is_none()
         && let Some(workspace_id) = workspace_id
     {
-        stored = repo::settings::find_for_workspace(&state.db, workspace_id)
+        // The workspace's credential is a hot read: kept until it is written.
+        stored = state
+            .caches
+            .workspace_llm(&state.db, workspace_id)
             .await?
+            .as_ref()
+            .clone()
             .map(|row| (row, ConfigScope::Workspace, workspace_id));
     }
     let scope = stored
@@ -125,7 +130,8 @@ pub async fn workspace_settings(
     state: &AppState,
     workspace_id: Uuid,
 ) -> Result<Option<LlmSettings>, AppError> {
-    let Some(row) = repo::settings::find_for_workspace(&state.db, workspace_id).await? else {
+    let stored = state.caches.workspace_llm(&state.db, workspace_id).await?;
+    let Some(row) = stored.as_ref().clone() else {
         return Ok(None);
     };
     Ok(Some(LlmSettings {

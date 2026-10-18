@@ -6,6 +6,7 @@ import {
   connectionCheckSchema,
   daySummarySchema,
   infrastructureSchema,
+  latencyReportSchema,
   mapItemSchema,
   mapNeighbourhoodSchema,
   type MapKind,
@@ -90,6 +91,14 @@ export const infrastructureQuery = () =>
   queryOptions({
     queryKey: ['insight', 'infrastructure'] as const,
     queryFn: ({ signal }) => apiRequest('/admin/infrastructure', infrastructureSchema, { signal }),
+  });
+
+/** p50, p99 and max per endpoint over the last five minutes of the instance that answers. */
+export const latencyQuery = () =>
+  queryOptions({
+    queryKey: ['insight', 'latency'] as const,
+    queryFn: ({ signal }) => apiRequest('/admin/latency', latencyReportSchema, { signal }),
+    refetchInterval: 30_000,
   });
 
 /** Asks the server whether it can reach a PostgreSQL or Redis URL. The URL is not kept. */

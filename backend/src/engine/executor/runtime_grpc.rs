@@ -18,7 +18,7 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::metadata::MetadataValue;
-use tonic::transport::{Channel, Endpoint};
+use tonic::transport::Channel;
 use tonic::{Code, Request, Status};
 use uuid::Uuid;
 
@@ -30,6 +30,7 @@ use crate::engine::artifacts::MAX_ARTIFACT_BYTES;
 use crate::gateway;
 use crate::ontology::json;
 use crate::realtime::events::LogLevel;
+use crate::rpc::ChannelSettings;
 use crate::rpc::runtime::agent_runtime_client::AgentRuntimeClient;
 use crate::rpc::runtime::{
     self as pb, BackendCommand, RuntimeEvent, backend_command, runtime_event,
@@ -37,21 +38,20 @@ use crate::rpc::runtime::{
 
 /// Largest event accepted from the runtime (an artifact plus its envelope).
 const MAX_EVENT_BYTES: usize = MAX_ARTIFACT_BYTES + 1024 * 1024;
-/// Opening the connection.
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long a cancelled attempt waits for the runtime's terminal event.
 const CANCEL_GRACE: Duration = Duration::from_secs(5);
 
-/// A lazily connected channel to the runtime's gRPC endpoint; a runtime
-/// that is down is a failed attempt, never a failed start.
+/// A lazily connected channel to the runtime's gRPC endpoint with the
+/// default keepalive and pool; a runtime that is down is a failed attempt,
+/// never a failed start.
 pub fn channel(url: &str) -> anyhow::Result<Channel> {
-    Ok(Endpoint::from_shared(url.to_owned())?
-        .connect_timeout(CONNECT_TIMEOUT)
-        .tcp_nodelay(true)
-        .http2_keep_alive_interval(Duration::from_secs(30))
-        .keep_alive_timeout(Duration::from_secs(10))
-        .keep_alive_while_idle(true)
-        .connect_lazy())
+    channel_with(url, &ChannelSettings::default())
+}
+
+/// A lazily connected channel to the runtime's gRPC endpoint, kept as
+/// `settings` say (`NEXC_GRPC_*`).
+pub fn channel_with(url: &str, settings: &ChannelSettings) -> anyhow::Result<Channel> {
+    Ok(crate::rpc::channel(url, settings)?)
 }
 
 /// The failure a status stands for: a runtime that is down, busy or
@@ -226,11 +226,13 @@ pub async fn run(ctx: &ExecContext, token: String) -> Result<ExecOutput, ExecErr
         .map_err(|_| ExecError::fatal("the runtime token is not ASCII"))?;
     request.metadata_mut().insert("authorization", bearer);
     let mut client = AgentRuntimeClient::new(channel).max_decoding_message_size(MAX_EVENT_BYTES);
-    let mut events = client
-        .execute(request)
-        .await
-        .map_err(|s| error_of(&s))?
-        .into_inner();
+    let opened = std::time::Instant::now();
+    let execute = client.execute(request).await;
+    // The stream's opening: the request down and the runtime's acceptance back.
+    state
+        .metrics
+        .grpc_client("AgentRuntime", "Execute", opened.elapsed());
+    let mut events = execute.map_err(|s| error_of(&s))?.into_inner();
 
     // The attempt is known to the instance while the stream is open: an operator's command
     // (the cancel of one sub-agent) finds it here and goes down the same stream.
@@ -459,6 +461,11 @@ mod tests {
         assert!(error_of(&Status::unknown("")).message.contains("Unknown"));
         assert!(channel("http://127.0.0.1:1").is_ok());
         assert!(channel("not a url").is_err());
+        let pooled = ChannelSettings {
+            pool: 4,
+            ..ChannelSettings::default()
+        };
+        assert!(channel_with("http://127.0.0.1:1", &pooled).is_ok());
     }
 
     #[test]

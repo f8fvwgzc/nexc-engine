@@ -76,6 +76,9 @@ pub fn build(state: AppState) -> Router {
         )
         .merge(Scalar::with_url("/api/docs", spec).title("nexc-engine API"))
         .fallback(middleware::not_found)
+        // Inside the metrics, so a 304 is counted as one; inside compression, so the tag is the
+        // body's, whatever encoding it travels in.
+        .layer(from_fn(middleware::etag::conditional_reads))
         .layer(from_fn_with_state(state.clone(), middleware::track_metrics))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .layer(from_fn(middleware::limit_body))

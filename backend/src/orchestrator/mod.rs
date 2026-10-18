@@ -102,10 +102,16 @@ pub async fn heartbeat(state: &AppState) -> anyhow::Result<()> {
     let busy = state.engine.busy_agents();
     if !busy.is_empty() {
         repo::agents::heartbeat(&state.db, &busy).await?;
+        for agent in &busy {
+            state
+                .caches
+                .invalidate(crate::app::caches::Key::Agent(*agent));
+        }
     }
     let flagged = repo::agents::flag_over_budget(&state.db).await?;
     if flagged > 0 {
         tracing::info!(flagged, "agents reached their token budget");
+        state.caches.invalidate(crate::app::caches::Key::Agents);
     }
     Ok(())
 }

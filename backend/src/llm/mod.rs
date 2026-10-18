@@ -11,6 +11,7 @@
 #![forbid(unsafe_code)]
 
 pub mod anthropic;
+pub mod breaker;
 pub mod catalog;
 pub mod claude_code;
 pub mod demo;
@@ -141,6 +142,15 @@ pub enum LlmError {
     Network(String),
     #[error("unexpected LLM response: {0}")]
     Protocol(String),
+    /// The provider's circuit is open: it failed too many times in a row, so
+    /// the call was not made (`NEXC_LLM_BREAKER_FAILURES`).
+    #[error(
+        "the LLM provider {provider} is unavailable: its circuit opened after repeated failures; a probe goes out in {retry_after_secs} s"
+    )]
+    CircuitOpen {
+        provider: String,
+        retry_after_secs: u64,
+    },
 }
 
 impl LlmError {
@@ -148,8 +158,22 @@ impl LlmError {
     pub fn is_retryable(&self) -> bool {
         match self {
             LlmError::Http { retryable, .. } => *retryable,
-            LlmError::Network(_) => true,
+            LlmError::Network(_) | LlmError::CircuitOpen { .. } => true,
             LlmError::MissingKey | LlmError::Refused | LlmError::Protocol(_) => false,
+        }
+    }
+
+    /// Whether the failure says the provider itself is in trouble (down,
+    /// overloaded, unreachable), which is what trips the circuit breaker;
+    /// a refused or malformed request does not.
+    pub fn is_provider_failure(&self) -> bool {
+        match self {
+            LlmError::Http { status, .. } => *status == 429 || *status >= 500,
+            LlmError::Network(_) => true,
+            LlmError::MissingKey
+            | LlmError::Refused
+            | LlmError::Protocol(_)
+            | LlmError::CircuitOpen { .. } => false,
         }
     }
 

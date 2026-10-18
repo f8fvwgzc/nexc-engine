@@ -14,7 +14,7 @@ BACKEND_MANIFEST := backend/Cargo.toml
 LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a;
 
 .PHONY: help init setup dev dev-backend dev-frontend dev-runtime db-up db-down db-shell \
-        backup backup-check restore prove prove-trace prove-identity prove-audit prove-policy prove-agentsecops prove-gateway test-worst-case \
+        backup backup-check restore prove prove-trace prove-identity prove-audit prove-policy prove-agentsecops prove-gateway prove-api test-worst-case \
         build test test-backend test-frontend test-runtime lint fmt check \
         docker-build docker-up docker-down docker-logs demo demo-onto demo-secops seed-demo \
         minikube-up minikube-down k8s-render openapi proto-runtime doctor clean \
@@ -145,6 +145,11 @@ prove-gateway: ## Gateway overhead per call (target p99 < 1 ms, the tool exclude
 	@$(LOAD_ENV) export DATABASE_URL="$${DATABASE_URL:-$$NEXC_DATABASE_URL}"; \
 	  $(CARGO) test --release --locked --manifest-path $(BACKEND_MANIFEST) --test gateway --test runtime_grpc prove_ -- --ignored --nocapture --test-threads=1 2>&1 \
 	  | grep '^prove-gateway\|prove-gateway:' | sed 's/^test [a-z_]* \.\.\. //'
+
+prove-api: ## Every public GET and the main writes under 64 concurrent callers, plus the three gRPC services: p50/p99/max per endpoint against the targets (docs/PERFORMANCE.md; needs PostgreSQL: make db-up)
+	@$(LOAD_ENV) export DATABASE_URL="$${DATABASE_URL:-$$NEXC_DATABASE_URL}"; \
+	  $(CARGO) test --release --locked --manifest-path $(BACKEND_MANIFEST) --test api_latency prove_api -- --ignored --nocapture --test-threads=1 2>&1 \
+	  | sed 's/^test [a-z_]* \.\.\. //' | grep '^prove-api:' | sed 's/^prove-api: //'
 
 test-worst-case: ## Every documented route against missing/forged tokens, outsiders, hostile input, races and a 20,000-issue workspace
 	cd backend && cargo test --test worst_case
