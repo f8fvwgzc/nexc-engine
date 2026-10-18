@@ -11510,7 +11510,7 @@
           {
             "name": "decision",
             "in": "query",
-            "description": "Only policy and approval spans with this decision (`allow`, `deny`, `require_approval`,\n`alert`), or `evidence`: the spans carrying an evidence verdict (a node's last model\ncall and the policy decision about its output).",
+            "description": "Only policy and approval spans with this decision (`allow`, `deny`, `require_approval`,\n`alert`), or `evidence`: the `policy` spans named `evidence`, the verdict on each\nnode's output, whatever was decided on it.",
             "required": false,
             "schema": {
               "type": [
@@ -17281,7 +17281,7 @@
       },
       "Evidence": {
         "type": "object",
-        "description": "What the verifier found about an output: stored on the node run\n(`NodeRun.evidence`) and summarised on its last `llm_call` span.",
+        "description": "What the verifier found about an output: stored on the node run\n(`NodeRun.evidence`) and summarised on the node's `policy` span named\n`evidence` (the built-in executor's one `llm_call` carries it too).",
         "required": [
           "verdict",
           "coverage",
@@ -21893,7 +21893,7 @@
               "string",
               "null"
             ],
-            "description": "`attributes.evidence`: the verdict on an output, on a node's last model\ncall and on the policy decision about it."
+            "description": "`attributes.evidence`: the verdict on an output, on the node's `evidence`\npolicy span (and on the built-in executor's one model call)."
           },
           "graph_id": {
             "type": "string",

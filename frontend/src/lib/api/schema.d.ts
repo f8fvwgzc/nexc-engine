@@ -4534,7 +4534,8 @@ export interface components {
         };
         /**
          * @description What the verifier found about an output: stored on the node run
-         *     (`NodeRun.evidence`) and summarised on its last `llm_call` span.
+         *     (`NodeRun.evidence`) and summarised on the node's `policy` span named
+         *     `evidence` (the built-in executor's one `llm_call` carries it too).
          */
         Evidence: {
             /** @description Distinct ids cited that the node was given (`doc:…`), first cited first. */
@@ -6333,8 +6334,8 @@ export interface components {
             /** Format: date-time */
             ended_at: string | null;
             /**
-             * @description `attributes.evidence`: the verdict on an output, on a node's last model
-             *     call and on the policy decision about it.
+             * @description `attributes.evidence`: the verdict on an output, on the node's `evidence`
+             *     policy span (and on the built-in executor's one model call).
              */
             evidence: string | null;
             /** Format: uuid */
@@ -14735,8 +14736,8 @@ export interface operations {
                 to?: string | null;
                 /**
                  * @description Only policy and approval spans with this decision (`allow`, `deny`, `require_approval`,
-                 *     `alert`), or `evidence`: the spans carrying an evidence verdict (a node's last model
-                 *     call and the policy decision about its output).
+                 *     `alert`), or `evidence`: the `policy` spans named `evidence`, the verdict on each
+                 *     node's output, whatever was decided on it.
                  */
                 decision?: string | null;
                 /** @description Spans per page, 1–500 (default 100). */
