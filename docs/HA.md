@@ -130,9 +130,9 @@ for expired leases every 2 s.
 
 Run at least two backend replicas and two runtime replicas against one PostgreSQL that has a
 standby, with one data volume (`NEXC_DATA_DIR`: run artifacts, uploaded documents) that every
-backend replica mounts: on more than one node it must be `ReadWriteMany`, or a replica cannot
-start (a `ReadWriteOnce` volume attaches to one node) and a peer that takes a run over cannot see
-its artifacts. Every replica gets the same `NEXC_RUN_LEASE_SECS`; each run records the lease its holder
+backend replica mounts: on more than one node it must be `ReadWriteMany`, or a replica cannot start
+(a `ReadWriteOnce` volume attaches to one node) and a peer that takes a run over cannot see its
+artifacts. Every replica gets the same `NEXC_RUN_LEASE_SECS`; each run records the lease its holder
 works under (`runs.lease_secs`) and a takeover waits for that one, so a replica set differently
 still takes a dead peer's runs over in time, and logs a warning when it does.
 
@@ -147,11 +147,10 @@ still takes a dead peer's runs over in time, and logs a warning when it does.
 | `NEXC_BACKEND_REPLICAS=2`                | `.env`, Docker Compose                   | Two backend replicas on one host, kept by every later `docker compose up -d`; restart `frontend` after changing it so its nginx resolves every replica. Each gets 30 s to drain (`stop_grace_period`). |
 
 Every write the executor makes for a run is one short transaction that sets
-`idle_in_transaction_session_timeout` to `L` for itself (`SET LOCAL`), so nothing needs
-configuring on PostgreSQL. A connection pooler in front of it must keep each transaction on one
-server connection, as PgBouncer does in session and transaction pooling (not in statement
-pooling), and must pass `SET LOCAL` through; a managed PostgreSQL that caps the setting lower
-ends such transactions sooner, which is harmless.
+`idle_in_transaction_session_timeout` to `L` for itself (`set_config(…, true)`, as `SET LOCAL`
+does), so nothing needs configuring on PostgreSQL or a managed database. A connection pooler in
+front of it must keep each transaction on one server connection, as PgBouncer does in session and
+transaction pooling (not in statement pooling).
 
 The backend's readiness probe is `/api/v1/readyz`. It answers 503 while the database does not
 answer and from the moment the replica is told to stop, so a load balancer stops sending it
