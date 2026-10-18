@@ -589,7 +589,12 @@ function DueChip({ issue }: { issue: Issue }) {
 /** Rows shaped like the list, shown while it loads. */
 function IssueListSkeleton() {
   return (
-    <div className="overflow-hidden rounded-lg border" aria-busy aria-label="Loading issues">
+    <div
+      className="overflow-hidden rounded-lg border"
+      role="status"
+      aria-busy
+      aria-label="Loading issues"
+    >
       <Skeleton className="h-8 w-full rounded-none" />
       <ul className="divide-y">
         {Array.from({ length: 8 }, (_, i) => (

@@ -235,6 +235,7 @@ function AssistantPanel({ current }: { current: Workspace }) {
                   {loading && (
                     <div
                       className="flex flex-col gap-3 py-2"
+                      role="status"
                       aria-busy
                       aria-label="Loading the conversation"
                     >

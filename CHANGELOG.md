@@ -1173,7 +1173,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and a compact frame; `ScrollRegion` (and the table container) become a focusable, named
   group while their content scrolls; `MainLandmark` gives a 404 or an error outside the shells
   a `main`; `PageSkeleton` takes the width of the page it stands for and `ContentSkeleton` is a
-  page body's placeholder under a header. Status, evidence, severity and destructive badges
+  page body's placeholder under a header; placeholders labelled "Loading" are a `status`, where
+  the label was not allowed on a plain `div` (axe `aria-prohibited-attr` while a page loads).
+  Status, evidence, severity and destructive badges
   mix their colour with the foreground (`text-badge`, `--badge-ink`) so 12px text clears
   4.5:1 in both themes; stat tiles wrap their labels and hints instead of cutting them; tab
   panels show focus; the command palette's hidden title no longer sits in every page.
