@@ -43,7 +43,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   renders the login page in its three states, the break-glass form and an `sso_error`.
 - Single sign-on in the console: `GET /auth/providers` (public) says how one signs in here
   (passwords or not, registration or not, the provider and its name), and the login page shows
-  "Continue with" and the provider's name, with a key icon, above the password form when single
+  "Continue with" and the provider's name (wrapping on a phone), with a key icon, above the password form when single
   sign-on is on, only the button when password sign-in is off (`/login?break_glass=1` opens the
   form for the break-glass administrator), and in words why the provider sent the browser back
   when it did (`sso_error`). "Create an account" shows only when registration is open, and the register page

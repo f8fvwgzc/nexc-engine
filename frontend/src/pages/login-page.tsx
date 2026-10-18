@@ -67,7 +67,8 @@ export default function LoginPage() {
                 asChild
                 variant={password ? 'outline' : 'default'}
                 size="lg"
-                className="w-full"
+                // A name of up to 40 characters wraps on a phone instead of leaving the card.
+                className="h-auto min-h-9 w-full py-2 text-center whitespace-normal"
               >
                 <a href={ssoLoginUrl(safeNextPath(next))}>
                   <KeyRoundIcon aria-hidden />

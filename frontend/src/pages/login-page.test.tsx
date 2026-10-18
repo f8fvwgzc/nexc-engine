@@ -55,6 +55,8 @@ describe('LoginPage', () => {
     expect(button).toHaveAttribute('href', '/api/v1/auth/oidc/login?return_to=%2Fapp%2Fruns');
     expect(button.querySelector('svg')).not.toBeNull();
     expect(button).toHaveAttribute('data-variant', 'outline');
+    // A long provider name wraps inside the card rather than overflowing it on a phone.
+    expect(button).toHaveClass('whitespace-normal');
     expect(screen.getByLabelText('Email')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Create an account' })).not.toBeInTheDocument();
