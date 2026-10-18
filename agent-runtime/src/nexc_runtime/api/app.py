@@ -63,7 +63,12 @@ def create_app(
     @app.get("/healthz", response_model=Health)
     async def healthz(request: Request) -> Health:
         census: Census = request.app.state.census
-        return Health(version=__version__, agents_loaded=census.agents_live)
+        return Health(
+            version=__version__,
+            agents_loaded=census.agents_live,
+            runs_active=census.runs_active,
+            grpc_port=settings.runtime_grpc_port or None,
+        )
 
     @app.post("/v1/execute", dependencies=[Depends(require_bearer)], response_model=None)
     async def execute_node(

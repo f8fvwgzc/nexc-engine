@@ -7,6 +7,7 @@ import typing
 
 import grpclib.const
 import grpclib.client
+
 if typing.TYPE_CHECKING:
     import grpclib.server
 
@@ -15,24 +16,27 @@ from . import runtime_pb2
 
 
 class AgentRuntimeBase(abc.ABC):
-
     @abc.abstractmethod
-    async def Execute(self, stream: 'grpclib.server.Stream[runtime_pb2.BackendCommand, runtime_pb2.RuntimeEvent]') -> None:
+    async def Execute(
+        self, stream: "grpclib.server.Stream[runtime_pb2.BackendCommand, runtime_pb2.RuntimeEvent]"
+    ) -> None:
         pass
 
     @abc.abstractmethod
-    async def Health(self, stream: 'grpclib.server.Stream[runtime_pb2.HealthRequest, runtime_pb2.HealthReply]') -> None:
+    async def Health(
+        self, stream: "grpclib.server.Stream[runtime_pb2.HealthRequest, runtime_pb2.HealthReply]"
+    ) -> None:
         pass
 
     def __mapping__(self) -> typing.Dict[str, grpclib.const.Handler]:
         return {
-            '/nexc.runtime.v1.AgentRuntime/Execute': grpclib.const.Handler(
+            "/nexc.runtime.v1.AgentRuntime/Execute": grpclib.const.Handler(
                 self.Execute,
                 grpclib.const.Cardinality.STREAM_STREAM,
                 runtime_pb2.BackendCommand,
                 runtime_pb2.RuntimeEvent,
             ),
-            '/nexc.runtime.v1.AgentRuntime/Health': grpclib.const.Handler(
+            "/nexc.runtime.v1.AgentRuntime/Health": grpclib.const.Handler(
                 self.Health,
                 grpclib.const.Cardinality.UNARY_UNARY,
                 runtime_pb2.HealthRequest,
@@ -42,17 +46,16 @@ class AgentRuntimeBase(abc.ABC):
 
 
 class AgentRuntimeStub:
-
     def __init__(self, channel: grpclib.client.Channel) -> None:
         self.Execute = grpclib.client.StreamStreamMethod(
             channel,
-            '/nexc.runtime.v1.AgentRuntime/Execute',
+            "/nexc.runtime.v1.AgentRuntime/Execute",
             runtime_pb2.BackendCommand,
             runtime_pb2.RuntimeEvent,
         )
         self.Health = grpclib.client.UnaryUnaryMethod(
             channel,
-            '/nexc.runtime.v1.AgentRuntime/Health',
+            "/nexc.runtime.v1.AgentRuntime/Health",
             runtime_pb2.HealthRequest,
             runtime_pb2.HealthReply,
         )

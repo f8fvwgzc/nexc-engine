@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
@@ -57,6 +57,14 @@ class LimitsIn(_Model):
     allow_code_exec: bool = False
 
 
+class GatewayToolIn(_Model):
+    """A tool the backend performs for the agent, as the model should see it."""
+
+    name: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=4_000)
+    input_schema: dict[str, Any] = Field(default_factory=lambda: {"type": "object"})
+
+
 class ExecuteRequest(_Model):
     run_id: str = Field(min_length=1, max_length=64)
     node_id: str = Field(min_length=1, max_length=64)
@@ -69,6 +77,8 @@ class ExecuteRequest(_Model):
     context: ContextIn = Field(default_factory=ContextIn)
     llm: LlmIn = Field(default_factory=LlmIn)
     limits: LimitsIn = Field(default_factory=LimitsIn)
+    # Tools the backend performs on the agent's behalf (the gRPC wire; empty on NDJSON).
+    gateway_tools: list[GatewayToolIn] = Field(default_factory=list, max_length=256)
 
 
 class ApprovalDecisionIn(_Model):
@@ -103,3 +113,6 @@ class Health(BaseModel):
     status: Literal["ok"] = "ok"
     version: str
     agents_loaded: int
+    runs_active: int = 0
+    # Where the gRPC stream is served; null when it is off.
+    grpc_port: int | None = None

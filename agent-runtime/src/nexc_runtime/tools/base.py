@@ -8,12 +8,15 @@ import time
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from ..approvals import ApprovalOutcome, ApprovalRegistry, ApprovalTimeout
 from ..config import Settings
+
+if TYPE_CHECKING:
+    from ..control import RunControl
 from ..llm.base import ToolSpec
 from ..policy import AgentToken, Decision, decide_tool_with
 from ..streaming import EventStream
@@ -58,6 +61,12 @@ class ToolContext:
     approvals: ApprovalRegistry | None = None
     # When the agent's recent tool calls started, against `limits.tool_calls_per_minute`.
     recent_calls: deque[float] = field(default_factory=deque)
+    # The backend's hold on the run over the gRPC stream (None on the NDJSON wire and in
+    # unit tests): where gateway results and token updates arrive.
+    control: RunControl | None = None
+    # The tool being invoked, and the approval it runs under, for handlers that need them.
+    current_tool: str | None = None
+    pending_approval_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.principal:
@@ -87,9 +96,16 @@ class Tool[A: BaseModel]:
     description: str
     args: type[A]
     handler: Callable[[ToolContext, A], Awaitable[str]]
+    # A schema given as is (a gateway tool's, as its server published it) instead of the
+    # argument model's.
+    input_schema: dict[str, Any] | None = None
+    # Whether `invoke` reports the call as a `tool_call` span; the backend records the spans
+    # of the calls it performs itself.
+    traced: bool = True
 
     def spec(self) -> ToolSpec:
-        return ToolSpec(self.name, self.description, strict_schema(self.args))
+        schema = self.input_schema if self.input_schema is not None else strict_schema(self.args)
+        return ToolSpec(self.name, self.description, schema)
 
     async def invoke(self, ctx: ToolContext, raw: dict[str, Any]) -> str:
         """Decide the call against the agent's token, validate `raw` against the argument model,
@@ -117,33 +133,39 @@ class Tool[A: BaseModel]:
         clock = time.perf_counter_ns()
         digest, size = args_digest(raw)
         output: str | None = None
+        ctx.current_tool = self.name
+        ctx.pending_approval_id = approval_id
         try:
             output = await self._run(ctx, raw)
             return output
         finally:
-            attributes: dict[str, Any] = {
-                "tool": self.name,
-                "args_sha256": digest,
-                "args_bytes": size,
-                "result_bytes": len(output.encode("utf-8")) if output is not None else 0,
-                "is_error": output is None,
-                "duration_ns": time.perf_counter_ns() - clock,
-            }
-            if ctx.token is not None:
-                attributes["policy_version"] = ctx.token.policy_version
-            if approval_id is not None:
-                attributes["approval_id"] = approval_id
-            ctx.events.span(
-                span_id=span_id,
-                parent_id=ctx.turn_span_id,
-                kind="tool_call",
-                name=self.name,
-                agent=ctx.principal,
-                started_at=rfc3339_ns(started),
-                ended_at=rfc3339_ns(now_ns()),
-                status="ok" if output is not None else "error",
-                attributes=attributes,
-            )
+            ctx.current_tool = None
+            ctx.pending_approval_id = None
+            # A gateway tool's spans are the backend's to record: it performed the call.
+            if self.traced:
+                attributes: dict[str, Any] = {
+                    "tool": self.name,
+                    "args_sha256": digest,
+                    "args_bytes": size,
+                    "result_bytes": len(output.encode("utf-8")) if output is not None else 0,
+                    "is_error": output is None,
+                    "duration_ns": time.perf_counter_ns() - clock,
+                }
+                if ctx.token is not None:
+                    attributes["policy_version"] = ctx.token.policy_version
+                if approval_id is not None:
+                    attributes["approval_id"] = approval_id
+                ctx.events.span(
+                    span_id=span_id,
+                    parent_id=ctx.turn_span_id,
+                    kind="tool_call",
+                    name=self.name,
+                    agent=ctx.principal,
+                    started_at=rfc3339_ns(started),
+                    ended_at=rfc3339_ns(now_ns()),
+                    status="ok" if output is not None else "error",
+                    attributes=attributes,
+                )
 
     async def _run(self, ctx: ToolContext, raw: dict[str, Any]) -> str:
         try:
@@ -214,8 +236,9 @@ async def wait_for_approval(
         "info", f"{ctx.agent_name}: {tool} waits for an approval ({decision.rule}, {timeout}s)"
     )
     now = rfc3339_ns(now_ns())
+    request_span_id = new_span_id()
     ctx.events.span(
-        span_id=new_span_id(),
+        span_id=request_span_id,
         parent_id=ctx.turn_span_id,
         kind="policy",
         name=tool,
@@ -237,6 +260,18 @@ async def wait_for_approval(
     if ctx.approvals is None:
         raise ApprovalTimeout(f"{tool} needs an approval and this runtime cannot receive one")
     future = ctx.approvals.register(approval_id)
+    if ctx.control is not None:
+        # The gRPC wire asks explicitly; the decision comes back as a command.
+        ctx.events.approval_request(
+            approval_id=approval_id,
+            tool=tool,
+            rule=decision.rule,
+            reason=decision.reason,
+            args_sha256=digest,
+            span_id=request_span_id,
+            agent=ctx.principal,
+            turn_span_id=ctx.turn_span_id,
+        )
     deadline = time.monotonic() + timeout
     try:
         while True:

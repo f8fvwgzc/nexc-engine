@@ -5,18 +5,15 @@
 # source: runtime.proto
 # Protobuf Python Version: 7.35.1
 """Generated protocol buffer code."""
+
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import descriptor_pool as _descriptor_pool
 from google.protobuf import runtime_version as _runtime_version
 from google.protobuf import symbol_database as _symbol_database
 from google.protobuf.internal import builder as _builder
+
 _runtime_version.ValidateProtobufRuntimeVersion(
-    _runtime_version.Domain.PUBLIC,
-    7,
-    35,
-    1,
-    '',
-    'runtime.proto'
+    _runtime_version.Domain.PUBLIC, 7, 35, 1, "", "runtime.proto"
 )
 # @@protoc_insertion_point(imports)
 
@@ -26,67 +23,69 @@ _sym_db = _symbol_database.Default()
 from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\rruntime.proto\x12\x0fnexc.runtime.v1\x1a\x1cgoogle/protobuf/struct.proto\"\x0f\n\rHealthRequest\"Z\n\x0bHealthReply\x12\x0e\n\x06status\x18\x01 \x01(\t\x12\x0f\n\x07version\x18\x02 \x01(\t\x12\x15\n\ragents_loaded\x18\x03 \x01(\r\x12\x13\n\x0bruns_active\x18\x04 \x01(\r\"\xcb\x02\n\x0e\x42\x61\x63kendCommand\x12\x32\n\x07\x65xecute\x18\x01 \x01(\x0b\x32\x1f.nexc.runtime.v1.ExecuteRequestH\x00\x12#\n\x03\x61\x63k\x18\x02 \x01(\x0b\x32\x14.nexc.runtime.v1.AckH\x00\x12)\n\x06\x63\x61ncel\x18\x03 \x01(\x0b\x32\x17.nexc.runtime.v1.CancelH\x00\x12>\n\x11\x61pproval_decision\x18\x04 \x01(\x0b\x32!.nexc.runtime.v1.ApprovalDecisionH\x00\x12\x36\n\rpolicy_update\x18\x05 \x01(\x0b\x32\x1d.nexc.runtime.v1.PolicyUpdateH\x00\x12\x32\n\x0btool_result\x18\x06 \x01(\x0b\x32\x1b.nexc.runtime.v1.ToolResultH\x00\x42\t\n\x07\x63ommand\"\xbc\x02\n\x0e\x45xecuteRequest\x12\x0e\n\x06run_id\x18\x01 \x01(\t\x12\x0f\n\x07node_id\x18\x02 \x01(\t\x12\r\n\x05token\x18\x03 \x01(\t\x12)\n\x05\x61gent\x18\x04 \x01(\x0b\x32\x1a.nexc.runtime.v1.AgentSpec\x12#\n\x04task\x18\x05 \x01(\x0b\x32\x15.nexc.runtime.v1.Task\x12)\n\x07\x63ontext\x18\x06 \x01(\x0b\x32\x18.nexc.runtime.v1.Context\x12!\n\x03llm\x18\x07 \x01(\x0b\x32\x14.nexc.runtime.v1.Llm\x12\'\n\x06limits\x18\x08 \x01(\x0b\x32\x17.nexc.runtime.v1.Limits\x12\x33\n\rgateway_tools\x18\t \x03(\x0b\x32\x1c.nexc.runtime.v1.GatewayTool\"w\n\tAgentSpec\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x0c\n\x04role\x18\x02 \x01(\t\x12\x11\n\tprincipal\x18\x03 \x01(\t\x12\x15\n\rsystem_prompt\x18\x04 \x01(\t\x12\r\n\x05model\x18\x05 \x01(\t\x12\x15\n\rbudget_tokens\x18\x06 \x01(\x03\"\x84\x01\n\x04Task\x12\r\n\x05title\x18\x01 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x02 \x01(\t\x12\x0c\n\x04kind\x18\x03 \x01(\t\x12\x18\n\x10kind_description\x18\x04 \x01(\t\x12\x1e\n\x11produces_artifact\x18\x05 \x01(\x08H\x00\x88\x01\x01\x42\x14\n\x12_produces_artifact\":\n\x08Upstream\x12\x0f\n\x07node_id\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\x0e\n\x06output\x18\x03 \x01(\t\"y\n\x07\x43ontext\x12\x0c\n\x04goal\x18\x01 \x01(\t\x12+\n\x08upstream\x18\x02 \x03(\x0b\x32\x19.nexc.runtime.v1.Upstream\x12\x10\n\x08memories\x18\x03 \x03(\t\x12\x11\n\tdocuments\x18\x04 \x03(\t\x12\x0e\n\x06labels\x18\x05 \x03(\t\"I\n\x03Llm\x12\x10\n\x08provider\x18\x01 \x01(\t\x12\x0f\n\x07\x61pi_key\x18\x02 \x01(\t\x12\r\n\x05model\x18\x03 \x01(\t\x12\x10\n\x08\x62\x61se_url\x18\x04 \x01(\t\"G\n\x06Limits\x12\x11\n\tmax_turns\x18\x01 \x01(\r\x12\x11\n\ttimeout_s\x18\x02 \x01(\r\x12\x17\n\x0f\x61llow_code_exec\x18\x03 \x01(\x08\"_\n\x0bGatewayTool\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x02 \x01(\t\x12-\n\x0cinput_schema\x18\x03 \x01(\x0b\x32\x17.google.protobuf.Struct\"\x19\n\x03\x41\x63k\x12\x12\n\nrequest_id\x18\x01 \x01(\t\"\x18\n\x06\x43\x61ncel\x12\x0e\n\x06reason\x18\x01 \x01(\t\"]\n\x10\x41pprovalDecision\x12\x13\n\x0b\x61pproval_id\x18\x01 \x01(\t\x12\x10\n\x08\x64\x65\x63ision\x18\x02 \x01(\t\x12\x0e\n\x06reason\x18\x03 \x01(\t\x12\x12\n\ndecided_by\x18\x04 \x01(\t\"\x1d\n\x0cPolicyUpdate\x12\r\n\x05token\x18\x01 \x01(\t\"B\n\nToolResult\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x0e\n\x06output\x18\x02 \x01(\t\x12\x10\n\x08is_error\x18\x03 \x01(\x08\"\xd7\x03\n\x0cRuntimeEvent\x12#\n\x03log\x18\x01 \x01(\x0b\x32\x14.nexc.runtime.v1.LogH\x00\x12\'\n\x05\x64\x65lta\x18\x02 \x01(\x0b\x32\x16.nexc.runtime.v1.DeltaH\x00\x12)\n\x06tokens\x18\x03 \x01(\x0b\x32\x17.nexc.runtime.v1.TokensH\x00\x12\'\n\x05spawn\x18\x04 \x01(\x0b\x32\x16.nexc.runtime.v1.SpawnH\x00\x12%\n\x04span\x18\x05 \x01(\x0b\x32\x15.nexc.runtime.v1.SpanH\x00\x12-\n\x08\x61rtifact\x18\x06 \x01(\x0b\x32\x19.nexc.runtime.v1.ArtifactH\x00\x12<\n\x10\x61pproval_request\x18\x07 \x01(\x0b\x32 .nexc.runtime.v1.ApprovalRequestH\x00\x12\x34\n\x0ctool_request\x18\x08 \x01(\x0b\x32\x1c.nexc.runtime.v1.ToolRequestH\x00\x12)\n\x06result\x18\t \x01(\x0b\x32\x17.nexc.runtime.v1.ResultH\x00\x12\'\n\x05\x65rror\x18\n \x01(\x0b\x32\x16.nexc.runtime.v1.ErrorH\x00\x42\x07\n\x05\x65vent\"%\n\x03Log\x12\r\n\x05level\x18\x01 \x01(\t\x12\x0f\n\x07message\x18\x02 \x01(\t\"\x15\n\x05\x44\x65lta\x12\x0c\n\x04text\x18\x01 \x01(\t\"7\n\x06Tokens\x12\r\n\x05input\x18\x01 \x01(\x03\x12\x0e\n\x06output\x18\x02 \x01(\x03\x12\x0e\n\x06\x63\x61\x63hed\x18\x03 \x01(\x03\"#\n\x05Spawn\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x0c\n\x04role\x18\x02 \x01(\t\"\xb3\x01\n\x04Span\x12\n\n\x02id\x18\x01 \x01(\t\x12\x11\n\tparent_id\x18\x02 \x01(\t\x12\x0c\n\x04kind\x18\x03 \x01(\t\x12\x0c\n\x04name\x18\x04 \x01(\t\x12\r\n\x05\x61gent\x18\x05 \x01(\t\x12\x12\n\nstarted_at\x18\x06 \x01(\t\x12\x10\n\x08\x65nded_at\x18\x07 \x01(\t\x12\x0e\n\x06status\x18\x08 \x01(\t\x12+\n\nattributes\x18\t \x01(\x0b\x32\x17.google.protobuf.Struct\"7\n\x08\x41rtifact\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x0c\n\x04mime\x18\x02 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x03 \x01(\x0c\"\x9d\x01\n\x0f\x41pprovalRequest\x12\x13\n\x0b\x61pproval_id\x18\x01 \x01(\t\x12\x0c\n\x04tool\x18\x02 \x01(\t\x12\x0c\n\x04rule\x18\x03 \x01(\t\x12\x0e\n\x06reason\x18\x04 \x01(\t\x12\x13\n\x0b\x61rgs_sha256\x18\x05 \x01(\t\x12\x0f\n\x07span_id\x18\x06 \x01(\t\x12\r\n\x05\x61gent\x18\x07 \x01(\t\x12\x14\n\x0cturn_span_id\x18\x08 \x01(\t\"\x80\x01\n\x0bToolRequest\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x0c\n\x04tool\x18\x02 \x01(\t\x12*\n\targuments\x18\x03 \x01(\x0b\x32\x17.google.protobuf.Struct\x12\r\n\x05\x61gent\x18\x04 \x01(\t\x12\x14\n\x0cturn_span_id\x18\x05 \x01(\t\"V\n\x06Result\x12\x0e\n\x06output\x18\x01 \x01(\t\x12\x11\n\ttokens_in\x18\x02 \x01(\x03\x12\x12\n\ntokens_out\x18\x03 \x01(\x03\x12\x15\n\rtokens_cached\x18\x04 \x01(\x03\"+\n\x05\x45rror\x12\x0f\n\x07message\x18\x01 \x01(\t\x12\x11\n\tretryable\x18\x02 \x01(\x08\x32\xa5\x01\n\x0c\x41gentRuntime\x12M\n\x07\x45xecute\x12\x1f.nexc.runtime.v1.BackendCommand\x1a\x1d.nexc.runtime.v1.RuntimeEvent(\x01\x30\x01\x12\x46\n\x06Health\x12\x1e.nexc.runtime.v1.HealthRequest\x1a\x1c.nexc.runtime.v1.HealthReplyb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(
+    b'\n\rruntime.proto\x12\x0fnexc.runtime.v1\x1a\x1cgoogle/protobuf/struct.proto"\x0f\n\rHealthRequest"Z\n\x0bHealthReply\x12\x0e\n\x06status\x18\x01 \x01(\t\x12\x0f\n\x07version\x18\x02 \x01(\t\x12\x15\n\ragents_loaded\x18\x03 \x01(\r\x12\x13\n\x0bruns_active\x18\x04 \x01(\r"\xcb\x02\n\x0e\x42\x61\x63kendCommand\x12\x32\n\x07\x65xecute\x18\x01 \x01(\x0b\x32\x1f.nexc.runtime.v1.ExecuteRequestH\x00\x12#\n\x03\x61\x63k\x18\x02 \x01(\x0b\x32\x14.nexc.runtime.v1.AckH\x00\x12)\n\x06\x63\x61ncel\x18\x03 \x01(\x0b\x32\x17.nexc.runtime.v1.CancelH\x00\x12>\n\x11\x61pproval_decision\x18\x04 \x01(\x0b\x32!.nexc.runtime.v1.ApprovalDecisionH\x00\x12\x36\n\rpolicy_update\x18\x05 \x01(\x0b\x32\x1d.nexc.runtime.v1.PolicyUpdateH\x00\x12\x32\n\x0btool_result\x18\x06 \x01(\x0b\x32\x1b.nexc.runtime.v1.ToolResultH\x00\x42\t\n\x07\x63ommand"\xbc\x02\n\x0e\x45xecuteRequest\x12\x0e\n\x06run_id\x18\x01 \x01(\t\x12\x0f\n\x07node_id\x18\x02 \x01(\t\x12\r\n\x05token\x18\x03 \x01(\t\x12)\n\x05\x61gent\x18\x04 \x01(\x0b\x32\x1a.nexc.runtime.v1.AgentSpec\x12#\n\x04task\x18\x05 \x01(\x0b\x32\x15.nexc.runtime.v1.Task\x12)\n\x07\x63ontext\x18\x06 \x01(\x0b\x32\x18.nexc.runtime.v1.Context\x12!\n\x03llm\x18\x07 \x01(\x0b\x32\x14.nexc.runtime.v1.Llm\x12\'\n\x06limits\x18\x08 \x01(\x0b\x32\x17.nexc.runtime.v1.Limits\x12\x33\n\rgateway_tools\x18\t \x03(\x0b\x32\x1c.nexc.runtime.v1.GatewayTool"w\n\tAgentSpec\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x0c\n\x04role\x18\x02 \x01(\t\x12\x11\n\tprincipal\x18\x03 \x01(\t\x12\x15\n\rsystem_prompt\x18\x04 \x01(\t\x12\r\n\x05model\x18\x05 \x01(\t\x12\x15\n\rbudget_tokens\x18\x06 \x01(\x03"\x84\x01\n\x04Task\x12\r\n\x05title\x18\x01 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x02 \x01(\t\x12\x0c\n\x04kind\x18\x03 \x01(\t\x12\x18\n\x10kind_description\x18\x04 \x01(\t\x12\x1e\n\x11produces_artifact\x18\x05 \x01(\x08H\x00\x88\x01\x01\x42\x14\n\x12_produces_artifact":\n\x08Upstream\x12\x0f\n\x07node_id\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\x0e\n\x06output\x18\x03 \x01(\t"y\n\x07\x43ontext\x12\x0c\n\x04goal\x18\x01 \x01(\t\x12+\n\x08upstream\x18\x02 \x03(\x0b\x32\x19.nexc.runtime.v1.Upstream\x12\x10\n\x08memories\x18\x03 \x03(\t\x12\x11\n\tdocuments\x18\x04 \x03(\t\x12\x0e\n\x06labels\x18\x05 \x03(\t"I\n\x03Llm\x12\x10\n\x08provider\x18\x01 \x01(\t\x12\x0f\n\x07\x61pi_key\x18\x02 \x01(\t\x12\r\n\x05model\x18\x03 \x01(\t\x12\x10\n\x08\x62\x61se_url\x18\x04 \x01(\t"G\n\x06Limits\x12\x11\n\tmax_turns\x18\x01 \x01(\r\x12\x11\n\ttimeout_s\x18\x02 \x01(\r\x12\x17\n\x0f\x61llow_code_exec\x18\x03 \x01(\x08"_\n\x0bGatewayTool\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x02 \x01(\t\x12-\n\x0cinput_schema\x18\x03 \x01(\x0b\x32\x17.google.protobuf.Struct"\x19\n\x03\x41\x63k\x12\x12\n\nrequest_id\x18\x01 \x01(\t"\x18\n\x06\x43\x61ncel\x12\x0e\n\x06reason\x18\x01 \x01(\t"]\n\x10\x41pprovalDecision\x12\x13\n\x0b\x61pproval_id\x18\x01 \x01(\t\x12\x10\n\x08\x64\x65\x63ision\x18\x02 \x01(\t\x12\x0e\n\x06reason\x18\x03 \x01(\t\x12\x12\n\ndecided_by\x18\x04 \x01(\t"\x1d\n\x0cPolicyUpdate\x12\r\n\x05token\x18\x01 \x01(\t"B\n\nToolResult\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x0e\n\x06output\x18\x02 \x01(\t\x12\x10\n\x08is_error\x18\x03 \x01(\x08"\xd7\x03\n\x0cRuntimeEvent\x12#\n\x03log\x18\x01 \x01(\x0b\x32\x14.nexc.runtime.v1.LogH\x00\x12\'\n\x05\x64\x65lta\x18\x02 \x01(\x0b\x32\x16.nexc.runtime.v1.DeltaH\x00\x12)\n\x06tokens\x18\x03 \x01(\x0b\x32\x17.nexc.runtime.v1.TokensH\x00\x12\'\n\x05spawn\x18\x04 \x01(\x0b\x32\x16.nexc.runtime.v1.SpawnH\x00\x12%\n\x04span\x18\x05 \x01(\x0b\x32\x15.nexc.runtime.v1.SpanH\x00\x12-\n\x08\x61rtifact\x18\x06 \x01(\x0b\x32\x19.nexc.runtime.v1.ArtifactH\x00\x12<\n\x10\x61pproval_request\x18\x07 \x01(\x0b\x32 .nexc.runtime.v1.ApprovalRequestH\x00\x12\x34\n\x0ctool_request\x18\x08 \x01(\x0b\x32\x1c.nexc.runtime.v1.ToolRequestH\x00\x12)\n\x06result\x18\t \x01(\x0b\x32\x17.nexc.runtime.v1.ResultH\x00\x12\'\n\x05\x65rror\x18\n \x01(\x0b\x32\x16.nexc.runtime.v1.ErrorH\x00\x42\x07\n\x05\x65vent"%\n\x03Log\x12\r\n\x05level\x18\x01 \x01(\t\x12\x0f\n\x07message\x18\x02 \x01(\t"\x15\n\x05\x44\x65lta\x12\x0c\n\x04text\x18\x01 \x01(\t"7\n\x06Tokens\x12\r\n\x05input\x18\x01 \x01(\x03\x12\x0e\n\x06output\x18\x02 \x01(\x03\x12\x0e\n\x06\x63\x61\x63hed\x18\x03 \x01(\x03"#\n\x05Spawn\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x0c\n\x04role\x18\x02 \x01(\t"\xb3\x01\n\x04Span\x12\n\n\x02id\x18\x01 \x01(\t\x12\x11\n\tparent_id\x18\x02 \x01(\t\x12\x0c\n\x04kind\x18\x03 \x01(\t\x12\x0c\n\x04name\x18\x04 \x01(\t\x12\r\n\x05\x61gent\x18\x05 \x01(\t\x12\x12\n\nstarted_at\x18\x06 \x01(\t\x12\x10\n\x08\x65nded_at\x18\x07 \x01(\t\x12\x0e\n\x06status\x18\x08 \x01(\t\x12+\n\nattributes\x18\t \x01(\x0b\x32\x17.google.protobuf.Struct"7\n\x08\x41rtifact\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x0c\n\x04mime\x18\x02 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x03 \x01(\x0c"\x9d\x01\n\x0f\x41pprovalRequest\x12\x13\n\x0b\x61pproval_id\x18\x01 \x01(\t\x12\x0c\n\x04tool\x18\x02 \x01(\t\x12\x0c\n\x04rule\x18\x03 \x01(\t\x12\x0e\n\x06reason\x18\x04 \x01(\t\x12\x13\n\x0b\x61rgs_sha256\x18\x05 \x01(\t\x12\x0f\n\x07span_id\x18\x06 \x01(\t\x12\r\n\x05\x61gent\x18\x07 \x01(\t\x12\x14\n\x0cturn_span_id\x18\x08 \x01(\t"\x80\x01\n\x0bToolRequest\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x0c\n\x04tool\x18\x02 \x01(\t\x12*\n\targuments\x18\x03 \x01(\x0b\x32\x17.google.protobuf.Struct\x12\r\n\x05\x61gent\x18\x04 \x01(\t\x12\x14\n\x0cturn_span_id\x18\x05 \x01(\t"V\n\x06Result\x12\x0e\n\x06output\x18\x01 \x01(\t\x12\x11\n\ttokens_in\x18\x02 \x01(\x03\x12\x12\n\ntokens_out\x18\x03 \x01(\x03\x12\x15\n\rtokens_cached\x18\x04 \x01(\x03"+\n\x05\x45rror\x12\x0f\n\x07message\x18\x01 \x01(\t\x12\x11\n\tretryable\x18\x02 \x01(\x08\x32\xa5\x01\n\x0c\x41gentRuntime\x12M\n\x07\x45xecute\x12\x1f.nexc.runtime.v1.BackendCommand\x1a\x1d.nexc.runtime.v1.RuntimeEvent(\x01\x30\x01\x12\x46\n\x06Health\x12\x1e.nexc.runtime.v1.HealthRequest\x1a\x1c.nexc.runtime.v1.HealthReplyb\x06proto3'
+)
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
-_builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'runtime_pb2', _globals)
+_builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, "runtime_pb2", _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
-  DESCRIPTOR._loaded_options = None
-  _globals['_HEALTHREQUEST']._serialized_start=64
-  _globals['_HEALTHREQUEST']._serialized_end=79
-  _globals['_HEALTHREPLY']._serialized_start=81
-  _globals['_HEALTHREPLY']._serialized_end=171
-  _globals['_BACKENDCOMMAND']._serialized_start=174
-  _globals['_BACKENDCOMMAND']._serialized_end=505
-  _globals['_EXECUTEREQUEST']._serialized_start=508
-  _globals['_EXECUTEREQUEST']._serialized_end=824
-  _globals['_AGENTSPEC']._serialized_start=826
-  _globals['_AGENTSPEC']._serialized_end=945
-  _globals['_TASK']._serialized_start=948
-  _globals['_TASK']._serialized_end=1080
-  _globals['_UPSTREAM']._serialized_start=1082
-  _globals['_UPSTREAM']._serialized_end=1140
-  _globals['_CONTEXT']._serialized_start=1142
-  _globals['_CONTEXT']._serialized_end=1263
-  _globals['_LLM']._serialized_start=1265
-  _globals['_LLM']._serialized_end=1338
-  _globals['_LIMITS']._serialized_start=1340
-  _globals['_LIMITS']._serialized_end=1411
-  _globals['_GATEWAYTOOL']._serialized_start=1413
-  _globals['_GATEWAYTOOL']._serialized_end=1508
-  _globals['_ACK']._serialized_start=1510
-  _globals['_ACK']._serialized_end=1535
-  _globals['_CANCEL']._serialized_start=1537
-  _globals['_CANCEL']._serialized_end=1561
-  _globals['_APPROVALDECISION']._serialized_start=1563
-  _globals['_APPROVALDECISION']._serialized_end=1656
-  _globals['_POLICYUPDATE']._serialized_start=1658
-  _globals['_POLICYUPDATE']._serialized_end=1687
-  _globals['_TOOLRESULT']._serialized_start=1689
-  _globals['_TOOLRESULT']._serialized_end=1755
-  _globals['_RUNTIMEEVENT']._serialized_start=1758
-  _globals['_RUNTIMEEVENT']._serialized_end=2229
-  _globals['_LOG']._serialized_start=2231
-  _globals['_LOG']._serialized_end=2268
-  _globals['_DELTA']._serialized_start=2270
-  _globals['_DELTA']._serialized_end=2291
-  _globals['_TOKENS']._serialized_start=2293
-  _globals['_TOKENS']._serialized_end=2348
-  _globals['_SPAWN']._serialized_start=2350
-  _globals['_SPAWN']._serialized_end=2385
-  _globals['_SPAN']._serialized_start=2388
-  _globals['_SPAN']._serialized_end=2567
-  _globals['_ARTIFACT']._serialized_start=2569
-  _globals['_ARTIFACT']._serialized_end=2624
-  _globals['_APPROVALREQUEST']._serialized_start=2627
-  _globals['_APPROVALREQUEST']._serialized_end=2784
-  _globals['_TOOLREQUEST']._serialized_start=2787
-  _globals['_TOOLREQUEST']._serialized_end=2915
-  _globals['_RESULT']._serialized_start=2917
-  _globals['_RESULT']._serialized_end=3003
-  _globals['_ERROR']._serialized_start=3005
-  _globals['_ERROR']._serialized_end=3048
-  _globals['_AGENTRUNTIME']._serialized_start=3051
-  _globals['_AGENTRUNTIME']._serialized_end=3216
+    DESCRIPTOR._loaded_options = None
+    _globals["_HEALTHREQUEST"]._serialized_start = 64
+    _globals["_HEALTHREQUEST"]._serialized_end = 79
+    _globals["_HEALTHREPLY"]._serialized_start = 81
+    _globals["_HEALTHREPLY"]._serialized_end = 171
+    _globals["_BACKENDCOMMAND"]._serialized_start = 174
+    _globals["_BACKENDCOMMAND"]._serialized_end = 505
+    _globals["_EXECUTEREQUEST"]._serialized_start = 508
+    _globals["_EXECUTEREQUEST"]._serialized_end = 824
+    _globals["_AGENTSPEC"]._serialized_start = 826
+    _globals["_AGENTSPEC"]._serialized_end = 945
+    _globals["_TASK"]._serialized_start = 948
+    _globals["_TASK"]._serialized_end = 1080
+    _globals["_UPSTREAM"]._serialized_start = 1082
+    _globals["_UPSTREAM"]._serialized_end = 1140
+    _globals["_CONTEXT"]._serialized_start = 1142
+    _globals["_CONTEXT"]._serialized_end = 1263
+    _globals["_LLM"]._serialized_start = 1265
+    _globals["_LLM"]._serialized_end = 1338
+    _globals["_LIMITS"]._serialized_start = 1340
+    _globals["_LIMITS"]._serialized_end = 1411
+    _globals["_GATEWAYTOOL"]._serialized_start = 1413
+    _globals["_GATEWAYTOOL"]._serialized_end = 1508
+    _globals["_ACK"]._serialized_start = 1510
+    _globals["_ACK"]._serialized_end = 1535
+    _globals["_CANCEL"]._serialized_start = 1537
+    _globals["_CANCEL"]._serialized_end = 1561
+    _globals["_APPROVALDECISION"]._serialized_start = 1563
+    _globals["_APPROVALDECISION"]._serialized_end = 1656
+    _globals["_POLICYUPDATE"]._serialized_start = 1658
+    _globals["_POLICYUPDATE"]._serialized_end = 1687
+    _globals["_TOOLRESULT"]._serialized_start = 1689
+    _globals["_TOOLRESULT"]._serialized_end = 1755
+    _globals["_RUNTIMEEVENT"]._serialized_start = 1758
+    _globals["_RUNTIMEEVENT"]._serialized_end = 2229
+    _globals["_LOG"]._serialized_start = 2231
+    _globals["_LOG"]._serialized_end = 2268
+    _globals["_DELTA"]._serialized_start = 2270
+    _globals["_DELTA"]._serialized_end = 2291
+    _globals["_TOKENS"]._serialized_start = 2293
+    _globals["_TOKENS"]._serialized_end = 2348
+    _globals["_SPAWN"]._serialized_start = 2350
+    _globals["_SPAWN"]._serialized_end = 2385
+    _globals["_SPAN"]._serialized_start = 2388
+    _globals["_SPAN"]._serialized_end = 2567
+    _globals["_ARTIFACT"]._serialized_start = 2569
+    _globals["_ARTIFACT"]._serialized_end = 2624
+    _globals["_APPROVALREQUEST"]._serialized_start = 2627
+    _globals["_APPROVALREQUEST"]._serialized_end = 2784
+    _globals["_TOOLREQUEST"]._serialized_start = 2787
+    _globals["_TOOLREQUEST"]._serialized_end = 2915
+    _globals["_RESULT"]._serialized_start = 2917
+    _globals["_RESULT"]._serialized_end = 3003
+    _globals["_ERROR"]._serialized_start = 3005
+    _globals["_ERROR"]._serialized_end = 3048
+    _globals["_AGENTRUNTIME"]._serialized_start = 3051
+    _globals["_AGENTRUNTIME"]._serialized_end = 3216
 # @@protoc_insertion_point(module_scope)

@@ -22,7 +22,13 @@ class HealthReply(_message.Message):
     version: str
     agents_loaded: int
     runs_active: int
-    def __init__(self, status: _Optional[str] = ..., version: _Optional[str] = ..., agents_loaded: _Optional[int] = ..., runs_active: _Optional[int] = ...) -> None: ...
+    def __init__(
+        self,
+        status: _Optional[str] = ...,
+        version: _Optional[str] = ...,
+        agents_loaded: _Optional[int] = ...,
+        runs_active: _Optional[int] = ...,
+    ) -> None: ...
 
 class BackendCommand(_message.Message):
     __slots__ = ("execute", "ack", "cancel", "approval_decision", "policy_update", "tool_result")
@@ -38,10 +44,28 @@ class BackendCommand(_message.Message):
     approval_decision: ApprovalDecision
     policy_update: PolicyUpdate
     tool_result: ToolResult
-    def __init__(self, execute: _Optional[_Union[ExecuteRequest, _Mapping]] = ..., ack: _Optional[_Union[Ack, _Mapping]] = ..., cancel: _Optional[_Union[Cancel, _Mapping]] = ..., approval_decision: _Optional[_Union[ApprovalDecision, _Mapping]] = ..., policy_update: _Optional[_Union[PolicyUpdate, _Mapping]] = ..., tool_result: _Optional[_Union[ToolResult, _Mapping]] = ...) -> None: ...
+    def __init__(
+        self,
+        execute: _Optional[_Union[ExecuteRequest, _Mapping]] = ...,
+        ack: _Optional[_Union[Ack, _Mapping]] = ...,
+        cancel: _Optional[_Union[Cancel, _Mapping]] = ...,
+        approval_decision: _Optional[_Union[ApprovalDecision, _Mapping]] = ...,
+        policy_update: _Optional[_Union[PolicyUpdate, _Mapping]] = ...,
+        tool_result: _Optional[_Union[ToolResult, _Mapping]] = ...,
+    ) -> None: ...
 
 class ExecuteRequest(_message.Message):
-    __slots__ = ("run_id", "node_id", "token", "agent", "task", "context", "llm", "limits", "gateway_tools")
+    __slots__ = (
+        "run_id",
+        "node_id",
+        "token",
+        "agent",
+        "task",
+        "context",
+        "llm",
+        "limits",
+        "gateway_tools",
+    )
     RUN_ID_FIELD_NUMBER: _ClassVar[int]
     NODE_ID_FIELD_NUMBER: _ClassVar[int]
     TOKEN_FIELD_NUMBER: _ClassVar[int]
@@ -60,7 +84,18 @@ class ExecuteRequest(_message.Message):
     llm: Llm
     limits: Limits
     gateway_tools: _containers.RepeatedCompositeFieldContainer[GatewayTool]
-    def __init__(self, run_id: _Optional[str] = ..., node_id: _Optional[str] = ..., token: _Optional[str] = ..., agent: _Optional[_Union[AgentSpec, _Mapping]] = ..., task: _Optional[_Union[Task, _Mapping]] = ..., context: _Optional[_Union[Context, _Mapping]] = ..., llm: _Optional[_Union[Llm, _Mapping]] = ..., limits: _Optional[_Union[Limits, _Mapping]] = ..., gateway_tools: _Optional[_Iterable[_Union[GatewayTool, _Mapping]]] = ...) -> None: ...
+    def __init__(
+        self,
+        run_id: _Optional[str] = ...,
+        node_id: _Optional[str] = ...,
+        token: _Optional[str] = ...,
+        agent: _Optional[_Union[AgentSpec, _Mapping]] = ...,
+        task: _Optional[_Union[Task, _Mapping]] = ...,
+        context: _Optional[_Union[Context, _Mapping]] = ...,
+        llm: _Optional[_Union[Llm, _Mapping]] = ...,
+        limits: _Optional[_Union[Limits, _Mapping]] = ...,
+        gateway_tools: _Optional[_Iterable[_Union[GatewayTool, _Mapping]]] = ...,
+    ) -> None: ...
 
 class AgentSpec(_message.Message):
     __slots__ = ("name", "role", "principal", "system_prompt", "model", "budget_tokens")
@@ -76,7 +111,15 @@ class AgentSpec(_message.Message):
     system_prompt: str
     model: str
     budget_tokens: int
-    def __init__(self, name: _Optional[str] = ..., role: _Optional[str] = ..., principal: _Optional[str] = ..., system_prompt: _Optional[str] = ..., model: _Optional[str] = ..., budget_tokens: _Optional[int] = ...) -> None: ...
+    def __init__(
+        self,
+        name: _Optional[str] = ...,
+        role: _Optional[str] = ...,
+        principal: _Optional[str] = ...,
+        system_prompt: _Optional[str] = ...,
+        model: _Optional[str] = ...,
+        budget_tokens: _Optional[int] = ...,
+    ) -> None: ...
 
 class Task(_message.Message):
     __slots__ = ("title", "content", "kind", "kind_description", "produces_artifact")
@@ -90,7 +133,14 @@ class Task(_message.Message):
     kind: str
     kind_description: str
     produces_artifact: bool
-    def __init__(self, title: _Optional[str] = ..., content: _Optional[str] = ..., kind: _Optional[str] = ..., kind_description: _Optional[str] = ..., produces_artifact: _Optional[bool] = ...) -> None: ...
+    def __init__(
+        self,
+        title: _Optional[str] = ...,
+        content: _Optional[str] = ...,
+        kind: _Optional[str] = ...,
+        kind_description: _Optional[str] = ...,
+        produces_artifact: _Optional[bool] = ...,
+    ) -> None: ...
 
 class Upstream(_message.Message):
     __slots__ = ("node_id", "title", "output")
@@ -100,7 +150,12 @@ class Upstream(_message.Message):
     node_id: str
     title: str
     output: str
-    def __init__(self, node_id: _Optional[str] = ..., title: _Optional[str] = ..., output: _Optional[str] = ...) -> None: ...
+    def __init__(
+        self,
+        node_id: _Optional[str] = ...,
+        title: _Optional[str] = ...,
+        output: _Optional[str] = ...,
+    ) -> None: ...
 
 class Context(_message.Message):
     __slots__ = ("goal", "upstream", "memories", "documents", "labels")
@@ -114,7 +169,14 @@ class Context(_message.Message):
     memories: _containers.RepeatedScalarFieldContainer[str]
     documents: _containers.RepeatedScalarFieldContainer[str]
     labels: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, goal: _Optional[str] = ..., upstream: _Optional[_Iterable[_Union[Upstream, _Mapping]]] = ..., memories: _Optional[_Iterable[str]] = ..., documents: _Optional[_Iterable[str]] = ..., labels: _Optional[_Iterable[str]] = ...) -> None: ...
+    def __init__(
+        self,
+        goal: _Optional[str] = ...,
+        upstream: _Optional[_Iterable[_Union[Upstream, _Mapping]]] = ...,
+        memories: _Optional[_Iterable[str]] = ...,
+        documents: _Optional[_Iterable[str]] = ...,
+        labels: _Optional[_Iterable[str]] = ...,
+    ) -> None: ...
 
 class Llm(_message.Message):
     __slots__ = ("provider", "api_key", "model", "base_url")
@@ -126,7 +188,13 @@ class Llm(_message.Message):
     api_key: str
     model: str
     base_url: str
-    def __init__(self, provider: _Optional[str] = ..., api_key: _Optional[str] = ..., model: _Optional[str] = ..., base_url: _Optional[str] = ...) -> None: ...
+    def __init__(
+        self,
+        provider: _Optional[str] = ...,
+        api_key: _Optional[str] = ...,
+        model: _Optional[str] = ...,
+        base_url: _Optional[str] = ...,
+    ) -> None: ...
 
 class Limits(_message.Message):
     __slots__ = ("max_turns", "timeout_s", "allow_code_exec")
@@ -136,7 +204,12 @@ class Limits(_message.Message):
     max_turns: int
     timeout_s: int
     allow_code_exec: bool
-    def __init__(self, max_turns: _Optional[int] = ..., timeout_s: _Optional[int] = ..., allow_code_exec: _Optional[bool] = ...) -> None: ...
+    def __init__(
+        self,
+        max_turns: _Optional[int] = ...,
+        timeout_s: _Optional[int] = ...,
+        allow_code_exec: _Optional[bool] = ...,
+    ) -> None: ...
 
 class GatewayTool(_message.Message):
     __slots__ = ("name", "description", "input_schema")
@@ -146,7 +219,12 @@ class GatewayTool(_message.Message):
     name: str
     description: str
     input_schema: _struct_pb2.Struct
-    def __init__(self, name: _Optional[str] = ..., description: _Optional[str] = ..., input_schema: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ...) -> None: ...
+    def __init__(
+        self,
+        name: _Optional[str] = ...,
+        description: _Optional[str] = ...,
+        input_schema: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ...,
+    ) -> None: ...
 
 class Ack(_message.Message):
     __slots__ = ("request_id",)
@@ -170,7 +248,13 @@ class ApprovalDecision(_message.Message):
     decision: str
     reason: str
     decided_by: str
-    def __init__(self, approval_id: _Optional[str] = ..., decision: _Optional[str] = ..., reason: _Optional[str] = ..., decided_by: _Optional[str] = ...) -> None: ...
+    def __init__(
+        self,
+        approval_id: _Optional[str] = ...,
+        decision: _Optional[str] = ...,
+        reason: _Optional[str] = ...,
+        decided_by: _Optional[str] = ...,
+    ) -> None: ...
 
 class PolicyUpdate(_message.Message):
     __slots__ = ("token",)
@@ -186,10 +270,26 @@ class ToolResult(_message.Message):
     request_id: str
     output: str
     is_error: bool
-    def __init__(self, request_id: _Optional[str] = ..., output: _Optional[str] = ..., is_error: _Optional[bool] = ...) -> None: ...
+    def __init__(
+        self,
+        request_id: _Optional[str] = ...,
+        output: _Optional[str] = ...,
+        is_error: _Optional[bool] = ...,
+    ) -> None: ...
 
 class RuntimeEvent(_message.Message):
-    __slots__ = ("log", "delta", "tokens", "spawn", "span", "artifact", "approval_request", "tool_request", "result", "error")
+    __slots__ = (
+        "log",
+        "delta",
+        "tokens",
+        "spawn",
+        "span",
+        "artifact",
+        "approval_request",
+        "tool_request",
+        "result",
+        "error",
+    )
     LOG_FIELD_NUMBER: _ClassVar[int]
     DELTA_FIELD_NUMBER: _ClassVar[int]
     TOKENS_FIELD_NUMBER: _ClassVar[int]
@@ -210,7 +310,19 @@ class RuntimeEvent(_message.Message):
     tool_request: ToolRequest
     result: Result
     error: Error
-    def __init__(self, log: _Optional[_Union[Log, _Mapping]] = ..., delta: _Optional[_Union[Delta, _Mapping]] = ..., tokens: _Optional[_Union[Tokens, _Mapping]] = ..., spawn: _Optional[_Union[Spawn, _Mapping]] = ..., span: _Optional[_Union[Span, _Mapping]] = ..., artifact: _Optional[_Union[Artifact, _Mapping]] = ..., approval_request: _Optional[_Union[ApprovalRequest, _Mapping]] = ..., tool_request: _Optional[_Union[ToolRequest, _Mapping]] = ..., result: _Optional[_Union[Result, _Mapping]] = ..., error: _Optional[_Union[Error, _Mapping]] = ...) -> None: ...
+    def __init__(
+        self,
+        log: _Optional[_Union[Log, _Mapping]] = ...,
+        delta: _Optional[_Union[Delta, _Mapping]] = ...,
+        tokens: _Optional[_Union[Tokens, _Mapping]] = ...,
+        spawn: _Optional[_Union[Spawn, _Mapping]] = ...,
+        span: _Optional[_Union[Span, _Mapping]] = ...,
+        artifact: _Optional[_Union[Artifact, _Mapping]] = ...,
+        approval_request: _Optional[_Union[ApprovalRequest, _Mapping]] = ...,
+        tool_request: _Optional[_Union[ToolRequest, _Mapping]] = ...,
+        result: _Optional[_Union[Result, _Mapping]] = ...,
+        error: _Optional[_Union[Error, _Mapping]] = ...,
+    ) -> None: ...
 
 class Log(_message.Message):
     __slots__ = ("level", "message")
@@ -234,7 +346,12 @@ class Tokens(_message.Message):
     input: int
     output: int
     cached: int
-    def __init__(self, input: _Optional[int] = ..., output: _Optional[int] = ..., cached: _Optional[int] = ...) -> None: ...
+    def __init__(
+        self,
+        input: _Optional[int] = ...,
+        output: _Optional[int] = ...,
+        cached: _Optional[int] = ...,
+    ) -> None: ...
 
 class Spawn(_message.Message):
     __slots__ = ("name", "role")
@@ -245,7 +362,17 @@ class Spawn(_message.Message):
     def __init__(self, name: _Optional[str] = ..., role: _Optional[str] = ...) -> None: ...
 
 class Span(_message.Message):
-    __slots__ = ("id", "parent_id", "kind", "name", "agent", "started_at", "ended_at", "status", "attributes")
+    __slots__ = (
+        "id",
+        "parent_id",
+        "kind",
+        "name",
+        "agent",
+        "started_at",
+        "ended_at",
+        "status",
+        "attributes",
+    )
     ID_FIELD_NUMBER: _ClassVar[int]
     PARENT_ID_FIELD_NUMBER: _ClassVar[int]
     KIND_FIELD_NUMBER: _ClassVar[int]
@@ -264,7 +391,18 @@ class Span(_message.Message):
     ended_at: str
     status: str
     attributes: _struct_pb2.Struct
-    def __init__(self, id: _Optional[str] = ..., parent_id: _Optional[str] = ..., kind: _Optional[str] = ..., name: _Optional[str] = ..., agent: _Optional[str] = ..., started_at: _Optional[str] = ..., ended_at: _Optional[str] = ..., status: _Optional[str] = ..., attributes: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ...) -> None: ...
+    def __init__(
+        self,
+        id: _Optional[str] = ...,
+        parent_id: _Optional[str] = ...,
+        kind: _Optional[str] = ...,
+        name: _Optional[str] = ...,
+        agent: _Optional[str] = ...,
+        started_at: _Optional[str] = ...,
+        ended_at: _Optional[str] = ...,
+        status: _Optional[str] = ...,
+        attributes: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ...,
+    ) -> None: ...
 
 class Artifact(_message.Message):
     __slots__ = ("path", "mime", "content")
@@ -274,10 +412,24 @@ class Artifact(_message.Message):
     path: str
     mime: str
     content: bytes
-    def __init__(self, path: _Optional[str] = ..., mime: _Optional[str] = ..., content: _Optional[bytes] = ...) -> None: ...
+    def __init__(
+        self,
+        path: _Optional[str] = ...,
+        mime: _Optional[str] = ...,
+        content: _Optional[bytes] = ...,
+    ) -> None: ...
 
 class ApprovalRequest(_message.Message):
-    __slots__ = ("approval_id", "tool", "rule", "reason", "args_sha256", "span_id", "agent", "turn_span_id")
+    __slots__ = (
+        "approval_id",
+        "tool",
+        "rule",
+        "reason",
+        "args_sha256",
+        "span_id",
+        "agent",
+        "turn_span_id",
+    )
     APPROVAL_ID_FIELD_NUMBER: _ClassVar[int]
     TOOL_FIELD_NUMBER: _ClassVar[int]
     RULE_FIELD_NUMBER: _ClassVar[int]
@@ -294,7 +446,17 @@ class ApprovalRequest(_message.Message):
     span_id: str
     agent: str
     turn_span_id: str
-    def __init__(self, approval_id: _Optional[str] = ..., tool: _Optional[str] = ..., rule: _Optional[str] = ..., reason: _Optional[str] = ..., args_sha256: _Optional[str] = ..., span_id: _Optional[str] = ..., agent: _Optional[str] = ..., turn_span_id: _Optional[str] = ...) -> None: ...
+    def __init__(
+        self,
+        approval_id: _Optional[str] = ...,
+        tool: _Optional[str] = ...,
+        rule: _Optional[str] = ...,
+        reason: _Optional[str] = ...,
+        args_sha256: _Optional[str] = ...,
+        span_id: _Optional[str] = ...,
+        agent: _Optional[str] = ...,
+        turn_span_id: _Optional[str] = ...,
+    ) -> None: ...
 
 class ToolRequest(_message.Message):
     __slots__ = ("request_id", "tool", "arguments", "agent", "turn_span_id")
@@ -308,7 +470,14 @@ class ToolRequest(_message.Message):
     arguments: _struct_pb2.Struct
     agent: str
     turn_span_id: str
-    def __init__(self, request_id: _Optional[str] = ..., tool: _Optional[str] = ..., arguments: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., agent: _Optional[str] = ..., turn_span_id: _Optional[str] = ...) -> None: ...
+    def __init__(
+        self,
+        request_id: _Optional[str] = ...,
+        tool: _Optional[str] = ...,
+        arguments: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ...,
+        agent: _Optional[str] = ...,
+        turn_span_id: _Optional[str] = ...,
+    ) -> None: ...
 
 class Result(_message.Message):
     __slots__ = ("output", "tokens_in", "tokens_out", "tokens_cached")
@@ -320,7 +489,13 @@ class Result(_message.Message):
     tokens_in: int
     tokens_out: int
     tokens_cached: int
-    def __init__(self, output: _Optional[str] = ..., tokens_in: _Optional[int] = ..., tokens_out: _Optional[int] = ..., tokens_cached: _Optional[int] = ...) -> None: ...
+    def __init__(
+        self,
+        output: _Optional[str] = ...,
+        tokens_in: _Optional[int] = ...,
+        tokens_out: _Optional[int] = ...,
+        tokens_cached: _Optional[int] = ...,
+    ) -> None: ...
 
 class Error(_message.Message):
     __slots__ = ("message", "retryable")
