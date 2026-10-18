@@ -87,6 +87,8 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(auth::login))
         .routes(routes!(auth::refresh))
         .routes(routes!(auth::logout))
+        .routes(routes!(sso::providers))
+        .routes(routes!(sso::identities))
         .routes(routes!(sso::oidc_login))
         .routes(routes!(sso::oidc_callback))
         .routes(routes!(auth::me, account::update_me))
@@ -306,6 +308,8 @@ mod tests {
             "/api/v1/auth/register",
             "/api/v1/auth/oidc/login",
             "/api/v1/auth/oidc/callback",
+            "/api/v1/auth/providers",
+            "/api/v1/auth/identities",
             "/api/v1/graphs/{gid}",
             "/api/v1/graphs/{gid}/plans/{pid}/apply",
             "/api/v1/runs/{rid}/artifacts.zip",

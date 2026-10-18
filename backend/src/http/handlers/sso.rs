@@ -1,12 +1,14 @@
 //! Single sign-on with the OpenID Connect provider: the browser is sent to
 //! the provider, comes back with a code, and leaves signed in exactly as a
 //! password sign-in leaves it (an access token from `POST /auth/refresh`, a
-//! refresh cookie). No token ever travels in an address.
+//! refresh cookie). No token ever travels in an address. Also what the login
+//! page offers, and the identities an account is linked to.
 //!
-//! Both routes are navigations, not API calls: they answer with redirects,
-//! and a sign-in that does not happen sends the browser to
+//! The login and the callback are navigations, not API calls: they answer
+//! with redirects, and a sign-in that does not happen sends the browser to
 //! `/login?sso_error=<code>` while the reason goes to the server's log.
 
+use axum::Json;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
@@ -19,10 +21,12 @@ use super::auth::{cookie, session_config};
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::account::AccountEventKind;
-use crate::domain::sso::{Refusal, safe_return_to};
+use crate::domain::sso::{
+    LinkedIdentity, LoginProviders, Refusal, SignInMethods, SsoProvider, safe_return_to,
+};
 use crate::engine::account::note;
 use crate::engine::sso::{self, Resolution};
-use crate::http::extract::ClientIp;
+use crate::http::extract::{Caller, ClientIp};
 use crate::http::middleware::rate_limit::AuthRateLimit;
 use crate::http::problem::Problem;
 use crate::repo;
@@ -68,6 +72,56 @@ fn client(state: &AppState) -> Result<std::sync::Arc<OidcClient>, AppError> {
         .oidc
         .clone()
         .ok_or(AppError::NotFound("single sign-on"))
+}
+
+/// The ways to sign in here, for the login page: a password or not,
+/// registration or not, and the single sign-on provider.
+#[utoipa::path(get, path = "/auth/providers", tag = "auth",
+    responses((status = 200, body = LoginProviders)))]
+pub async fn providers(State(state): State<AppState>) -> Json<LoginProviders> {
+    let settings = &state.settings;
+    let oidc = settings.oidc.as_ref();
+    let password = oidc.is_none_or(|oidc| oidc.allow_local_login);
+    Json(LoginProviders {
+        password,
+        signup: password && settings.allow_signup,
+        sso: oidc
+            .map(|oidc| SsoProvider {
+                id: "oidc".into(),
+                display_name: oidc.display_name.clone(),
+                login_url: "/api/v1/auth/oidc/login".into(),
+            })
+            .into_iter()
+            .collect(),
+    })
+}
+
+/// How the caller signs in: whether the account has a password, and the
+/// single sign-on identities linked to it.
+#[utoipa::path(get, path = "/auth/identities", tag = "auth", security(("bearer" = [])),
+    responses((status = 200, body = SignInMethods), (status = 401, body = Problem)))]
+pub async fn identities(
+    State(state): State<AppState>,
+    auth: Caller,
+) -> Result<Json<SignInMethods>, AppError> {
+    let oidc = state.settings.oidc.as_ref();
+    let identities = repo::sso::identities(&state.db, auth.id)
+        .await?
+        .into_iter()
+        .map(|row| LinkedIdentity {
+            provider: oidc
+                .filter(|oidc| oidc.issuer == row.issuer)
+                .map_or_else(|| row.issuer.clone(), |oidc| oidc.display_name.clone()),
+            issuer: row.issuer,
+            email: row.email,
+            linked_at: row.created_at,
+            last_login_at: row.last_login_at,
+        })
+        .collect();
+    Ok(Json(SignInMethods {
+        password: repo::sso::has_password(&state.db, auth.id).await?,
+        identities,
+    }))
 }
 
 /// The binding cookie: `SameSite=Lax`, because the provider sends the

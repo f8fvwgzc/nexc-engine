@@ -9,6 +9,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Single sign-on in the console: `GET /auth/providers` (public) says how one signs in here
+  (passwords or not, registration or not, the provider and its name), and the login page shows
+  "Continue with" and the provider's name, with a key icon, above the password form when single
+  sign-on is on, only the button when password sign-in is off (`/login?break_glass=1` opens the
+  form for the break-glass administrator), and in words why the provider sent the browser back
+  when it did (`sso_error`). "Create an account" shows only when registration is open, and the register page
+  says how accounts are made when it is not. The profile page (the platform console's account
+  page too) shows the linked identity, with the provider, the address it gave and the last
+  sign-in, and says when the account has no password (`GET /auth/identities`).
 - Single sign-on with an OpenID Connect provider: `GET /auth/oidc/login` sends the browser to the
   provider (authorization code flow, PKCE S256, a `state` and a `nonce` kept server-side for ten
   minutes, single use, bound to the browser by the `nexc_sso` cookie) and

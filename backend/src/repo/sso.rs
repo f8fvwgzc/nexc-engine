@@ -135,6 +135,38 @@ pub async fn touch(
     Ok(())
 }
 
+/// One identity linked to an account, as its holder sees it.
+#[derive(Debug, Clone, FromRow)]
+pub struct IdentityRow {
+    pub issuer: String,
+    pub email: String,
+    pub created_at: DateTime<Utc>,
+    pub last_login_at: Option<DateTime<Utc>>,
+}
+
+/// The identities linked to an account, oldest first.
+pub async fn identities(
+    db: impl PgExecutor<'_>,
+    user_id: Uuid,
+) -> Result<Vec<IdentityRow>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT issuer, email, created_at, last_login_at FROM user_identities
+         WHERE user_id = $1 ORDER BY created_at, id",
+    )
+    .bind(user_id)
+    .fetch_all(db)
+    .await
+}
+
+/// Whether an account has a password ("!" is none: single sign-on created it).
+pub async fn has_password(db: impl PgExecutor<'_>, user_id: Uuid) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar("SELECT password_hash <> '!' FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_optional(db)
+        .await
+        .map(|found| found.unwrap_or(false))
+}
+
 /// An account as a sign-in through the provider sees it.
 #[derive(Debug, Clone)]
 pub struct SsoAccount {

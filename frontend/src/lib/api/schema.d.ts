@@ -745,6 +745,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/identities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * How the caller signs in: whether the account has a password, and the
+         *     single sign-on identities linked to it.
+         */
+        get: operations["identities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/login": {
         parameters: {
             query?: never;
@@ -918,6 +938,26 @@ export interface paths {
          *     meet the rules does not use the link up.
          */
         post: operations["reset_password"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The ways to sign in here, for the login page: a password or not,
+         *     registration or not, and the single sign-on provider.
+         */
+        get: operations["providers"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -5258,6 +5298,18 @@ export interface components {
              */
             tool_calls_per_minute: number | null;
         };
+        /** @description An identity of a single sign-on provider that signs in to the account. */
+        LinkedIdentity: {
+            /** @description The address the provider gave at the last sign-in. */
+            email: string;
+            issuer: string;
+            /** Format: date-time */
+            last_login_at: string | null;
+            /** Format: date-time */
+            linked_at: string;
+            /** @description The provider's name on the login page (its issuer when it is no longer the one configured). */
+            provider: string;
+        };
         /**
          * @description An allow-list and a deny-list of names (tools, hosts, models). `allow:
          *     null` inherits the level above; `deny` is always added to it.
@@ -5289,6 +5341,19 @@ export interface components {
          * @enum {string}
          */
         LogLevel: "debug" | "info" | "warn" | "error";
+        /** @description The ways to sign in to this installation. */
+        LoginProviders: {
+            /**
+             * @description E-mail and password (`POST /auth/login`). `false` when only single
+             *     sign-on is allowed: the login page hides its form, which the
+             *     break-glass administrator opens at `/login?break_glass=1`.
+             */
+            password: boolean;
+            /** @description Whether `POST /auth/register` creates accounts. */
+            signup: boolean;
+            /** @description Single sign-on providers; empty while single sign-on is off. */
+            sso: components["schemas"]["SsoProvider"][];
+        };
         /** @description `POST /auth/login` body. */
         LoginRequest: {
             /**
@@ -6639,6 +6704,13 @@ export interface components {
             count: number;
             severity: components["schemas"]["Severity"];
         };
+        /** @description How an account signs in. */
+        SignInMethods: {
+            /** @description The provider identities linked to the account, oldest first. */
+            identities: components["schemas"]["LinkedIdentity"][];
+            /** @description Whether the account has a password; one single sign-on created has none. */
+            password: boolean;
+        };
         /** @description One span of a run's trace, as stored and as served. */
         Span: {
             /** Format: uuid */
@@ -6770,6 +6842,18 @@ export interface components {
             alert: components["schemas"]["Alert"];
         } | {
             run: components["schemas"]["Run"];
+        };
+        /** @description A single sign-on provider the login page offers. */
+        SsoProvider: {
+            /** @description What the button says after "Continue with". */
+            display_name: string;
+            /** @description `oidc`. */
+            id: string;
+            /**
+             * @description Where the button sends the browser (`GET`, a navigation), with
+             *     `?return_to=<path of this site>`.
+             */
+            login_url: string;
         };
         /** @description `POST /workspaces/{wid}/transfers` body. */
         StartTransfer: {
@@ -9088,6 +9172,33 @@ export interface operations {
             };
         };
     };
+    identities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignInMethods"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     login: {
         parameters: {
             query?: never;
@@ -9512,6 +9623,25 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    providers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginProviders"];
                 };
             };
         };

@@ -9,7 +9,7 @@
 import type { A2aCounterpart } from '@/schemas/a2a';
 import type { A2aTask, Agent, AgentCard, Capabilities } from '@/schemas/agent';
 import type { AuditAnswer, AuditFact, CannedQuestion } from '@/schemas/audit';
-import type { AuthResponse, User } from '@/schemas/auth';
+import type { AuthResponse, LoginProviders, SignInMethods, User } from '@/schemas/auth';
 import type {
   EdgeSuggestion,
   Graph,
@@ -43,6 +43,8 @@ type Assert<T extends true> = T;
 export type ContractDrift = [
   Assert<Matches<'User', User>>,
   Assert<Matches<'AuthResponse', AuthResponse>>,
+  Assert<Matches<'LoginProviders', LoginProviders>>,
+  Assert<Matches<'SignInMethods', SignInMethods>>,
   Assert<Matches<'LlmSettings', LlmSettings>>,
   Assert<Matches<'GraphNode', GraphNode>>,
   Assert<Matches<'GraphEdge', GraphEdge>>,

@@ -1,11 +1,63 @@
-//! Single sign-on: why a sign-in through the identity provider was refused,
-//! and where the browser may be sent once it succeeded.
+//! Single sign-on: the ways to sign in the login page offers, the identities
+//! an account is linked to, why a sign-in through the identity provider was
+//! refused, and where the browser may be sent once it succeeded.
+
+use chrono::{DateTime, Utc};
+use serde::Serialize;
+use utoipa::ToSchema;
 
 /// Where the browser goes after signing in when it named nowhere (or
 /// somewhere it may not go).
 pub const DEFAULT_RETURN_TO: &str = "/app";
 /// Longest path the browser may ask to come back to.
 pub const RETURN_TO_MAX: usize = 512;
+
+/// A single sign-on provider the login page offers.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct SsoProvider {
+    /// `oidc`.
+    pub id: String,
+    /// What the button says after "Continue with".
+    pub display_name: String,
+    /// Where the button sends the browser (`GET`, a navigation), with
+    /// `?return_to=<path of this site>`.
+    pub login_url: String,
+}
+
+/// The ways to sign in to this installation.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct LoginProviders {
+    /// E-mail and password (`POST /auth/login`). `false` when only single
+    /// sign-on is allowed: the login page hides its form, which the
+    /// break-glass administrator opens at `/login?break_glass=1`.
+    pub password: bool,
+    /// Whether `POST /auth/register` creates accounts.
+    pub signup: bool,
+    /// Single sign-on providers; empty while single sign-on is off.
+    pub sso: Vec<SsoProvider>,
+}
+
+/// An identity of a single sign-on provider that signs in to the account.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct LinkedIdentity {
+    /// The provider's name on the login page (its issuer when it is no longer the one configured).
+    pub provider: String,
+    pub issuer: String,
+    /// The address the provider gave at the last sign-in.
+    pub email: String,
+    pub linked_at: DateTime<Utc>,
+    #[schema(required = true)]
+    pub last_login_at: Option<DateTime<Utc>>,
+}
+
+/// How an account signs in.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct SignInMethods {
+    /// Whether the account has a password; one single sign-on created has none.
+    pub password: bool,
+    /// The provider identities linked to the account, oldest first.
+    pub identities: Vec<LinkedIdentity>,
+}
 
 /// Why a sign-in through the provider did not happen. The callback sends the
 /// browser to `/login?sso_error=<code>`; the code is all the address carries,

@@ -2504,6 +2504,40 @@
         ]
       }
     },
+    "/api/v1/auth/identities": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "How the caller signs in: whether the account has a password, and the\nsingle sign-on identities linked to it.",
+        "operationId": "identities",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignInMethods"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/auth/login": {
       "post": {
         "tags": [
@@ -3053,6 +3087,26 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/providers": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "The ways to sign in here, for the login page: a password or not,\nregistration or not, and the single sign-on provider.",
+        "operationId": "providers",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginProviders"
                 }
               }
             }
@@ -19122,6 +19176,41 @@
         },
         "additionalProperties": false
       },
+      "LinkedIdentity": {
+        "type": "object",
+        "description": "An identity of a single sign-on provider that signs in to the account.",
+        "required": [
+          "provider",
+          "issuer",
+          "email",
+          "linked_at",
+          "last_login_at"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "The address the provider gave at the last sign-in."
+          },
+          "issuer": {
+            "type": "string"
+          },
+          "last_login_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "linked_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "provider": {
+            "type": "string",
+            "description": "The provider's name on the login page (its issuer when it is no longer the one configured)."
+          }
+        }
+      },
       "ListRule": {
         "type": "object",
         "description": "An allow-list and a deny-list of names (tools, hosts, models). `allow:\nnull` inherits the level above; `deny` is always added to it.",
@@ -19211,6 +19300,32 @@
           "warn",
           "error"
         ]
+      },
+      "LoginProviders": {
+        "type": "object",
+        "description": "The ways to sign in to this installation.",
+        "required": [
+          "password",
+          "signup",
+          "sso"
+        ],
+        "properties": {
+          "password": {
+            "type": "boolean",
+            "description": "E-mail and password (`POST /auth/login`). `false` when only single\nsign-on is allowed: the login page hides its form, which the\nbreak-glass administrator opens at `/login?break_glass=1`."
+          },
+          "signup": {
+            "type": "boolean",
+            "description": "Whether `POST /auth/register` creates accounts."
+          },
+          "sso": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SsoProvider"
+            },
+            "description": "Single sign-on providers; empty while single sign-on is off."
+          }
+        }
       },
       "LoginRequest": {
         "type": "object",
@@ -22768,6 +22883,27 @@
           }
         }
       },
+      "SignInMethods": {
+        "type": "object",
+        "description": "How an account signs in.",
+        "required": [
+          "password",
+          "identities"
+        ],
+        "properties": {
+          "identities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LinkedIdentity"
+            },
+            "description": "The provider identities linked to the account, oldest first."
+          },
+          "password": {
+            "type": "boolean",
+            "description": "Whether the account has a password; one single sign-on created has none."
+          }
+        }
+      },
       "Span": {
         "type": "object",
         "description": "One span of a run's trace, as stored and as served.",
@@ -23165,6 +23301,29 @@
           }
         ],
         "description": "One server-sent event (`data:` payload). The variant determines the SSE `event:` name."
+      },
+      "SsoProvider": {
+        "type": "object",
+        "description": "A single sign-on provider the login page offers.",
+        "required": [
+          "id",
+          "display_name",
+          "login_url"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string",
+            "description": "What the button says after \"Continue with\"."
+          },
+          "id": {
+            "type": "string",
+            "description": "`oidc`."
+          },
+          "login_url": {
+            "type": "string",
+            "description": "Where the button sends the browser (`GET`, a navigation), with\n`?return_to=<path of this site>`."
+          }
+        }
       },
       "StartTransfer": {
         "type": "object",

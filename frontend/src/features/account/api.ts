@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { apiRequest, apiSend } from '@/lib/api/client';
 import { saveDownload } from '@/lib/api/download';
-import { authResponseSchema, userSchema } from '@/schemas/auth';
+import { authResponseSchema, signInMethodsSchema, userSchema } from '@/schemas/auth';
 import { idSchema, timestampSchema } from '@/schemas/common';
 
 /** Changes the signed-in person's display name. */
@@ -51,6 +51,13 @@ export const accountEventSchema = z.object({
   created_at: timestampSchema,
 });
 export type AccountEvent = z.infer<typeof accountEventSchema>;
+
+/** How the signed-in person signs in: a password or not, and the single sign-on identities. */
+export const signInMethodsQuery = () =>
+  queryOptions({
+    queryKey: ['account', 'sign-in'] as const,
+    queryFn: ({ signal }) => apiRequest('/auth/identities', signInMethodsSchema, { signal }),
+  });
 
 /** What happened to the signed-in person's access lately, newest first. */
 export const activityQuery = () =>
