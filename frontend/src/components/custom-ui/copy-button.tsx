@@ -2,8 +2,9 @@ import { CheckIcon, CopyIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
-import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+
+import { IconButton } from './icon-button';
 
 export function CopyButton({
   value,
@@ -32,11 +33,9 @@ export function CopyButton({
   };
 
   return (
-    <Button
+    <IconButton
       type="button"
-      variant="ghost"
-      size="icon-sm"
-      aria-label={copied ? 'Copied' : label}
+      label={copied ? 'Copied' : label}
       onClick={() => void copy()}
       className={cn('text-muted-foreground hover:text-foreground', className)}
     >
@@ -45,6 +44,6 @@ export function CopyButton({
       ) : (
         <CopyIcon />
       )}
-    </Button>
+    </IconButton>
   );
 }

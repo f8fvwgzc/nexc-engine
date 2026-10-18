@@ -1,13 +1,26 @@
+import { PageContainer, type PageWidth } from '@/components/custom-ui/page-container';
 import { Skeleton } from '@/components/ui/skeleton';
 
-/** Generic page placeholder matching PageHeader + a card grid, to avoid layout shift. */
-export function PageSkeleton() {
+/**
+ * A whole page while it loads: a header and a card grid in the page's own frame, so nothing
+ * moves when the page arrives. `width` is the width of the page that will replace it.
+ */
+export function PageSkeleton({ width = 'default' }: { width?: PageWidth }) {
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-6 p-4 sm:p-6" aria-busy aria-label="Loading">
-      <div className="space-y-2">
-        <Skeleton className="h-8 w-48" />
+    <PageContainer width={width} aria-busy aria-label="Loading">
+      <div className="space-y-2 border-b pb-4">
+        <Skeleton className="h-7 w-48" />
         <Skeleton className="h-4 w-80 max-w-full" />
       </div>
+      <ContentSkeleton />
+    </PageContainer>
+  );
+}
+
+/** The body of a page while it loads, under a header that is already there. */
+export function ContentSkeleton() {
+  return (
+    <div className="space-y-6" aria-busy aria-label="Loading">
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {Array.from({ length: 4 }, (_, i) => (
           <Skeleton key={i} className="h-24 rounded-xl" />
@@ -22,6 +35,7 @@ export function PageSkeleton() {
   );
 }
 
+/** A table while it loads: its header row and a few rows. */
 export function TableSkeleton({ rows = 6 }: { rows?: number }) {
   return (
     <div className="space-y-2" aria-busy aria-label="Loading">
