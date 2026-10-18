@@ -1767,3 +1767,216 @@ async fn the_gateway_refuses_counterparts_hosts_and_labels_the_policy_forbids(po
         "{alerts}"
     );
 }
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn delegation_depth_and_loops_are_bounded_across_hops(pool: PgPool) {
+    let (url, seen) = fake_grpc_runtime().await;
+    let app = grpc_app(pool, &url).await;
+    let (card_url, stub_seen) = a2a_stub(true).await;
+    let (owner, _) = app.register("owner@example.com").await;
+    let wid = workspace(&app, &owner).await;
+    // Exposed, may call `stub` back, and may go one hop deep.
+    let analyst = calling_analyst(&app, &owner, &["stub"], 1).await;
+    let principal = analyst["principal_id"].as_str().unwrap().to_owned();
+    let (stub, secret) = counterpart(&app, &owner, &wid, "stub", &card_url).await;
+    let stub_principal = stub["principal_id"].as_str().unwrap().to_owned();
+    // The message's first line tells the runtime stand-in to call the counterpart back.
+    let callback =
+        |text: &str| text_message(&format!("TOOL a2a:stub\n{}", json!({"message": text})));
+
+    // The stub sends a task; the Analyst calls the stub back as a tool: hop 1, the chain names
+    // the Analyst, the egress span is on the inbound run's trace.
+    let (status, reply) = rpc(
+        &app,
+        &principal,
+        Some(&secret),
+        "tasks/send",
+        json!({"message": callback("call me back")}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{reply}");
+    let task = &reply["result"];
+    assert_eq!(task["status"]["state"], "completed", "{task}");
+    assert!(
+        task["artifacts"][0]["parts"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Remote says: call me back"),
+        "{task}"
+    );
+    {
+        let remote = stub_seen.lock().unwrap();
+        assert_eq!(remote.methods, ["tasks/sendSubscribe"]);
+        assert_eq!(remote.params[0]["metadata"]["nexc.hop"], 1);
+        assert_eq!(
+            remote.params[0]["metadata"]["nexc.chain"],
+            json!([principal])
+        );
+    }
+    let run_id = task["metadata"]["nexc.run_id"].as_str().unwrap();
+    let spans = trace_of(&app, &owner, run_id).await;
+    assert_eq!(spans[0]["attributes"]["inbound"], true);
+    assert_eq!(spans[0]["attributes"]["hop"], 0);
+    let outbound = spans
+        .iter()
+        .find(|s| s["kind"] == "tool_call" && s["attributes"]["direction"] == "outbound")
+        .expect("the callback is on the inbound run's trace");
+    assert_eq!(outbound["name"], "a2a:stub");
+    assert_eq!(outbound["attributes"]["hop"], 1);
+    assert_eq!(outbound["attributes"]["chain"], json!([principal]));
+    assert!(
+        spans.iter().any(|s| s["kind"] == "egress"
+            && s["parent_id"] == outbound["id"]
+            && s["attributes"]["transport"] == "a2a"),
+        "the egress span hangs under the callback"
+    );
+
+    // A loop: the task comes back to the Analyst with itself already in the chain.
+    let (status, reply) = rpc(
+        &app,
+        &principal,
+        Some(&secret),
+        "tasks/send",
+        json!({"message": text_message("again"),
+            "metadata": {"nexc.hop": 1, "nexc.chain": [principal, stub_principal]}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{reply}");
+    let task = &reply["result"];
+    assert_eq!(task["status"]["state"], "failed", "{task}");
+    assert_eq!(task["metadata"]["nexc.refused_rule"], "delegation.loop");
+    assert!(
+        task["status"]["message"]["parts"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("loop")
+    );
+    let run_id = task["metadata"]["nexc.run_id"].as_str().unwrap();
+    let spans = trace_of(&app, &owner, run_id).await;
+    assert_eq!(spans.len(), 2, "{spans:?}");
+    assert_eq!(spans[1]["kind"], "policy");
+    assert_eq!(spans[1]["attributes"]["rule"], "delegation.loop");
+    assert_eq!(spans[1]["attributes"]["decision"], "deny");
+    assert_eq!(
+        spans[1]["attributes"]["chain"],
+        json!([principal, stub_principal])
+    );
+    assert_eq!(
+        seen.requests.lock().unwrap().len(),
+        1,
+        "the agent never started"
+    );
+
+    // Too deep: a task that already passed two hops, for an agent allowed one.
+    let (_, reply) = rpc(
+        &app,
+        &principal,
+        Some(&secret),
+        "tasks/send",
+        json!({"message": text_message("deep"),
+            "metadata": {"nexc.hop": 2, "nexc.chain": ["agent://other/X", "agent://other/Y"]}}),
+    )
+    .await;
+    assert_eq!(reply["result"]["status"]["state"], "failed", "{reply}");
+    assert_eq!(
+        reply["result"]["metadata"]["nexc.refused_rule"],
+        "delegation.max_depth"
+    );
+    let run_id = reply["result"]["metadata"]["nexc.run_id"].as_str().unwrap();
+    let spans = trace_of(&app, &owner, run_id).await;
+    assert_eq!(spans[1]["attributes"]["rule"], "delegation.max_depth");
+    assert_eq!(spans[1]["attributes"]["hop"], 2);
+
+    // One hop deep is admitted, but the callback would be the second: refused by the gateway
+    // as a policy span, and nothing reaches the stub.
+    let before = stub_seen.lock().unwrap().methods.len();
+    let (_, reply) = rpc(
+        &app,
+        &principal,
+        Some(&secret),
+        "tasks/send",
+        json!({"message": callback("one hop in"),
+            "metadata": {"nexc.hop": 1, "nexc.chain": ["agent://other/X"]}}),
+    )
+    .await;
+    let task = &reply["result"];
+    assert_eq!(task["status"]["state"], "completed", "{task}");
+    let run_id = task["metadata"]["nexc.run_id"].as_str().unwrap();
+    let spans = trace_of(&app, &owner, run_id).await;
+    let refusal = spans
+        .iter()
+        .find(|s| {
+            s["kind"] == "policy"
+                && s["attributes"]["rule"] == "delegation.max_depth"
+                && s["attributes"]["action"] == "counterpart"
+        })
+        .expect("the gateway refused the second hop");
+    assert_eq!(refusal["name"], "stub");
+    assert_eq!(refusal["attributes"]["decision"], "deny");
+    let (answer, is_error) = last_answer(&seen);
+    assert!(
+        is_error && answer.contains("delegation.max_depth"),
+        "{answer}"
+    );
+    assert_eq!(stub_seen.lock().unwrap().methods.len(), before);
+    assert_eq!(task["metadata"]["nexc.hop"], 1);
+
+    // With two hops allowed, the callback goes out at hop 2 with the whole chain.
+    call(
+        &app,
+        Method::PATCH,
+        &format!("/agents/{}", analyst["id"].as_str().unwrap()),
+        &owner,
+        Some(json!({"capabilities": {
+            "tools": ["read_file", "list_files", "write_file", "make_docx", "finish", "a2a:stub"],
+            "egress_hosts": ["127.0.0.1"], "counterparts": ["stub"],
+            "delegation": {"max_depth": 2, "max_fan_out": 2}}})),
+    )
+    .await;
+    let (_, reply) = rpc(
+        &app,
+        &principal,
+        Some(&secret),
+        "tasks/send",
+        json!({"message": callback("two hops allowed"),
+            "metadata": {"nexc.hop": 1, "nexc.chain": ["agent://other/X"]}}),
+    )
+    .await;
+    assert_eq!(reply["result"]["status"]["state"], "completed", "{reply}");
+    {
+        let remote = stub_seen.lock().unwrap();
+        let last = remote.params.last().unwrap();
+        assert_eq!(remote.methods.len(), before + 1);
+        assert_eq!(last["metadata"]["nexc.hop"], 2);
+        assert_eq!(
+            last["metadata"]["nexc.chain"],
+            json!(["agent://other/X", principal])
+        );
+    }
+    let (_, tasks) = call(
+        &app,
+        Method::GET,
+        &format!("/agents/{}/a2a/tasks", analyst["id"].as_str().unwrap()),
+        &owner,
+        None,
+    )
+    .await;
+    let rules: Vec<Option<&str>> = tasks
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["refused_rule"].as_str())
+        .collect();
+    assert_eq!(
+        rules,
+        [
+            None,
+            None,
+            Some("delegation.max_depth"),
+            Some("delegation.loop"),
+            None
+        ]
+    );
+    assert_eq!(tasks[0]["hop"], 1);
+    assert_eq!(tasks[0]["chain"], json!(["agent://other/X"]));
+}

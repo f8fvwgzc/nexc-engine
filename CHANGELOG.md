@@ -9,6 +9,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A2A adapter, delegation bounds across hops (`docs/CONTRACT.md` §10): a task carries in its
+  A2A `metadata` the number of nexc-mediated hops before it (`nexc.hop`, 0 for a counterpart's
+  own call) and the principals it passed through (`nexc.chain`); every outbound call made while
+  a run answers an inbound task carries `hop + 1` and the chain with the agent appended, so the
+  agent's resolved `delegation.max_depth` bounds the chain as it bounds a sub-agent's depth,
+  wherever the hops happened: an inbound task past the depth is refused as
+  `delegation.max_depth` before the agent starts, an outbound call that would be the hop too
+  many is refused by the gateway the same way, and a task whose chain already names the agent
+  (or a callback to a counterpart already in the chain) is refused as `delegation.loop`; each
+  refusal is a `policy` span of action `counterpart` with the hop and the chain, and the
+  console's task list shows the rule. Test: the stub's task makes the Analyst call the stub
+  back at hop 1 with the chain on the inbound run's trace; the task coming back with the
+  Analyst in the chain is refused as a loop; two hops in is too deep for an agent allowed one,
+  one hop in is admitted but its callback refused; with two allowed the callback goes out at
+  hop 2 with the whole chain.
 - A2A adapter, counterparts and the outbound tool (`docs/CONTRACT.md` §10): a workspace
   registers remote A2A agents (Settings → A2A counterparts; `GET/POST
   /workspaces/{wid}/a2a-counterparts`, `GET/DELETE …/{cid}`, `POST …/{cid}/check`): a name, the
