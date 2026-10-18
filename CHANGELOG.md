@@ -73,6 +73,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   The kustomize manifests get the same readiness probe and `NEXC_RUN_LEASE_SECS`.
   `docker-compose.yml` documents running two backend replicas (`--scale backend=2`), passes
   `NEXC_RUN_LEASE_SECS` and gives the backend 30 s to drain.
+- Documentation of high availability: **Operate, High availability** on the site
+  (`site/operate/ha.md`) shows `docs/HA.md` (the model, the failure modes with their RTO and RPO,
+  deploying, shutting down, seeing takeovers happen, retrying writes); the contract documents the
+  setting, the lease semantics and `Idempotency-Key`; the architecture's scaling section no
+  longer says an in-flight run is lost with its replica.
 - Documentation site (`site/`, VitePress): the repository's Markdown rendered with a sidebar,
   full-text search, a dark theme, mermaid diagrams and the API reference (Scalar over
   `site/public/openapi.json`, a committed export of `nexc openapi`), in six sections: Start,

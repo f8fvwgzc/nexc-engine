@@ -24,6 +24,7 @@ export const ROUTES: Record<string, string> = {
     '/reference/environment',
   'docs/AGENTSECOPS.md': '/secops/assessment',
   'docs/INFRASTRUCTURE.md': '/operate/infrastructure',
+  'docs/HA.md': '/operate/ha',
   'deploy/k8s/README.md': '/operate/kubernetes',
   'deploy/helm/nexc-engine/values.yaml': '/operate/helm#values',
   'CONTRIBUTING.md': '/reference/contributing',

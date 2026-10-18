@@ -7,6 +7,7 @@ This section is for whoever runs nexc-engine: how to deploy it, keep its data sa
 | [Docker Compose](/operate/compose)                     | The full stack on one host, and how to put it behind TLS.                             |
 | [Kubernetes](/operate/kubernetes)                      | The kustomize manifests, from minikube to a production checklist.                     |
 | [Helm chart](/operate/helm)                            | The same deployment as a chart, with every value.                                     |
+| [High availability](/operate/ha)                       | How a run survives a replica going away, the RTO and RPO of each failure, draining.   |
 | [Backups](/operate/backups)                            | Back up, check and restore the database and the files on disk.                        |
 | [Infrastructure](/operate/infrastructure)              | The one PostgreSQL database, secrets, queues and caches.                               |
 | [Workspace transfers](/operate/transfers)              | Move one workspace to a database its owner controls.                                  |

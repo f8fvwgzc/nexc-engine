@@ -243,10 +243,17 @@ the ingress and the Vite dev server proxy it to the backend as they do `/api`.
 
 - **Backend** – stateless apart from `NEXC_DATA_DIR` (artifacts). Realtime events are published
   through PostgreSQL `LISTEN/NOTIFY`, so an SSE or WebSocket client receives events no matter which
-  replica it is connected to, and you can run several replicas behind a load balancer. Scheduler
-  note: a run is executed by the replica that accepted its `POST /runs`; the other replicas only
-  relay its events. If that replica stops, its in-flight run is not migrated to another replica.
-  With more than one node, mount the artifact directory on shared (ReadWriteMany) storage.
+  replica it is connected to, and you can run several replicas behind a load balancer. Scheduler:
+  a queued run is claimed by the dispatcher of whichever replica looks first (`FOR UPDATE SKIP
+  LOCKED`), usually the one that accepted its `POST /runs`, which wakes its own dispatcher. That
+  replica holds a lease on the run (`NEXC_RUN_LEASE_SECS`) while the others relay its events. If
+  it stops, the run is not lost: a crashed replica's lease runs out and another replica takes the
+  run over with the next lease epoch, and a replica that shuts down hands its runs over at once.
+  The new holder resumes from what was written (succeeded nodes keep their outputs, an
+  interrupted node runs again with its next attempt, a node waiting for an approval waits on), and
+  every write is fenced on the epoch, so a former holder that comes back writes nothing
+  ([High availability](HA.md)). With more than one node, mount the artifact directory on shared
+  (ReadWriteMany) storage.
 - **Agent runtime** – fully stateless (per-run scratch directories are deleted after each run);
   scale freely. Each instance limits concurrent runs (`RUNTIME_MAX_CONCURRENT_RUNS`, default 8) and
   answers 429 (NDJSON) or `RESOURCE_EXHAUSTED` (gRPC) when full. The gRPC channel of a backend

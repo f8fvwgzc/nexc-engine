@@ -98,6 +98,7 @@ export default defineConfig({
           { text: 'Docker Compose', link: '/operate/compose' },
           { text: 'Kubernetes', link: '/operate/kubernetes' },
           { text: 'Helm chart', link: '/operate/helm' },
+          { text: 'High availability', link: '/operate/ha' },
           { text: 'Backups', link: '/operate/backups' },
           { text: 'Infrastructure', link: '/operate/infrastructure' },
           { text: 'Workspace transfers', link: '/operate/transfers' },
