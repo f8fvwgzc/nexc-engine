@@ -48,7 +48,7 @@ With `NEXC_OIDC_ALLOW_LOCAL_LOGIN=false` the login page shows only the single si
 ### What else to know
 
 - **Second factor.** People who sign in through the provider are not asked for the local authenticator code: the provider authenticates them, so enforce a second factor there.
-- **Accounts the provider creates** have no password. Their holders see the linked identity on their profile; deleting such an account is done by a platform administrator (Accounts, Erase), since deleting one's own account asks for a password.
+- **Accounts the provider creates** have no password. Their holders see the linked identity on their profile, and no password or two-factor forms (the provider checks both; setting up the local second factor is refused); deleting such an account is done by a platform administrator (Accounts, Erase), since deleting one's own account asks for a password.
 - **Who may sign in** is the provider's decision: anyone it lets through gets an account at the first sign-in. Assign the application to the people or groups who should use it.
 - **Existing accounts** are linked at the first sign-in through the provider when the provider says the address is verified and the account has no other identity of the provider. Otherwise the sign-in is refused with a message, never merged.
 - **Deleting an account** erases its linked identities; the person's next sign-in through the provider creates a new account.

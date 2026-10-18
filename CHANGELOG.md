@@ -44,7 +44,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   when it did (`sso_error`). "Create an account" shows only when registration is open, and the register page
   says how accounts are made when it is not. The profile page (the platform console's account
   page too) shows the linked identity, with the provider, the address it gave and the last
-  sign-in, and says when the account has no password (`GET /auth/identities`).
+  sign-in, and says when the account has no password (`GET /auth/identities`); such an account sees
+  no password or two-factor forms and no self-delete it could never confirm, only a note that the
+  provider checks both, and `POST /auth/2fa/setup` answers 409 for it.
 - Single sign-on with an OpenID Connect provider: `GET /auth/oidc/login` sends the browser to the
   provider (authorization code flow, PKCE S256, a `state` and a `nonce` kept server-side for ten
   minutes, single use, bound to the browser by the `nexc_sso` cookie) and

@@ -249,14 +249,24 @@ pub async fn two_factor_status(
 
 /// Starts setting up two-factor sign-in: a secret for an authenticator app,
 /// as text and as an `otpauth://` address. Nothing changes about signing in
-/// until `POST /auth/2fa/enable` proves the app has it.
+/// until `POST /auth/2fa/enable` proves the app has it. An account without a
+/// password (single sign-on created it) has no use for one: it signs in
+/// through the provider, which asks for its own second factor, and could
+/// never turn this one off again (that asks for the password).
 #[utoipa::path(post, path = "/auth/2fa/setup", tag = "auth", security(("bearer" = [])),
     responses((status = 200, body = Setup), (status = 401, body = Problem),
-        (status = 409, description = "Already on", body = Problem)))]
+        (status = 409, description = "Already on, or the account has no password (it signs in with single sign-on only)", body = Problem)))]
 pub async fn two_factor_setup(
     State(state): State<AppState>,
     auth: Caller,
 ) -> Result<Json<Setup>, AppError> {
+    if !repo::sso::has_password(&state.db, auth.id).await? {
+        return Err(AppError::Conflict(
+            "this account has no password: it signs in through single sign-on, whose provider \
+             asks for the second factor"
+                .into(),
+        ));
+    }
     let account = repo::users::find(&state.db, auth.id)
         .await
         .or_not_found("user")?;

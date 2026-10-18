@@ -1,4 +1,4 @@
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -17,7 +17,7 @@ import { Label } from '@/components/ui/label';
 import { ApiError, errorMessage } from '@/lib/api/errors';
 import { useAuthStore } from '@/stores/auth-store';
 
-import { deleteAccount, exportAccount } from '../api';
+import { deleteAccount, exportAccount, signInMethodsQuery } from '../api';
 
 function DeleteDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navigate = useNavigate();
@@ -94,6 +94,8 @@ function DeleteDialog({ open, onClose }: { open: boolean; onClose: () => void })
 /** A copy of what is held about the signed-in person, and deleting the account. */
 export function DataCard() {
   const admin = useAuthStore((s) => s.user?.role === 'admin');
+  // Deleting asks for the password, which an account single sign-on created does not have.
+  const passwordless = useQuery(signInMethodsQuery()).data?.password === false;
   const [deleting, setDeleting] = useState(false);
   const download = useMutation({
     mutationFn: exportAccount,
@@ -123,6 +125,11 @@ export function DataCard() {
           <p className="text-sm text-muted-foreground">
             This account administers the platform. Another administrator has to take that role away
             before it can be deleted.
+          </p>
+        ) : passwordless ? (
+          <p className="text-sm text-muted-foreground">
+            This account has no password, which deleting it asks for: ask whoever administers this
+            installation to erase it.
           </p>
         ) : (
           <>

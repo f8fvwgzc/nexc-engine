@@ -211,6 +211,11 @@ async fn a_first_sign_in_creates_the_account_just_in_time(pool: PgPool) {
         )
         .await;
     assert_eq!(login.status, StatusCode::UNAUTHORIZED);
+    // Nor a local second factor, which it would never use and could never turn off (that asks
+    // for the password): the provider asks for its own.
+    let (status, body) = call(&app, Method::POST, "/auth/2fa/setup", token, None).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(body["detail"].as_str().unwrap().contains("no password"));
 
     // The next sign-in is the same account, whatever address the provider gives now.
     let (_, again) = signed_in(
