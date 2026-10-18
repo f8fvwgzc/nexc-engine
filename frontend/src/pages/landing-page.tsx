@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { AnimatedButton } from '@/components/custom-ui/animated-button';
 import { GlassCard } from '@/components/custom-ui/glass-card';
 import { GradientText } from '@/components/custom-ui/gradient-text';
+import { IconButton } from '@/components/custom-ui/icon-button';
 import { FadeIn } from '@/components/custom-ui/motion';
 import { BrandMark } from '@/components/layout/brand-mark';
 import { ThemeToggle } from '@/components/layout/theme-toggle';
@@ -36,16 +37,11 @@ export default function LandingPage() {
           nexc-engine
         </Link>
         <nav className="flex items-center gap-1" aria-label="Main">
-          <Button variant="ghost" size="icon" asChild>
-            <a
-              href={GITHUB_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="nexc-engine on GitHub"
-            >
+          <IconButton size="icon" label="nexc-engine on GitHub" asChild>
+            <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer">
               <GitHubIcon />
             </a>
-          </Button>
+          </IconButton>
           <ThemeToggle />
           <Button variant="ghost" asChild className="hidden sm:inline-flex">
             <Link to="/login">Log in</Link>

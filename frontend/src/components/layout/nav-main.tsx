@@ -60,8 +60,9 @@ function NavSection({
               </NavLink>
             </SidebarMenuButton>
             {(badges[item.to] ?? 0) > 0 && (
-              <SidebarMenuBadge aria-label={`${badges[item.to]} unread`}>
+              <SidebarMenuBadge>
                 {badges[item.to]}
+                <span className="sr-only"> unread</span>
               </SidebarMenuBadge>
             )}
           </SidebarMenuItem>
@@ -83,12 +84,17 @@ function NavTeams() {
   if (mine.length === 0) return null;
   const openTeam = pathname === '/app/issues' ? new URLSearchParams(search).get('team') : null;
   return (
-    <SidebarGroup className="py-1 group-data-[collapsible=icon]:hidden">
+    <SidebarGroup className="py-1">
       <SidebarGroupLabel className="h-7">Your teams</SidebarGroupLabel>
       <SidebarMenu className="gap-0.5">
         {mine.map((team) => (
           <SidebarMenuItem key={team.id}>
-            <SidebarMenuButton asChild isActive={openTeam === team.id} className={ROW}>
+            <SidebarMenuButton
+              asChild
+              isActive={openTeam === team.id}
+              className={ROW}
+              tooltip={team.name}
+            >
               <NavLink to={`/app/issues?team=${team.id}`}>
                 <span className="flex size-4 shrink-0 items-center justify-center rounded-[4px] bg-foreground/10 text-[9px] font-semibold">
                   {team.key.slice(0, 1)}

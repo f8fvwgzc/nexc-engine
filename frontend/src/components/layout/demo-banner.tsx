@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { FlaskConicalIcon, XIcon } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
-import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/custom-ui/icon-button';
 import { orchestratorQuery } from '@/features/graphs/api';
 import { useDismissible } from '@/hooks/use-dismissible';
 
@@ -11,7 +11,12 @@ import { useDismissible } from '@/hooks/use-dismissible';
  * in-flow) so it never shifts the layout when the status query resolves.
  */
 export function DemoBanner() {
-  const { data: demoMode } = useQuery({ ...orchestratorQuery(), select: (s) => s.demo_mode });
+  // Demo mode is set when the server starts: one read is enough, whatever page is open.
+  const { data: demoMode } = useQuery({
+    ...orchestratorQuery(),
+    staleTime: Infinity,
+    select: (s) => s.demo_mode,
+  });
   const [dismissed, dismiss] = useDismissible('nexc-demo-banner-dismissed');
   if (!demoMode || dismissed) return null;
 
@@ -31,9 +36,9 @@ export function DemoBanner() {
         </Link>{' '}
         for real results.
       </p>
-      <Button variant="ghost" size="icon-sm" onClick={dismiss} aria-label="Dismiss demo notice">
+      <IconButton onClick={dismiss} label="Dismiss demo notice">
         <XIcon />
-      </Button>
+      </IconButton>
     </div>
   );
 }

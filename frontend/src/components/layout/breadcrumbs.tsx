@@ -18,12 +18,19 @@ import { isRouteHandle, type Crumb } from './route-handle';
 function GraphCrumb() {
   const { graphId = '' } = useParams();
   // Reads the cache the graph page fills; never triggers its own fetch.
-  const { data: name } = useQuery({
+  const { data: name, status } = useQuery({
     ...graphQuery(graphId),
     enabled: false,
     select: (g) => g.name,
   });
-  return name ? <>{name}</> : <Skeleton className="h-4 w-24" />;
+  if (name) return <>{name}</>;
+  // The page says why the graph cannot be shown; the crumb only names what was asked for.
+  if (status === 'error') return <>Graph</>;
+  return (
+    <Skeleton className="h-4 w-24">
+      <span className="sr-only">Loading the graph’s name</span>
+    </Skeleton>
+  );
 }
 
 function RunCrumb() {

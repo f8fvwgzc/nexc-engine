@@ -9,6 +9,7 @@ import {
 import { Suspense } from 'react';
 import { Navigate, NavLink, Outlet, useLocation } from 'react-router-dom';
 
+import { MainLandmarkProvider } from '@/components/custom-ui/main-landmark';
 import {
   Sidebar,
   SidebarContent,
@@ -23,6 +24,7 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from '@/components/ui/sidebar';
+import { useIsTablet } from '@/hooks/use-tablet';
 import { useAuthStore } from '@/stores/auth-store';
 
 import { BrandMark } from './brand-mark';
@@ -66,22 +68,23 @@ const GROUPS: PlatformGroup[] = [
  */
 export default function PlatformShell() {
   const { pathname } = useLocation();
+  const tablet = useIsTablet();
   const admin = useAuthStore((s) => s.user?.role === 'admin');
   if (!admin) return <Navigate to="/app/issues" replace />;
   const current = GROUPS.flatMap((g) => g.items).find((item) => pathname.startsWith(item.to));
   return (
-    <SidebarProvider open>
+    <SidebarProvider open={!tablet}>
       <a
         href="#main"
         className="sr-only z-50 rounded-md bg-background px-3 py-2 focus:not-sr-only focus:fixed focus:top-2 focus:left-2"
       >
         Skip to content
       </a>
-      <Sidebar>
+      <Sidebar collapsible="icon" role="navigation" aria-label="Platform">
         <SidebarHeader>
           <div className="flex items-center gap-2 px-2 py-1.5">
             <BrandMark className="size-8 shrink-0" />
-            <div className="grid min-w-0 flex-1 text-left text-sm leading-tight">
+            <div className="grid min-w-0 flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
               <span className="truncate font-semibold">Nexc Platform</span>
               <span className="truncate text-xs text-muted-foreground">Administrator</span>
             </div>
@@ -98,6 +101,7 @@ export default function PlatformShell() {
                       asChild
                       isActive={pathname.startsWith(item.to)}
                       className="h-7 text-[13px]"
+                      tooltip={item.title}
                     >
                       <NavLink to={item.to}>
                         <item.icon />
@@ -124,9 +128,11 @@ export default function PlatformShell() {
           </div>
         </header>
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-          <Suspense fallback={<PageSkeleton />}>
-            <Outlet />
-          </Suspense>
+          <MainLandmarkProvider>
+            <Suspense fallback={<PageSkeleton width="narrow" />}>
+              <Outlet />
+            </Suspense>
+          </MainLandmarkProvider>
         </div>
       </SidebarInset>
     </SidebarProvider>

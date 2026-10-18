@@ -2,6 +2,7 @@ import { ArrowUpRightIcon, ChevronLeftIcon } from 'lucide-react';
 import { Suspense } from 'react';
 import { Link, Navigate, NavLink, Outlet, useLocation } from 'react-router-dom';
 
+import { MainLandmarkProvider } from '@/components/custom-ui/main-landmark';
 import {
   Sidebar,
   SidebarContent,
@@ -20,6 +21,7 @@ import { CommandPalette } from '@/features/command/components/command-palette';
 import { ShortcutsDialog } from '@/features/command/components/shortcuts-dialog';
 import { useGlobalShortcuts } from '@/features/command/hooks/use-global-shortcuts';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
+import { useIsTablet } from '@/hooks/use-tablet';
 import { useAuthStore } from '@/stores/auth-store';
 
 import { DemoBanner } from './demo-banner';
@@ -33,6 +35,7 @@ import { SETTINGS_GROUPS } from './settings-nav';
  */
 export default function SettingsShell() {
   useGlobalShortcuts();
+  const tablet = useIsTablet();
   const { pathname } = useLocation();
   const { current } = useCurrentWorkspace();
   const admin = current?.role === 'owner' || current?.role === 'admin';
@@ -40,18 +43,22 @@ export default function SettingsShell() {
   // Workspace settings are not for platform administrators: their place is the console.
   if (platformAdmin) return <Navigate to="/app/platform" replace />;
   return (
-    <SidebarProvider open>
+    <SidebarProvider open={!tablet}>
       <a
         href="#main"
         className="sr-only z-50 rounded-md bg-background px-3 py-2 focus:not-sr-only focus:fixed focus:top-2 focus:left-2"
       >
         Skip to content
       </a>
-      <Sidebar>
+      <Sidebar collapsible="icon" role="navigation" aria-label="Settings">
         <SidebarHeader>
           <SidebarMenu>
             <SidebarMenuItem>
-              <SidebarMenuButton asChild className="h-8 text-[13px] font-medium">
+              <SidebarMenuButton
+                asChild
+                className="h-8 text-[13px] font-medium"
+                tooltip="Back to app"
+              >
                 <Link to="/app/issues">
                   <ChevronLeftIcon />
                   <span>Back to app</span>
@@ -75,6 +82,7 @@ export default function SettingsShell() {
                         asChild
                         isActive={pathname.startsWith(item.to)}
                         className="h-7 text-[13px]"
+                        tooltip={item.title}
                       >
                         <NavLink to={item.to}>
                           <item.icon />
@@ -90,7 +98,7 @@ export default function SettingsShell() {
         <SidebarFooter>
           <SidebarMenu>
             <SidebarMenuItem>
-              <SidebarMenuButton asChild className="h-7 text-[13px]">
+              <SidebarMenuButton asChild className="h-7 text-[13px]" tooltip={API_DOCS_ITEM.title}>
                 <a href={API_DOCS_ITEM.to} target="_blank" rel="noopener noreferrer">
                   <API_DOCS_ITEM.icon />
                   <span>{API_DOCS_ITEM.title}</span>
@@ -109,9 +117,11 @@ export default function SettingsShell() {
           <span className="text-[13px] font-medium">Settings</span>
         </header>
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-          <Suspense fallback={<PageSkeleton />}>
-            <Outlet />
-          </Suspense>
+          <MainLandmarkProvider>
+            <Suspense fallback={<PageSkeleton width="narrow" />}>
+              <Outlet />
+            </Suspense>
+          </MainLandmarkProvider>
         </div>
       </SidebarInset>
       <DemoBanner />

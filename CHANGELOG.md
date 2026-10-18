@@ -1168,6 +1168,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   mix their colour with the foreground (`text-badge`, `--badge-ink`) so 12px text clears
   4.5:1 in both themes; stat tiles wrap their labels and hints instead of cutting them; tab
   panels show focus; the command palette's hidden title no longer sits in every page.
+- UI pass, the shells: from 768 to 1023 px the app's, the settings' and the platform console's
+  sidebars are a rail of icons named by tooltips, so a tablet keeps 720 px for the page instead
+  of 528; each sidebar is a navigation landmark. The assistant's notch is narrower than the
+  page's gutter, so it no longer covers the right edge of tables and cards, and on a phone the
+  assistant opens from a button in the header instead. The header's search is an icon with a
+  tooltip on a phone, the theme menu is named on hover, the sidebar's empty "No graphs yet."
+  is a list item, its unread count is spoken as text, a graph that cannot be loaded no longer
+  leaves a skeleton in the breadcrumb, and the 404 and route-error states have an `h1` (and a
+  `main` outside the shells).
 - The per-account API rate limit is a setting, `NEXC_API_CALLS_PER_MINUTE` (600, the burst a
   fifth of it, as before), so a load test or an automation account can be given more on its own
   server.

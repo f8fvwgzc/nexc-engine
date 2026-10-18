@@ -11,8 +11,9 @@ import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
+import { IconButton } from '@/components/custom-ui/icon-button';
 import { Markdown } from '@/components/custom-ui/markdown';
-import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { askAssistant, conversationQuery } from '@/features/workspaces/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
@@ -158,8 +159,10 @@ function AssistantPanel({ current }: { current: Workspace }) {
 
   return (
     <MotionConfig reducedMotion="user">
-      {/* The notch sits on the right edge, halfway down, and slides away while the panel is open. */}
-      <div className="pointer-events-none fixed inset-y-0 right-0 z-40 flex items-center">
+      {/* The notch sits on the right edge, halfway down, and slides away while the panel is open.
+          It is narrower than the page's gutter, so it never covers the page; on a phone, where
+          the gutter is narrower still, the header's button opens the assistant instead. */}
+      <div className="pointer-events-none fixed inset-y-0 right-0 z-40 hidden items-center md:flex">
         <AnimatePresence initial={false}>
           {!open && (
             <motion.button
@@ -168,14 +171,14 @@ function AssistantPanel({ current }: { current: Workspace }) {
               initial={{ x: 40, opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
               exit={{ x: 40, opacity: 0 }}
-              whileHover={{ width: 32 }}
+              whileHover={{ width: 28 }}
               transition={spring}
-              className="pointer-events-auto flex h-28 w-7 flex-col items-center justify-center gap-1.5 rounded-l-xl bg-primary text-primary-foreground shadow-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="pointer-events-auto flex h-28 w-5 flex-col items-center justify-center gap-1.5 rounded-l-lg bg-primary text-primary-foreground shadow-lg outline-none focus-visible:w-7 focus-visible:ring-2 focus-visible:ring-ring"
               aria-label="Open assistant"
               aria-expanded={false}
               onClick={() => setOpen(true)}
             >
-              <SparklesIcon className="size-3.5" aria-hidden />
+              <SparklesIcon className="size-3" aria-hidden />
               <span className="text-[11px] font-medium tracking-wide [writing-mode:vertical-rl]">
                 Ask
               </span>
@@ -214,38 +217,31 @@ function AssistantPanel({ current }: { current: Workspace }) {
                     <span className="min-w-0 truncate">Sees: {page.title || 'this page'}</span>
                   </p>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="New conversation"
-                  title="New conversation"
-                  onClick={fresh}
-                >
+                <IconButton label="New conversation" onClick={fresh}>
                   <SquarePenIcon />
-                </Button>
-                <Button variant="ghost" size="icon-sm" asChild>
-                  <Link
-                    to="/app/conversations"
-                    aria-label="Past conversations"
-                    title="Past conversations"
-                  >
+                </IconButton>
+                <IconButton label="Past conversations" asChild>
+                  <Link to="/app/conversations">
                     <HistoryIcon />
                   </Link>
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="Close assistant"
-                  onClick={() => setOpen(false)}
-                >
+                </IconButton>
+                <IconButton label="Close the assistant" onClick={() => setOpen(false)}>
                   <XIcon />
-                </Button>
+                </IconButton>
               </header>
 
               <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
                 <div className="flex flex-col gap-3">
                   {loading && (
-                    <p className="py-6 text-muted-foreground">Loading the conversation…</p>
+                    <div
+                      className="flex flex-col gap-3 py-2"
+                      aria-busy
+                      aria-label="Loading the conversation"
+                    >
+                      <Skeleton className="ml-10 h-9 w-3/5 self-end rounded-2xl" />
+                      <Skeleton className="mr-6 h-20 rounded-xl" />
+                      <Skeleton className="ml-10 h-9 w-2/5 self-end rounded-2xl" />
+                    </div>
                   )}
                   {!loading && turns.length === 0 && (
                     <motion.div {...rise} className="flex flex-col gap-3 py-6">
@@ -379,15 +375,15 @@ function AssistantPanel({ current }: { current: Workspace }) {
                     }}
                     className="max-h-40 min-h-9 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none focus-visible:ring-0 dark:bg-transparent"
                   />
-                  <Button
+                  <IconButton
                     type="submit"
-                    size="icon-sm"
+                    variant="default"
+                    label="Send"
                     className="rounded-lg"
                     disabled={!text.trim() || ask.isPending}
-                    aria-label="Send"
                   >
                     <ArrowUpIcon />
-                  </Button>
+                  </IconButton>
                 </div>
                 <p className="mt-1.5 text-[11px] text-muted-foreground">
                   Enter to send · Shift+Enter for a new line

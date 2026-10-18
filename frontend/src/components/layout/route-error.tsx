@@ -8,6 +8,7 @@ import {
 } from 'react-router-dom';
 
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { MainLandmark } from '@/components/custom-ui/main-landmark';
 import { Seo } from '@/components/seo/seo';
 import { Button } from '@/components/ui/button';
 import { ApiError, errorMessage } from '@/lib/api/errors';
@@ -29,11 +30,12 @@ export function RouteError() {
       : errorMessage(error);
 
   return (
-    <div className="flex min-h-[60svh] items-center justify-center p-6">
+    <MainLandmark className="flex min-h-[60svh] flex-1 items-center justify-center p-6">
       <Seo title={title} noIndex />
       <EmptyState
         icon={AlertTriangleIcon}
         title={title}
+        headingLevel={1}
         description={description}
         className="max-w-lg"
         action={
@@ -50,6 +52,6 @@ export function RouteError() {
           </div>
         }
       />
-    </div>
+    </MainLandmark>
   );
 }
