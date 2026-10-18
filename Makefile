@@ -189,10 +189,11 @@ k8s-render: ## Render the kustomize manifests to stdout
 proto-runtime: ## Regenerate the runtime's gRPC stubs from backend/proto/nexc/runtime/v1/runtime.proto
 	cd agent-runtime && $(UV) run python scripts/gen_proto.py
 
-openapi: ## Export the OpenAPI spec from the backend and regenerate frontend types
+openapi: ## Export the OpenAPI spec from the backend, regenerate frontend types and refresh the docs' copy
 	@mkdir -p .cache
 	@$(LOAD_ENV) $(CARGO) run --quiet --manifest-path $(BACKEND_MANIFEST) -- openapi > .cache/openapi.json
 	cd frontend && $(PNPM) exec openapi-typescript ../.cache/openapi.json -o src/lib/api/schema.d.ts
+	cp .cache/openapi.json site/public/openapi.json
 
 doctor: ## Check local tooling and configuration (nexc doctor)
 	@scripts/doctor.sh

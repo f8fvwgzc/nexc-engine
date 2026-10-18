@@ -1,11 +1,14 @@
 # nexc-engine — system contract
 
+<!-- #region intro -->
 This file is the single source of truth that the **backend** (`backend/`, Rust axum), the
 **frontend** (`frontend/`, React) and the **agent runtime** (`agent-runtime/`, Python) agree on.
 Change the contract and every implementation together. The backend also publishes the machine
 readable form at `GET /api/openapi.json` (utoipa); the frontend generates TypeScript types from it
 (`npm run gen:api`) and validates responses at runtime with zod.
 
+<!-- #endregion intro -->
+<!-- #region topology -->
 ## 1. Topology & ports
 
 | Service                  | Dev port | Purpose                                                                                                  |
@@ -22,8 +25,10 @@ readable form at `GET /api/openapi.json` (utoipa); the frontend generates TypeSc
 
 In Docker/K8s the frontend is served by unprivileged nginx on 8080 which proxies `/api` → backend:8080.
 
+<!-- #endregion topology -->
 ## 2. Environment variables (one `.env` at repo root; see `.env.example`)
 
+<!-- #region env -->
 | Var                                                                     | Default                                                   | Used by                                                                                                                                                                                                                                                                                  |
 | ----------------------------------------------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `NEXC_ENV`                                                              | `development`                                             | backend (`production` forces secure cookies, HSTS, refuses weak secrets)                                                                                                                                                                                                                 |
@@ -73,6 +78,8 @@ In Docker/K8s the frontend is served by unprivileged nginx on 8080 which proxies
 | `RUNTIME_ALLOW_CODE_EXEC`                                               | `false`                                                   | runtime: enables the sandboxed `run_python` tool                                                                                                                                                                                                                                         |
 | `VITE_API_BASE_URL`                                                     | `/api/v1`                                                 | frontend                                                                                                                                                                                                                                                                                 |
 
+<!-- #endregion env -->
+<!-- #region conventions -->
 ## 3. Conventions
 
 - Base path `/api/v1`. JSON bodies, `snake_case` fields, ids are UUID v7 strings, timestamps RFC 3339 UTC.
@@ -93,8 +100,10 @@ In Docker/K8s the frontend is served by unprivileged nginx on 8080 which proxies
 - `GET /graphs/{id}` returns `ETag`; supports `If-None-Match` → 304.
 - Limits: request body 1 MiB (node content max 64 KiB, title max 200 chars, ≤ 500 nodes per graph).
 
+<!-- #endregion conventions -->
 ## 4. Types (TypeScript notation)
 
+<!-- #region types -->
 ```ts
 type Role = "admin" | "user";
 interface User {
@@ -679,6 +688,7 @@ interface McpServerInput {
 }
 interface McpCheck { ok: boolean; detail: string; tools: McpTool[]; latency_ms: number }
 
+// #region alerts
 // Alert routing: where a workspace's alerts and approvals go beyond the console. The URL is kept
 // encrypted (a Slack incoming-webhook URL carries its token) and only its host is shown; the
 // signing secret is generated once, shown once, kept encrypted.
@@ -767,6 +777,7 @@ interface DeliveryEnvelope {
 //         ...
 //         return "", 204
 
+// #endregion alerts
 interface AgentCard {
   agent: Agent;
   owner: { id: string; name: string } | null;
@@ -972,8 +983,10 @@ interface BackendHealth {
 }
 ```
 
+<!-- #endregion types -->
 ## 5. Endpoints (`/api/v1`)
 
+<!-- #region endpoints -->
 Public: `GET /healthz`, `GET /readyz`, `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`,
 `POST /auth/logout`, `POST /auth/password/reset`, `GET /api/openapi.json`, `GET /api/docs` (Scalar UI), and the
 A2A agent cards (§10: `GET /.well-known/agent.json?agent=`, `GET /a2a/agents/{principal}/card`, outside `/api/v1`).
@@ -1143,6 +1156,8 @@ at the budget: blank padding is removed and the passages most relevant to the no
 upstream failed is `skipped`. Unchanged nodes (same content hash + same upstream outputs) are served
 from the result cache (`cached: true`) unless `force: true`.
 
+<!-- #endregion endpoints -->
+<!-- #region events -->
 ## 6. SSE — `GET /api/v1/graphs/{gid}/events?ticket=...`
 
 Frames: `id: <seq>\nevent: <type>\ndata: <json>\n\n`; `retry: 3000` first; `heartbeat` every 15 s.
@@ -1179,8 +1194,10 @@ Server → client: `{type:"node.upserted", node}`, `{type:"node.deleted", node_i
 Every REST mutation of nodes/edges is broadcast to all sockets of that graph; dependency detection
 runs after each node create/update and pushes `suggestions` plus any auto-created `[[wikilink]]` edges.
 
+<!-- #endregion events -->
 ## 8. Agent runtime internal API (backend → runtime only)
 
+<!-- #region runtime -->
 Auth: `Authorization: Bearer $NEXC_RUNTIME_TOKEN` (constant-time compare). Bind to the internal network only.
 
 - `GET /healthz` → `{status:"ok", version, agents_loaded}`
@@ -1412,6 +1429,7 @@ retryable error; an attempt is never resumed. The NDJSON endpoint stays for one 
 (`NEXC_RUNTIME_PROTOCOL=ndjson`): it offers no gateway tools and approvals reach it over `POST
 /v1/approvals/{id}`.
 
+<!-- #region gateway-wire -->
 **The tools gateway.** An agent never reaches the network itself. MCP servers registered for the
 workspace (`/workspaces/{wid}/mcp-servers`, §5), A2A counterparts (`a2a:<name>`, §10) and the
 built-in `fetch_url` are offered to a node as `gateway_tools` as far as the policy lets it: a
@@ -1444,6 +1462,8 @@ HTTP server is spoken to with MCP streamable HTTP (`initialize`, `tools/list`, `
 `mcp-session-id`, SSE answers read), with the registered `Authorization` header. The gateway's
 own cost per call, the tool excluded, is what `make prove-gateway` measures.
 
+<!-- #endregion gateway-wire -->
+<!-- #region firewall-wire -->
 **The Agent Firewall API (`NEXC_GRPC_ADDR`).** Agents that run elsewhere use nexc as their policy
 and trace service through `nexc.firewall.v1.AgentFirewall`
 (`backend/proto/nexc/firewall/v1/firewall.proto`), served with reflection and `grpc.health.v1`
@@ -1467,6 +1487,8 @@ managed graph (`graphs.external_agent_id`, one node per external run). `VerifyTr
 recomputes the chain as `GET /runs/{rid}/trace/verify` does; `GetAgentCard` answers the caller's
 own card. A run with no call for 10 minutes is sealed and finished.
 
+<!-- #endregion firewall-wire -->
+<!-- #region otlp-wire -->
 **The OpenTelemetry export (`NEXC_OTLP_ENDPOINT`).** When set, a worker sends every span of the
 trace to the collector over OTLP/gRPC as it is written, in batches of up to 1000 behind one
 cursor (`otlp_export_cursor`, taken with `SKIP LOCKED` so instances share it; at least once). The
@@ -1479,8 +1501,11 @@ digests, names, hosts and counts, never arguments, prompts or content. `nexc doc
 `/admin/infrastructure` report whether the collector answers, how many spans went and how far
 the cursor is behind.
 
+<!-- #endregion otlp-wire -->
+<!-- #endregion runtime -->
 ## 9. texc-symphony bridge
 
+<!-- #region symphony -->
 When `NEXC_SYMPHONY_ENABLED=true`, nodes with `executor: "symphony"` are written as issues
 (`identifier: NEXC-<last 8 hex of node id>` (UUID v7 prefixes are timestamps and collide), `state: Todo`) into the managed `WORKFLOW.md`
 (`tracker.kind: memory`), then the backend calls `POST {SYMPHONY_URL}/api/v1/refresh` and follows
@@ -1513,8 +1538,10 @@ the run record.
 `scripts/symphony-claude-agent.py` is an agent command that runs each turn with the Claude Code
 CLI (`claude -p`) instead of Codex.
 
+<!-- #endregion symphony -->
 ## 10. A2A adapter (Agent-to-Agent protocol)
 
+<!-- #region a2a -->
 nexc speaks A2A on the firewall, both ways. Everything below is served at the root (where the
 protocol expects it), not under `/api/v1`; in Docker and Kubernetes the frontend's nginx proxies
 `/.well-known/agent.json` and `/a2a/` to the backend like `/api/`.
@@ -1611,3 +1638,5 @@ exposed agent's resolved `delegation.max_depth` bounds the hop as it bounds a su
 agent is refused as `delegation.loop`. An outbound call made during such a run carries
 `hop + 1` and the chain with the agent appended, and is refused the same way when `hop + 1`
 exceeds the agent's depth or the counterpart is already in the chain.
+
+<!-- #endregion a2a -->

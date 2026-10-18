@@ -46,3 +46,9 @@ htmlcov/
 *.swp
 *.log
 .cache/
+
+# --- documentation site ---
+site/.vitepress/dist/
+site/.vitepress/cache/
+site/public/media/
+site/public/favicon.svg

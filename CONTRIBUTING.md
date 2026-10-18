@@ -1,5 +1,6 @@
 # Contributing to nexc-engine
 
+<!-- #region body -->
 Thanks for helping! Bug reports, docs fixes, new tools for agents and whole features are all
 welcome. Please read the [Code of Conduct](CODE_OF_CONDUCT.md) first; security issues go through
 [SECURITY.md](SECURITY.md), never public issues.
@@ -100,3 +101,5 @@ version. The release workflow builds multi-arch images with SBOM and provenance 
 
 By contributing you agree that your contributions are licensed under the
 [MIT License](LICENSE).
+
+<!-- #endregion body -->

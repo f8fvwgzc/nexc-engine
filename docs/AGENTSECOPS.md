@@ -1,5 +1,6 @@
 # AgentSecOps on nexc-engine: assessment and roadmap
 
+<!-- #region preface -->
 _Written 2026-10-17 against commit `ac41d1b` (branch `nexc-workspaces`)._
 
 This document answers one question: what does nexc-engine need to become a platform that
@@ -10,8 +11,10 @@ defend, governance, observability), and what would we build first.
 It is written to be shown to that team. Section 1 is an honest inventory, section 2 answers the
 design questions raised, sections 3 to 8 are the proposal, section 9 is a five-minute demo script.
 
+<!-- #endregion preface -->
 ---
 
+<!-- #region assessment -->
 ## 1. Where nexc-engine stands today
 
 nexc-engine is already a **node-execution engine for agents**: a graph of tasks is planned by an
@@ -152,12 +155,14 @@ Five rules the design follows:
 5. **Policy is data with history.** Organisation → team → agent, each level narrows, never widens;
    every change is versioned and audited; a run records which policy version governed it.
 
+<!-- #endregion assessment -->
 ---
 
 ## 4. Features, by AgentSecOps function
 
 ### 4.1 Identity: the agent ID card
 
+<!-- #region identity -->
 - **Agent principal.** `agents` gains `principal_id` (a stable URN such as
   `agent://{workspace}/{name}`), `owner_user_id`, `team_id`, `purpose` (one paragraph), and
   `capabilities` (JSON): allowed tools, data scopes (knowledge topics, document labels, memory
@@ -174,8 +179,10 @@ Five rules the design follows:
 - **Done (§11):** each agent an admin exposes publishes an A2A agent card and takes A2A tasks
   through the firewall with the same principals; counterparts are external agent principals.
 
+<!-- #endregion identity -->
 ### 4.2 Observability: the trace spine
 
+<!-- #region trace -->
 - **Span table** `agent_spans`: `id uuid (v7)`, `run_id`, `node_id`, `agent_id`, `principal`,
   `parent_id`, `kind` (`llm_call`, `tool_call`, `spawn`, `data_read`, `egress`, `policy`,
   `approval`), `name`, `started_at`, `ended_at`, `status`, `attributes jsonb` (tool name and
@@ -194,6 +201,8 @@ Five rules the design follows:
 - **Export.** OpenTelemetry OTLP export of spans is a thin mapping once the table exists; this
   closes the README roadmap item "OpenTelemetry tracing across backend and runtime".
 
+<!-- #endregion trace -->
+<!-- #region policy -->
 ### 4.3 Defend
 
 - **Policy engine** (`backend/src/engine/policy.rs`): pure functions over (principal, action,
@@ -237,8 +246,10 @@ Five rules the design follows:
   execution?", "every denied action this month": all queries over the span and policy tables, and
   deterministic questions for onto-intelli.
 
+<!-- #endregion policy -->
 ### 4.5 Ask the audit: onto-intelli as the central query service
 
+<!-- #region audit -->
 Spans and policy decisions are exported as ontology facts to onto-intelli over its gRPC
 `EventService/Ingest` stream (or in-process through its Rust library, which removes the hop):
 `agent —ran→ run`, `run —executed→ node`, `agent —used_tool→ tool`, `agent —read→ document`,
@@ -255,6 +266,8 @@ denials, and governed action types with `confirm` for high-risk actions. Those m
 AgentSecOps governance for actions an agent takes **inside** the ontology (assign an issue, update
 a record): nexc agents call them through onto-intelli's MCP server, under the same principal.
 
+<!-- #endregion audit -->
+<!-- #region templates -->
 ### 4.6 Creating agents that work on day one
 
 - **Role templates** ship with capabilities, policy, knowledge bindings and an evaluation set of
@@ -269,8 +282,10 @@ a record): nexc agents call them through onto-intelli's MCP server, under the sa
 No new work beyond the per-agent model allow-list. The CLI provider stays valuable for a demo
 with no API key; Ollama for an air-gapped one.
 
+<!-- #endregion templates -->
 ---
 
+<!-- #region plan -->
 ## 5. Data model changes
 
 | Table                                       | Change                                                                                                                                                                          |
@@ -340,10 +355,12 @@ Phases 0 to 2 are the core; after them nexc-engine covers all four AgentSecOps f
 end. Phase 3 is the differentiator (an ontology-backed audit nobody else demos). Phase 4 is what
 makes it a platform other agents can sit behind, which is what SoftBank's Agent Firewall is.
 
+<!-- #endregion plan -->
 ---
 
 ## 9. Five-minute demo
 
+<!-- #region demo -->
 1. **Create an agent** from the "Analyst" template: purpose, owner, scopes (knowledge topic
    `finance`, label clearance `internal`, tools `read_file write_file make_docx`, model
    allow-list), budget. The card shows its evaluation score.
@@ -367,8 +384,10 @@ makes it a platform other agents can sit behind, which is what SoftBank's Agent 
 6. **Prove it.** `make prove-agentsecops` prints the latency table; `GET /runs/{id}/trace/verify`
    shows the chain intact, then flags the row we tampered with.
 
+<!-- #endregion demo -->
 ---
 
+<!-- #region not -->
 ## 10. What this proposal deliberately does not do
 
 - **No rewrite of the runtime in Rust now.** Security does not depend on the Python process
@@ -383,10 +402,12 @@ makes it a platform other agents can sit behind, which is what SoftBank's Agent 
   are adapters added later, as SoftBank's Agent Firewall does. (A2A came after the roadmap as
   exactly such an adapter: §11.)
 
+<!-- #endregion not -->
 ---
 
 ## 11. A2A on the firewall
 
+<!-- #region a2a -->
 The Agent-to-Agent protocol is an adapter on the parts above, not a second security model.
 `docs/CONTRACT.md` §10 has the wire; this is where it sits.
 
@@ -425,3 +446,5 @@ The Agent-to-Agent protocol is an adapter on the parts above, not a second secur
 
 In SoftBank's terms: the agent card is the ID card shown outward, the counterpart's token is
 the visitor's badge, the firewall decides at the door, and the trace keeps the visit on record.
+
+<!-- #endregion a2a -->

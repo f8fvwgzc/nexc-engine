@@ -1,9 +1,12 @@
 # Architecture
 
+<!-- #region intro -->
 This document explains how a request travels through nexc-engine. The wire-level contract
 (types, endpoints, events, environment) is [CONTRACT.md](CONTRACT.md); when the two disagree, the
 contract wins.
 
+<!-- #endregion intro -->
+<!-- #region components -->
 ## Components
 
 | Component                    | Tech                                             | Responsibility                                                                                                                                                            |
@@ -46,6 +49,8 @@ flowchart TB
     http --> pg
 ```
 
+<!-- #endregion components -->
+<!-- #region auth -->
 ## Authentication in one paragraph
 
 `POST /auth/login` returns a 15-minute JWT access token in the body and sets a rotating refresh
@@ -64,6 +69,8 @@ the epoch (`security/gate.rs`), so the tokens already issued stop working at onc
 and within ten seconds on the others. Event streams and collaboration sockets note the epoch when
 they open and close once it has risen.
 
+<!-- #endregion auth -->
+<!-- #region plan -->
 ## Flow 1: plan refinement
 
 The user asks the LLM to turn a rough sketch into a concrete plan. The response is asynchronous:
@@ -105,8 +112,10 @@ sequenceDiagram
 If the model fails or produces an invalid plan the backend emits `plan.failed {plan_id, error}`
 and the graph is untouched. In demo mode the planner is a deterministic offline generator.
 
+<!-- #endregion plan -->
 ### The ontology
 
+<!-- #region ontology -->
 Nothing about node or relation types is compiled in. Every graph stores an **ontology**: its node
 types (label, meaning, colour, default role and executor, stage, whether its nodes deliver a file or
 may run code) and its relation types (label, meaning, and whether the relation is _blocking_). A
@@ -120,6 +129,8 @@ execution DAG (other relations record meaning only and may point "backwards"), `
 suggested dependencies, `produces_artifact` routes deliverables, and each upstream output reaches
 the next node together with the reason of the edge that carried it.
 
+<!-- #endregion ontology -->
+<!-- #region run -->
 ## Flow 2: running a graph
 
 Running executes the DAG of blocking edges (`depends_on` in the starter ontology). Every node's prompt context is its own title and content,
@@ -163,14 +174,16 @@ sequenceDiagram
         B->>DB: node run succeeded / failed, output, tokens
         B->>DB: write memories from the output
         B-->>F: SSE node.status
-        Note over B: failure with retryable=true is retried up to NEXC_MAX_ATTEMPTS;<br/>downstream nodes of a failed node become skipped
+        Note over B: failure with retryable=true is retried up to NEXC_MAX_ATTEMPTS.<br/>Downstream nodes of a failed node become skipped
     end
     B->>DB: run finished (tokens, cost)
     B-->>F: SSE run.finished
 ```
 
+<!-- #endregion run -->
 ### The agent runtime protocol
 
+<!-- #region runtime -->
 The backend opens one gRPC stream per node attempt (`AgentRuntime/Execute`, the runtime's port
 8095, `NEXC_RUNTIME_PROTOCOL=grpc`, the default): it sends the request as the first command and
 reads the run's events; approval decisions, policy updates and the results of gateway calls go
@@ -197,8 +210,10 @@ flowchart LR
     loop -->|refusal, budget, timeout| err["error (retryable flag)"]
 ```
 
+<!-- #endregion runtime -->
 ### The tools gateway, the Agent Firewall API and the OTLP export
 
+<!-- #region gateway -->
 An agent never reaches the network: a tool that leaves the runtime (an MCP server registered
 for the workspace, `fetch_url`) is a `tool_request` up the stream, and the backend performs it
 after the policy decided the tool and the host, the DLP screen read the arguments and the
@@ -222,6 +237,8 @@ chain of principals carried in the task's metadata so the delegation depth and l
 bounded across platforms. The surface lives at the root, where the protocol expects it; nginx,
 the ingress and the Vite dev server proxy it to the backend as they do `/api`.
 
+<!-- #endregion gateway -->
+<!-- #region scaling -->
 ## Scaling and state
 
 - **Backend** – stateless apart from `NEXC_DATA_DIR` (artifacts). Realtime events are published
@@ -238,6 +255,8 @@ the ingress and the Vite dev server proxy it to the backend as they do `/api`.
   spread the runs.
 - **PostgreSQL** – the single source of truth; back it up together with `NEXC_MASTER_KEY`.
 
+<!-- #endregion scaling -->
+<!-- #region erase -->
 ## Deleting an account
 
 Several tables cascade from an account's id (`graphs`, `agents`, `runs`, `plans`, `memories`), so
@@ -252,6 +271,8 @@ free text (an issue's assignee history, a comment, a day summary) is not found a
 same routine serves a person deleting their own account and a platform administrator erasing one
 on request.
 
+<!-- #endregion erase -->
+<!-- #region worst -->
 ## Worst cases that are tested
 
 `backend/tests/worst_case.rs` reads the routes from the OpenAPI document, so a route added later
@@ -271,6 +292,8 @@ is covered without being listed anywhere:
 Not covered by a test: the database itself being down (`/readyz` reports it), disk full, and load
 from many machines at once.
 
+<!-- #endregion worst -->
+<!-- #region boundaries -->
 ## Security boundaries
 
 | Boundary               | Control                                                                                                                                                                                                                                                                    |
@@ -286,3 +309,5 @@ from many machines at once.
 | Agent → code execution | Disabled by default. When enabled: `python -I`, scrubbed environment, rlimits (CPU, memory, file size, processes, open files), wall-clock timeout that kills the process group, truncated output.                                                                          |
 | Untrusted model input  | Upstream outputs and memories are wrapped in tags and the system prompt marks them as data, not instructions.                                                                                                                                                              |
 | Containers             | Non-root, read-only root filesystem, all capabilities dropped, `no-new-privileges`, seccomp `RuntimeDefault` on Kubernetes.                                                                                                                                                |
+
+<!-- #endregion boundaries -->

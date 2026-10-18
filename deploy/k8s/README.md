@@ -1,9 +1,12 @@
 # nexc-engine on Kubernetes
 
+<!-- #region intro -->
 Kustomize manifests for a complete deployment: PostgreSQL 17, backend, agent runtime and frontend
 behind an nginx Ingress, with NetworkPolicies and the `restricted` Pod Security Standard. They are
 tested on minikube and are a sound starting point for any cluster.
 
+<!-- #endregion intro -->
+<!-- #region kustomize -->
 ## Quick start (minikube)
 
 ```sh
@@ -58,8 +61,10 @@ Every pod runs as non-root with `readOnlyRootFilesystem`, `allowPrivilegeEscalat
 
 Render without applying: `make k8s-render`.
 
+<!-- #endregion kustomize -->
 ## Helm
 
+<!-- #region helm -->
 `deploy/helm/nexc-engine` is the same deployment as a chart, for clusters that are managed with
 Helm: the objects above, templated. `values.yaml` sets the images and their tag (the chart's
 `appVersion` by default, `local` for images built by `scripts/minikube-up.sh`), the replicas,
@@ -84,6 +89,8 @@ helm template nexc deploy/helm/nexc-engine -n nexc --set secrets.existingSecret=
 
 CI lints the chart and renders it with the firewall, the collector and onto-intelli on.
 
+<!-- #endregion helm -->
+<!-- #region production -->
 ## Production checklist
 
 * **TLS** – add a `tls:` block to `ingress.yaml` (for example with cert-manager), enable
@@ -117,3 +124,5 @@ kubectl -n nexc get events --sort-by=.lastTimestamp
   writable root filesystem or extra capabilities).
 * Everything is `Running` but the site does not load – check the `/etc/hosts` entry, and with the
   docker driver on macOS/Windows keep `minikube tunnel` running.
+
+<!-- #endregion production -->

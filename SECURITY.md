@@ -1,5 +1,6 @@
 # Security policy
 
+<!-- #region body -->
 nexc-engine runs LLM agents, stores encrypted API keys and executes user-defined graphs, so we
 take security reports seriously and appreciate responsible disclosure.
 
@@ -54,3 +55,5 @@ changes the text of an output the same user can already edit).
   Kubernetes NetworkPolicies do this) and leave `RUNTIME_ALLOW_CODE_EXEC=false` unless needed.
 - Back up `NEXC_MASTER_KEY` together with the database; rotate `NEXC_RUNTIME_TOKEN` and
   `NEXC_JWT_SECRET` if they may have leaked.
+
+<!-- #endregion body -->

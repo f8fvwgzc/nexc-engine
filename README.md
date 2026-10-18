@@ -24,6 +24,7 @@
 
 ---
 
+<!-- #region intro -->
 nexc-engine is a self-hosted, visual **LLM graph-engineering** platform. You think in an
 Obsidian-like canvas of notes and links; nexc turns that canvas into an executable plan:
 
@@ -40,8 +41,10 @@ Obsidian-like canvas of notes and links; nexc turns that canvas into an executab
 No API key? Demo mode runs the entire product offline with a deterministic provider, so you can
 explore everything before you plug in Claude or a local model.
 
+<!-- #endregion intro -->
 ## Try it in 60 seconds
 
+<!-- #region quickstart -->
 You need Docker (with Compose v2), `make` and `openssl`.
 
 ```sh
@@ -55,6 +58,8 @@ secret and selects **demo mode** (no API key needed). `docker compose up` pulls 
 or, before the first release or for local changes, builds them from source (`make docker-up` always
 rebuilds).
 
+<!-- #endregion quickstart -->
+<!-- #region providers -->
 To use Claude, put your key in `.env` (`ANTHROPIC_API_KEY=...`, `NEXC_LLM_PROVIDER=anthropic`) and
 run `docker compose up -d` again, or add a personal key in the app under **Settings -> LLM**.
 
@@ -64,6 +69,7 @@ cheaper runs): plans and agents then go through your logged-in `claude` CLI - no
 is an isolated `claude -p` with built-in tools, MCP, hooks and sessions disabled and a scrubbed
 environment.
 
+<!-- #endregion providers -->
 ## Screenshots
 
 | Plan refinement streams in as ghost nodes                                                               | Dashboard with starter templates                                                                                       |
@@ -74,6 +80,7 @@ environment.
 
 ## AgentSecOps
 
+<!-- #region agentsecops -->
 nexc-engine is also an AgentSecOps platform in the shape of SoftBank's AgentSecOps PF: every
 agent is a principal with scopes and a signed per-run token, every action is a span on a hash
 chain, policies are versioned data that only narrow, approvals land in the inbox, DLP and a
@@ -97,6 +104,7 @@ key needed: an Analyst from a role template with its competency score, a traced 
 approval, a withheld document, a denial, an alert, a quarantine, the audit questions, the
 latency table (`make prove-agentsecops`) and the chain verified, printing the URLs to open.
 
+<!-- #endregion agentsecops -->
 | The console after the demo (light)                                                                                                                       | The same screen (dark)                                                                                                            |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | <img src="docs/media/secops-light.png" alt="AgentSecOps console: agents, live feed of spans, approvals, alerts, risk, policies and the audit, light theme"> | <img src="docs/media/secops-dark.png" alt="AgentSecOps console in the dark theme">                                                |
@@ -105,6 +113,7 @@ latency table (`make prove-agentsecops`) and the chain verified, printing the UR
 
 ## Features
 
+<!-- #region features -->
 |                                 |                                                                                                                                                                                                                                                      |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Visual graph editor**         | Obsidian-like canvas with typed nodes, drag-and-drop, `[[wikilink]]` auto-edges, live multi-user presence over WebSocket.                                                                                                                            |
@@ -123,8 +132,10 @@ latency table (`make prove-agentsecops`) and the chain verified, printing the UR
 | **Secure by default**           | Argon2 passwords, short-lived JWTs with rotating refresh tokens and reuse detection, CSRF guard, AES-256-GCM encrypted API keys, rate limiting, non-root read-only containers, internal-only runtime and database, NetworkPolicies.                  |
 | **Runs anywhere**               | `make dev` locally, Docker Compose on a single host, or Kubernetes (kustomize manifests, tested on minikube).                                                                                                                                        |
 
+<!-- #endregion features -->
 ## Architecture
 
+<!-- #region architecture -->
 ```mermaid
 flowchart LR
     user([Browser])
@@ -167,8 +178,10 @@ runtime protocol) is [docs/CONTRACT.md](docs/CONTRACT.md). The assessment of nex
 AgentSecOps PF, and the roadmap to agent identity, policy, trace and audit, is
 [docs/AGENTSECOPS.md](docs/AGENTSECOPS.md).
 
+<!-- #endregion architecture -->
 ## Repository layout
 
+<!-- #region layout -->
 ```text
 nexc-engine/
 ├── backend/             Rust (axum) API, scheduler, engine, C kernels (csrc/), SQL migrations
@@ -184,10 +197,12 @@ nexc-engine/
 └── .env.example         Every configuration variable with safe defaults
 ```
 
+<!-- #endregion layout -->
 ## Getting started
 
 ### 1. Local development
 
+<!-- #region local-dev -->
 Prerequisites: Rust 1.99+ and a C compiler, Node.js 22.12+ with pnpm 10 (`corepack enable`),
 [uv](https://docs.astral.sh/uv/) (it installs Python 3.12 for you), Docker (for PostgreSQL) and
 `openssl`. `make doctor` checks all of them.
@@ -203,8 +218,10 @@ Ctrl-C. Run the pieces separately with `make db-up`, `make dev-backend`, `make d
 `make dev-frontend`. If port 5432 is taken, set `NEXC_DB_PORT` in `.env` before `make init` (or
 fix the port in `NEXC_DATABASE_URL`).
 
+<!-- #endregion local-dev -->
 ### 2. Docker Compose
 
+<!-- #region compose -->
 ```sh
 make init
 make docker-up        # build from source and start; http://localhost:8080
@@ -223,8 +240,10 @@ This path is tested: `make docker-up` builds the three images from source (backe
 frontend 62 MB, runtime 295 MB), the stack comes up healthy, and `make smoke` walks register →
 plan → run → artifacts against it.
 
+<!-- #endregion compose -->
 #### Putting it on the internet
 
+<!-- #region internet -->
 Nothing in the stack serves TLS. Put a reverse proxy in front of the published port (Caddy,
 nginx, Traefik, or a cloud load balancer) that terminates HTTPS and forwards to
 `http://localhost:8080`, then set in `.env`:
@@ -239,8 +258,10 @@ NEXC_TRUST_PROXY=true               # visitor addresses come from X-Forwarded-Fo
 `NEXC_TRUST_PROXY` must stay `false` without a proxy, or anyone can forge their address. A Caddy
 file that does all of it: `nexc.example.com { reverse_proxy localhost:8080 }`.
 
+<!-- #endregion internet -->
 #### Backups
 
+<!-- #region backups -->
 ```sh
 make backup                 # database dump + files on disk → backups/<time>
 make backup-check           # restore the latest into a scratch database and count what is in it
@@ -250,6 +271,7 @@ make restore FROM=backups/<time>   # into an EMPTY installation only
 Set `NEXC_BACKUP_COMPOSE=1` for the Docker stack. Keep `NEXC_MASTER_KEY` with the backup: without
 it, stored AI keys cannot be read after a restore (everything else can).
 
+<!-- #endregion backups -->
 ### 3. Kubernetes (minikube)
 
 ```sh
@@ -263,6 +285,7 @@ port, the Agent Firewall API, the OTLP collector and onto-intelli as values.
 
 ## Configuration
 
+<!-- #region configuration -->
 All configuration is environment variables in one `.env` at the repo root. The complete,
 authoritative table is [docs/CONTRACT.md §2](docs/CONTRACT.md#2-environment-variables-one-env-at-repo-root-see-envexample);
 [.env.example](.env.example) documents each variable inline. The most important ones:
@@ -279,8 +302,10 @@ authoritative table is [docs/CONTRACT.md §2](docs/CONTRACT.md#2-environment-var
 | `RUNTIME_ALLOW_CODE_EXEC`                                  | `false`                    | enables the sandboxed `run_python` agent tool                  |
 | `NEXC_ONTO_URL`, `NEXC_ONTO_TOKEN`                         | –                          | optional onto-intelli: the trace as facts, "ask the audit"     |
 
+<!-- #endregion configuration -->
 ## CLI
 
+<!-- #region cli -->
 The backend is one binary with subcommands:
 
 ```sh
@@ -296,8 +321,10 @@ nexc openapi              # print the OpenAPI document to stdout
 From a checkout use `cargo run --manifest-path backend/Cargo.toml -- <command>`; in Compose,
 `docker compose exec backend nexc <command>`.
 
+<!-- #endregion cli -->
 ## texc-symphony integration
 
+<!-- #region symphony -->
 [texc-symphony](https://github.com/f8fvwgzc/texc-symphony) runs Codex coding agents against
 issues. nexc can hand `executor: symphony` nodes to it:
 
@@ -313,8 +340,10 @@ The backend writes each such node as an issue (`NEXC-<id>`, state `Todo`) into a
 the final message. Outside Docker run Symphony yourself with
 `symphony --port 4000 ./data/symphony/WORKFLOW.md` and point `NEXC_SYMPHONY_URL` at it.
 
+<!-- #endregion symphony -->
 ## Security
 
+<!-- #region security -->
 - Secrets are generated by `make init`; production mode refuses weak ones.
 - Passwords use Argon2; access tokens are short-lived JWTs, refresh tokens live in an `HttpOnly`,
   `SameSite=Strict` cookie and are rotated with reuse detection.
@@ -337,8 +366,10 @@ the final message. Outside Docker run Symphony yourself with
 
 Please report vulnerabilities privately, see [SECURITY.md](SECURITY.md).
 
+<!-- #endregion security -->
 ## How it compares
 
+<!-- #region compares -->
 nexc-engine borrows good ideas from many projects. A fair, high-level comparison (check each project
 for details – they all evolve quickly):
 
@@ -356,6 +387,7 @@ LLM apps from components, CrewAI to build agent teams in code, and Paperclip to 
 organisation of agents. nexc-engine focuses on going from a loose web of ideas to a planned,
 executed and reviewable set of deliverables.
 
+<!-- #endregion compares -->
 ## Roadmap
 
 - [x] Graph editor with realtime collaboration and dependency suggestions
@@ -375,6 +407,7 @@ Ideas and votes are welcome in [Discussions](https://github.com/f8fvwgzc/nexc-en
 
 ## Troubleshooting
 
+<!-- #region troubleshooting -->
 | Symptom                                        | Fix                                                                                                                                                        |
 | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `POSTGRES_PASSWORD is empty - run make init`   | Run `make init`; Compose reads secrets from `.env`.                                                                                                        |
@@ -387,6 +420,7 @@ Ideas and votes are welcome in [Discussions](https://github.com/f8fvwgzc/nexc-en
 | `docker compose up` runs old code              | It reuses existing images; use `make docker-up` (always rebuilds).                                                                                         |
 | minikube: `nexc.local` does not resolve        | Add the `/etc/hosts` line printed by `make minikube-up`; with the docker driver on macOS also keep `minikube tunnel` running.                              |
 
+<!-- #endregion troubleshooting -->
 ## Contributing
 
 `make check` runs every linter and test suite; `make smoke` drives the whole product end to end
@@ -396,7 +430,6 @@ and CI runs it against Docker Compose on every pull request.
 Contributions of all sizes are welcome – see [CONTRIBUTING.md](CONTRIBUTING.md) for the dev setup,
 conventions and commit style, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Good first issues are
 labelled [`good first issue`](https://github.com/f8fvwgzc/nexc-engine/labels/good%20first%20issue).
-
 ## Star history
 
 <a href="https://star-history.com/#f8fvwgzc/nexc-engine&Date">

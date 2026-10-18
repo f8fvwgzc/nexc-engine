@@ -2,6 +2,7 @@
 
 What nexc-engine runs on, what can be changed, and how.
 
+<!-- #region database -->
 ## One database: PostgreSQL
 
 Everything is stored in one PostgreSQL 17 database. There is no SQLite mode and none is planned:
@@ -28,8 +29,10 @@ For vector search use an image with pgvector: `deploy/postgres/pgvector.Dockerfi
 `nexc-postgres-pgvector:<tag>` from that Dockerfile when the machine does not have it (it is on
 no registry) and pulls any other image it lacks.
 
+<!-- #endregion database -->
 ## Transferring one workspace to its owner's database
 
+<!-- #region transfer -->
 An organisation that wants to hold its own data does not need the whole installation moved:
 Settings -> **Data transfer** (the workspace's owner only) copies one workspace to a PostgreSQL
 the owner names, and then offers to remove it from this server.
@@ -83,6 +86,8 @@ What the software does provide, for whoever is building a compliance case on it:
 What it does not provide: a log of who _read_ what (only changes are logged), encryption of the
 database itself, and anything about the LLM provider's handling of what was sent to it.
 
+<!-- #endregion transfer -->
+<!-- #region secrets -->
 ## Secrets
 
 | Secret                                | How it is kept                                                                                                             |
@@ -119,8 +124,10 @@ known migrations, whether the agent runtime answers, the server's embedding mode
 queues and caches live. API: `GET /api/v1/admin/infrastructure`,
 `POST /api/v1/admin/infrastructure/check`.
 
+<!-- #endregion secrets -->
 ## onto-intelli (optional): the audit's query engine
 
+<!-- #region onto -->
 "Ask the audit" needs an [onto-intelli](https://github.com/f8fvwgzc/onto-intelli) server: the
 backend exports the trace to it as ontology facts (ids, names, hosts, counts and decisions,
 never content) and answers audit questions from them. Set `NEXC_ONTO_URL` (its gRPC endpoint)
@@ -141,3 +148,5 @@ deletes them once onto-intelli acknowledged, so a span reaches it at least once 
 share the work; `onto_export_cursors` holds each workspace's backfill (done once, the first time
 the feature sees the workspace) and its last error. Moving to another onto-intelli is a restart
 with a new `NEXC_ONTO_URL` and `DELETE FROM onto_export_cursors`, which backfills everything there.
+
+<!-- #endregion onto -->
