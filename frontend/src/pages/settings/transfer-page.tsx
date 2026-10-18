@@ -14,6 +14,7 @@ import { Seo } from '@/components/seo/seo';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { apiRequest, apiSend } from '@/lib/api/client';
 import { errorMessage } from '@/lib/api/errors';
@@ -220,6 +221,7 @@ function TransferForm({ workspace }: { workspace: Workspace }) {
             {errorMessage(check.error ?? start.error)}
           </p>
         )}
+        {history.isPending && <Skeleton className="h-16 w-full rounded-lg" />}
         {history.error && (
           <ErrorState
             compact
