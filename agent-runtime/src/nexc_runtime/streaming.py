@@ -23,6 +23,10 @@ LogLevel = Literal["debug", "info", "warning", "error"]
 # that refused one of them. Data reads, egress and approvals are recorded by the backend.
 SpanKind = Literal["llm_call", "tool_call", "spawn", "policy"]
 SpanStatus = Literal["ok", "error"]
+# What a payload holds: what a model turn was given and answered, what a tool call got and gave.
+PayloadKind = Literal["prompt", "completion", "tool_input", "tool_output"]
+# Most characters of one payload sent up; longer content is cut and says so.
+PAYLOAD_MAX_CHARS = 200_000
 
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 _EXTRA_MIME = {
@@ -111,6 +115,11 @@ class EventStream:
 
     def artifact(self, path: str, mime: str, content: bytes) -> None:
         self._emit({"type": "artifact", "path": path, "mime": mime, "content": content})
+
+    def payload(self, *, span_id: str, kind: PayloadKind, content: str) -> None:
+        """What a span said, sent only while the token's `recording` claim asks for the kind;
+        the backend scrubs, redacts and seals it (CONTRACT section 4, `Recording`)."""
+        self._emit({"type": "payload", "span_id": span_id, "kind": kind, "content": clip(content)})
 
     def approval_request(
         self,
@@ -201,6 +210,13 @@ class EventStream:
         self._queue.put_nowait(event)
         self._terminated = True
         self._queue.put_nowait(None)
+
+
+def clip(content: str) -> str:
+    """`content` cut at `PAYLOAD_MAX_CHARS`, with a marker."""
+    if len(content) <= PAYLOAD_MAX_CHARS:
+        return content
+    return content[:PAYLOAD_MAX_CHARS] + f"\n\n[… cut: {len(content)} characters in all]"
 
 
 def _encode(event: dict[str, Any]) -> bytes:

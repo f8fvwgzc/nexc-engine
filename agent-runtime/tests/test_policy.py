@@ -58,6 +58,19 @@ def _verified(**overrides: Any) -> AgentToken:
     return verify_token(mint_token(**overrides), AGENT_KEY, run_id="run-1", node_id="node-1")
 
 
+def test_the_recording_claim_is_read_and_passed_to_sub_agents() -> None:
+    token = _verified()
+    assert not token.recording.on
+    token = _verified(recording={"prompts": True, "tool_io": True})
+    assert token.recording.on
+    assert token.recording.prompts and token.recording.tool_io
+    assert not token.recording.completions
+    child = token.child("writer/researcher-1", AGENT_KEY)
+    assert child.recording == token.recording
+    with pytest.raises(TokenError):
+        _verified(recording="yes")
+
+
 # --- tokens -------------------------------------------------------------------------------------
 
 

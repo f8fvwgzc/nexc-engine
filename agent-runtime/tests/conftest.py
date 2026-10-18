@@ -37,6 +37,7 @@ def mint_token(
     ttl_s: int = 660,
     rules: dict[str, Any] | None = None,
     labels: list[str] | None = None,
+    recording: dict[str, Any] | None = None,
 ) -> str:
     """A per-run agent token as the backend mints it (`security/agent_token.rs`)."""
     now = int(time.time()) if now is None else now
@@ -60,6 +61,8 @@ def mint_token(
         claims["rules"] = rules
     if labels is not None:
         claims["labels"] = labels
+    if recording is not None:
+        claims["recording"] = recording
     return encode_token(claims, key)
 
 
@@ -174,15 +177,18 @@ def execute_body(
     capabilities: dict[str, Any] | None = None,
     rules: dict[str, Any] | None = None,
     labels: list[str] | None = None,
+    recording: dict[str, Any] | None = None,
     **overrides: Any,
 ) -> dict[str, Any]:
     """A request as the backend sends it, with a valid token for `capabilities` (default: the
-    unrestricted policy) and `rules` (default: none). Pass `token=...` to send another token,
-    `token=None` for none."""
+    unrestricted policy), `rules` (default: none) and `recording` (default: off). Pass
+    `token=...` to send another token, `token=None` for none."""
     body: dict[str, Any] = {
         "run_id": "run-1",
         "node_id": "node-1",
-        "token": mint_token(capabilities=capabilities, rules=rules, labels=labels),
+        "token": mint_token(
+            capabilities=capabilities, rules=rules, labels=labels, recording=recording
+        ),
         "agent": {"name": "writer", "role": "writer", "budget_tokens": 200_000},
         "task": {"title": "Quarterly report", "content": "Summarise Q3.", "kind": "document"},
         "context": {"goal": "Inform the board", "upstream": [], "memories": []},

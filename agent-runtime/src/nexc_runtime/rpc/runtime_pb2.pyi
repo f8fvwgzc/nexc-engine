@@ -31,19 +31,29 @@ class HealthReply(_message.Message):
     ) -> None: ...
 
 class BackendCommand(_message.Message):
-    __slots__ = ("execute", "ack", "cancel", "approval_decision", "policy_update", "tool_result")
+    __slots__ = (
+        "execute",
+        "ack",
+        "cancel",
+        "approval_decision",
+        "policy_update",
+        "tool_result",
+        "cancel_agent",
+    )
     EXECUTE_FIELD_NUMBER: _ClassVar[int]
     ACK_FIELD_NUMBER: _ClassVar[int]
     CANCEL_FIELD_NUMBER: _ClassVar[int]
     APPROVAL_DECISION_FIELD_NUMBER: _ClassVar[int]
     POLICY_UPDATE_FIELD_NUMBER: _ClassVar[int]
     TOOL_RESULT_FIELD_NUMBER: _ClassVar[int]
+    CANCEL_AGENT_FIELD_NUMBER: _ClassVar[int]
     execute: ExecuteRequest
     ack: Ack
     cancel: Cancel
     approval_decision: ApprovalDecision
     policy_update: PolicyUpdate
     tool_result: ToolResult
+    cancel_agent: CancelAgent
     def __init__(
         self,
         execute: _Optional[_Union[ExecuteRequest, _Mapping]] = ...,
@@ -52,6 +62,7 @@ class BackendCommand(_message.Message):
         approval_decision: _Optional[_Union[ApprovalDecision, _Mapping]] = ...,
         policy_update: _Optional[_Union[PolicyUpdate, _Mapping]] = ...,
         tool_result: _Optional[_Union[ToolResult, _Mapping]] = ...,
+        cancel_agent: _Optional[_Union[CancelAgent, _Mapping]] = ...,
     ) -> None: ...
 
 class ExecuteRequest(_message.Message):
@@ -277,6 +288,16 @@ class ToolResult(_message.Message):
         is_error: _Optional[bool] = ...,
     ) -> None: ...
 
+class CancelAgent(_message.Message):
+    __slots__ = ("spawn_span_id", "reason")
+    SPAWN_SPAN_ID_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    spawn_span_id: str
+    reason: str
+    def __init__(
+        self, spawn_span_id: _Optional[str] = ..., reason: _Optional[str] = ...
+    ) -> None: ...
+
 class RuntimeEvent(_message.Message):
     __slots__ = (
         "log",
@@ -289,6 +310,7 @@ class RuntimeEvent(_message.Message):
         "tool_request",
         "result",
         "error",
+        "payload",
     )
     LOG_FIELD_NUMBER: _ClassVar[int]
     DELTA_FIELD_NUMBER: _ClassVar[int]
@@ -300,6 +322,7 @@ class RuntimeEvent(_message.Message):
     TOOL_REQUEST_FIELD_NUMBER: _ClassVar[int]
     RESULT_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
+    PAYLOAD_FIELD_NUMBER: _ClassVar[int]
     log: Log
     delta: Delta
     tokens: Tokens
@@ -310,6 +333,7 @@ class RuntimeEvent(_message.Message):
     tool_request: ToolRequest
     result: Result
     error: Error
+    payload: Payload
     def __init__(
         self,
         log: _Optional[_Union[Log, _Mapping]] = ...,
@@ -322,6 +346,7 @@ class RuntimeEvent(_message.Message):
         tool_request: _Optional[_Union[ToolRequest, _Mapping]] = ...,
         result: _Optional[_Union[Result, _Mapping]] = ...,
         error: _Optional[_Union[Error, _Mapping]] = ...,
+        payload: _Optional[_Union[Payload, _Mapping]] = ...,
     ) -> None: ...
 
 class Log(_message.Message):
@@ -495,6 +520,21 @@ class Result(_message.Message):
         tokens_in: _Optional[int] = ...,
         tokens_out: _Optional[int] = ...,
         tokens_cached: _Optional[int] = ...,
+    ) -> None: ...
+
+class Payload(_message.Message):
+    __slots__ = ("span_id", "kind", "content")
+    SPAN_ID_FIELD_NUMBER: _ClassVar[int]
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    CONTENT_FIELD_NUMBER: _ClassVar[int]
+    span_id: str
+    kind: str
+    content: str
+    def __init__(
+        self,
+        span_id: _Optional[str] = ...,
+        kind: _Optional[str] = ...,
+        content: _Optional[str] = ...,
     ) -> None: ...
 
 class Error(_message.Message):

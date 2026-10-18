@@ -120,6 +120,89 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with the reason, skips what depended on it and leaves the verdict on the record, under
   `mark` succeeds with the verdict as an alert span, and under the default only records it
   (`backend/tests/evidence.rs`).
+- The Sessions page (`/app/sessions`, in the sidebar under Build): the workspace's runs as a
+  table with status, the agents that worked, nodes, model turns and tool calls, tokens, cost,
+  duration and start, narrowed by agent, status and time, paged. Opening one shows the run as an
+  outline that follows its graph's `trace.span`, `node.status` and `run.finished` events: the
+  run, its nodes, the agent each ran as and the sub-agents it spawned, each row with its kind,
+  status, duration, tokens in, out and cached, cost, turns, calls and denials (the rollup of its
+  subtree; an agent's own share shown apart), a Stop behind a confirmation on every sub-agent
+  still running (the run goes on) and on the run, and filters by agent, span kind and status that
+  keep the ancestors so the outline stays a tree. Above it, the run's totals and a breakdown by
+  model. Selecting a row shows its spans on the right as a timeline; a span opens on its digests
+  and, when the run was recorded, on the prompt, completion, tool input and output as they were
+  kept (monospace, folded past 4 KiB, copied with a click, every redaction and cut marked), else
+  a hint to enable recording in the guardrails. `?span=` opens the outline at the row holding
+  that span. Arrow keys travel the rows, Right and Left open and fold, Enter selects, Home and
+  End jump; at phone width a row opens its spans in place of the outline, with a way back. Tests
+  (`frontend/src/features/sessions`): the outline flattens and filters as the tree says, the tree
+  shows every row with its figures, stops behind a confirmation and only for those who may, and
+  travels with the keyboard; the viewer marks the redactions, copies, folds and opens long
+  payloads folded.
+- Opt-in recording of prompts, completions and tool calls (`docs/CONTRACT.md` §4, §5, §8). The
+  guardrails gain `recording` `{prompts, completions, tool_io, retention_days, redact_labels}`,
+  off by default (Settings → Guardrails has the switches, the retention and the labels; every
+  change is audited as `recording_changed` with the setting in words). When a kind is on, the
+  per-run token tells the runtime (`recording` claim) and the runtime sends what each span said
+  up the stream as `payload` events: every turn's prompt (the system prompt and the task first,
+  then what was added since the last turn) and completion (the text and the tool calls with
+  their arguments), every tool call's input and output; the built-in executor records its one
+  call, and the gateway records what its calls got and gave. The backend keeps only the kinds
+  the workspace asked for, whatever a runtime sends, after the guardrails' secret scrubber and
+  the label redaction (passages and memories of a label in `redact_labels` are replaced by their
+  citation id: `[redacted restricted passage <chunk>]`), AES-256-GCM under the master key bound
+  to the span id, in the new `span_payloads` table; spans themselves still carry digests only.
+  The `data_read` span of every node notes `recording`, `recording_kinds` and
+  `recording_redact_labels`; `Session.recording` says whether a run was recorded. A worker
+  deletes payloads past the workspace's `retention_days` (1–3650, default 30) every minute;
+  a transfer leaves payloads behind (documented and exempted in the coverage test); the account
+  export is unchanged. `GET /spans/{id}/payload` answers the decrypted payloads of a span with the
+  classifications of the data its node was given for the viewer's banner (the run's owner and
+  the workspace's admins; audited as `payload_viewed`). `make proto-runtime` and `make openapi`
+  regenerated the stubs and the frontend types. Tests (`backend/tests/recording.rs`,
+  `agent-runtime/tests/test_trace.py`, `test_policy.py`): nothing travels or is kept unless the
+  token asks, payloads a leaky runtime sends anyway are dropped, the kinds asked for and only
+  those are kept and read back (sealed on disk), a restricted passage is replaced by its citation
+  and a credential scrubbed, the gateway's calls are recorded, a bad retention is refused, the
+  change is audited, reading is audited, members are refused, retention deletes old rows under
+  the workspace's and the default retention, and the runtime's turns, tool calls and sub-agent
+  tokens carry the claim.
+- Stop one subtree: `POST /runs/{id}/agents/{span_id}/cancel` `{reason?}` stops the sub-agent
+  born in that `spawn` span while the run goes on (whoever may cancel the run; 202 with
+  `AgentCancel`; 404 for a span that is no spawn, 409 for a run that is not running). The
+  command is recorded (`run_commands`, copied by a transfer) and goes down the node attempt's
+  gRPC stream as the new `cancel_agent` command at once when the run executes on this instance,
+  else by the instance executing it within a second (the run's cancel watcher takes what was
+  recorded elsewhere, `SKIP LOCKED`, so no command is delivered twice). The runtime cancels the
+  sub-agent's task (its own sub-agents with it): the parent's `spawn_subagent` call ends as the
+  tool error `sub-agent … was cancelled by an operator[: reason]`, its `tool_call` span in error,
+  and the parent continues; a spawn naming no live sub-agent changes nothing. On the trace the
+  stop is a `policy` span of the sub-agent's principal under its spawn (`decision: cancelled`,
+  `rule: operator`, `action: cancel_agent`, `spawn_span_id`, `requested_by`, `delivered`), the
+  session tree shows the subtree `cancelled`, and the audit log records `agent_cancelled`
+  (subject the sub-agent's principal; detail the run, the node, the spawn and the reason). The
+  whole run's cancel is unchanged. `docs/CONTRACT.md` §5 and §8; `make proto-runtime`
+  regenerated the runtime's stubs. Tests: the runtime stops one sub-agent on the command and the
+  parent finishes with the tool error, a cancel naming nobody changes nothing
+  (`agent-runtime/tests/test_grpc.py`); over the stream the stop is accepted, delivered, on the
+  trace, in the audit log and on the tree, refused for a span that is no spawn, an outsider, an
+  oversized reason and a finished run, and the chain still verifies (`backend/tests/sessions.rs`).
+- Sessions (`docs/CONTRACT.md` §4, §5): a run seen as a tree. `GET /runs/{id}/sessions` answers
+  `Session`: run → nodes → the agent each node ran as → the sub-agents it spawned (one per `spawn`
+  span) → their turns and tool calls, with status (`queued`, `running`, `waiting_approval`,
+  `succeeded`, `failed`, `cancelled`, `skipped`), started and ended times, duration, tokens in, out
+  and cached, cost, model turns, tool calls, denials and the ids of its spans at every level, plus
+  the run's totals and a breakdown by model. A sub-agent's status follows its parent's
+  `spawn_subagent` call, an operator's cancel or a pending approval of its own; a subtree's cost
+  is estimated from each turn's model and tokens and scaled so the subtrees of a finished node sum
+  to the cost its result recorded. `GET /workspaces/{wid}/sessions?agent=&status=&from=&to=&limit=&before=`
+  lists the workspace's runs with the same rollups and the agents that worked in them, newest
+  first, narrowed by agent, status and time, paged (`node_runs_agent_idx` serves the agent
+  filter). Computed from `agent_spans`, `node_runs` and `llm_usage`; nothing is stored twice.
+  Tests (`backend/tests/sessions.rs`, `domain::session`): nested spawns roll up to their parents
+  with the costs adding up, a cancelled subtree and a waiting approval are told apart, the list
+  narrows by every filter, pages without repeats, clamps its limit, refuses a window the wrong way
+  round, guests and outsiders; the worst-case suite reads the new routes.
 - A2A adapter, the console: the agent card gets an **A2A** tab with the switch that publishes
   the agent (admins; disabled for an external agent, with the reason), the addresses of its card,
   its well-known card and its JSON-RPC endpoint under the console's origin with a copy each, and

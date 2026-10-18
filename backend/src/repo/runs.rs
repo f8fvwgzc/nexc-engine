@@ -515,6 +515,26 @@ pub async fn evidence_of_agent(
         .collect())
 }
 
+/// The classifications of the data one node of a run was given.
+pub async fn context_labels(
+    db: impl PgExecutor<'_>,
+    run_id: Uuid,
+    node_id: Uuid,
+) -> Result<Vec<DataLabel>, sqlx::Error> {
+    let labels: Option<Vec<String>> = sqlx::query_scalar(
+        "SELECT context_labels FROM node_runs WHERE run_id = $1 AND node_id = $2",
+    )
+    .bind(run_id)
+    .bind(node_id)
+    .fetch_optional(db)
+    .await?;
+    Ok(labels
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|l| l.parse().ok())
+        .collect())
+}
+
 /// Final outcome of one node.
 #[derive(Debug, Clone)]
 pub struct NodeOutcome<'a> {

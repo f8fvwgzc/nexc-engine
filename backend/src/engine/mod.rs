@@ -7,6 +7,7 @@ pub mod analysis;
 pub mod approvals;
 pub mod artifacts;
 pub mod assistant;
+pub mod commands;
 pub mod credentials;
 pub mod defend;
 pub mod deps;
@@ -17,6 +18,7 @@ pub mod json_stream;
 pub mod knowledge;
 pub mod planner;
 pub mod policy;
+pub mod recording;
 pub mod risk;
 pub mod scheduler;
 pub mod summary;
@@ -27,6 +29,7 @@ pub mod two_factor;
 pub mod usage;
 pub mod workspaces;
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dashmap::{DashMap, DashSet};
@@ -34,17 +37,43 @@ use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use commands::Attempt;
+
 /// In-process engine bookkeeping shared by handlers and workers.
-#[derive(Debug)]
 pub struct Engine {
     instance: Uuid,
     wake: Notify,
     active_runs: DashMap<Uuid, CancellationToken>,
     /// The nodes each agent is working on here, with what stops each of them.
     busy_agents: DashMap<Uuid, Vec<(Uuid, CancellationToken)>>,
+    /// The node attempts open here over the runtime's gRPC stream, by run and node:
+    /// where an operator's command to the attempt goes.
+    attempts: DashMap<(Uuid, Uuid), Attempt>,
     /// Nodes started per agent, against a policy's `runs_per_hour`.
     dispatches: DashMap<Uuid, crate::dsa::token_bucket::TokenBucket>,
     deps_pending: DashSet<Uuid>,
+}
+
+impl std::fmt::Debug for Engine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Engine")
+            .field("instance", &self.instance)
+            .field("active_runs", &self.active_runs.len())
+            .field("attempts", &self.attempts.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Keeps a node attempt registered while it is held; dropping it forgets the attempt.
+pub struct AttemptGuard {
+    engine: Arc<Engine>,
+    key: (Uuid, Uuid),
+}
+
+impl Drop for AttemptGuard {
+    fn drop(&mut self) {
+        self.engine.attempts.remove(&self.key);
+    }
 }
 
 impl Engine {
@@ -55,9 +84,25 @@ impl Engine {
             wake: Notify::new(),
             active_runs: DashMap::new(),
             busy_agents: DashMap::new(),
+            attempts: DashMap::new(),
             dispatches: DashMap::new(),
             deps_pending: DashSet::new(),
         }
+    }
+
+    /// Registers a node attempt open over the stream; it is forgotten when the guard drops.
+    pub fn attempt_opened(self: &Arc<Self>, attempt: Attempt) -> AttemptGuard {
+        let key = (attempt.run_id, attempt.node_id);
+        self.attempts.insert(key, attempt);
+        AttemptGuard {
+            engine: self.clone(),
+            key,
+        }
+    }
+
+    /// The attempt of `node_id` in `run_id`, if it is open here.
+    pub fn attempt(&self, run_id: Uuid, node_id: Uuid) -> Option<Attempt> {
+        self.attempts.get(&(run_id, node_id)).map(|a| a.clone())
     }
 
     /// Identifier used when claiming runs.
@@ -181,6 +226,27 @@ mod tests {
         assert!(e.busy_agents().is_empty());
         assert_eq!(e.quarantine_local(agent), 0);
         assert!(e.mark_deps_pending(run) && !e.mark_deps_pending(run));
+    }
+
+    #[test]
+    fn attempts_are_known_while_their_guard_lives() {
+        let e = Arc::new(Engine::new(Uuid::now_v7()));
+        let (run, node) = (Uuid::now_v7(), Uuid::now_v7());
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let guard = e.attempt_opened(Attempt {
+            run_id: run,
+            node_id: node,
+            graph_id: Uuid::now_v7(),
+            agent_id: None,
+            policy_version: 0,
+            commands: tx,
+            trace: trace::TraceHandle::discard(),
+        });
+        assert!(e.attempt(run, node).is_some());
+        assert!(e.attempt(run, Uuid::now_v7()).is_none());
+        assert!(format!("{e:?}").contains("attempts: 1"));
+        drop(guard);
+        assert!(e.attempt(run, node).is_none());
     }
 
     #[test]

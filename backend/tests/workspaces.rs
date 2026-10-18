@@ -1418,7 +1418,9 @@ async fn guardrails_stop_work_before_it_spends(pool: PgPool) {
         defaults,
         json!({"monthly_token_budget": null, "member_monthly_token_budget": null,
         "allowed_providers": [], "allow_code_exec": true, "redact_secrets": true,
-            "memory_limit": null, "memory_forget_after_days": null})
+            "memory_limit": null, "memory_forget_after_days": null,
+            "recording": {"prompts": false, "completions": false, "tool_io": false,
+                "retention_days": 30, "redact_labels": []}})
     );
     assert_eq!(
         call(&app, Method::PUT, &rails, &member, Some(defaults.clone()))

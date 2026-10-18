@@ -1,22 +1,30 @@
-//! Runs: start, list, inspect, cancel.
+//! Runs: start, list, inspect, cancel; stop one sub-agent of a run.
 
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use serde::Deserialize;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use super::workspaces::audit;
 use crate::app::AppState;
 use crate::domain::AppError;
+use crate::domain::audit::AuditAction;
 use crate::domain::graph::MAX_NODES;
-use crate::domain::run::Run;
-use crate::domain::validation::{FieldErrors, Validate};
-use crate::engine::editor;
+use crate::domain::run::{Run, RunStatus};
+use crate::domain::trace::SpanKind;
+use crate::domain::validation::{FieldErrors, Validate, check_max_len};
 use crate::engine::scheduler::{self, RunOptions};
+use crate::engine::{commands, editor};
 use crate::http::extract::{AuthUser, Path, ValidatedJson};
 use crate::http::problem::Problem;
+use crate::repo::audit::Subject;
 use crate::repo::{self, OrNotFound};
+
+/// Longest reason given for stopping a sub-agent.
+pub const CANCEL_REASON_MAX: usize = 500;
 
 /// `POST /graphs/{gid}/runs` body.
 #[derive(Debug, Default, Deserialize, ToSchema)]
@@ -108,4 +116,119 @@ pub async fn cancel(
     Path(rid): Path<Uuid>,
 ) -> Result<Json<Run>, AppError> {
     Ok(Json(scheduler::cancel_run(&state, auth.id, rid).await?))
+}
+
+/// `POST /runs/{rid}/agents/{sid}/cancel` body.
+#[derive(Debug, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CancelAgentBody {
+    /// Why, for the trace and the audit log.
+    #[serde(default)]
+    pub reason: String,
+}
+
+impl Validate for CancelAgentBody {
+    fn validate(&self, errors: &mut FieldErrors) {
+        check_max_len(errors, "reason", &self.reason, CANCEL_REASON_MAX);
+    }
+}
+
+/// What stopping a sub-agent recorded.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AgentCancel {
+    pub run_id: Uuid,
+    pub node_id: Uuid,
+    /// The `spawn` span the sub-agent was born in.
+    pub spawn_span_id: Uuid,
+    /// The sub-agent's principal.
+    pub principal: String,
+    pub requested_at: DateTime<Utc>,
+    /// Whether the runtime was told at once (the run executes on this instance); otherwise
+    /// the instance executing it tells the runtime within a second.
+    pub delivered: bool,
+}
+
+/// Stops one sub-agent of a running run, named by the `spawn` span it was
+/// born in; the run goes on. The runtime cancels the sub-agent's task and its
+/// parent sees the tool error "cancelled by an operator"; the stop is a
+/// `policy` span of decision `cancelled` on the trace and an
+/// `agent_cancelled` entry in the audit log (whoever may cancel the run).
+#[utoipa::path(post, path = "/runs/{rid}/agents/{sid}/cancel", tag = "runs", security(("bearer" = [])),
+    params(("rid" = Uuid, Path, description = "Run id"), ("sid" = Uuid, Path, description = "The sub-agent's spawn span id")),
+    request_body = CancelAgentBody,
+    responses((status = 202, description = "The stop is recorded and on its way", body = AgentCancel),
+        (status = 404, body = Problem), (status = 409, description = "The run is not running", body = Problem),
+        (status = 422, body = Problem)))]
+pub async fn cancel_agent(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((rid, sid)): Path<(Uuid, Uuid)>,
+    ValidatedJson(req): ValidatedJson<CancelAgentBody>,
+) -> Result<(StatusCode, Json<AgentCancel>), AppError> {
+    let run = repo::runs::find_owned(&state.db, auth.id, rid)
+        .await
+        .or_not_found("run")?;
+    if run.status != RunStatus::Running {
+        return Err(AppError::Conflict(format!(
+            "the run is {}; only a running run has agents to stop",
+            run.status
+        )));
+    }
+    let spawn = repo::spans::find(&state.db, rid, sid)
+        .await?
+        .filter(|s| s.kind == SpanKind::Spawn)
+        .ok_or(AppError::NotFound("spawn span"))?;
+    let principal = spawn
+        .attributes
+        .get("child")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(&spawn.name)
+        .to_owned();
+    let reason = req.reason.trim();
+    let command = repo::run_commands::insert(
+        &state.db,
+        repo::run_commands::NewCommand {
+            run_id: rid,
+            node_id: spawn.node_id,
+            command: repo::run_commands::CANCEL_AGENT,
+            span_id: sid,
+            subject: &principal,
+            reason,
+            requested_by: auth.id,
+        },
+    )
+    .await?;
+    if let Some(workspace) = repo::graphs::workspace_of(&state.db, run.graph_id).await? {
+        let detail = format!(
+            "run {rid}, node {}, spawn {sid}{}",
+            spawn.node_id,
+            if reason.is_empty() {
+                String::new()
+            } else {
+                format!(": {reason}")
+            }
+        );
+        audit(
+            &state,
+            workspace,
+            auth.id,
+            AuditAction::AgentCancelled,
+            Subject::Text(&principal),
+            &detail,
+        )
+        .await;
+    }
+    // The attempt is open here: the runtime is told now. Elsewhere: within a second.
+    let delivered = commands::deliver(&state, rid).await > 0;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(AgentCancel {
+            run_id: rid,
+            node_id: spawn.node_id,
+            spawn_span_id: sid,
+            principal,
+            requested_at: command.created_at,
+            delivered,
+        }),
+    ))
 }

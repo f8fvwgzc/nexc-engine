@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { dataLabelSchema } from './agent';
 import { idSchema, timestampSchema } from './common';
 
 export const workspaceRoleSchema = z.enum(['owner', 'admin', 'member', 'guest']);
@@ -72,6 +73,33 @@ export type TeamMember = z.infer<typeof teamMemberSchema>;
 /** Mirrors `domain::workspace` on the server, which stays the authority. */
 export const isWorkspaceAdmin = (role: WorkspaceRole) => role === 'owner' || role === 'admin';
 
+/**
+ * Opt-in recording of what agents say and hear (CONTRACT §4): off by default; when a kind is on,
+ * what spans of that kind said is kept apart from the span, sealed, for `retention_days`, with
+ * the passages and memories of `redact_labels` replaced by their citation.
+ */
+export const recordingSchema = z.object({
+  prompts: z.boolean(),
+  completions: z.boolean(),
+  tool_io: z.boolean(),
+  retention_days: z.number().int(),
+  redact_labels: z.array(dataLabelSchema),
+});
+export type Recording = z.infer<typeof recordingSchema>;
+
+/** Nothing recorded, kept thirty days: what a workspace starts with. */
+export const RECORDING_OFF: Recording = {
+  prompts: false,
+  completions: false,
+  tool_io: false,
+  retention_days: 30,
+  redact_labels: [],
+};
+
+/** Whether any kind is recorded. */
+export const isRecordingOn = (recording: Recording) =>
+  recording.prompts || recording.completions || recording.tool_io;
+
 /** The policy a workspace puts on its use of LLMs. */
 export const guardrailsSchema = z.object({
   /** Tokens per calendar month for the whole workspace; null for no limit. */
@@ -85,5 +113,7 @@ export const guardrailsSchema = z.object({
   memory_limit: z.number().int().nullable(),
   /** Memories untouched for this many days are forgotten; null never forgets by age. */
   memory_forget_after_days: z.number().int().nullable(),
+  /** What is kept of what agents say and hear; off by default. */
+  recording: recordingSchema,
 });
 export type Guardrails = z.infer<typeof guardrailsSchema>;

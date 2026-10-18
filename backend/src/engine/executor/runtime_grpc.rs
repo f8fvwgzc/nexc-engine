@@ -232,6 +232,19 @@ pub async fn run(ctx: &ExecContext, token: String) -> Result<ExecOutput, ExecErr
         .map_err(|s| error_of(&s))?
         .into_inner();
 
+    // The attempt is known to the instance while the stream is open: an operator's command
+    // (the cancel of one sub-agent) finds it here and goes down the same stream.
+    let _attempt = state
+        .engine
+        .attempt_opened(crate::engine::commands::Attempt {
+            run_id: ctx.run_id,
+            node_id: ctx.node.id,
+            graph_id: ctx.graph_id,
+            agent_id: ctx.agent.as_ref().map(|a| a.id),
+            policy_version: ctx.policy_version,
+            commands: cmd_tx.clone(),
+            trace: ctx.trace.clone(),
+        });
     // The driver owns the stream: it forwards events, and on cancellation sends
     // `cancel` and waits a moment for the runtime's terminal event.
     let stop = CancellationToken::new();
@@ -356,6 +369,11 @@ pub async fn run(ctx: &ExecContext, token: String) -> Result<ExecOutput, ExecErr
                     Some(runtime_event::Event::Error(error)) => Event::Error {
                         message: error.message,
                         retryable: error.retryable,
+                    },
+                    Some(runtime_event::Event::Payload(payload)) => Event::Payload {
+                        span_id: payload.span_id,
+                        kind: payload.kind,
+                        content: payload.content,
                     },
                     Some(
                         runtime_event::Event::ToolRequest(_)

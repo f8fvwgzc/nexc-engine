@@ -11,6 +11,8 @@ import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace
 import { qk } from '@/lib/query-keys';
 import { isWorkspaceAdmin, type Guardrails, type Workspace } from '@/schemas/workspace';
 
+import { RecordingFields } from './recording-fields';
+
 const PROVIDERS: { value: Guardrails['allowed_providers'][number]; label: string }[] = [
   { value: 'anthropic', label: 'Anthropic' },
   { value: 'openai_compatible', label: 'OpenAI-compatible' },
@@ -38,6 +40,7 @@ function GuardrailsForm({ workspace }: { workspace: Workspace }) {
     },
   });
   const dirty = JSON.stringify(draft) !== JSON.stringify(stored);
+  const retentionOk = draft.recording.retention_days >= 1 && draft.recording.retention_days <= 3650;
   const toggleProvider = (value: Guardrails['allowed_providers'][number], on: boolean) =>
     setDraft((d) => ({
       ...d,
@@ -149,10 +152,14 @@ function GuardrailsForm({ workspace }: { workspace: Workspace }) {
             Let agents execute code where a node type asks for it
           </label>
         </div>
+        <RecordingFields
+          value={draft.recording}
+          onChange={(recording) => setDraft((d) => ({ ...d, recording }))}
+        />
       </fieldset>
       {canEdit && (
         <div className="flex justify-end">
-          <Button disabled={!dirty || save.isPending} onClick={() => save.mutate()}>
+          <Button disabled={!dirty || !retentionOk || save.isPending} onClick={() => save.mutate()}>
             Save guardrails
           </Button>
         </div>

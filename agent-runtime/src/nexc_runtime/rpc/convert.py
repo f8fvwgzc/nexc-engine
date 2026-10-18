@@ -157,6 +157,12 @@ def event_to_message(event: dict[str, Any]) -> pb.RuntimeEvent:
                 turn_span_id=event["turn_span_id"] or "",
             )
         )
+    if kind == "payload":
+        return pb.RuntimeEvent(
+            payload=pb.Payload(
+                span_id=event["span_id"], kind=event["kind"], content=event["content"]
+            )
+        )
     if kind == "result":
         return pb.RuntimeEvent(
             result=pb.Result(

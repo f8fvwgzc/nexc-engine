@@ -5,14 +5,18 @@
 //! decision, `DROP` ends the stream without a terminal event, `TOOL <name>`
 //! asks the gateway to perform `<name>` with the request's arguments and
 //! reports what came back, `BURST <n>` sends `n` deltas as fast as it can
-//! (for `make prove-gateway`), and anything else is a well-behaved run of
-//! one turn, one tool call, one artifact and a result.
+//! (for `make prove-gateway`), `TREE` spawns a researcher who spawns a qa
+//! (a family of three with turns, tool calls and a denial), `STOPPABLE`
+//! spawns a researcher who works until a `cancel_agent` arrives, and
+//! anything else is a well-behaved run of one turn, one tool call, one
+//! artifact and a result.
 #![allow(dead_code)]
 
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use base64::Engine as _;
 use chrono::Utc;
 use futures::Stream;
 use nexc::ontology::json;
@@ -37,6 +41,8 @@ pub struct Seen {
     pub tool_results: Mutex<Vec<(String, String, bool)>>,
     /// When each delta of a `BURST` was sent, in order.
     pub burst_sent: Mutex<Vec<Instant>>,
+    /// The spawn span ids of the `cancel_agent` commands a `STOPPABLE` run received.
+    pub cancelled_agents: Mutex<Vec<String>>,
 }
 
 #[derive(Clone)]
@@ -64,6 +70,23 @@ pub fn span(kind: &str, name: &str, agent: &str, parent: &str, attrs: Value) -> 
         status: "ok".into(),
         attributes: Some(json::to_struct(&attrs)),
     }
+}
+
+/// The `recording` claim of the per-run token, as the Python runtime reads it:
+/// `(prompts, completions, tool_io)`.
+fn recording_of(token: &str) -> (bool, bool, bool) {
+    let claims = token
+        .split('.')
+        .nth(1)
+        .and_then(|part| {
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(part)
+                .ok()
+        })
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .unwrap_or(Value::Null);
+    let wants = |kind: &str| claims["recording"][kind].as_bool() == Some(true);
+    (wants("prompts"), wants("completions"), wants("tool_io"))
 }
 
 fn request_json(req: &pb::ExecuteRequest) -> Value {
@@ -187,6 +210,9 @@ impl AgentRuntime for Stub {
                                         "policy_update"
                                     }
                                     Some(backend_command::Command::ToolResult(_)) => "tool_result",
+                                    Some(backend_command::Command::CancelAgent(_)) => {
+                                        "cancel_agent"
+                                    }
                                     Some(backend_command::Command::Execute(_)) => "execute",
                                     None => "empty",
                                 };
@@ -200,6 +226,177 @@ impl AgentRuntime for Stub {
                     }
                 }
             };
+            if title.contains("TREE") {
+                // A family: the root spawns a researcher, who spawns a qa; each works a turn.
+                let child = format!("{agent}/researcher-1");
+                let grandchild = format!("{child}/qa-1");
+                let model = |tokens_in: i64, tokens_out: i64, cached: i64| {
+                    json!({"provider": "anthropic", "model": "claude-sonnet-5", "turn": 1,
+                        "tokens_in": tokens_in, "tokens_out": tokens_out, "tokens_cached": cached})
+                };
+                let spawn_a = span(
+                    "spawn",
+                    &child,
+                    &agent,
+                    &turn_id,
+                    json!({"child": child, "role": "researcher", "depth": 1, "budget_tokens": 50_000}),
+                );
+                let spawn_a_id = spawn_a.id.clone();
+                send(runtime_event::Event::Span(spawn_a)).await;
+                let a_turn = span(
+                    "llm_call",
+                    "claude-sonnet-5",
+                    &child,
+                    &spawn_a_id,
+                    model(50, 5, 10),
+                );
+                let a_turn_id = a_turn.id.clone();
+                send(runtime_event::Event::Span(a_turn)).await;
+                let spawn_b = span(
+                    "spawn",
+                    &grandchild,
+                    &child,
+                    &a_turn_id,
+                    json!({"child": grandchild, "role": "qa", "depth": 2, "budget_tokens": 20_000}),
+                );
+                let spawn_b_id = spawn_b.id.clone();
+                send(runtime_event::Event::Span(spawn_b)).await;
+                let b_turn = span(
+                    "llm_call",
+                    "claude-sonnet-5",
+                    &grandchild,
+                    &spawn_b_id,
+                    model(20, 2, 0),
+                );
+                let b_turn_id = b_turn.id.clone();
+                send(runtime_event::Event::Span(b_turn)).await;
+                send(runtime_event::Event::Span(span(
+                    "tool_call",
+                    "write_file",
+                    &grandchild,
+                    &b_turn_id,
+                    json!({"tool": "write_file", "args_sha256": "ab".repeat(32), "args_bytes": 12,
+                        "result_bytes": 4, "is_error": false, "duration_ns": 1000}),
+                )))
+                .await;
+                send(runtime_event::Event::Span(span(
+                    "tool_call",
+                    "spawn_subagent",
+                    &child,
+                    &a_turn_id,
+                    json!({"tool": "spawn_subagent", "args_sha256": "cd".repeat(32), "args_bytes": 40,
+                        "result_bytes": 9, "is_error": false, "duration_ns": 5000}),
+                )))
+                .await;
+                let mut denied = span(
+                    "policy",
+                    "make_docx",
+                    &child,
+                    &a_turn_id,
+                    json!({"decision": "deny", "rule": "tools.allow", "reason": "tool make_docx is not allowed",
+                        "action": "tool_call", "subject": "make_docx", "policy_version": 0}),
+                );
+                denied.status = "error".into();
+                send(runtime_event::Event::Span(denied)).await;
+                send(runtime_event::Event::Span(span(
+                    "tool_call",
+                    "spawn_subagent",
+                    &agent,
+                    &turn_id,
+                    json!({"tool": "spawn_subagent", "args_sha256": "ef".repeat(32), "args_bytes": 40,
+                        "result_bytes": 12, "is_error": false, "duration_ns": 9000}),
+                )))
+                .await;
+                let mut second = span("llm_call", "claude-sonnet-5", &agent, "", model(30, 3, 0));
+                second.attributes = Some(json::to_struct(&json!({"provider": "anthropic",
+                    "model": "claude-sonnet-5", "turn": 2, "tokens_in": 30, "tokens_out": 3, "tokens_cached": 0})));
+                send(runtime_event::Event::Span(second)).await;
+                send(runtime_event::Event::Tokens(pb::Tokens {
+                    input: 100,
+                    output: 10,
+                    cached: 10,
+                }))
+                .await;
+                send(runtime_event::Event::Result(pb::Result {
+                    output: format!("[runtime] {title}"),
+                    tokens_in: 100,
+                    tokens_out: 10,
+                    tokens_cached: 10,
+                }))
+                .await;
+                return;
+            }
+            if title.contains("STOPPABLE") {
+                // The root spawns a researcher who works until an operator stops it (or 20 s
+                // pass); the root then sees the tool error and finishes the node.
+                let child = format!("{agent}/researcher-1");
+                let spawn_a = span(
+                    "spawn",
+                    &child,
+                    &agent,
+                    &turn_id,
+                    json!({"child": child, "role": "researcher", "depth": 1, "budget_tokens": 50_000}),
+                );
+                let spawn_a_id = spawn_a.id.clone();
+                send(runtime_event::Event::Span(spawn_a)).await;
+                let a_turn = span(
+                    "llm_call",
+                    "claude-sonnet-5",
+                    &child,
+                    &spawn_a_id,
+                    json!({"provider": "anthropic", "model": "claude-sonnet-5", "turn": 1,
+                        "tokens_in": 50, "tokens_out": 5, "tokens_cached": 0}),
+                );
+                send(runtime_event::Event::Span(a_turn)).await;
+                let stopped =
+                    tokio::time::timeout(Duration::from_secs(20), next_command(&["cancel_agent"]))
+                        .await;
+                let (is_error, output) = match stopped {
+                    Ok(Some(BackendCommand {
+                        command: Some(backend_command::Command::CancelAgent(cancel)),
+                    })) => {
+                        seen.cancelled_agents
+                            .lock()
+                            .unwrap()
+                            .push(cancel.spawn_span_id.clone());
+                        send(runtime_event::Event::Log(pb::Log {
+                            level: "warning".into(),
+                            message: format!(
+                                "{child} stopped: cancelled by an operator{}",
+                                if cancel.reason.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!(": {}", cancel.reason)
+                                }
+                            ),
+                        }))
+                        .await;
+                        (true, format!("[runtime] went on without {child}"))
+                    }
+                    _ => (false, format!("[runtime] {child} finished on its own")),
+                };
+                send(runtime_event::Event::Span(span(
+                    "tool_call",
+                    "spawn_subagent",
+                    &agent,
+                    &turn_id,
+                    json!({"tool": "spawn_subagent", "args_sha256": "ef".repeat(32), "args_bytes": 40,
+                        "result_bytes": 30, "is_error": is_error, "duration_ns": 9000}),
+                )))
+                .await;
+                let mut second = span("llm_call", "claude-sonnet-5", &agent, "", json!({}));
+                second.attributes = Some(json::to_struct(&json!({"provider": "anthropic",
+                    "model": "claude-sonnet-5", "turn": 2, "tokens_in": 30, "tokens_out": 3, "tokens_cached": 0})));
+                send(runtime_event::Event::Span(second)).await;
+                send(runtime_event::Event::Result(pb::Result {
+                    output,
+                    tokens_in: 80,
+                    tokens_out: 8,
+                    tokens_cached: 0,
+                }))
+                .await;
+                return;
+            }
             if title.contains("SLOW") {
                 send(runtime_event::Event::Delta(pb::Delta {
                     text: "working".into(),
@@ -399,6 +596,59 @@ impl AgentRuntime for Stub {
                 send(result).await;
                 return;
             }
+            // What the turn was given and answered, and what the tool call got and gave: sent
+            // for the kinds the token asks for, as the Python runtime does; a `LEAKY` node sends
+            // them whatever the token says, and the backend must drop what is off.
+            let (prompts, completions, tool_io) = if title.contains("LEAKY") {
+                (true, true, true)
+            } else {
+                recording_of(&req.token)
+            };
+            let context = req.context.clone().unwrap_or_default();
+            let mut prompt = format!(
+                "[system]\n{}\n\n[user]\n{}",
+                req.agent
+                    .as_ref()
+                    .map(|a| a.system_prompt.clone())
+                    .unwrap_or_default(),
+                req.task
+                    .as_ref()
+                    .map(|t| t.content.clone())
+                    .unwrap_or_default()
+            );
+            for document in &context.documents {
+                prompt.push_str("\n\n<document>\n");
+                prompt.push_str(document);
+                prompt.push_str("\n</document>");
+            }
+            for memory in &context.memories {
+                prompt.push_str("\n\n<memory>\n");
+                prompt.push_str(memory);
+                prompt.push_str("\n</memory>");
+            }
+            if title.contains("RECORD") {
+                prompt.push_str(
+                    "\n\nANTHROPIC_API_KEY=sk-ant-api03-AbCdEf0123456789xyz_-Q must never be kept",
+                );
+            }
+            if prompts {
+                send(runtime_event::Event::Payload(pb::Payload {
+                    span_id: turn_id.clone(),
+                    kind: "prompt".into(),
+                    content: prompt,
+                }))
+                .await;
+            }
+            if completions {
+                send(runtime_event::Event::Payload(pb::Payload {
+                    span_id: turn_id.clone(),
+                    kind: "completion".into(),
+                    content: format!(
+                        "Working on {title}.\n\n[tool call write_file]\n{{\n  \"path\": \"deliverable.md\"\n}}"
+                    ),
+                }))
+                .await;
+            }
             send(runtime_event::Event::Delta(pb::Delta {
                 text: format!("[runtime] {title}"),
             }))
@@ -409,15 +659,32 @@ impl AgentRuntime for Stub {
                 cached: 0,
             }))
             .await;
-            send(runtime_event::Event::Span(span(
+            let tool = span(
                 "tool_call",
                 "write_file",
                 &agent,
                 &turn_id,
                 json!({"tool": "write_file", "args_sha256": "ab".repeat(32), "args_bytes": 12,
                     "result_bytes": 4, "is_error": false, "duration_ns": 1000}),
-            )))
-            .await;
+            );
+            let tool_id = tool.id.clone();
+            if tool_io {
+                send(runtime_event::Event::Payload(pb::Payload {
+                    span_id: tool_id.clone(),
+                    kind: "tool_input".into(),
+                    content: format!(
+                        "{{\n  \"content\": \"# {title}\\n\",\n  \"path\": \"deliverable.md\"\n}}"
+                    ),
+                }))
+                .await;
+                send(runtime_event::Event::Payload(pb::Payload {
+                    span_id: tool_id,
+                    kind: "tool_output".into(),
+                    content: "wrote deliverable.md (12 bytes)".into(),
+                }))
+                .await;
+            }
+            send(runtime_event::Event::Span(tool)).await;
             send(runtime_event::Event::Artifact(pb::Artifact {
                 path: "deliverable.md".into(),
                 mime: "text/markdown".into(),

@@ -14,9 +14,10 @@ import "google/protobuf/struct.proto";
 
 service AgentRuntime {
   // One node attempt. Commands go down (the execute request first, then
-  // acks, cancel, approval decisions, policy updates and tool results);
-  // events come up (log, delta, tokens, spawn, span, artifact, approval and
-  // tool requests, and one terminal result or error).
+  // acks, cancel, approval decisions, policy updates, tool results and
+  // cancels of one sub-agent);
+  // events come up (log, delta, tokens, spawn, span, payload, artifact,
+  // approval and tool requests, and one terminal result or error).
   rpc Execute(stream BackendCommand) returns (stream RuntimeEvent);
   // Liveness, with the same counters as `GET /healthz`.
   rpc Health(HealthRequest) returns (HealthReply);
@@ -41,6 +42,7 @@ message BackendCommand {
     ApprovalDecision approval_decision = 4;
     PolicyUpdate policy_update = 5;
     ToolResult tool_result = 6;
+    CancelAgent cancel_agent = 7;
   }
 }
 
@@ -145,6 +147,14 @@ message ToolResult {
   bool is_error = 3;
 }
 
+// Stop one sub-agent, named by the `spawn` span it was born in: its task is
+// cancelled, its parent sees the tool error "cancelled by an operator" and
+// goes on. The run is not cancelled.
+message CancelAgent {
+  string spawn_span_id = 1;
+  string reason = 2;
+}
+
 // --- runtime → backend ---------------------------------------------------------------------
 
 message RuntimeEvent {
@@ -159,6 +169,7 @@ message RuntimeEvent {
     ToolRequest tool_request = 8;
     Result result = 9;
     Error error = 10;
+    Payload payload = 11;
   }
 }
 
@@ -229,6 +240,17 @@ message Result {
   int64 tokens_in = 2;
   int64 tokens_out = 3;
   int64 tokens_cached = 4;
+}
+
+// What a span said: the prompt or completion of a model turn, the input or
+// output of a tool call. Sent only for the kinds the token's `recording`
+// claim names; the backend scrubs, redacts, seals and keeps it apart from
+// the span (CONTRACT §4 `Recording`).
+message Payload {
+  string span_id = 1;
+  // `prompt` | `completion` | `tool_input` | `tool_output`.
+  string kind = 2;
+  string content = 3;
 }
 
 message Error {

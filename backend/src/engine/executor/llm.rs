@@ -12,8 +12,10 @@ use uuid::Uuid;
 use super::{ExecContext, ExecError, ExecOutput, NodeExecutor, slug, with_evidence};
 use crate::domain::evidence;
 use crate::domain::prompt::{NodePrompt, node_prompt};
+use crate::domain::recording::PayloadKind;
 use crate::domain::settings::LlmProviderKind;
 use crate::domain::trace::{self, SpanKind, SpanStatus};
+use crate::engine::recording::{self, Capture};
 use crate::llm::{LlmEvent, LlmRequest, Message, StopReason};
 use crate::realtime::events::LogLevel;
 
@@ -45,9 +47,14 @@ async fn run(ctx: &ExecContext) -> Result<ExecOutput, ExecError> {
         documents: &ctx.documents,
     });
     let target = ctx.agent_target();
+    let system = ctx.system_prompt();
+    let recorded_prompt = ctx
+        .recording
+        .prompts
+        .then(|| format!("[system]\n{system}\n\n[user]\n{prompt}"));
     let request = LlmRequest {
         target: target.clone(),
-        system: ctx.system_prompt(),
+        system,
         messages: vec![Message::user(prompt)],
         max_tokens: 64_000,
         json_schema: None,
@@ -91,6 +98,30 @@ async fn run(ctx: &ExecContext) -> Result<ExecOutput, ExecError> {
         }
     }
     ctx.record(span);
+    if let Some(span_id) = out.span_id {
+        if let Some(content) = recorded_prompt {
+            recording::store(
+                ctx,
+                Capture {
+                    span_id,
+                    kind: PayloadKind::Prompt,
+                    content,
+                },
+            )
+            .await;
+        }
+        if ctx.recording.completions && !out.output.is_empty() {
+            recording::store(
+                ctx,
+                Capture {
+                    span_id,
+                    kind: PayloadKind::Completion,
+                    content: out.output.clone(),
+                },
+            )
+            .await;
+        }
+    }
     match streamed? {
         StopReason::MaxTokens => ctx.log(LogLevel::Warn, "output truncated at max_tokens"),
         StopReason::EndTurn => {}

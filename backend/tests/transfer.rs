@@ -298,6 +298,10 @@ const NOT_COPIED: &[(&str, &str)] = &[
         "alert_deliveries",
         "the delivery log of this server's alert routing, which stays with its destinations",
     ),
+    (
+        "span_payloads",
+        "what spans said, sealed with this server's key and bound to its retention; the spans travel, their payloads do not",
+    ),
 ];
 
 /// A transfer is how a workspace takes all of its data with it. Whatever

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -135,13 +136,32 @@ class Tool[A: BaseModel]:
         started = now_ns()
         clock = time.perf_counter_ns()
         digest, size = args_digest(raw)
+        # What the call got and gave, when the workspace records tool calls (the backend records
+        # the calls it performs itself).
+        record_io = self.traced and ctx.token is not None and ctx.token.recording.tool_io
+        if record_io:
+            try:
+                arguments = json.dumps(raw, ensure_ascii=False, sort_keys=True, indent=2)
+            except (TypeError, ValueError):
+                arguments = repr(raw)
+            ctx.events.payload(span_id=span_id, kind="tool_input", content=arguments)
         output: str | None = None
+        failure: str | None = None
         ctx.current_tool = self.name
         ctx.pending_approval_id = approval_id
         try:
             output = await self._run(ctx, raw)
             return output
+        except ToolError as exc:
+            failure = str(exc)
+            raise
         finally:
+            if record_io:
+                ctx.events.payload(
+                    span_id=span_id,
+                    kind="tool_output",
+                    content=output if output is not None else f"[error] {failure or 'failed'}",
+                )
             ctx.current_tool = None
             ctx.pending_approval_id = None
             # A gateway tool's spans are the backend's to record: it performed the call.

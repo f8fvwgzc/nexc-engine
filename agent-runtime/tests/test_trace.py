@@ -145,6 +145,90 @@ def test_a_spawn_hangs_under_its_turn_and_the_child_under_the_spawn(
     assert "Find three facts" not in json.dumps(spans), "the sub-task is an argument"
 
 
+def _payloads(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [e for e in events if e["type"] == "payload"]
+
+
+def test_nothing_of_what_was_said_travels_unless_the_token_asks(
+    client_for: ClientFactory,
+) -> None:
+    client, _ = client_for(
+        [
+            Step(calls=[call("write_file", "c1", path="notes.md", content=SECRET_CONTENT)]),
+            Step(calls=[call("finish", answer="Done.")]),
+        ]
+    )
+    events = parse_ndjson(client.post("/v1/execute", json=execute_body(), headers=AUTH).content)
+    assert _payloads(events) == []
+    assert SECRET_CONTENT not in json.dumps(events)
+
+
+def test_prompts_completions_and_tool_io_travel_as_payloads_when_recorded(
+    client_for: ClientFactory,
+) -> None:
+    client, _ = client_for(
+        [
+            Step(
+                text="Writing the notes.",
+                calls=[
+                    call("write_file", "c1", path="notes.md", content=SECRET_CONTENT),
+                    call("read_file", "c2", path="missing.md"),
+                ],
+            ),
+            Step(calls=[call("finish", answer="Done.")]),
+        ]
+    )
+    body = execute_body(recording={"prompts": True, "completions": True, "tool_io": True})
+    events = parse_ndjson(client.post("/v1/execute", json=body, headers=AUTH).content)
+    spans = _spans(events)
+    first_turn, write, read, second_turn, finish = spans
+    by_kind = [(p["kind"], p["span_id"]) for p in _payloads(events)]
+    assert by_kind == [
+        ("prompt", first_turn["id"]),
+        ("completion", first_turn["id"]),
+        ("tool_input", write["id"]),
+        ("tool_output", write["id"]),
+        ("tool_input", read["id"]),
+        ("tool_output", read["id"]),
+        ("prompt", second_turn["id"]),
+        ("completion", second_turn["id"]),
+        ("tool_input", finish["id"]),
+        ("tool_output", finish["id"]),
+    ]
+    payloads = {(p["kind"], p["span_id"]): p["content"] for p in _payloads(events)}
+    first_prompt = payloads[("prompt", first_turn["id"])]
+    assert first_prompt.startswith("[system]\n")
+    assert "[user]\n" in first_prompt and "Quarterly report" in first_prompt
+    assert "Summarise Q3." in first_prompt
+    first_completion = payloads[("completion", first_turn["id"])]
+    assert first_completion.startswith("Writing the notes.")
+    assert "[tool call write_file]" in first_completion and SECRET_CONTENT in first_completion
+    assert SECRET_CONTENT in payloads[("tool_input", write["id"])]
+    assert payloads[("tool_output", write["id"])] == "wrote notes.md (44 bytes)"
+    assert payloads[("tool_output", read["id"])].startswith("[error] no such file")
+    # The second turn was given the tool results of the first, and only those.
+    second_prompt = payloads[("prompt", second_turn["id"])]
+    assert second_prompt.startswith("[tool result write_file]\nwrote notes.md")
+    assert "[tool result read_file (error)]" in second_prompt
+    assert "[system]" not in second_prompt
+    # Spans still carry digests only, and the request's key travels nowhere.
+    assert SECRET_CONTENT not in json.dumps(spans)
+    assert "sk-ant-secret-value" not in json.dumps(events)
+
+
+def test_only_the_kinds_asked_for_travel(client_for: ClientFactory) -> None:
+    client, _ = client_for(
+        [
+            Step(calls=[call("write_file", path="notes.md", content="x")]),
+            Step(calls=[call("finish", answer="Done.")]),
+        ]
+    )
+    body = execute_body(recording={"completions": True})
+    events = parse_ndjson(client.post("/v1/execute", json=body, headers=AUTH).content)
+    assert {p["kind"] for p in _payloads(events)} == {"completion"}
+    assert len(_payloads(events)) == 2
+
+
 def test_a_failed_model_call_is_an_error_span(client_for: ClientFactory) -> None:
     client, _ = client_for([Step(raise_error=LLMError("rate limited", retryable=True))])
     events = parse_ndjson(client.post("/v1/execute", json=execute_body(), headers=AUTH).content)

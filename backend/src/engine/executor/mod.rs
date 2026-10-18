@@ -20,9 +20,11 @@ use crate::domain::audit::AuditAction;
 use crate::domain::capabilities::{Capabilities, DataLabel};
 use crate::domain::evidence::{Evidence, Given};
 use crate::domain::graph::{Executor, GraphNode, NodeStatus};
+use crate::domain::guardrails::Recording;
 use crate::domain::ontology::NodeType;
 use crate::domain::policy::{self, Action, Decision, Rules};
 use crate::domain::prompt::UpstreamOutput;
+use crate::domain::recording::Redaction;
 use crate::domain::run::Artifact;
 use crate::domain::settings::LlmProviderKind;
 use crate::domain::trace::{SYSTEM_PRINCIPAL, SpanDraft, SpanKind, SpanStatus};
@@ -73,6 +75,12 @@ pub struct ExecContext {
     pub trace: TraceHandle,
     /// The attempt under way (set by the scheduler before each one).
     pub attempt: AtomicI32,
+    /// What the workspace records of what the node says and hears.
+    pub recording: Recording,
+    /// Whether credentials are scrubbed from what is recorded (the guardrails' `redact_secrets`).
+    pub scrub_secrets: bool,
+    /// The passages and memories replaced by their citation in everything recorded.
+    pub redactions: Vec<Redaction>,
 }
 
 impl ExecContext {
@@ -102,6 +110,9 @@ impl ExecContext {
             force: self.force,
             trace: self.trace.clone(),
             attempt: AtomicI32::new(self.attempt.load(Ordering::Relaxed)),
+            recording: self.recording.clone(),
+            scrub_secrets: self.scrub_secrets,
+            redactions: self.redactions.clone(),
         }
     }
 

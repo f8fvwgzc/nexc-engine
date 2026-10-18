@@ -4,7 +4,54 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use super::capabilities::DataLabel;
 use super::settings::LlmProviderKind;
+
+/// Days a recorded payload is kept when the workspace set nothing.
+pub const RETENTION_DEFAULT_DAYS: i64 = 30;
+
+/// What is kept of what agents say and hear, off by default: the prompt and
+/// the completion of every model turn, the input and output of every tool
+/// call, each for `retention_days`, with the passages and memories of the
+/// labels in `redact_labels` replaced by their citation before anything is
+/// written (`domain::recording`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Recording {
+    #[serde(default)]
+    #[schema(required = true)]
+    pub prompts: bool,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub completions: bool,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub tool_io: bool,
+    /// Days a payload is kept (1–3650; default 30); a worker deletes older ones.
+    #[serde(default = "retention_default")]
+    #[schema(required = true)]
+    pub retention_days: i64,
+    /// Labels whose passages and memories are replaced by their citation id in every payload.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub redact_labels: Vec<DataLabel>,
+}
+
+fn retention_default() -> i64 {
+    RETENTION_DEFAULT_DAYS
+}
+
+impl Default for Recording {
+    fn default() -> Self {
+        Recording {
+            prompts: false,
+            completions: false,
+            tool_io: false,
+            retention_days: RETENTION_DEFAULT_DAYS,
+            redact_labels: Vec::new(),
+        }
+    }
+}
 
 /// What stands in for a secret that was removed from a prompt.
 pub const REDACTED: &str = "[redacted secret]";
@@ -47,6 +94,10 @@ pub struct Guardrails {
     #[serde(default)]
     #[schema(required = true)]
     pub memory_forget_after_days: Option<i64>,
+    /// What is kept of what agents say and hear; off by default.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub recording: Recording,
 }
 
 fn yes() -> bool {
@@ -63,6 +114,7 @@ impl Default for Guardrails {
             redact_secrets: true,
             memory_limit: None,
             memory_forget_after_days: None,
+            recording: Recording::default(),
         }
     }
 }
@@ -200,6 +252,11 @@ mod tests {
         let g: Guardrails = serde_json::from_str("{}").unwrap();
         assert_eq!(g, Guardrails::default());
         assert!(g.allow_code_exec && g.redact_secrets);
+        assert!(!g.recording.is_on(), "nothing is recorded unless asked");
+        let partial: Guardrails =
+            serde_json::from_str(r#"{"recording": {"prompts": true}}"#).unwrap();
+        assert!(partial.recording.prompts && !partial.recording.tool_io);
+        assert_eq!(partial.recording.retention_days, RETENTION_DEFAULT_DAYS);
         assert_eq!(g.provider_refusal(LlmProviderKind::ClaudeCode), None);
         assert_eq!(g.budget_refusal(i64::MAX, i64::MAX), None);
         assert!(serde_json::from_str::<Guardrails>(r#"{"typo": 1}"#).is_err());

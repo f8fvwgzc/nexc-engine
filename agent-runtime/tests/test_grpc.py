@@ -1,6 +1,7 @@
-"""The gRPC wire (CONTRACT section 8): a full run with the demo provider, a cancel mid-run, an
-approval round trip, a gateway tool round trip, a policy update, a dropped stream, and the
-refusals (no token, a bad first command, an invalid request)."""
+"""The gRPC wire (CONTRACT section 8): a full run with the demo provider, a cancel mid-run, the
+cancel of one sub-agent while the run goes on, an approval round trip, a gateway tool round
+trip, a policy update, a dropped stream, and the refusals (no token, a bad first command, an
+invalid request)."""
 
 from __future__ import annotations
 
@@ -64,6 +65,31 @@ class SlowProvider(FakeProvider):
     ) -> Turn:
         self.started.set()
         await self.release.wait()
+        return await super().next_turn(conversation, tools, max_tokens=max_tokens, on_text=on_text)
+
+
+class BlockingProvider(FakeProvider):
+    """A model whose `block_at`-th turn never answers until told to (or is cancelled)."""
+
+    def __init__(self, steps: list[Step], *, block_at: int) -> None:
+        super().__init__(steps)
+        self.block_at = block_at
+        self.calls = 0
+        self.blocked = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def next_turn(
+        self,
+        conversation: Conversation,
+        tools: list[ToolSpec],
+        *,
+        max_tokens: int,
+        on_text: TextSink | None = None,
+    ) -> Turn:
+        self.calls += 1
+        if self.calls == self.block_at:
+            self.blocked.set()
+            await self.release.wait()
         return await super().next_turn(conversation, tools, max_tokens=max_tokens, on_text=on_text)
 
 
@@ -164,6 +190,69 @@ async def test_a_cancel_mid_run_ends_the_stream_with_one_error(serve: Callable[.
     assert error.retryable is True
     assert "cancelled" in error.message and "the run was cancelled" in error.message
     assert seen.count("error") == 1
+    assert running.census.runs_active == 0
+
+
+async def test_a_cancel_agent_stops_one_sub_agent_and_the_run_goes_on(
+    serve: Callable[..., Any],
+) -> None:
+    # The root spawns a researcher whose first turn hangs; the operator stops the researcher;
+    # the root sees the tool error and finishes.
+    provider = BlockingProvider(
+        [
+            Step(calls=[call("spawn_subagent", role="researcher", task="Dig.")]),
+            # The researcher's turn blocks before it takes a step; the root's second turn
+            # takes this one.
+            Step(calls=[call("finish", answer="went on without the researcher")]),
+        ],
+        block_at=2,
+    )
+    running = await serve(provider)
+    # A plain task: `finish` needs no file in the workspace.
+    body = execute_body(task={"kind": "task"})
+    async with running.channel() as channel:
+        stub = AgentRuntimeStub(channel)
+        async with stub.Execute.open(metadata=[("authorization", AUTH["Authorization"])]) as stream:
+            await stream.send_message(pb.BackendCommand(execute=to_request(body)))
+            spawn = None
+            while spawn is None:
+                event = await asyncio.wait_for(stream.recv_message(), 5)
+                assert event is not None
+                if event.WhichOneof("event") == "span" and event.span.kind == "spawn":
+                    spawn = event.span
+            await asyncio.wait_for(provider.blocked.wait(), 5)
+            assert running.census.agents_live == 2
+            # A cancel naming no live sub-agent changes nothing.
+            await stream.send_message(
+                pb.BackendCommand(cancel_agent=pb.CancelAgent(spawn_span_id="nobody"))
+            )
+            await stream.send_message(
+                pb.BackendCommand(
+                    cancel_agent=pb.CancelAgent(spawn_span_id=spawn.id, reason="going in circles")
+                ),
+                end=True,
+            )
+            events = await collect(stream)
+    seen = kinds(events)
+    assert seen[-1] == "result", seen
+    assert events[-1].result.output == "went on without the researcher"
+    assert seen.count("error") == 0
+    # The parent saw the tool error and went on; the child's turn was cut short.
+    result = provider.tool_results[0]
+    assert result.is_error
+    assert "cancelled by an operator: going in circles" in result.content
+    assert provider.tool_results[1].content == "final answer recorded"
+    assert not provider.release.is_set(), "the child's turn was never released: it was cancelled"
+    spans = [e.span for e in events if e.WhichOneof("event") == "span"]
+    spawn_call = next(s for s in spans if s.kind == "tool_call" and s.name == "spawn_subagent")
+    assert spawn_call.attributes["is_error"] is True
+    assert spawn_call.parent_id == spawn.parent_id, "under the root's first turn, as the spawn"
+    assert not any(s.kind == "llm_call" and s.agent == "writer/researcher-1" for s in spans)
+    assert any(
+        e.WhichOneof("event") == "log" and "stopped: cancelled by an operator" in e.log.message
+        for e in events
+    )
+    assert running.census.agents_live == 0
     assert running.census.runs_active == 0
 
 
