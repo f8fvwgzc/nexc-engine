@@ -66,7 +66,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   network only), the Kubernetes manifests (the runtime's Service and NetworkPolicy admit the
   backend on 8095; the firewall port is documented for when it is opened to another namespace),
   `docs/CONTRACT.md` §1, §2, §4, §5 and §8 and `docs/ARCHITECTURE.md` describe the wire, the
-  gateway, the firewall and the export.
+  gateway, the firewall and the export. A workspace transfer copies the MCP servers without
+  their `Authorization` headers and leaves the API tokens of external agents behind, both to
+  be entered again on the target, as it does with the other stored credentials.
 - Ask the audit (AgentSecOps phase 3, `docs/AGENTSECOPS.md` §4.5): the trace becomes ontology
   facts in [onto-intelli](https://github.com/f8fvwgzc/onto-intelli) and audit questions are answered
   from them. `NEXC_ONTO_URL` (its gRPC endpoint; unset keeps the feature off), `NEXC_ONTO_TOKEN`

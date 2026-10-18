@@ -133,6 +133,14 @@ const TABLES: &[Table] = &[
         // The key is sealed with this server's master key; it is entered again on the target.
         overlay: Some(r#"{"api_key_enc": null, "key_hint": null}"#),
     },
+    Table {
+        name: "mcp_servers",
+        belongs: IN_WORKSPACE,
+        page: Page::Whole,
+        // The server's Authorization header is sealed with this server's master key; it is
+        // entered again on the target. What the server listed travels.
+        overlay: Some(r#"{"auth_header": null}"#),
+    },
     table("teams", IN_WORKSPACE, false),
     table("team_members", OF_ITS_TEAMS, false),
     table("issue_states", OF_ITS_TEAMS, false),
