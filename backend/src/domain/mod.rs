@@ -22,6 +22,7 @@ pub mod ontology;
 pub mod plan;
 pub mod platform;
 pub mod policy;
+pub mod policy_document;
 pub mod prompt;
 pub mod run;
 pub mod search;
@@ -48,7 +49,7 @@ macro_rules! string_enum {
     ($(#[$meta:meta])* $name:ident { $($(#[$vmeta:meta])* $variant:ident => $s:literal),+ $(,)? }) => {
         $(#[$meta])*
         #[derive(
-            Debug, Clone, Copy, PartialEq, Eq, Hash,
+            Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash,
             serde::Serialize, serde::Deserialize, utoipa::ToSchema,
         )]
         // utoipa cannot see the per-variant `rename = $s` through the macro, so the

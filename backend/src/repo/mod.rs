@@ -78,6 +78,7 @@ pub mod nodes;
 pub mod outbox;
 pub mod plans;
 pub mod platform;
+pub mod policies;
 pub mod resets;
 pub mod runs;
 pub mod settings;

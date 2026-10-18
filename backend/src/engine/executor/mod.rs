@@ -14,10 +14,10 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::domain::agent::{Agent, FALLBACK_SYSTEM_PROMPT};
 use crate::domain::audit::AuditAction;
-use crate::domain::capabilities::Capabilities;
+use crate::domain::capabilities::{Capabilities, DataLabel};
 use crate::domain::graph::{Executor, GraphNode};
 use crate::domain::ontology::NodeType;
-use crate::domain::policy::{self, Action, Decision};
+use crate::domain::policy::{self, Action, Decision, Rules};
 use crate::domain::prompt::UpstreamOutput;
 use crate::domain::run::Artifact;
 use crate::domain::settings::LlmProviderKind;
@@ -53,6 +53,11 @@ pub struct ExecContext {
     pub capabilities: Capabilities,
     /// The agent's policy version the token records.
     pub policy_version: i32,
+    /// The rules the policies in force resolve to, beside the capabilities.
+    pub rules: Rules,
+    /// The classifications of the data the node was given (its context and
+    /// its upstream nodes'); what it produces is derived from them.
+    pub labels_given: Vec<DataLabel>,
     pub target: LlmTarget,
     /// When true, cached LLM responses must not be reused.
     pub force: bool,
@@ -69,9 +74,17 @@ impl ExecContext {
             .map_or_else(|| SYSTEM_PRINCIPAL.to_owned(), |a| a.principal_id.clone())
     }
 
-    /// Decides `action` under the node's capabilities (in-process, microseconds).
+    /// Decides `action` under the node's capabilities and rules (in-process, microseconds).
     pub fn decide(&self, action: &Action<'_>) -> Decision {
-        policy::decide(&self.capabilities, action)
+        policy::decide_with(&self.capabilities, &self.rules, &self.labels_given, action)
+    }
+
+    /// The strictest classification among the data the node was given.
+    pub fn strictest_label(&self) -> DataLabel {
+        self.labels_given
+            .iter()
+            .copied()
+            .fold(DataLabel::Public, DataLabel::stricter)
     }
 
     /// Records a policy decision about `subject` as a `policy` span, with
@@ -90,6 +103,7 @@ impl ExecContext {
             "rule": decision.rule,
             "reason": decision.reason,
             "policy_version": self.policy_version,
+            "policy_versions": self.rules.versions,
         });
         if let (Value::Object(into), Value::Object(from)) = (&mut attributes, extra) {
             into.extend(from);
@@ -111,11 +125,7 @@ impl ExecContext {
         );
         self.policy_span(
             "policy_mismatch",
-            &Decision {
-                allowed: false,
-                rule,
-                reason: detail.clone(),
-            },
+            &Decision::deny(rule, detail.clone()),
             json!({
                 "decision": "mismatch",
                 "action": "recheck",

@@ -5,7 +5,9 @@ use serde::Serialize;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use super::capabilities::DataLabel;
 use super::graph::{Executor, NodeStatus};
+use super::policy::PolicyVersions;
 use super::string_enum;
 
 /// Characters of node output included in [`NodeRun::output_preview`].
@@ -50,6 +52,10 @@ pub struct NodeRun {
     pub finished_at: Option<DateTime<Utc>>,
     #[schema(required = true)]
     pub output_preview: Option<String>,
+    /// The policy versions that governed the node, by level.
+    pub policy_versions: PolicyVersions,
+    /// The classifications of the data the node was given.
+    pub context_labels: Vec<DataLabel>,
 }
 
 /// One execution of (part of) a graph.
@@ -73,6 +79,8 @@ pub struct Run {
     /// Actions the runtime reported that the policy minted for the run did
     /// not allow (each one is a `policy_mismatch` audit entry and a `policy` span).
     pub policy_mismatches: i32,
+    /// The workspace policy version that governed the run (each node run has every level).
+    pub policy_versions: PolicyVersions,
     pub node_runs: Vec<NodeRun>,
 }
 

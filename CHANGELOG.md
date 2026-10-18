@@ -9,6 +9,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Versioned policies (AgentSecOps phase 2, `docs/AGENTSECOPS.md` §4.3 and §4.4): rules are data,
+  kept as an append-only history per level in `policies` (`workspace`, `team`, `agent`; each
+  version has an author and a time). A `PolicyDocument` holds tool, host and model allow- and
+  deny-lists, the clearance labels, token and cost ceilings per run and per day, tool calls per
+  minute and node starts per hour, time windows (UTC), which tools and labels require an
+  approval and who approves, alert and quarantine thresholds, the DLP rules (secrets, PII
+  shapes and keywords, where content of each label may go) and the prompt-injection screen's
+  action. Resolution walks workspace → team → agent over the agent's own capabilities and only
+  narrows: allow-lists are met, deny-lists added, labels intersected, limits lowered, approvals
+  and thresholds added, actions tightened; `GET /workspaces/{wid}/policies/resolve?agent_id=`
+  shows the effective policy and which level set each rule. `GET/POST
+  /workspaces/{wid}/policies` list the history and add a version (admins); a version that would
+  widen the levels above is refused rule by rule, and every version is audited as
+  `policy_changed` with what changed since the previous one. The resolved policy is compiled
+  into the per-run token (`capabilities` narrowed, plus `rules`, contract §8) and the versions
+  in force are recorded on the run (`policy_versions`), on each node run (with the
+  `context_labels` of the data it was given) and on every policy span. Before dispatch the
+  backend refuses a node outside its time windows, over the day's token or dollar ceiling or
+  past the agent's starts per hour (a `policy` span of rule `time_windows`,
+  `limits.tokens_per_day`, `limits.cost_usd_per_day` or `limits.runs_per_hour`); the ceiling per
+  run caps the budget the runtime is given.
 - Agent identity and scopes (AgentSecOps phase 1, `docs/AGENTSECOPS.md` §4.1): every agent is a
   principal, `agent://{workspace}/{name}` (`principal_id`, unique, following the name), with an
   owner (`owner_user_id`), a team, a `purpose` and a `capabilities` document: the tools it may

@@ -18,6 +18,7 @@ pub mod nodes;
 pub mod orchestrator;
 pub mod plans;
 pub mod platform;
+pub mod policies;
 pub mod realtime;
 pub mod runs;
 pub mod search;

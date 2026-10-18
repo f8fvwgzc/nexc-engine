@@ -49,6 +49,7 @@ pub const UPLOAD_SLACK: usize = 64 * 1024;
         (name = "plans", description = "LLM planning"),
         (name = "runs", description = "Execution"),
         (name = "artifacts"), (name = "templates"), (name = "agents"), (name = "memories"),
+        (name = "policies", description = "Versioned policies and what they resolve to"),
         (name = "orchestrator"), (name = "realtime"), (name = "health"),
         (name = "admin", description = "The platform console: every workspace and account, for platform administrators only"),
     )
@@ -121,6 +122,8 @@ fn v1_routes() -> OpenApiRouter<AppState> {
             workspaces::delete_assistant_conversation
         ))
         .routes(routes!(workspaces::audit_log))
+        .routes(routes!(policies::list, policies::create))
+        .routes(routes!(policies::resolve))
         .routes(routes!(search::search))
         .routes(routes!(platform::workspaces))
         .routes(routes!(platform::workspace))

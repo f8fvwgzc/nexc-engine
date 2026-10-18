@@ -103,5 +103,6 @@ async fn housekeeping(state: &AppState) -> anyhow::Result<()> {
     repo::plans::fail_stale(&state.db).await?;
     state.hub.prune();
     state.limiters.prune();
+    state.engine.prune_dispatches();
     Ok(())
 }

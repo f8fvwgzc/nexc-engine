@@ -39,6 +39,23 @@ pub async fn insert(db: impl PgExecutor<'_>, e: &UsageEvent) -> Result<(), sqlx:
     Ok(())
 }
 
+/// Tokens (in + out) and dollars an agent spent since the start of the
+/// current UTC day, across runs.
+pub async fn agent_today(
+    db: impl PgExecutor<'_>,
+    agent_id: Uuid,
+) -> Result<(i64, f64), sqlx::Error> {
+    sqlx::query_as(
+        "SELECT COALESCE(sum(tokens_in + tokens_out), 0)::bigint, COALESCE(sum(cost_usd), 0)::float8
+         FROM llm_usage
+         WHERE agent_id = $1
+           AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'",
+    )
+    .bind(agent_id)
+    .fetch_one(db)
+    .await
+}
+
 /// Tokens (in + out) spent in a workspace since the start of the current UTC
 /// month: `(by everyone, by user_id)`.
 pub async fn tokens_this_month(

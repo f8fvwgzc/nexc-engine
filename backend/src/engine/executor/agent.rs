@@ -235,6 +235,7 @@ fn context(
     upstream: &[UpstreamOutput],
     memories: &[String],
     documents: &[String],
+    labels: &[crate::domain::capabilities::DataLabel],
 ) -> serde_json::Value {
     json!({
         "goal": goal,
@@ -243,6 +244,7 @@ fn context(
         })).collect::<Vec<_>>(),
         "memories": memories,
         "documents": documents,
+        "labels": labels,
     })
 }
 
@@ -258,11 +260,26 @@ fn mint_token(ctx: &ExecContext) -> Result<String, ExecError> {
         workspace_id: ctx.workspace_id,
         policy_version: ctx.policy_version,
         capabilities: &ctx.capabilities,
+        rules: &ctx.rules,
+        labels: &ctx.labels_given,
     };
     ctx.state
         .agent_tokens
         .issue(&grant, ctx.state.settings.node_timeout + EXPIRY_SLACK)
         .map_err(|e| ExecError::fatal(format!("cannot mint the agent token: {e}")))
+}
+
+/// Tokens the run may spend: what the agent has left, capped by the
+/// policy's ceiling per run (0 means no agent budget).
+fn budget_tokens(ctx: &ExecContext) -> i64 {
+    let left = ctx
+        .agent
+        .as_ref()
+        .map_or(0, |a| (a.budget_tokens - a.spent_tokens).max(0));
+    match ctx.rules.limits.tokens_per_run {
+        Some(ceiling) if left == 0 || ceiling < left => ceiling,
+        _ => left,
+    }
 }
 
 fn request_body(ctx: &ExecContext, token: &str) -> serde_json::Value {
@@ -279,7 +296,7 @@ fn request_body(ctx: &ExecContext, token: &str) -> serde_json::Value {
             "principal": ctx.principal(),
             "system_prompt": ctx.system_prompt(),
             "model": target.model,
-            "budget_tokens": agent.map_or(0, |a| (a.budget_tokens - a.spent_tokens).max(0)),
+            "budget_tokens": budget_tokens(ctx),
         },
         "task": {
             "title": ctx.node.title,
@@ -288,7 +305,13 @@ fn request_body(ctx: &ExecContext, token: &str) -> serde_json::Value {
             "kind_description": ctx.node_type.as_ref().map_or("", |t| t.description.as_str()),
             "produces_artifact": ctx.node_type.as_ref().is_some_and(|t| t.produces_artifact),
         },
-        "context": context(&ctx.goal, &ctx.upstream, &ctx.memories, &ctx.documents),
+        "context": context(
+            &ctx.goal,
+            &ctx.upstream,
+            &ctx.memories,
+            &ctx.documents,
+            &ctx.labels_given,
+        ),
         "llm": {
             "provider": target.provider,
             "api_key": target.api_key.as_ref().map(|k| k.expose().as_str()),
@@ -745,9 +768,16 @@ mod tests {
     fn document_passages_travel_apart_from_memories() {
         let memories = ["The team writes in British English.".to_owned()];
         let documents = ["[customs.pdf, p. 17]\nGoods under 150 EUR are exempt.".to_owned()];
-        let sent = context("Ship the handbook", &[], &memories, &documents);
+        let sent = context(
+            "Ship the handbook",
+            &[],
+            &memories,
+            &documents,
+            &[crate::domain::capabilities::DataLabel::Internal],
+        );
         assert_eq!(sent["memories"], json!(memories));
         assert_eq!(sent["documents"], json!(documents));
         assert_eq!(sent["goal"], "Ship the handbook");
+        assert_eq!(sent["labels"], json!(["internal"]));
     }
 }

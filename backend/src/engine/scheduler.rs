@@ -20,18 +20,20 @@ use uuid::Uuid;
 
 use super::analysis::dependency_graph;
 use super::executor::{self, ExecContext, ExecError, ExecOutput};
+use super::policy as policies;
 use super::trace::{self, Sealed, TraceHandle};
 use super::{artifacts, credentials, editor, guardrails, knowledge, usage};
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::agent::{Agent, AgentStatus};
 use crate::domain::audit::AuditAction;
-use crate::domain::capabilities::Capabilities;
+use crate::domain::capabilities::{Capabilities, DataLabel};
 use crate::domain::context;
 use crate::domain::graph::{Executor, GraphEdge, GraphNode, NodeStatus};
 use crate::domain::guardrails::Guardrails;
 use crate::domain::ontology::Ontology;
 use crate::domain::policy::{self, Action, Decision};
+use crate::domain::policy_document::Policy;
 use crate::domain::prompt::{AGENT_UPSTREAM_CHARS, UPSTREAM_CHARS, UpstreamOutput};
 use crate::domain::run::{Run, RunStatus, final_status};
 use crate::domain::settings::{ConfigScope, LlmProviderKind};
@@ -297,8 +299,10 @@ struct RunData {
     target: LlmTarget,
     /// Whose configuration `target` came from; usage is booked to it.
     credential: ConfigScope,
-    /// The workspace's policy, as it stood when the run started.
+    /// The workspace's guardrails, as they stood when the run started.
     policy: Guardrails,
+    /// The latest version of every policy of the workspace, as the run started.
+    policies: Vec<Policy>,
     workspace_id: Option<Uuid>,
     ontology: Ontology,
     edges: Vec<GraphEdge>,
@@ -376,6 +380,13 @@ impl Execution {
             .collect();
         let resolved = credentials::resolve(state, row.owner_id, graph.workspace_id).await?;
         let (target, credential) = (resolved.target, resolved.scope);
+        let policies = match graph.workspace_id {
+            Some(workspace) => repo::policies::latest_all(&state.db, workspace).await?,
+            None => Vec::new(),
+        };
+        // The workspace level governs the whole run; each node records every level.
+        let versions = policies::versions_of(&policies::levels_for(&policies, None, None));
+        repo::runs::set_policy_versions(&state.db, row.id, &versions).await?;
         let data = RunData {
             run_id: row.id,
             graph_id: row.graph_id,
@@ -385,6 +396,7 @@ impl Execution {
             target,
             credential,
             policy: guardrails::load(state, graph.workspace_id).await?,
+            policies,
             workspace_id: graph.workspace_id,
             ontology: graph.ontology,
             edges,
@@ -830,12 +842,16 @@ impl NodeTask {
             }
             None => Vec::new(),
         };
-        // The agent's data scopes decide what reaches it; a node without an agent reads as the
-        // system does. What was withheld is on the record before the node runs, ids only.
-        let capabilities = agent
-            .as_ref()
-            .map(|a| a.capabilities.clone())
-            .unwrap_or_default();
+        // The policies in force, resolved for this agent (workspace -> team -> agent over its
+        // own capabilities), decide what reaches it; a node without an agent reads as the system
+        // does. What was withheld is on the record before the node runs, ids only.
+        let levels = policies::levels_for(
+            &data.policies,
+            agent.as_ref().and_then(|a| a.team_id),
+            agent.as_ref().map(|a| a.id),
+        );
+        let resolved = policies::resolve(&levels, agent.as_ref().map(|a| &a.capabilities));
+        let (capabilities, rules) = (resolved.capabilities, resolved.rules);
         let policy_version = agent.as_ref().map_or(0, |a| a.policy_version);
         let mut withheld = Withheld::default();
         let recalled: Vec<_> = recalled
@@ -871,6 +887,21 @@ impl NodeTask {
             })
             .collect();
         let memory_ids: Vec<Uuid> = recalled.iter().map(|m| m.id).collect();
+        // What the node produces is derived from what it reads: its own context and its
+        // upstream nodes' (whatever earlier run they were given it in).
+        let upstream_ids: Vec<Uuid> = upstream.iter().map(|(id, _)| *id).collect();
+        let mut labels_given: Vec<DataLabel> = recalled
+            .iter()
+            .map(|m| m.label)
+            .chain(passages.iter().map(|p| p.label))
+            .chain(
+                repo::runs::context_labels_of(&state.db, &upstream_ids)
+                    .await
+                    .unwrap_or_default(),
+            )
+            .collect();
+        labels_given.sort_by_key(|l| l.rank());
+        labels_given.dedup();
         let memories = recalled
             .into_iter()
             .map(|m| data.policy.scrub(m.content))
@@ -905,7 +936,6 @@ impl NodeTask {
         };
         let mut context_saved = 0;
         // The titles of all upstream nodes in one read, not one per node.
-        let upstream_ids: Vec<Uuid> = upstream.iter().map(|(id, _)| *id).collect();
         let titles: HashMap<Uuid, String> =
             repo::nodes::find_many(&state.db, data.graph_id, &upstream_ids)
                 .await?
@@ -952,6 +982,8 @@ impl NodeTask {
                 "documents": chunk_ids.len(),
                 "memories": memory_ids.len(),
                 "chars_saved": context_saved,
+                "labels": labels_given,
+                "policy_versions": rules.versions,
             }),
         });
         let ctx = ExecContext {
@@ -970,6 +1002,8 @@ impl NodeTask {
             agent,
             capabilities,
             policy_version,
+            rules,
+            labels_given,
             target: data.target.clone(),
             force: data.force,
             trace: data.trace.clone(),
@@ -1074,6 +1108,13 @@ impl NodeTask {
             let reason = format!("policy: {}", decision.reason);
             return self.finish(NodeStatus::Failed, 0, None, Some(reason)).await;
         }
+        // So are the rules only the backend can see: working hours, the day's spend, the pace.
+        if let Some(decision) = self.gate().await {
+            self.ctx
+                .policy_span(decision.rule, &decision, json!({"action": "node"}));
+            let reason = format!("policy: {}", decision.reason);
+            return self.finish(NodeStatus::Failed, 0, None, Some(reason)).await;
+        }
         let state = &self.ctx.state;
         let settings = state.settings.clone();
         let executor = executor::for_kind(self.ctx.node.executor);
@@ -1112,11 +1153,7 @@ impl NodeTask {
                     );
                     self.ctx.policy_span(
                         "quarantine",
-                        &Decision {
-                            allowed: false,
-                            rule: "quarantine",
-                            reason: reason.clone(),
-                        },
+                        &Decision::deny("quarantine", reason.clone()),
                         json!({"action": "node"}),
                     );
                     return self
@@ -1160,10 +1197,65 @@ impl NodeTask {
         unreachable!("the last attempt always returns")
     }
 
+    /// Why the node may not start now under the resolved rules, if it may not:
+    /// outside the time windows, over the day's token or dollar ceiling, or
+    /// past the agent's starts per hour.
+    async fn gate(&self) -> Option<Decision> {
+        let rules = &self.ctx.rules;
+        let windows = rules.within_time_windows(Utc::now());
+        if !windows.allowed {
+            return Some(windows);
+        }
+        let agent = self.ctx.agent.as_ref()?;
+        let limits = &rules.limits;
+        if limits.tokens_per_day.is_some() || limits.cost_usd_per_day.is_some() {
+            let (tokens, cost) = repo::usage::agent_today(&self.ctx.state.db, agent.id)
+                .await
+                .unwrap_or((0, 0.0));
+            if let Some(ceiling) = limits.tokens_per_day
+                && tokens >= ceiling
+            {
+                return Some(Decision::deny(
+                    "limits.tokens_per_day",
+                    format!("the agent spent {tokens} of its {ceiling} tokens for today"),
+                ));
+            }
+            if let Some(ceiling) = limits.cost_usd_per_day
+                && cost >= ceiling
+            {
+                return Some(Decision::deny(
+                    "limits.cost_usd_per_day",
+                    format!("the agent spent ${cost:.2} of its ${ceiling:.2} for today"),
+                ));
+            }
+        }
+        if let Some(per_hour) = limits.runs_per_hour
+            && let Err(wait) = self.ctx.state.engine.admit_dispatch(agent.id, per_hour)
+        {
+            return Some(Decision::deny(
+                "limits.runs_per_hour",
+                format!(
+                    "the agent already started {per_hour} node(s) this hour; next in {}s",
+                    wait.as_secs()
+                ),
+            ));
+        }
+        None
+    }
+
     async fn mark_running(&self, attempt: i32, agent_id: Option<Uuid>) -> anyhow::Result<()> {
         let state = &self.ctx.state;
         let node_id = self.ctx.node.id;
-        repo::runs::start_node(&state.db, self.data.run_id, node_id, attempt, agent_id).await?;
+        repo::runs::start_node(
+            &state.db,
+            self.data.run_id,
+            node_id,
+            attempt,
+            agent_id,
+            &self.ctx.rules.versions,
+            &self.ctx.labels_given,
+        )
+        .await?;
         repo::nodes::set_status(&state.db, node_id, NodeStatus::Running, None).await?;
         publish_status(
             state,
