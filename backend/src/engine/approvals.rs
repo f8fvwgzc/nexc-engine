@@ -46,20 +46,20 @@ pub type Granted = Arc<Mutex<HashSet<Uuid>>>;
 
 /// Decisions taken on the requests of an attempt that a takeover
 /// interrupted, kept for the attempt that replaces it: each answers one
-/// request for the same tool (and the same arguments, when both name them).
+/// request for the same tool with the same arguments.
 pub type Carried = Arc<Mutex<Vec<Approval>>>;
 
 /// Takes the carried decision that answers a request for `tool` with
-/// arguments of digest `args`, if there is one.
+/// arguments of digest `args`, if there is one. Both requests must name the
+/// digest of their arguments and it must be the same: a decision on one call
+/// never answers another, so without digests the approvers are asked again.
 fn take_carried(carried: &Carried, tool: &str, args: Option<&str>) -> Option<Approval> {
+    let asked = args?;
     let mut carried = carried.lock().expect("carried decisions");
     let at = carried.iter().position(|a| {
         a.tool == tool
             && matches!(a.status, ApprovalStatus::Approved | ApprovalStatus::Denied)
-            && match (a.args_sha256.as_deref(), args) {
-                (Some(kept), Some(asked)) => kept == asked,
-                _ => true,
-            }
+            && a.args_sha256.as_deref() == Some(asked)
     })?;
     Some(carried.remove(at))
 }
@@ -596,5 +596,57 @@ pub async fn reattach(
         _ if cancelled => Reattached::Cancelled,
         ApprovalStatus::Approved | ApprovalStatus::Denied => Reattached::Decided(approval),
         _ => Reattached::Expired(approval),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::policy::PolicyVersions;
+
+    fn decided(tool: &str, args: Option<&str>) -> Approval {
+        Approval {
+            id: Uuid::now_v7(),
+            workspace_id: Uuid::now_v7(),
+            run_id: Uuid::now_v7(),
+            node_id: Uuid::now_v7(),
+            graph_id: Uuid::now_v7(),
+            agent_id: None,
+            principal: "agent://ws/Writer".into(),
+            span_id: Uuid::now_v7(),
+            tool: tool.into(),
+            args_sha256: args.map(str::to_owned),
+            rule: "approvals.tools".into(),
+            reason: String::new(),
+            approver_ids: Vec::new(),
+            status: ApprovalStatus::Approved,
+            requested_at: Utc::now(),
+            expires_at: Utc::now(),
+            decided_by: None,
+            decided_at: Some(Utc::now()),
+            decision_reason: String::new(),
+            decision_span_id: None,
+            policy_versions: PolicyVersions::default(),
+        }
+    }
+
+    #[test]
+    fn a_carried_decision_answers_only_the_same_call() {
+        let (one, other) = ("ab".repeat(32), "cd".repeat(32));
+        let carried: Carried = Arc::new(Mutex::new(vec![
+            decided("make_docx", Some(&one)),
+            decided("send_mail", None),
+        ]));
+        // Another tool, other arguments, or a request without a digest: nothing carried.
+        assert!(take_carried(&carried, "write_file", Some(&one)).is_none());
+        assert!(take_carried(&carried, "make_docx", Some(&other)).is_none());
+        assert!(take_carried(&carried, "make_docx", None).is_none());
+        // A decision kept without a digest answers nothing either.
+        assert!(take_carried(&carried, "send_mail", None).is_none());
+        assert!(take_carried(&carried, "send_mail", Some(&one)).is_none());
+        // The same call is answered, once.
+        let answer = take_carried(&carried, "make_docx", Some(&one)).expect("the same call");
+        assert_eq!(answer.args_sha256.as_deref(), Some(one.as_str()));
+        assert!(take_carried(&carried, "make_docx", Some(&one)).is_none());
     }
 }

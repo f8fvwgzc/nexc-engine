@@ -144,7 +144,9 @@ pub async fn latest_of_node(
 /// Decides a pending approval as `from` was decided: the request an
 /// attempt asks again after a takeover gets the decision already taken on
 /// the interrupted attempt's request, by the same person, for the same
-/// reason. `None` when it was not pending.
+/// reason, as long as that person may still decide it (one of its
+/// approvers, or an admin of its workspace). `None` when it was not pending
+/// or the decider may not decide it: the approvers are then asked.
 pub async fn carry(
     db: impl PgExecutor<'_>,
     id: Uuid,
@@ -156,6 +158,11 @@ pub async fn carry(
                 decided_at = now()
          FROM approvals o
          WHERE a.id = $1 AND o.id = $2 AND a.status = 'pending' AND o.status IN ('approved', 'denied')
+           AND o.decided_by IS NOT NULL
+           AND (o.decided_by = ANY(a.approver_ids)
+                OR EXISTS (SELECT 1 FROM workspace_members m
+                           WHERE m.workspace_id = a.workspace_id AND m.user_id = o.decided_by
+                             AND m.role IN ('owner', 'admin')))
          RETURNING a.*",
     )
     .bind(id)

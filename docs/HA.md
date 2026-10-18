@@ -25,7 +25,7 @@ Resuming a run keeps everything that was committed:
 | Succeeded          | Keeps its output; its successors build on it. Nothing is run again.                                                                                                        |
 | Failed, skipped    | Stays as it ended; its descendants are skipped.                                                                                                                            |
 | Running            | Is queued again with `attempt + 1` and a `policy` span named `interrupted` on its trace. A node interrupted on its last attempt fails. An attempt cut short by a hand-off on shutdown (a rolling update, a node drain) does not count against `NEXC_MAX_ATTEMPTS`, so a deploy never uses up a node's attempts. |
-| Waiting for approval | Stays waiting and is re-attached: the decision, taken on any replica, resumes it. The new attempt asks again and is answered with the decision already taken.            |
+| Waiting for approval | Stays waiting and is re-attached: the decision, taken on any replica, resumes it. The new attempt asks again and is answered with the decision already taken, when it asks for the same call (the same tool and argument digest) and the decider may still decide it; otherwise the approvers are asked again. |
 | Queued             | Runs when its upstream nodes have succeeded, as before; one queued again by a holder that stopped before it started it runs the attempt after the interrupted one.       |
 
 The trace's hash chain continues from the last span written, so `GET /runs/{rid}/trace/verify`

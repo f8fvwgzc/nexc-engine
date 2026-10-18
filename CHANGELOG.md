@@ -45,7 +45,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   queued again by a holder that died before starting it resumes at the attempt after the
   interrupted one); a node waiting for an approval stays
   waiting, is re-attached, and runs again once someone decides, its new request answered at once
-  with the decision already taken (`approval` spans with `reattached` and `carried_from`); the
+  with the decision already taken (`approval` spans with `reattached` and `carried_from`) when it
+  is the same call (both requests carry the same argument digest) and the decider is still one of
+  its approvers or a workspace admin, the approvers asked again otherwise; the
   trace chain continues from the last span written, so `GET /runs/{id}/trace/verify` stays `ok`;
   commands the former holder never took (`run_commands`, now with the epoch they were addressed
   to) are taken by the new one, a sub-agent's cancel carried to the attempt that replaces its own;

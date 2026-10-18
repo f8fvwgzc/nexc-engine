@@ -1335,12 +1335,14 @@ the interrupted one); a `waiting_approval` node gets a `policy` span named `reat
 reattached`) and stays waiting: its pending approval is decided on any replica as usual (or expires
 at its `expires_at`, which fails the node), the decision's `approval` span carries `reattached:
 true`, and the node then runs its next attempt, in which the runtime's request for the same tool
-(and argument digest) is recorded as a new approval decided at once like the first (same decider and
-reason; its `approval` span carries `carried_from`, the first approval's id). The trace continues
-from the last span written (`seq` and `prev_hash`), so `GET /runs/{rid}/trace/verify` holds across a
-takeover; the run's `policy_versions` stay those it started under. A run whose cancel was asked for
-while nobody held it (`cancel_requested`) is cancelled by the new holder before any node is queued
-again (the `interrupted` span then has no `next_attempt`). A `run_commands` row records the run's
+with the same argument digest (both requests must carry one) is recorded as a new approval decided
+at once like the first (same decider and reason; its `approval` span carries `carried_from`, the
+first approval's id) when that decider may still decide it (one of the new request's approvers or a
+workspace admin), and is put to the approvers again otherwise. The trace continues from the last
+span written (`seq` and `prev_hash`), so `GET /runs/{rid}/trace/verify` holds across a takeover; the
+run's `policy_versions` stay those it started under. A run whose cancel was asked for while nobody
+held it (`cancel_requested`) is cancelled by the new holder before any node is queued again (the
+`interrupted` span then has no `next_attempt`). A `run_commands` row records the run's
 `lease_epoch`; only the holder takes commands, and a cancel recorded under an earlier epoch is
 carried to the node's next attempt and delivered when that attempt spawns the sub-agent of the same
 principal (its `policy` span carries `carried_from_spawn_span_id`). The lease's history is in
