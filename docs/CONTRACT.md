@@ -1348,7 +1348,8 @@ the authorization code flow with PKCE (`S256`), as a confidential client.
    not passed and `iat` neither in the future nor older than ten minutes (a minute of leeway), and
    the `nonce` the one sent. `email`, `email_verified`, `name` and the groups claim are read from
    the ID token, and from the userinfo endpoint when the ID token lacks any of them (its `sub` must
-   be the same).
+   be the same). The address and `email_verified` go together: userinfo's `email_verified` counts
+   only for the address the ID token gave, or, when the ID token gave none, for userinfo's own.
 4. The account is the one linked to the `(issuer, subject)` pair. At an identity's first sign-in
    it is linked to the account with its address only when the provider says the address is
    verified and that account has no identity of this provider yet (`sso_linked` in the account's

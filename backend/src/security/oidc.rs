@@ -309,10 +309,26 @@ impl Profile {
             && self.groups.is_some()
     }
 
-    /// Fills what is missing from `other` (the userinfo answer).
+    /// Fills what is missing from `other` (the userinfo answer). The address
+    /// and whether it is verified are one statement: without an address both
+    /// come from `other`; with one, `other` may only say whether that same
+    /// address is verified.
     pub fn fill_from(&mut self, other: Profile) {
-        self.email = self.email.take().or(other.email);
-        self.email_verified = self.email_verified.or(other.email_verified);
+        match &self.email {
+            None => {
+                self.email = other.email;
+                self.email_verified = other.email_verified;
+            }
+            Some(mine) => {
+                let same = other
+                    .email
+                    .as_deref()
+                    .is_some_and(|theirs| theirs.eq_ignore_ascii_case(mine));
+                if self.email_verified.is_none() && same {
+                    self.email_verified = other.email_verified;
+                }
+            }
+        }
         self.name = self.name.take().or(other.name);
         self.groups = self.groups.take().or(other.groups);
     }
@@ -971,5 +987,45 @@ mod tests {
         );
         assert_eq!(sparse.email_verified, Some(false));
         assert_eq!(sparse.groups, Some(vec!["eng".to_owned()]));
+
+        // Whether an address is verified is never taken from an answer about another address.
+        let unvouched = || Profile {
+            email: Some("ada@example.com".into()),
+            ..Profile::default()
+        };
+        let mut p = unvouched();
+        p.fill_from(Profile {
+            email: Some("someone@else.example".into()),
+            email_verified: Some(true),
+            ..Profile::default()
+        });
+        assert_eq!(p.email.as_deref(), Some("ada@example.com"));
+        assert_eq!(p.email_verified, None);
+        let mut p = unvouched();
+        p.fill_from(Profile {
+            email_verified: Some(true),
+            ..Profile::default()
+        });
+        assert_eq!(p.email_verified, None, "an answer naming no address");
+        let mut p = unvouched();
+        p.fill_from(Profile {
+            email: Some("Ada@Example.com".into()),
+            email_verified: Some(true),
+            ..Profile::default()
+        });
+        assert_eq!(p.email_verified, Some(true), "the same address");
+        // With no address of its own, both come from the answer, together.
+        let mut p = Profile {
+            email_verified: Some(true),
+            ..Profile::default()
+        };
+        p.fill_from(Profile {
+            email: Some("ada@example.com".into()),
+            ..Profile::default()
+        });
+        assert_eq!(
+            (p.email.as_deref(), p.email_verified),
+            (Some("ada@example.com"), None)
+        );
     }
 }

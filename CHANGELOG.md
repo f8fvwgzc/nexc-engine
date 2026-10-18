@@ -52,7 +52,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   signature by the provider's key set (kept an hour, fetched again once for a key id it does not
   hold, at most once a minute; `none` and HS* never pass), `iss`, `aud` (and `azp` with several
   audiences), `exp` and `iat` with a minute of leeway, and the nonce. Email, verification, name and
-  groups come from the ID token, else from userinfo. Accounts are found by a new `(issuer,
+  groups come from the ID token, else from userinfo (an address and whether it is verified always
+  from the same answer). Accounts are found by a new `(issuer,
   subject)` link table (`user_identities`): a first sign-in links an existing account only by a
   verified address and only when it has no other identity of the provider, else creates the
   account (no password; invitations accepted only for a verified address). The admin groups give
