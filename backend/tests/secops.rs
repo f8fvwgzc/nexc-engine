@@ -640,7 +640,8 @@ async fn the_live_feed_carries_every_graphs_spans(pool: PgPool) {
 
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
 async fn an_agent_made_from_a_template_has_its_scopes_policy_and_score(pool: PgPool) {
-    let app = TestApp::new(pool, &[]).await;
+    // The offline demo provider: its runtime answers as `nexc-demo` whatever the agent says.
+    let app = TestApp::new(pool, &[("NEXC_LLM_PROVIDER", "demo")]).await;
     let (owner, _) = app.register("owner@example.com").await;
     let (guest, _) = app.register("guest@example.com").await;
     let (outsider, _) = app.register("outsider@example.com").await;
@@ -680,8 +681,12 @@ async fn an_agent_made_from_a_template_has_its_scopes_policy_and_score(pool: PgP
         json!(["public", "internal"])
     );
     assert_eq!(agent["capabilities"]["egress_hosts"], json!([]));
-    // The model allow-list is pinned to the model the agent was given.
-    assert_eq!(agent["capabilities"]["models"], json!([agent["model"]]));
+    // The model allow-list is pinned to the model the agent was given, and admits the demo
+    // runtime's own name since that is the workspace's provider.
+    assert_eq!(
+        agent["capabilities"]["models"],
+        json!([agent["model"], "nexc-demo"])
+    );
     assert_eq!(card["owner"]["name"], "Test");
     assert!(card["recent_spans"].as_array().unwrap().is_empty());
     // The fake model answered the three questions; they are scored and kept.

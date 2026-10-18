@@ -17,6 +17,9 @@ use super::policy_document::PolicyDocument;
 pub const ANSWER_EXCERPT_CHARS: usize = 300;
 /// Most tokens an answer may take.
 pub const ANSWER_MAX_TOKENS: u32 = 400;
+/// The model name the agent runtime's offline demo provider reports (contract §8), whatever
+/// model the agent is given: a pinned allow-list must admit it under the demo provider.
+pub const DEMO_RUNTIME_MODEL: &str = "nexc-demo";
 
 /// A competency question and what a competent answer mentions.
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]

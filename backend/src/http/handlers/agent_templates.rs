@@ -16,8 +16,8 @@ use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::agent::{AGENT_NAME_MAX, Agent, AgentCard, AgentStatus};
 use crate::domain::agent_template::{
-    self, ANSWER_MAX_TOKENS, AgentEvaluation, AgentTemplate, AgentTemplateSpec, EvaluatedQuestion,
-    excerpt,
+    self, ANSWER_MAX_TOKENS, AgentEvaluation, AgentTemplate, AgentTemplateSpec, DEMO_RUNTIME_MODEL,
+    EvaluatedQuestion, excerpt,
 };
 use crate::domain::audit::AuditAction;
 use crate::domain::policy_document::{PolicyScope, diff_summary};
@@ -232,7 +232,19 @@ pub async fn instantiate(
         .unwrap_or_else(|| state.settings.llm_model.clone());
     let mut capabilities = template.capabilities.clone();
     if template.pin_model {
-        capabilities.models = Some(vec![model.clone()]);
+        // The allow-list names the model the agent runs on: the one it is given, the one the
+        // workspace's provider would use for it, and the offline demo's own name when that
+        // is the provider (its runtime reports `nexc-demo` whatever the agent says).
+        let mut allowed = vec![model.clone()];
+        if let Ok(resolved) = credentials::resolve(&state, auth.id, Some(workspace)).await {
+            if !resolved.target.model.is_empty() && !allowed.contains(&resolved.target.model) {
+                allowed.push(resolved.target.model.clone());
+            }
+            if resolved.is_demo() {
+                allowed.push(DEMO_RUNTIME_MODEL.to_owned());
+            }
+        }
+        capabilities.models = Some(allowed);
     }
     let topics: Vec<(Uuid, Vec<String>)> = repo::knowledge::topics(&state.db, workspace)
         .await?
