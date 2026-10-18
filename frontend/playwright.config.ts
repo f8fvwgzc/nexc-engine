@@ -43,6 +43,8 @@ export default defineConfig({
     {
       name: 'ui',
       testMatch: ['ui.spec.ts', 'fixtures.spec.ts'],
+      // A page, axe and a full-page screenshot; generous for an emulated amd64 container.
+      timeout: 90_000,
       use: { ...devices['Desktop Chrome'] },
     },
     {

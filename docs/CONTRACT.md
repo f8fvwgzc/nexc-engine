@@ -8,7 +8,9 @@ readable form at `GET /api/openapi.json` (utoipa); the frontend generates TypeSc
 (`npm run gen:api`) and validates responses at runtime with zod. The frontend's UI suite
 (`frontend/e2e`) answers the SPA from JSON fixtures typed against those generated types and parsed
 by the same zod schemas, so a contract change that the fixtures no longer match fails
-`pnpm typecheck` and `pnpm e2e`: update `frontend/e2e/fixtures` with it.
+`pnpm typecheck` and `pnpm e2e` (CI's **Frontend UI** job, `make e2e-ui`): update
+`frontend/e2e/fixtures` with it, and a new endpoint the SPA calls gets a handler in
+`frontend/e2e/support/mock-api.ts`.
 
 <!-- #endregion intro -->
 <!-- #region topology -->

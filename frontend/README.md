@@ -24,11 +24,13 @@ The backend must be running on `:8080` for anything past the landing/login pages
 | `pnpm dev`                     | Vite dev server on 5173 with `/api` proxy (`ws: true`)                                          |
 | `pnpm build`                   | `pnpm typecheck` (TypeScript 7 `tsc`) then `vite build`                                         |
 | `pnpm preview`                 | Serve `dist/` (port 4173, same `/api` proxy)                                                    |
-| `pnpm typecheck`               | `tsc -p tsconfig.app.json && tsc -p tsconfig.node.json` (both `noEmit`)                         |
+| `pnpm typecheck`               | `tsc` over `tsconfig.app.json`, `tsconfig.node.json` and `tsconfig.e2e.json` (all `noEmit`)     |
 | `pnpm lint`                    | ESLint 10 flat config, type-aware typescript-eslint, react-hooks 7                              |
 | `pnpm test`                    | Vitest 5 + Testing Library (jsdom)                                                              |
 | `pnpm gen:api`                 | `openapi-typescript` from the running backend's `/api/openapi.json` → `src/lib/api/schema.d.ts` |
 | `pnpm format` / `format:check` | Prettier (+ Tailwind class sorting)                                                             |
+| `pnpm e2e`                     | The UI suite (Playwright, see below); `make e2e-ui` runs it in the image CI uses                |
+| `pnpm e2e:audit`               | The UI audit: screenshots and records of every route, width, theme and data set (`e2e/.audit`)  |
 
 ## Environment
 
@@ -111,10 +113,34 @@ product's own vocabulary composed from them — feature code should reach for th
 | `OptionSelect`                                                                               | `Select`                               | typed fixed-option select                                                            |
 | `ConfirmDialog`                                                                              | `AlertDialog`                          | destructive confirmations                                                            |
 | `EmptyState`                                                                                 | `Empty`                                | icon + copy + action                                                                 |
+| `ErrorState`                                                                                 | `Empty`                                | a failed load: the reason and Try again (never an `EmptyState` for an error)         |
+| `PageContainer`                                                                              | div                                    | a page's frame: `default`, `wide` or `narrow` width, one vertical rhythm             |
+| `IconButton`, `WithTooltip`                                                                  | `Button`, `Tooltip`                    | an icon-only control: its label is its accessible name and its tooltip               |
+| `ScrollRegion`, `MainLandmark`                                                               | div / main                             | a box that scrolls (focusable while it does); a `main` where no shell gives one      |
 | `PageHeader`, `StatTile`, `GradientText`, `KbdHint`, `CopyButton`, `Spinner`, `NodeKindIcon` | various                                | page chrome & small affordances                                                      |
 | `FadeIn`, `Stagger`                                                                          | CSS keyframes                          | entrance motion                                                                      |
 
 To restyle the whole app, change tokens in `styles/index.css` (`:root` / `.dark`), not components.
+
+## UI suite (Playwright)
+
+`e2e/` serves the production build with `vite preview` and answers every `/api/v1` call from
+the JSON fixtures in `e2e/fixtures` (typed against `src/lib/api/schema.d.ts`, parsed by the
+app's zod schemas in `fixtures.spec.ts`), so no backend is needed. The browser is signed in by
+answering the boot-time refresh with a mocked token; the clock is fixed at 2026-10-14 12:00 UTC.
+
+`ui.spec.ts` visits every route of `src/app/router.tsx` (the login and register pages aside)
+with realistic and with empty data at 375, 768 and 1280 px, and fails on an API call no fixture
+answers, an uncaught error, a placeholder that never resolves, anything that scrolls sideways,
+two interactive elements that overlap, or a serious or critical axe violation (light, and dark
+at 1280 px). The main pages are compared with the baselines in `e2e/__screenshots__` (light;
+1% of pixels may differ past a small colour distance).
+
+The baselines are rendered on Linux, in the Playwright image CI runs: `make e2e-ui` runs the
+suite there (Docker), `make e2e-ui-update` re-renders the baselines after a deliberate change.
+Without Docker, `pnpm e2e` runs it on this machine and skips the pixel comparisons off Linux.
+`pnpm e2e:audit` writes screenshots and findings for every route, width, theme and data set to
+`e2e/.audit/<AUDIT_PHASE>/`; `e2e/AUDIT.md` is what the first audit found and what was done.
 
 ## Contract notes (ambiguities resolved here)
 

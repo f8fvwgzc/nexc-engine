@@ -17,14 +17,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   stream left open. The fixtures are typed against the OpenAPI types (`pnpm typecheck` covers
   `e2e/` through `tsconfig.e2e.json`) and parsed by the app's own zod schemas
   (`fixtures.spec.ts`). `pnpm e2e` visits every route of `src/app/router.tsx` (the login and
-  register pages aside) with realistic data and with empty data and fails on an API call no
-  fixture answers or an uncaught error; `pnpm e2e:audit` is the audit tool: every route at 375,
-  768 and 1280 px, light and dark, both data sets, with a full-page screenshot and a record of
-  axe, the layout check, unnamed icon controls, silent truncation, headings, empty states,
-  focus visibility and refetches under `frontend/e2e/.audit/` (not committed), plus every page
-  while its data loads and when its requests fail. Vitest now only collects `src/**/*.test.*`.
-  `frontend/e2e/AUDIT.md` records what the audit found: 33 findings on layout, headers,
-  controls, accessibility, empty, loading and error states, and caching.
+  register pages aside) with realistic data and with empty data at 375, 768 and 1280 px and
+  fails on an API call no fixture answers, an uncaught error, a placeholder that never resolves,
+  anything that scrolls sideways, two visible interactive elements that overlap, or a serious or
+  critical axe violation (light, and dark at 1280 px); ten main pages (Graphs, Runs, a run,
+  Agents, AgentSecOps, Sessions, Inbox, Issues, Projects, Members) are compared with screenshot
+  baselines at the three widths (`frontend/e2e/__screenshots__`, light, 1% of pixels may differ).
+  The baselines are rendered in the Playwright image (`mcr.microsoft.com/playwright`, the
+  version of `@playwright/test`), which the new CI job **Frontend UI** runs and `make e2e-ui`
+  runs locally through Docker (`scripts/e2e-ui.sh`; `make e2e-ui-update` re-renders the
+  baselines; without Docker the suite runs natively and skips the pixels off Linux).
+  `pnpm e2e:audit` is the audit tool: every route at 375, 768 and 1280 px, light and dark, both
+  data sets, with a full-page screenshot and a record of axe, the layout check, unnamed icon
+  controls, silent truncation, headings, empty states, focus visibility and refetches under
+  `frontend/e2e/.audit/` (not committed), plus every page while its data loads and when its
+  requests fail. Vitest now only collects `src/**/*.test.*`. `frontend/e2e/AUDIT.md` records what
+  the audit found: 33 findings on layout, headers, controls, accessibility, empty, loading and
+  error states, and caching.
 - Documentation site (`site/`, VitePress): the repository's Markdown rendered with a sidebar,
   full-text search, a dark theme, mermaid diagrams and the API reference (Scalar over
   `site/public/openapi.json`, a committed export of `nexc openapi`), in six sections: Start,

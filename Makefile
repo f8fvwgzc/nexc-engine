@@ -15,7 +15,7 @@ LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a;
 
 .PHONY: help init setup dev dev-backend dev-frontend dev-runtime db-up db-down db-shell \
         backup backup-check restore prove prove-trace prove-identity prove-audit prove-policy prove-agentsecops prove-gateway prove-api test-worst-case \
-        build test test-backend test-frontend test-runtime lint fmt check \
+        build test test-backend test-frontend test-runtime e2e-ui e2e-ui-update lint fmt check \
         docker-build docker-up docker-down docker-logs demo demo-onto demo-secops seed-demo \
         minikube-up minikube-down k8s-render openapi proto-runtime doctor clean \
         docs docs-build docs-dev
@@ -75,6 +75,12 @@ test-frontend: ## Frontend unit tests (vitest)
 
 test-runtime: ## Agent runtime tests (pytest, fake LLM, no network)
 	cd agent-runtime && $(UV) run pytest
+
+e2e-ui: ## SPA UI suite: every route at 375/768/1280 px on fixtures, layout check, axe and screenshot baselines (in the Playwright image CI uses; needs Docker)
+	scripts/e2e-ui.sh
+
+e2e-ui-update: ## Re-render the UI suite's screenshot baselines (frontend/e2e/__screenshots__) after a deliberate visual change
+	scripts/e2e-ui.sh --update-snapshots=changed
 
 lint: ## Lint + typecheck everything (clippy -D warnings, eslint/tsc, ruff/mypy)
 	$(CARGO) fmt --manifest-path $(BACKEND_MANIFEST) --check
