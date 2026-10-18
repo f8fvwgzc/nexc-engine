@@ -39,7 +39,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   left as it was); `GET /auth/providers` and
   `GET /auth/identities`. `backend/tests/worst_case.rs` sends hostile values in every parameter
   and cookie of the two routes (every answer a redirect to the provider or to this site), races
-  eight callbacks for one state (one session), and purges what expired sign-ins left. A vitest
+  eight callbacks for one state (one session), and purges what expired sign-ins left.
+  `make prove-api` drives the login (held to the write target) and the whole callback
+  (informational: half of it is the provider's) against the same provider in process, each
+  caller a person of their own (`docs/PERFORMANCE.md`). A vitest
   renders the login page in its three states, the break-glass form and an `sso_error`.
 - Single sign-on in the console: `GET /auth/providers` (public) says how one signs in here
   (passwords or not, registration or not, the provider and its name), and the login page shows

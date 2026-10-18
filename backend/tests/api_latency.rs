@@ -7,7 +7,9 @@
 //! included); and the three gRPC services are measured over loopback: the
 //! runtime's `Execute` stream against the stand-in runtime, onto-intelli's
 //! `Ask` against the stub server, and the Agent Firewall's `AuthorizeAction`
-//! in process and over the wire, the difference being the transport.
+//! in process and over the wire, the difference being the transport. Single
+//! sign-on's two navigations are driven against the OpenID Connect provider
+//! in process (`common::oidc`).
 //!
 //! Every gated row has a target; a missed one fails the test, so the table
 //! gates CI. `NEXC_PROVE_API_CALLERS`, `NEXC_PROVE_API_REQUESTS` and
@@ -643,6 +645,10 @@ async fn sweep_reads(
         {
             continue;
         }
+        // Single sign-on's navigations have their own rows, with a provider ([`sweep_sso`]).
+        if op.path.starts_with("/api/v1/auth/oidc/") {
+            continue;
+        }
         let url = w.fill(&op);
         let token = w.token_for(&op.path).to_owned();
         let router = app.router.clone();
@@ -668,6 +674,127 @@ async fn sweep_reads(
         };
         rows.push(samples.row(name, target, http_ok));
     }
+    rows
+}
+
+/// A browser's navigation through the router: the status and where it was
+/// sent (`Location`).
+async fn navigate(router: Router, url: &str, headers: &[(&str, &str)]) -> (StatusCode, String) {
+    let mut request = Request::builder().method(Method::GET).uri(url);
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    let request = request.body(Body::empty()).unwrap();
+    let response = tower::ServiceExt::oneshot(router, request).await.unwrap();
+    let status = response.status();
+    let location = response
+        .headers()
+        .get(header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    let _ = response.into_body().collect().await;
+    (status, location)
+}
+
+/// Single sign-on's two navigations against the OpenID Connect provider in
+/// process, each caller a person of their own who signed in once already
+/// (so the provider's discovery document and key set are kept, as a running
+/// server keeps them). The login (the kept document read, a row of
+/// `oidc_logins` written) is held to the write target. The callback (the
+/// state taken, the code exchanged at the provider, the ID token verified,
+/// the account found and its groups applied, a session started) is shown,
+/// not gated: half of it is the provider's work, here an in-process stub
+/// that signs every token under one lock.
+async fn sweep_sso(
+    pool: &PgPool,
+    overrides: &[(&str, &str)],
+    callers: usize,
+    requests: usize,
+) -> Vec<Row> {
+    use common::oidc::{Assertion, Stub, begin, local, trip, visitor};
+
+    let stub = Stub::start().await;
+    let settings = stub.settings();
+    let mut with_sso: Vec<(&str, &str)> = overrides.to_vec();
+    // Every navigation comes from an address of its own, past the `/auth/*` rate limit.
+    with_sso.push(("NEXC_TRUST_PROXY", "true"));
+    with_sso.extend(settings.iter().map(|(k, v)| (*k, v.as_str())));
+    let app = TestApp::with_real_providers(pool.clone(), &with_sso).await;
+    let person = |caller: usize| {
+        Assertion::person(
+            &format!("sub-load-{caller}"),
+            &format!("load-{caller}@example.com"),
+        )
+        .groups(&["staff"])
+    };
+    for caller in 0..callers {
+        let first = trip(&app, &stub, person(caller), None).await;
+        assert_eq!(
+            first.location, "/app",
+            "the first sign-in of caller {caller}"
+        );
+    }
+    let mut rows = Vec::new();
+
+    let router = app.router.clone();
+    let samples = load(callers, requests, move |_, _| {
+        let router = router.clone();
+        async move {
+            let from = visitor();
+            let headers = [("x-forwarded-for", from.as_str())];
+            let (status, location) = navigate(router, "/api/v1/auth/oidc/login", &headers).await;
+            if status == StatusCode::SEE_OTHER && !location.starts_with('/') {
+                "303".to_owned()
+            } else {
+                format!("{} {location}", status.as_u16())
+            }
+        }
+    })
+    .await;
+    rows.push(samples.row(
+        "GET /api/v1/auth/oidc/login (to the provider)",
+        Some(WRITE_TARGET_MS),
+        |s| s == "303",
+    ));
+
+    // The provider's half of each sign-in is done beforehand, untimed: a state works once.
+    let mut prepared = Vec::with_capacity(callers);
+    for caller in 0..callers {
+        let mut trips = Vec::with_capacity(rounds() * requests);
+        for _ in 0..rounds() * requests {
+            stub.expect(person(caller));
+            let (_, location, binding) = begin(&app, None).await;
+            trips.push((local(&stub.authorize(&location)), binding));
+        }
+        prepared.push(std::sync::Mutex::new(trips));
+    }
+    let prepared = Arc::new(prepared);
+    let router = app.router.clone();
+    let samples = load(callers, requests, move |caller, _| {
+        let router = router.clone();
+        let (url, binding) = prepared[caller]
+            .lock()
+            .unwrap()
+            .pop()
+            .expect("a sign-in prepared");
+        async move {
+            let cookie = format!("nexc_sso={binding}");
+            let from = visitor();
+            let headers = [
+                ("cookie", cookie.as_str()),
+                ("x-forwarded-for", from.as_str()),
+            ];
+            let (status, location) = navigate(router, &url, &headers).await;
+            format!("{} {location}", status.as_u16())
+        }
+    })
+    .await;
+    rows.push(samples.row(
+        "GET /api/v1/auth/oidc/callback (a whole sign-in, the provider in process)",
+        None,
+        |s| s == "303 /app",
+    ));
     rows
 }
 
@@ -984,6 +1111,9 @@ async fn prove_api(pool: PgPool) {
         Some(WRITE_TARGET_MS),
         http_ok,
     ));
+
+    // --- Single sign-on, against the provider in process ---------------------------------------
+    rows.extend(sweep_sso(&pool, &overrides, callers, requests).await);
 
     // --- The table -------------------------------------------------------------------------------
     print_table(&rows, scale);

@@ -28,6 +28,16 @@ prove targets), does the following on an isolated test database:
    (informational).
 4. Measures the cached reads again with the hot-read caches off (`NEXC_CACHE_TTL_SECS=0`), to show
    the gain.
+5. Drives single sign-on's two navigations against the OpenID Connect provider in process
+   (`backend/tests/common/oidc.rs`), each caller a person of their own who signed in once, so the
+   provider's discovery document and key set are kept as a running server keeps them:
+   `GET /auth/oidc/login` (the kept document read, a row of `oidc_logins` written, the redirect to
+   the provider) and `GET /auth/oidc/callback`, a whole sign-in (the state taken, the code exchanged
+   at the provider, the ID token's signature verified, the account found and its groups applied, a
+   session started), the provider's half done beforehand and untimed for each call. The callback
+   row is informational: half of its time is the provider's, here a stub that signs every token
+   under one lock, so it measures the stub as much as the server. The generic `GET` sweep leaves
+   both routes to this step.
 
 Every row is the best of two rounds (`NEXC_PROVE_API_ROUNDS`), so a stall of the machine during
 one round, another build or a backup, does not stand for the endpoint. The first rows are the
@@ -43,7 +53,7 @@ pool's queue costs at that concurrency.
 | ------------------------------------------------------------------------------------------------------ | -----: |
 | reads: every documented `GET`                                                                          |  20 ms |
 | reads that aggregate a whole workspace in one answer (the SecOps overview, search, the map, usage, the day summary, transfers, knowledge search, memory topics) and the server's status page, which probes what it runs on | 200 ms |
-| writes: an issue filed, a node added, a run started                                                    |  50 ms |
+| writes: an issue filed, a node added, a run started, single sign-on's login (a sign-in kept)           |  50 ms |
 | gRPC calls, the work itself excluded (the stubs do none; the firewall's transport is the health check beside it) |   1 ms |
 
 A missed target fails the test, so the table gates CI: the `api-latency` job runs it on every
@@ -53,7 +63,8 @@ full run is a developer's: `make prove-api` on a machine with a local PostgreSQL
 
 A row whose fixture the harness does not seed (an approval, a memory, an MCP server, an alert
 destination, an assistant conversation) answers 404 and is shown but not gated; so are the
-informational rows (the 64-caller gRPC figures, the cache-off figures, the one-team write).
+informational rows (the 64-caller gRPC figures, the cache-off figures, the one-team write, the
+single sign-on callback, which waits on the provider).
 
 ## The table
 
@@ -190,3 +201,18 @@ The harness's own header: nexc-engine API latency: 64 concurrent callers × 8 re
 | POST /api/v1/graphs/{gid}/runs | 512 | 202 | 35.36 | 37.74 | 39.55 | 50 ms | pass |
 
 96 rows gated, 0 missed, 9 not gated (no fixture or refused: GET /a2a/tasks/{tid}/artifacts/{aid} 401; GET /api/v1/approvals/{id} 404; GET /api/v1/memories/{id} 404; GET /api/v1/workspaces/{wid}/a2a-counterparts/{cid} 404; GET /api/v1/workspaces/{wid}/alert-destinations/{id} 404; GET /api/v1/workspaces/{wid}/alert-destinations/{id}/deliveries 404; GET /api/v1/workspaces/{wid}/assistant/conversations/{cid} 404; GET /api/v1/workspaces/{wid}/mcp-servers/{sid} 404; GET /api/v1/workspaces/{wid}/secops/spans 400)
+
+Single sign-on's rows came later and were taken on the same machine, 64 callers × 8 requests and
+the best of two rounds, but against PostgreSQL 17 in Docker Desktop with other builds running, so
+every row of that run sits above the native table (eleven of the reads and writes above missed
+their target in it by up to 15 ms; their native figures are the ones above). The login is a read
+of the kept discovery document and one insert; the callback is informational, the in-process
+provider signing every token under one lock:
+
+| endpoint | calls | status | p50 ms | p99 ms | max ms | target p99 | result |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| GET /api/v1/auth/providers | 512 | 200 | 0.01 | 0.02 | 0.04 | 20 ms | pass |
+| GET /api/v1/auth/identities | 512 | 200 | 8.67 | 12.23 | 12.97 | 20 ms | pass |
+| GET /api/v1/admin/users/{uid}/identities | 512 | 200 | 8.67 | 13.53 | 14.27 | 20 ms | pass |
+| GET /api/v1/auth/oidc/login (to the provider) | 512 | 303 | 8.51 | 17.18 | 18.40 | 50 ms | pass |
+| GET /api/v1/auth/oidc/callback (a whole sign-in, the provider in process) | 512 | 303 /app | 239.54 | 380.60 | 399.57 | — | info |
