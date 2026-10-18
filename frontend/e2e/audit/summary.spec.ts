@@ -122,9 +122,13 @@ test('summarise the audit', () => {
         route: string;
         mode: string;
         width: number;
-        state: unknown;
+        state: Record<string, unknown>;
+        axe?: AxeFinding[];
       };
-      (states[r.route] ??= {})[`${r.mode}/${r.width}`] = r.state;
+      (states[r.route] ??= {})[`${r.mode}/${r.width}`] = {
+        ...r.state,
+        axe: (r.axe ?? []).map((v) => `${v.impact}: ${v.id}`),
+      };
     }
     writeFileSync(join(AUDIT_DIR, 'states.json'), JSON.stringify(states, null, 2));
   }

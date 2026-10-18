@@ -254,7 +254,9 @@ async function stateRecord(page: Page) {
         /try again|retry/i.test(b.textContent ?? ''),
       ),
     })),
-    h1: [...document.querySelectorAll('h1')].map((h) => h.textContent),
+    h1: [...document.querySelectorAll('h1, [role="heading"][aria-level="1"]')].map(
+      (h) => h.textContent,
+    ),
   }));
 }
 
@@ -273,7 +275,13 @@ for (const route of APP_ROUTES) {
         const shot = join(AUDIT_DIR, 'shots', mode, 'light', String(width), `${route.name}.png`);
         mkdirSync(dirname(shot), { recursive: true });
         await page.screenshot({ path: shot, animations: 'disabled' });
-        const record = { route: route.name, mode, width, state: await stateRecord(page) };
+        const record = {
+          route: route.name,
+          mode,
+          width,
+          state: await stateRecord(page),
+          axe: await runAxe(page),
+        };
         const out = join(AUDIT_DIR, 'states', `${route.name}.${mode}.${width}.json`);
         mkdirSync(dirname(out), { recursive: true });
         writeFileSync(out, JSON.stringify(record, null, 2));

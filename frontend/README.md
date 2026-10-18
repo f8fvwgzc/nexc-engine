@@ -129,12 +129,13 @@ the JSON fixtures in `e2e/fixtures` (typed against `src/lib/api/schema.d.ts`, pa
 app's zod schemas in `fixtures.spec.ts`), so no backend is needed. The browser is signed in by
 answering the boot-time refresh with a mocked token; the clock is fixed at 2026-10-14 12:00 UTC.
 
-`ui.spec.ts` visits every route of `src/app/router.tsx` (the login and register pages aside)
-with realistic and with empty data at 375, 768 and 1280 px, and fails on an API call no fixture
-answers, an uncaught error, a placeholder that never resolves, anything that scrolls sideways,
-two interactive elements that overlap, or a serious or critical axe violation (light, and dark
-at 1280 px). The main pages are compared with the baselines in `e2e/__screenshots__` (light;
-1% of pixels may differ past a small colour distance).
+`ui.spec.ts` visits every route of `src/app/router.tsx` (the login and register pages aside) with
+realistic and with empty data at 375, 768 and 1280 px, and fails on an API call no fixture
+answers, an uncaught error, a placeholder that never resolves, anything that scrolls sideways, two
+interactive elements that overlap, or a serious or critical axe violation (light, and dark at 1280
+px); each page's skeleton (requests left pending) and error state (requests answered 500) get the
+same layout and axe checks at 375 and 1280 px. The main pages are compared with the baselines in
+`e2e/__screenshots__` (light; 1% of pixels may differ past a small colour distance).
 
 The baselines are rendered on Linux, in the Playwright image CI runs: `make e2e-ui` runs the
 suite there (Docker), `make e2e-ui-update` re-renders the baselines after a deliberate change.

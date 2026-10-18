@@ -20,7 +20,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   register pages aside) with realistic data and with empty data at 375, 768 and 1280 px and
   fails on an API call no fixture answers, an uncaught error, a placeholder that never resolves,
   anything that scrolls sideways, two visible interactive elements that overlap, or a serious or
-  critical axe violation (light, and dark at 1280 px); ten main pages (Graphs, Runs, a run,
+  critical axe violation (light, and dark at 1280 px), and holds every page's skeleton and error
+  state to the same layout and axe checks at 375 and 1280 px; ten main pages (Graphs, Runs, a run,
   Agents, AgentSecOps, Sessions, Inbox, Issues, Projects, Members) are compared with screenshot
   baselines at the three widths (`frontend/e2e/__screenshots__`, light, 1% of pixels may differ).
   The baselines are rendered in the Playwright image (`mcr.microsoft.com/playwright`, the

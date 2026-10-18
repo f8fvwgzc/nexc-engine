@@ -7,6 +7,8 @@
  * - the layout check: nothing scrolls sideways (the document or the page's own scroller), and no
  *   two visible interactive elements overlap;
  * - axe finds no serious or critical violation (light, and dark at 1280 px);
+ * - the same layout and axe checks while the data loads and when every request fails (375 and
+ *   1280 px), so skeletons and error states are held to them too;
  * - the main pages match their screenshot baseline (light), within the threshold of
  *   `playwright.config.ts`. Baselines are rendered on Linux (`make e2e-ui-update`).
  */
@@ -36,11 +38,13 @@ async function openAndCheck(
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
 
-  const opened = await openRoute(page, route, { mode, theme });
+  // While loading, the placeholders are the point: look at them once they are drawn.
+  const loading = mode === 'loading';
+  const opened = await openRoute(page, route, { mode, theme, settle: loading ? 1_500 : undefined });
 
   expect(opened.unhandled, 'API calls no fixture answers').toEqual([]);
   expect(errors, 'uncaught errors').toEqual([]);
-  expect(opened.stuckLoading, 'loading placeholders left once settled').toBe(0);
+  if (!loading) expect(opened.stuckLoading, 'loading placeholders left once settled').toBe(0);
 
   const layout = await checkLayout(page);
   expect(layout.docOverflow, 'the page scrolls sideways').toBe(0);
@@ -73,4 +77,15 @@ for (const route of APP_ROUTES) {
   test(`${route.name} · full data · dark · 1280 px`, async ({ page }) => {
     await openAndCheck(page, route, 'full', 'dark', 1280);
   });
+
+  // The skeletons while the data loads, and the error states when every request fails.
+  if (!route.signedOut) {
+    for (const mode of ['loading', 'error'] as const) {
+      for (const width of [375, 1280]) {
+        test(`${route.name} · ${mode} · ${width} px`, async ({ page }) => {
+          await openAndCheck(page, route, mode, 'light', width);
+        });
+      }
+    }
+  }
 }
