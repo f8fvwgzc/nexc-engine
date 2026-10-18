@@ -21,8 +21,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   renews all its leases in one statement every third of `NEXC_RUN_LEASE_SECS` (default 30 s). A
   run whose lease ran out is claimed by another replica's dispatcher with one atomic `UPDATE`
   that raises the epoch, and every write the executor makes for the run (node status, outputs,
-  spans, usage, the run's status) first locks the run row at the epoch it holds (shared, so the
-  writes of one run do not wait for each other, unless the write changes the run row; a span
+  spans, usage, artifacts, approval requests and their inbox entries, the run's status) first
+  locks the run row at the epoch it holds (shared, so the writes of one run do not wait for each other, unless the write changes the run row; a span
   batch does it in its one statement; the transaction sets `idle_in_transaction_session_timeout`
   to the lease for itself, so one left open by a replica whose host or network vanished mid-write
   does not hold the run's takeover off until TCP notices), so a former
@@ -30,7 +30,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it stops its copy of the run (also when its renewal or the run's watcher sees the epoch moved,
   or when the database has not confirmed its lease for two thirds of a lease, counted from when
   the last renewal that went through was sent, so a replica cut off from the database stops its
-  copy a third of a lease before a peer can take the run over). The new holder resumes the
+  copy a third of a lease before a peer can take the run over). An artifact's bytes go to a file
+  of their own (`artifacts/<run>/<node>/<write id>/<path>`) and its record is pointed at them
+  under the fence, so a former holder's late artifact replaces neither the record nor the bytes,
+  and a DLP quarantine applies only to the bytes it screened. The new holder resumes the
   run from what was written: succeeded nodes keep their outputs; a running node is queued again
   with `attempt + 1` and an `interrupted` policy span; a node waiting for an approval stays
   waiting, is re-attached, and runs again once someone decides, its new request answered at once

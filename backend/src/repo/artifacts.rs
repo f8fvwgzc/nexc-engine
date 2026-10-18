@@ -1,4 +1,5 @@
-//! Artifact metadata (files live under `<data>/artifacts/<run_id>/<node_id>/`).
+//! Artifact metadata (files live under `<data>/artifacts/<run_id>/<node_id>/`,
+//! each write in a directory of its own).
 
 use sqlx::{FromRow, PgExecutor};
 use uuid::Uuid;
@@ -54,6 +55,23 @@ macro_rules! artifact_columns {
         "a.id, a.run_id, a.node_id, a.path, a.size, a.mime, a.created_at, a.quarantined_at,
          a.quarantine_reason, a.released_at"
     };
+}
+
+/// Where the artifact of `path` of a node of a run is stored now, if it is recorded.
+pub async fn storage_path_of(
+    db: impl PgExecutor<'_>,
+    run_id: Uuid,
+    node_id: Uuid,
+    path: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT storage_path FROM artifacts WHERE run_id = $1 AND node_id = $2 AND path = $3",
+    )
+    .bind(run_id)
+    .bind(node_id)
+    .bind(path)
+    .fetch_optional(db)
+    .await
 }
 
 /// Records an artifact (replacing one with the same run, node and path).
@@ -120,21 +138,26 @@ pub async fn list_for_node(
     .await
 }
 
-/// Keeps an artifact from being downloaded until an admin releases it.
+/// Keeps an artifact from being downloaded until an admin releases it, as
+/// long as it still holds the bytes that were screened (stored at
+/// `storage_path`): a later write of the same path is screened on its own.
+/// Returns whether it did.
 pub async fn quarantine(
     db: impl PgExecutor<'_>,
     id: Uuid,
+    storage_path: &str,
     reason: &str,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "UPDATE artifacts SET quarantined_at = now(), quarantine_reason = $2, released_at = NULL,
-                released_by = NULL WHERE id = $1",
+) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query(
+        "UPDATE artifacts SET quarantined_at = now(), quarantine_reason = $3, released_at = NULL,
+                released_by = NULL WHERE id = $1 AND storage_path = $2",
     )
     .bind(id)
+    .bind(storage_path)
     .bind(reason)
     .execute(db)
     .await?;
-    Ok(())
+    Ok(done.rows_affected() == 1)
 }
 
 /// Releases a quarantined artifact; `None` when it is not quarantined or unknown.

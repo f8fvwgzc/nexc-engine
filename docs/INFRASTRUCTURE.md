@@ -45,7 +45,8 @@ the owner names, and then offers to remove it from this server.
    parents before children, in one transaction on the target (`engine/transfer.rs`): the copy
    is there completely or not at all. Per-table counts are kept in `workspace_transfers`.
 3. Files kept on disk travel inside the same database: uploaded originals
-   (`documents/<document id>`) and run artifacts (`artifacts/<run id>/<node id>/<path>`) are
+   (`documents/<document id>`) and run artifacts (`artifacts/<run id>/<node id>/<write id>/<path>`,
+   or `artifacts/<run id>/<node id>/<path>` for artifacts written before high availability) are
    written to `workspace_files`, one row per file, with the path they had in the data folder
    (`NEXC_DATA_DIR`). The nexc server that owns the target database writes them back out to its
    own data folder when it next starts (`transfer::restore_files`) and clears the rows' content.

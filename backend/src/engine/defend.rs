@@ -148,11 +148,18 @@ impl ExecContext {
         raise(&self.state, &about, finding).await
     }
 
-    /// Screens an artifact just stored: classifies its text, decides under the
-    /// DLP rules for the strictest label the node read, and on a denial keeps
-    /// the file in. Every finding is a `policy` span; a denial or an alert
-    /// also raises an alert.
-    pub async fn screen_artifact(&self, artifact: &Artifact, bytes: &[u8]) -> Decision {
+    /// Screens an artifact just stored at `storage_path`: classifies its
+    /// text, decides under the DLP rules for the strictest label the node
+    /// read, and on a denial keeps the file in (unless a later write of the
+    /// same path replaced it already: that one is screened on its own).
+    /// Every finding is a `policy` span; a denial or an alert also raises an
+    /// alert.
+    pub async fn screen_artifact(
+        &self,
+        artifact: &Artifact,
+        storage_path: &str,
+        bytes: &[u8],
+    ) -> Decision {
         let label = self.strictest_label();
         let rules = &self.rules.dlp;
         let findings = dlp::extract_text(bytes, &artifact.mime, &artifact.path)
@@ -188,10 +195,16 @@ impl ExecContext {
         };
         if !decision.allowed {
             let reason = format!("{}: {}", decision.rule, decision.reason);
-            if let Err(err) =
-                repo::artifacts::quarantine(&self.state.db, artifact.id, &reason).await
+            match repo::artifacts::quarantine(&self.state.db, artifact.id, storage_path, &reason)
+                .await
             {
-                tracing::error!(artifact = %artifact.id, error = %err, "artifact not quarantined");
+                Ok(true) => {}
+                Ok(false) => {
+                    tracing::debug!(artifact = %artifact.id, "artifact replaced before its quarantine")
+                }
+                Err(err) => {
+                    tracing::error!(artifact = %artifact.id, error = %err, "artifact not quarantined")
+                }
             }
             self.state.metrics.artifacts_quarantined.add(1);
             self.log(

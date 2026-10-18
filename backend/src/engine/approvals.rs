@@ -149,9 +149,19 @@ pub async fn open(
         expires_at,
         policy_versions: &ctx.rules.versions,
     };
-    let approval = match repo::approvals::insert(&ctx.state.db, &record).await {
+    // The request, its carried decision and the approvers' inbox entries are written under
+    // the run's lease: an attempt of a former holder of the run asks nobody.
+    let mut tx = match lease::begin(&ctx.state, &ctx.lease, "approval request").await {
+        Ok(tx) => tx,
+        Err(err) => {
+            tracing::warn!(run_id = %ctx.run_id, error = %err, "approval request not recorded");
+            return None;
+        }
+    };
+    let approval = match repo::approvals::insert(&mut *tx, &record).await {
         Ok(approval) => approval,
         Err(err) => {
+            drop(tx);
             // A reused id is the runtime's doing; anything else is ours. Either way the call
             // is not held on the record and the runtime's wait will run out.
             ctx.policy_mismatch(
@@ -170,18 +180,27 @@ pub async fn open(
     // answers it, on the record as this request's, and nobody is asked again.
     let carried = take_carried(&ctx.carried, &request.tool, request.args_sha256.as_deref());
     let carried_from = match &carried {
-        Some(original) => {
-            match repo::approvals::carry(&ctx.state.db, approval.id, original.id).await {
-                Ok(Some(_)) => Some(original.id),
-                Ok(None) => None,
-                Err(err) => {
-                    tracing::error!(approval = %approval.id, error = %err, "carried decision not recorded");
-                    None
-                }
+        Some(original) => match repo::approvals::carry(&mut *tx, approval.id, original.id).await {
+            Ok(Some(_)) => Some(original.id),
+            Ok(None) => None,
+            Err(err) => {
+                tracing::error!(approval = %approval.id, error = %err, "carried decision not recorded");
+                return None;
             }
-        }
+        },
         None => None,
     };
+    if carried_from.is_none()
+        && let Err(err) =
+            repo::approvals::notify(&mut *tx, approval.id, workspace_id, &approvers).await
+    {
+        tracing::error!(approval = %approval.id, error = %err, "approvers were not told");
+        return None;
+    }
+    if let Err(err) = tx.commit().await {
+        tracing::error!(approval = %approval.id, error = %err, "approval request not recorded");
+        return None;
+    }
     if let Some(from) = carried_from {
         ctx.log(
             LogLevel::Info,
@@ -191,11 +210,6 @@ pub async fn open(
             ),
         );
     } else {
-        if let Err(err) =
-            repo::approvals::notify(&ctx.state.db, approval.id, workspace_id, &approvers).await
-        {
-            tracing::error!(approval = %approval.id, error = %err, "approvers were not told");
-        }
         crate::alerting::enqueue_approval(&ctx.state, &approval, DeliveryEvent::ApprovalRequested)
             .await;
         pause(ctx, true).await;

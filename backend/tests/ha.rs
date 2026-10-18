@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 use axum::http::{Method, StatusCode};
 use common::grpc_runtime::{Seen, fake_grpc_runtime};
 use common::{TestApp, collect_until};
+use nexc::engine::artifacts;
 use nexc::engine::lease::{self, Lease, WriteError};
 use nexc::engine::trace::{self, Tail};
 use nexc::realtime::hub::SseFrame;
@@ -241,6 +242,24 @@ async fn usage_per_node(pool: &PgPool, rid: &str) -> HashMap<Uuid, i64> {
     .collect()
 }
 
+/// How many files are under `dir`, at any depth.
+fn files_under(dir: &std::path::Path) -> usize {
+    std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|e| {
+                    if e.path().is_dir() {
+                        files_under(&e.path())
+                    } else {
+                        1
+                    }
+                })
+                .sum()
+        })
+        .unwrap_or(0)
+}
+
 fn succeeded_events(events: &[(String, Value)], node: &str) -> usize {
     events
         .iter()
@@ -433,6 +452,45 @@ async fn a_former_holder_cannot_write_once_the_run_was_taken_over(pool: PgPool) 
             .contains("nexc_run_lease_events_total{event=\"fenced\"} 2"),
         "counted on the instance that tried"
     );
+
+    // B stores an artifact of the node; A's late artifact of the same path replaces neither
+    // its record nor its bytes, and leaves no file behind.
+    let node_id: Uuid = nodes[0].parse().unwrap();
+    let b_lease = b.state.engine.lease(run_id).expect("B executes the run");
+    let kept = artifacts::store(
+        &b.state,
+        &b_lease,
+        graph_id,
+        run_id,
+        node_id,
+        "report.md",
+        None,
+        b"from the holder",
+    )
+    .await
+    .expect("the holder's artifact is kept");
+    let refused_artifact = artifacts::store(
+        &a.state,
+        &Lease::held(run_id, 1, a_id),
+        graph_id,
+        run_id,
+        node_id,
+        "report.md",
+        None,
+        b"from a former holder",
+    )
+    .await;
+    assert!(refused_artifact.is_err(), "the late artifact is refused");
+    let stored = nexc::repo::artifacts::list_stored(&pool, run_id)
+        .await
+        .unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].storage_path, kept.storage_path);
+    let on_disk = artifacts::resolve(&b.state, &stored[0].storage_path).unwrap();
+    assert_eq!(std::fs::read(on_disk).unwrap(), b"from the holder");
+    // (Each instance of these tests has a data directory of its own.)
+    let a_run_dir = a.state.settings.artifacts_dir().join(run_id.to_string());
+    assert_eq!(files_under(&a_run_dir), 0, "the refused write left no file");
 
     // B finishes the run as if A had never come back.
     let run = until_finished(&b, &token, &rid).await;

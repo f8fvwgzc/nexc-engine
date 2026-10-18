@@ -311,8 +311,9 @@ impl ExecContext {
         mime: Option<&str>,
         bytes: &[u8],
     ) -> Result<Artifact, String> {
-        let artifact = super::artifacts::store(
+        let stored = super::artifacts::store(
             &self.state,
+            &self.lease,
             self.graph_id,
             self.run_id,
             self.node.id,
@@ -321,8 +322,9 @@ impl ExecContext {
             bytes,
         )
         .await?;
-        self.screen_artifact(&artifact, bytes).await;
-        Ok(artifact)
+        self.screen_artifact(&stored.artifact, &stored.storage_path, bytes)
+            .await;
+        Ok(stored.artifact)
     }
 
     /// System prompt: the assigned agent's, or a generic one.

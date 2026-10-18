@@ -1,13 +1,19 @@
-//! Artifact storage under `<data>/artifacts/<run_id>/<node_id>/<path>`.
+//! Artifact storage under `<data>/artifacts/<run_id>/<node_id>/<write_id>/<path>`.
 //!
 //! Paths come from LLM / agent output and are therefore untrusted: they must
 //! be relative, made of plain file-name characters, contain no `..` and
 //! stay inside the node's directory after resolution.
+//!
+//! Every write has a file of its own, and the artifact's record is pointed
+//! at it in a transaction fenced by the run's lease (docs/HA.md): a former
+//! holder of the run that writes late never replaces the bytes or the record
+//! the holder wrote.
 
 use std::path::{Component, Path, PathBuf};
 
 use uuid::Uuid;
 
+use super::lease::{self, Lease, WriteError};
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::run::Artifact;
@@ -65,8 +71,17 @@ pub fn mime_for(path: &str, declared: Option<&str>) -> String {
     }
 }
 
-fn storage_rel(run_id: Uuid, node_id: Uuid, path: &str) -> String {
-    format!("{run_id}/{node_id}/{path}")
+/// Where one write of an artifact is kept, relative to the artifacts directory.
+fn storage_rel(run_id: Uuid, node_id: Uuid, write_id: Uuid, path: &str) -> String {
+    format!("{run_id}/{node_id}/{write_id}/{path}")
+}
+
+/// An artifact as stored: its record and where its bytes are.
+#[derive(Debug, Clone)]
+pub struct Stored {
+    pub artifact: Artifact,
+    /// Relative to the artifacts directory.
+    pub storage_path: String,
 }
 
 /// Removes the stored files of runs (each run has its own directory). Called
@@ -105,16 +120,22 @@ pub fn resolve(state: &AppState, storage_path: &str) -> Result<PathBuf, AppError
     Ok(canonical)
 }
 
-/// Writes an artifact atomically, records it and publishes `artifact.created`.
+/// Writes an artifact of a node of a run executed here under `lease`,
+/// records it and publishes `artifact.created`. The bytes go to a file of
+/// their own; the record is pointed at it in a transaction fenced by the
+/// lease, and the file it pointed at before is removed after. A write the
+/// fence refuses (another instance executes the run now) leaves nothing.
+#[allow(clippy::too_many_arguments)]
 pub async fn store(
     state: &AppState,
+    lease: &Lease,
     graph_id: Uuid,
     run_id: Uuid,
     node_id: Uuid,
     raw_path: &str,
     declared_mime: Option<&str>,
     bytes: &[u8],
-) -> Result<Artifact, String> {
+) -> Result<Stored, String> {
     if bytes.len() > MAX_ARTIFACT_BYTES {
         return Err(format!(
             "artifact exceeds {} MiB",
@@ -122,35 +143,92 @@ pub async fn store(
         ));
     }
     let path = sanitize_path(raw_path)?;
-    let rel = storage_rel(run_id, node_id, &path);
+    if lease.is_lost() {
+        return Err(REFUSED.into());
+    }
+    let rel = storage_rel(run_id, node_id, Uuid::now_v7(), &path);
     let full = state.settings.artifacts_dir().join(&rel);
     write_atomic(&full, bytes)
         .await
         .map_err(|e| format!("cannot write artifact: {e}"))?;
     let mime = mime_for(&path, declared_mime);
-    let artifact = repo::artifacts::upsert(
-        &state.db,
-        run_id,
-        node_id,
-        &path,
-        bytes.len() as i64,
-        &mime,
-        &rel,
-    )
-    .await
-    .map_err(|e| format!("cannot record artifact: {e}"))?;
+    let recorded = async {
+        let mut tx = lease::begin(state, lease, "artifact").await?;
+        let replaced = repo::artifacts::storage_path_of(&mut *tx, run_id, node_id, &path).await?;
+        let artifact = repo::artifacts::upsert(
+            &mut *tx,
+            run_id,
+            node_id,
+            &path,
+            bytes.len() as i64,
+            &mime,
+            &rel,
+        )
+        .await?;
+        tx.commit().await?;
+        Ok::<_, WriteError>((artifact, replaced))
+    }
+    .await;
+    let (artifact, replaced) = match recorded {
+        Ok(recorded) => recorded,
+        Err(err) => {
+            discard(state, &rel).await;
+            return Err(match err {
+                WriteError::Fenced => REFUSED.into(),
+                WriteError::Db(err) => format!("cannot record artifact: {err}"),
+            });
+        }
+    };
+    if let Some(replaced) = replaced.filter(|old| *old != rel) {
+        discard(state, &replaced).await;
+    }
     state.hub.publish(
         graph_id,
         SseEvent::ArtifactCreated {
             artifact: artifact.clone(),
         },
     );
-    Ok(artifact)
+    Ok(Stored {
+        artifact,
+        storage_path: rel,
+    })
 }
 
-/// Copies a node's artifacts from an earlier run (cache hits keep their files).
+/// Why a write of a former holder of the run was not kept.
+const REFUSED: &str = "artifact not kept: another instance executes the run now";
+
+/// Removes the file of one write (`rel`), with the directories it leaves
+/// empty inside its node's directory. Nothing refers to it any more, so a
+/// failure is logged, not an error.
+async fn discard(state: &AppState, rel: &str) {
+    let root = state.settings.artifacts_dir();
+    let full = root.join(rel);
+    match tokio::fs::remove_file(&full).await {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => {
+            tracing::warn!(storage_path = rel, error = %err, "cannot remove an artifact's file");
+            return;
+        }
+    }
+    let node_dir = rel
+        .splitn(3, '/')
+        .take(2)
+        .fold(root, |dir, part| dir.join(part));
+    let mut dir = full.parent();
+    while let Some(d) = dir.filter(|d| *d != node_dir && d.starts_with(&node_dir)) {
+        if tokio::fs::remove_dir(d).await.is_err() {
+            break;
+        }
+        dir = d.parent();
+    }
+}
+
+/// Copies a node's artifacts from an earlier run (cache hits keep their
+/// files) into a run executed here under `lease`.
 pub async fn copy_from_run(
     state: &AppState,
+    lease: &Lease,
     graph_id: Uuid,
     from_run: Uuid,
     to_run: Uuid,
@@ -164,6 +242,7 @@ pub async fn copy_from_run(
         let a = &stored.artifact;
         store(
             state,
+            lease,
             graph_id,
             to_run,
             node_id,

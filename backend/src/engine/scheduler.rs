@@ -2110,6 +2110,7 @@ impl NodeTask {
         }
         if let Err(err) = artifacts::copy_from_run(
             state,
+            &self.data.lease,
             self.data.graph_id,
             hit.run_id,
             self.data.run_id,
