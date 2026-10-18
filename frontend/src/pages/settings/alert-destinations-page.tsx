@@ -244,13 +244,18 @@ function DeliveryLog({
   workspaceId: string;
   destinationId: string;
 }) {
-  const { data, isPending, error } = useQuery(alertDeliveriesQuery(workspaceId, destinationId));
+  const { data, isPending, error, refetch } = useQuery(
+    alertDeliveriesQuery(workspaceId, destinationId),
+  );
   if (isPending) return <Skeleton className="h-16 rounded-lg" />;
   if (error) {
     return (
-      <p role="alert" className="text-xs text-destructive">
-        {errorMessage(error)}
-      </p>
+      <ErrorState
+        compact
+        title="Couldn’t load the deliveries"
+        error={error}
+        onRetry={() => void refetch()}
+      />
     );
   }
   if (data.length === 0) {

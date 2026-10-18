@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 
 import { AnimatedButton } from '@/components/custom-ui/animated-button';
 import { CopyButton } from '@/components/custom-ui/copy-button';
+import { ErrorState } from '@/components/custom-ui/error-state';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -332,7 +333,10 @@ function AgentApprovals({
   agentId: string;
   admin: boolean;
 }) {
-  const { data, isPending, error } = useQuery({ ...approvalsQuery(workspaceId), enabled: admin });
+  const { data, isPending, error, refetch } = useQuery({
+    ...approvalsQuery(workspaceId),
+    enabled: admin,
+  });
   if (!admin) {
     return (
       <p className="text-xs text-muted-foreground">
@@ -343,9 +347,12 @@ function AgentApprovals({
   if (isPending) return <Skeleton className="h-16 rounded-lg" />;
   if (error) {
     return (
-      <p role="alert" className="text-xs text-destructive">
-        {errorMessage(error)}
-      </p>
+      <ErrorState
+        compact
+        title="Couldn’t load the approvals"
+        error={error}
+        onRetry={() => void refetch()}
+      />
     );
   }
   const own = data.filter((a) => a.agent_id === agentId);
@@ -373,14 +380,20 @@ function AgentAlerts({
   agentId: string;
   admin: boolean;
 }) {
-  const { data, isPending, error } = useQuery({ ...alertsQuery(workspaceId), enabled: admin });
+  const { data, isPending, error, refetch } = useQuery({
+    ...alertsQuery(workspaceId),
+    enabled: admin,
+  });
   if (!admin) return <p className="text-xs text-muted-foreground">Admins see alerts.</p>;
   if (isPending) return <Skeleton className="h-16 rounded-lg" />;
   if (error) {
     return (
-      <p role="alert" className="text-xs text-destructive">
-        {errorMessage(error)}
-      </p>
+      <ErrorState
+        compact
+        title="Couldn’t load the alerts"
+        error={error}
+        onRetry={() => void refetch()}
+      />
     );
   }
   const own = orderAlerts(data.filter((a) => a.agent_id === agentId));

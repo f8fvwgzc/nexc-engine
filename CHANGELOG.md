@@ -1200,8 +1200,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   an empty workspace to the first step (Teams from Issues, the file picker from Knowledge, a
   graph from Sessions, Memory and Usage, the name field from Projects, the policies from
   Alerts), Usage and the workspace map have an empty state, and a failed load is an
-  `ErrorState` with **Try again** instead of red text, or, worse, an empty state that told
-  the reader to create what may exist (Issues, Sessions, Knowledge, Memory, Project). The
+  `ErrorState` with **Try again** instead of red text (lists, Infrastructure, policy versions,
+  an agent's approvals and alerts, a destination's deliveries), or, worse, an empty state that
+  told the reader to create what may exist (Issues, Sessions, Knowledge, Memory, Project,
+  Policies). The
   primary action of A2A counterparts, MCP servers and Alert destinations moved into the page
   header, as on the other pages, and My issues has its **New issue** there too (it was only in
   the toolbar, under the tabs); the graph canvas and the project page have an `h1`.

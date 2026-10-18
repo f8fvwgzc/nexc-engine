@@ -3,6 +3,7 @@ import { ServerIcon } from 'lucide-react';
 import { useState } from 'react';
 
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { ErrorState } from '@/components/custom-ui/error-state';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { ScrollRegion } from '@/components/custom-ui/scroll-region';
@@ -26,13 +27,16 @@ function Row({ name, children }: { name: string; children: React.ReactNode }) {
 }
 
 function Status() {
-  const { data, isPending, error } = useQuery(infrastructureQuery());
+  const { data, isPending, error, refetch } = useQuery(infrastructureQuery());
   if (isPending) return <Skeleton className="h-64 w-full rounded-lg" />;
   if (error) {
     return (
-      <p role="alert" className="text-sm text-destructive">
-        {errorMessage(error)}
-      </p>
+      <ErrorState
+        compact
+        title="Couldn’t read the server’s status"
+        error={error}
+        onRetry={() => void refetch()}
+      />
     );
   }
   const db = data.database;
@@ -144,13 +148,16 @@ const LATENCY_ROWS = 40;
 
 /** p50, p99 and max per endpoint over the last five minutes, from the instance that answers. */
 function Latency() {
-  const { data, isPending, error } = useQuery(latencyQuery());
+  const { data, isPending, error, refetch } = useQuery(latencyQuery());
   if (isPending) return <Skeleton className="h-40 w-full rounded-lg" />;
   if (error) {
     return (
-      <p role="alert" className="text-sm text-destructive">
-        {errorMessage(error)}
-      </p>
+      <ErrorState
+        compact
+        title="Couldn’t load the latency"
+        error={error}
+        onRetry={() => void refetch()}
+      />
     );
   }
   const shown = data.rows.slice(0, LATENCY_ROWS);

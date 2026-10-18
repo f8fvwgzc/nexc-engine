@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 
 import { AnimatedButton } from '@/components/custom-ui/animated-button';
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { ErrorState } from '@/components/custom-ui/error-state';
 import { ScrollRegion } from '@/components/custom-ui/scroll-region';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -186,15 +187,19 @@ export function PolicyVersions({ workspaceId, scope, scopeId, levelName }: Polic
     data: versions,
     isPending,
     error,
+    refetch,
   } = useQuery(policiesQuery(workspaceId, scope, scopeId ?? undefined));
   const [selected, setSelected] = useState<number | null>(null);
   const [adding, setAdding] = useState(false);
   if (isPending) return <Skeleton className="h-48 rounded-xl" />;
   if (error) {
     return (
-      <p role="alert" className="text-sm text-destructive">
-        {errorMessage(error)}
-      </p>
+      <ErrorState
+        compact
+        title={`Couldn’t load the versions of ${levelName}`}
+        error={error}
+        onRetry={() => void refetch()}
+      />
     );
   }
   const current = versions.find((v) => v.version === selected) ?? versions[0] ?? null;
