@@ -50,7 +50,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   minutes, single use, bound to the browser by the `nexc_sso` cookie) and
   `GET /auth/oidc/callback` exchanges the code and verifies the ID token: an RS256 or ES256
   signature by the provider's key set (kept an hour, fetched again once for a key id it does not
-  hold, at most once a minute; `none` and HS* never pass), `iss`, `aud` (and `azp` with several
+  hold, at most once a minute; a failed refresh of the set or of the discovery document keeps the
+  old one and asks again only after a minute, so sign-ins do not queue on a slow provider; `none`
+  and HS* never pass), `iss`, `aud` (and `azp` with several
   audiences), `exp` and `iat` with a minute of leeway, and the nonce. Email, verification, name and
   groups come from the ID token, else from userinfo (an address and whether it is verified always
   from the same answer). Accounts are found by a new `(issuer,

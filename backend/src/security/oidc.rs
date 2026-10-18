@@ -7,7 +7,8 @@
 //! * it is signed with RS256 or ES256 (never `none`, never an HMAC, whatever
 //!   the header says) by a key of the provider's key set: a key id the set
 //!   does not hold makes it fetched again once (the provider rotated), at
-//!   most once a minute, and a key set is kept for an hour;
+//!   most once a minute, and a key set is kept for an hour (a refresh that
+//!   fails keeps the old set and is tried again after a minute);
 //! * `iss` is the configured issuer, `aud` names the client and, when it
 //!   names others too, `azp` is the client;
 //! * `exp` has not passed and `iat` is not in the future, nor older than ten
@@ -37,6 +38,13 @@ const KEYS_TTL: Duration = Duration::from_secs(3600);
 /// not hold caused: tokens naming made-up keys do not make this side hammer
 /// the provider.
 const KEYS_REFETCH_GAP: Duration = Duration::from_secs(60);
+/// After a failed refresh, how long the kept document or key set is used
+/// before the provider is asked again: while it is slow or down, sign-ins
+/// do not each wait for its timeout in turn.
+const RETRY_GAP: Duration = Duration::from_secs(60);
+/// After a failed first fetch (nothing kept), how long the failure is the
+/// answer before the provider is asked again.
+const FAILURE_GAP: Duration = Duration::from_secs(5);
 /// The largest discovery document, key set or userinfo answer read.
 const DOCUMENT_MAX_BYTES: usize = 256 * 1024;
 /// The largest token endpoint answer read.
@@ -54,7 +62,7 @@ const MAX_GROUPS: usize = 1000;
 const SUBJECT_MAX: usize = 255;
 
 /// Why talking to the provider did not work.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum OidcError {
     /// The provider could not be reached, or answered something unusable.
     #[error("the identity provider is unavailable: {0}")]
@@ -215,9 +223,31 @@ struct KeyCache {
     fetched_at: Option<Instant>,
     /// When a key id the set did not hold last made it fetched again.
     refetched_at: Option<Instant>,
+    /// No fetch for being old before then: the last one failed.
+    retry_at: Option<Instant>,
 }
 
 impl KeyCache {
+    /// Whether the set is due to be fetched: never fetched or older than
+    /// [`KEYS_TTL`], and no fetch failed lately.
+    fn due(&self, now: Instant) -> bool {
+        let old = self
+            .fetched_at
+            .is_none_or(|at| now.saturating_duration_since(at) >= KEYS_TTL);
+        old && self.retry_at.is_none_or(|at| now >= at)
+    }
+
+    /// Notes a failed fetch: the next waits [`RETRY_GAP`] while keys are
+    /// kept, [`FAILURE_GAP`] while there are none.
+    fn failed(&mut self, now: Instant) {
+        let gap = if self.keys.is_empty() {
+            FAILURE_GAP
+        } else {
+            RETRY_GAP
+        };
+        self.retry_at = Some(now + gap);
+    }
+
     fn matching(&self, alg: Algorithm, kid: Option<&str>) -> Vec<DecodingKey> {
         self.keys
             .iter()
@@ -431,12 +461,66 @@ fn describe(err: Option<jsonwebtoken::errors::Error>) -> OidcError {
     })
 }
 
+/// The discovery document as last fetched, and when to ask for it again.
+#[derive(Default)]
+struct DiscoveryCache {
+    doc: Option<Discovery>,
+    /// No fetch before then: the kept document is fresh, or a fetch failed lately.
+    next_fetch: Option<Instant>,
+    /// Why the last fetch failed, while no document is kept.
+    failure: Option<OidcError>,
+}
+
+impl DiscoveryCache {
+    /// The answer without asking the provider, while it is not time to ask.
+    fn kept(&self, now: Instant) -> Option<Result<Discovery, OidcError>> {
+        if self.next_fetch.is_none_or(|at| now >= at) {
+            return None;
+        }
+        match (&self.doc, &self.failure) {
+            (Some(doc), _) => Some(Ok(doc.clone())),
+            (None, Some(err)) => Some(Err(err.clone())),
+            (None, None) => None,
+        }
+    }
+
+    /// Keeps what a fetch came to and answers with it: a failure answers
+    /// with the kept document when there is one, asked for again after
+    /// [`RETRY_GAP`], else is the answer for [`FAILURE_GAP`].
+    fn record(
+        &mut self,
+        fetched: Result<Discovery, OidcError>,
+        now: Instant,
+    ) -> Result<Discovery, OidcError> {
+        match fetched {
+            Ok(doc) => {
+                self.doc = Some(doc.clone());
+                self.failure = None;
+                self.next_fetch = Some(now + DISCOVERY_TTL);
+                Ok(doc)
+            }
+            Err(err) => match &self.doc {
+                Some(doc) => {
+                    tracing::warn!(error = %err, "OIDC discovery failed; the previous document is used");
+                    self.next_fetch = Some(now + RETRY_GAP);
+                    Ok(doc.clone())
+                }
+                None => {
+                    self.failure = Some(err.clone());
+                    self.next_fetch = Some(now + FAILURE_GAP);
+                    Err(err)
+                }
+            },
+        }
+    }
+}
+
 /// The relying party of one configured provider, shared by every request.
 pub struct OidcClient {
     settings: OidcSettings,
     production: bool,
     http: reqwest::Client,
-    discovery: Mutex<Option<(Discovery, Instant)>>,
+    discovery: Mutex<DiscoveryCache>,
     keys: Mutex<KeyCache>,
 }
 
@@ -462,7 +546,7 @@ impl OidcClient {
             settings,
             production,
             http,
-            discovery: Mutex::new(None),
+            discovery: Mutex::new(DiscoveryCache::default()),
             keys: Mutex::new(KeyCache::default()),
         })
     }
@@ -481,27 +565,16 @@ impl OidcClient {
     }
 
     /// The provider's discovery document: the kept one while it is less than
-    /// an hour old, else fetched. A failed fetch keeps using the old one.
+    /// an hour old, else fetched. A failed fetch keeps using the old one for
+    /// another minute before asking again; with none kept, the failure is
+    /// the answer for five seconds.
     pub async fn discovery(&self) -> Result<Discovery, OidcError> {
-        let mut kept = self.discovery.lock().await;
-        if let Some((doc, at)) = kept.as_ref()
-            && at.elapsed() < DISCOVERY_TTL
-        {
-            return Ok(doc.clone());
+        let mut cache = self.discovery.lock().await;
+        if let Some(answer) = cache.kept(Instant::now()) {
+            return answer;
         }
-        match self.fetch_discovery().await {
-            Ok(doc) => {
-                *kept = Some((doc.clone(), Instant::now()));
-                Ok(doc)
-            }
-            Err(err) => match kept.as_ref() {
-                Some((doc, _)) => {
-                    tracing::warn!(error = %err, "OIDC discovery failed; the previous document is used");
-                    Ok(doc.clone())
-                }
-                None => Err(err),
-            },
-        }
+        let fetched = self.fetch_discovery().await;
+        cache.record(fetched, Instant::now())
     }
 
     async fn fetch_discovery(&self) -> Result<Discovery, OidcError> {
@@ -668,17 +741,27 @@ impl OidcClient {
         kid: Option<&str>,
     ) -> Result<Vec<DecodingKey>, OidcError> {
         let mut cache = self.keys.lock().await;
-        if cache.fetched_at.is_none_or(|at| at.elapsed() >= KEYS_TTL) {
+        if cache.due(Instant::now()) {
             match self.fetch_keys(jwks_uri).await {
                 Ok(keys) => {
                     cache.keys = keys;
                     cache.fetched_at = Some(Instant::now());
+                    cache.retry_at = None;
                 }
-                Err(err) if cache.keys.is_empty() => return Err(err),
                 Err(err) => {
+                    let had_keys = !cache.keys.is_empty();
+                    cache.failed(Instant::now());
+                    if !had_keys {
+                        return Err(err);
+                    }
                     tracing::warn!(error = %err, "OIDC key set fetch failed; the previous keys are used");
                 }
             }
+        } else if cache.keys.is_empty() {
+            return Err(OidcError::Unavailable(
+                "the provider's key set could not be fetched; it is asked for again in a moment"
+                    .into(),
+            ));
         }
         let found = cache.matching(alg, kid);
         if !found.is_empty() {
@@ -858,6 +941,56 @@ mod tests {
             hmac.check(&s, true).is_err(),
             "only RS256 and ES256 are accepted"
         );
+    }
+
+    #[test]
+    fn a_failed_refresh_is_not_tried_again_by_every_sign_in() {
+        let s = settings();
+        let t0 = Instant::now();
+        let down = || Err(OidcError::Unavailable("connection refused".into()));
+        let mut cache = DiscoveryCache::default();
+        assert!(cache.kept(t0).is_none(), "nothing kept: fetch");
+        // The provider is down at the first fetch: the failure is the answer for a moment.
+        assert!(cache.record(down(), t0).is_err());
+        assert!(matches!(
+            cache.kept(t0 + Duration::from_secs(1)),
+            Some(Err(_))
+        ));
+        assert!(cache.kept(t0 + FAILURE_GAP).is_none());
+        // Fetched, the document is kept for an hour.
+        assert!(cache.record(Ok(doc(&s.issuer)), t0).is_ok());
+        assert!(matches!(
+            cache.kept(t0 + Duration::from_secs(1800)),
+            Some(Ok(_))
+        ));
+        let t1 = t0 + DISCOVERY_TTL;
+        assert!(cache.kept(t1).is_none(), "an hour old: fetch again");
+        // A failed refresh answers with the kept document, and nobody asks again for a minute.
+        assert_eq!(cache.record(down(), t1).unwrap().issuer, s.issuer);
+        assert!(matches!(
+            cache.kept(t1 + Duration::from_secs(30)),
+            Some(Ok(_))
+        ));
+        assert!(cache.kept(t1 + RETRY_GAP).is_none());
+
+        let mut keys = KeyCache::default();
+        assert!(keys.due(t0));
+        keys.failed(t0);
+        assert!(!keys.due(t0 + Duration::from_secs(1)));
+        assert!(keys.due(t0 + FAILURE_GAP));
+        keys.keys = signing_keys(&json!({"keys": [{
+            "kty": "RSA", "alg": "RS256", "n": URL_SAFE_NO_PAD.encode([0xc3u8; 256]), "e": "AQAB",
+        }]}));
+        keys.fetched_at = Some(t0);
+        keys.retry_at = None;
+        assert!(!keys.due(t0 + Duration::from_secs(1800)));
+        assert!(keys.due(t1));
+        keys.failed(t1);
+        assert!(
+            !keys.due(t1 + Duration::from_secs(30)),
+            "kept keys wait a minute"
+        );
+        assert!(keys.due(t1 + RETRY_GAP));
     }
 
     #[test]

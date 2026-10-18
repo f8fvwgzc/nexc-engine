@@ -1343,7 +1343,8 @@ the authorization code flow with PKCE (`S256`), as a confidential client.
 3. The code is exchanged at the token endpoint with the verifier (`client_secret_basic`, or
    `client_secret_post` when that is all the provider takes), and the ID token is verified: an
    RS256 or ES256 signature (never `none`, never HS*) by a key of the provider's key set (kept an
-   hour; a key id it does not hold makes it fetched again once, at most once a minute), `iss` the
+   hour, as the discovery document is; a refresh that fails keeps the old one and asks again after
+   a minute; a key id it does not hold makes it fetched again once, at most once a minute), `iss` the
    issuer, `aud` naming the client and `azp` the client when there are several audiences, `exp`
    not passed and `iat` neither in the future nor older than ten minutes (a minute of leeway), and
    the `nonce` the one sent. `email`, `email_verified`, `name` and the groups claim are read from
