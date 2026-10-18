@@ -16,97 +16,99 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   model it states (a lease per run with fencing, takeover by a peer, a release on shutdown) is what
   the backend implements.
 - Run takeover with fencing (`docs/HA.md`; `docs/CONTRACT.md` §2 and §5, run leases): an in-flight
-  run survives the loss of the replica executing it. The executing replica holds a lease on the
-  run (`runs.lease_epoch`, `runs.lease_expires_at`, migration `20261006000070_run_leases`) and
-  renews all its leases in one statement every third of `NEXC_RUN_LEASE_SECS` (default 30 s; at
-  least 10 s with `NEXC_ENV=production`). Each run records the lease of its holder
-  (`runs.lease_secs`, migration `20261006000073_run_lease_secs`): a takeover waits for that one,
-  so replicas set differently still take a dead peer's runs over in time, and say so in a
-  warning. A
-  run whose lease ran out is claimed by another replica's dispatcher with one atomic `UPDATE`
-  that raises the epoch, and every write the executor makes for the run (node status, outputs,
-  spans, usage, artifacts, approval requests and their inbox entries, the run's status) first
-  locks the run row at the epoch it holds (shared, so the writes of one run do not wait for each other, unless the write changes the run row; a span
-  batch does it in its one statement; the transaction sets `idle_in_transaction_session_timeout`
-  to the lease for itself, so one left open by a replica whose host or network vanished mid-write
-  does not hold the run's takeover off until TCP notices), so a former
-  holder that comes back cannot write: its write is refused and recorded as a `fenced` event, and
-  it stops its copy of the run (also when its renewal or the run's watcher sees the epoch moved,
-  or when the database has not confirmed its lease for two thirds of a lease, counted from when
-  the last renewal that went through was sent, so a replica cut off from the database stops its
-  copy a third of a lease before a peer can take the run over). An artifact's bytes go to a file
-  of their own (`artifacts/<run>/<node>/<write id>/<path>`) and its record is pointed at them
-  under the fence, so a former holder's late artifact replaces neither the record nor the bytes,
-  and a DLP quarantine applies only to the bytes it screened. The tokens a refused attempt spent
-  at the provider are still booked to the usage ledger and the agent's budget (not to the run's
-  totals), so budgets do not undercount after a takeover. The new holder resumes the
-  run from what was written: succeeded nodes keep their outputs; a running node is queued again
-  with `attempt + 1` and an `interrupted` policy span (an attempt cut short by a release on
-  shutdown does not count against `NEXC_MAX_ATTEMPTS`, so a rolling update over several replicas
-  does not fail nodes: `node_runs.handoffs`, migration `20261006000072_node_run_handoffs`; a node
-  queued again by a holder that died before starting it resumes at the attempt after the
-  interrupted one); a node waiting for an approval stays
-  waiting, is re-attached, and runs again once someone decides, its new request answered at once
-  with the decision already taken (`approval` spans with `reattached` and `carried_from`) when it
-  is the same call (both requests carry the same argument digest) and the decider is still one of
-  its approvers or a workspace admin, the approvers asked again otherwise; the
-  trace chain continues from the last span written, so `GET /runs/{id}/trace/verify` stays `ok`;
-  commands the former holder never took (`run_commands`, now with the epoch they were addressed
-  to) are taken by the new one, a sub-agent's cancel carried to the attempt that replaces its own;
-  a run cancelled while nobody held it is cancelled before any node is queued again (the run's
-  watcher also takes its first look at once instead of after a second).
-  A failed write stops the run on that replica instead of letting it go on from a state the
-  database does not have, span batches are retried with back-off for two minutes (a database
-  failover), and runs are no longer failed as orphans after 60 s without a heartbeat: a run
-  claimed during the rollout by a replica of the version before leases (which sets no lease) is
-  taken over once its heartbeat is older than a lease. The
-  history of every lease is kept in `run_lease_events` and counted in
-  `nexc_run_lease_events_total{event}`.
+  run survives the loss of the replica executing it. The executing replica holds a lease on the run
+  (`runs.lease_epoch`, `runs.lease_expires_at`, migration `20261006000070_run_leases`) and renews
+  all its leases in one statement every third of `NEXC_RUN_LEASE_SECS` (default 30 s; at least 10 s
+  with `NEXC_ENV=production`). Each run records the lease of its holder (`runs.lease_secs`,
+  migration `20261006000073_run_lease_secs`): a takeover waits for that one, so replicas set
+  differently still take a dead peer's runs over in time, and say so in a warning. A run whose
+  lease ran out is claimed by another replica's dispatcher with one atomic `UPDATE` that raises the
+  epoch, and every write the executor makes for the run (node status, outputs, spans, usage,
+  artifacts, approval requests and their inbox entries, the run's status) first locks the run row
+  at the epoch it holds (shared, so the writes of one run do not wait for each other, unless the
+  write changes the run row; a span batch does it in its one statement; the transaction sets
+  `idle_in_transaction_session_timeout` to the lease for itself, so one left open by a replica
+  whose host or network vanished mid-write does not hold the run's takeover off until TCP notices),
+  so a former holder that comes back cannot write: its write is refused and recorded as a `fenced`
+  event, and it stops its copy of the run (also when its renewal or the run's watcher sees the
+  epoch moved, or when the database has not confirmed its lease for two thirds of a lease, counted
+  from when the last renewal that went through was sent, so a replica cut off from the database
+  stops its copy a third of a lease before a peer can take the run over). An artifact's bytes go to
+  a file of their own (`artifacts/<run>/<node>/<write id>/<path>`) and its record is pointed at
+  them under the fence, so a former holder's late artifact replaces neither the record nor the
+  bytes, and a DLP quarantine applies only to the bytes it screened. The tokens a refused attempt
+  spent at the provider are still booked to the usage ledger and the agent's budget (not to the
+  run's totals), so budgets do not undercount after a takeover. The new holder resumes the run from
+  what was written: succeeded nodes keep their outputs; a running node is queued again with
+  `attempt + 1` and an `interrupted` policy span (an attempt cut short by a release on shutdown
+  does not count against `NEXC_MAX_ATTEMPTS`, so a rolling update over several replicas does not
+  fail nodes: `node_runs.handoffs`, migration `20261006000072_node_run_handoffs`; a node queued
+  again by a holder that died before starting it resumes at the attempt after the interrupted one);
+  a node waiting for an approval stays waiting, is re-attached, and runs again once someone
+  decides, its new request answered at once with the decision already taken (`approval` spans with
+  `reattached` and `carried_from`) when it is the same call (both requests carry the same argument
+  digest) and the decider is still one of its approvers or a workspace admin, the approvers asked
+  again otherwise; the trace chain continues from the last span written, so `GET
+  /runs/{id}/trace/verify` stays `ok`; commands the former holder never took (`run_commands`, now
+  with the epoch they were addressed to) are taken by the new one, a sub-agent's cancel carried to
+  the attempt that replaces its own; a run cancelled while nobody held it is cancelled before any
+  node is queued again (the run's watcher also takes its first look at once instead of after a
+  second). A failed write stops the run on that replica instead of letting it go on from a state
+  the database does not have, span batches are retried with back-off for two minutes (a database
+  failover), and runs are no longer failed as orphans after 60 s without a heartbeat: a run claimed
+  during the rollout by a replica of the version before leases (which sets no lease) is taken over
+  once its heartbeat is older than a lease. The history of every lease is kept in
+  `run_lease_events` and counted in `nexc_run_lease_events_total{event}`.
 - `Idempotency-Key` on the writes a client retries after a failover (`docs/CONTRACT.md` §3):
   starting a run, creating an issue, creating a node, and approving or denying an approval. The
   first request with a key is handled and its response kept in `idempotency_keys` (migration
   `20261006000071_idempotency_keys`: account, route, key, the SHA-256 of the body as canonical
-  JSON, the response's status and body, `created_at`); a retry with the same key and body within
-  24 hours gets the first response again with `Idempotent-Replayed: true` and no second effect, the
+  JSON, the response's status and body, `created_at`); a retry with the same key and body within 24
+  hours gets the first response again with `Idempotent-Replayed: true` and no second effect, the
   same key with another body is 422, and a retry that arrives while the first is still handled is
-  409 with `Retry-After`. Server errors and rate limits are not kept. Every keyed request, a
-  replay included, counts once against the account's rate limit, checked before the key is
-  looked up. A housekeeping job deletes
-  keys after 24 hours, and deleting an account deletes its keys. The OpenAPI document names the
-  header on the five routes (frontend types and the site's copy regenerated).
-- Chaos tests of run takeover (`backend/tests/ha.rs`): two instances of the app share one
-  database and the gRPC stand-in runtime (which gains a `NAP <ms>` behaviour). The instance
-  executing a three-node run has its dispatcher, its lease renewal and its runs aborted mid-node
-  with no graceful shutdown (`TestApp::crash`); the other takes the run over within the lease and
-  5 s, the interrupted node runs again as attempt 2, the run succeeds, every node succeeds once (on
-  the wire of both instances and in the usage ledger), the trace verifies with no span missing and
-  the lease history names both holders. Further tests: a former holder that comes back has its
-  node write and its spans refused and recorded as `fenced`; a node waiting for an approval waits
-  on across the takeover and resumes with the decision carried to its new request; a cancel of a
-  sub-agent recorded while nobody held the run is delivered by the new holder to the sub-agent of
-  the same name in the new attempt; an instance that stops renewing (`TestApp::stop_renewing`)
-  notices the takeover and stops its copy without writing, the chain verifying with no span
-  missing (the live former holder racing the new one; `TestApp::crash` stops the runs with the
-  process, as a crash does).
-- Graceful hand-off on shutdown (`docs/HA.md`, shutting down; `docs/CONTRACT.md` §5): on SIGTERM
-  a backend replica drains instead of cancelling its runs. `/readyz` answers 503 (`draining`),
-  its dispatcher claims nothing more, every run it executes stops, writes its trace and releases
-  its lease (a `released` event at the next epoch), so a peer takes it over within one dispatcher
-  poll rather than after the lease; the HTTP server closes after at most 15 s. The Helm chart
-  gets a drain-aware readiness probe (every 2 s, out after three failures in a row, so a
-  database slow for a moment does not empty the Service), a configurable grace
-  period (`backend.terminationGracePeriodSeconds`), PodDisruptionBudgets for the backend, the
-  runtime and the frontend that allow `podDisruptionBudgets.maxUnavailable` evictions at once
-  (they required one pod to stay, which blocked node drains with one replica), optional
-  HorizontalPodAutoscalers for the backend and the runtime (`autoscaling.*`; `replicas` is left
-  out of an autoscaled Deployment), `backend.runLeaseSecs`, and the backend's data volume as
-  values (`backend.dataAccessMode`, `backend.dataStorageClass`, `backend.dataExistingClaim`;
-  replicas on several nodes need `ReadWriteMany`, and the chart's notes warn when replicas share
-  a `ReadWriteOnce` one); CI renders the chart with them on.
-  The kustomize manifests get the same readiness probe and `NEXC_RUN_LEASE_SECS`.
-  `docker-compose.yml` runs `NEXC_BACKEND_REPLICAS` backend replicas (`.env`, default 1, so a
-  later `docker compose up -d` keeps them), documents running two, passes
-  `NEXC_RUN_LEASE_SECS` and gives the backend 30 s to drain.
+  409 with `Retry-After`. Server errors and rate limits are not kept. Every keyed request, a replay
+  included, counts once against the account's rate limit, checked before the key is looked up. A
+  housekeeping job deletes keys after 24 hours, and deleting an account deletes its keys. The
+  OpenAPI document names the header on the five routes (frontend types and the site's copy
+  regenerated).
+- Chaos tests of run takeover (`backend/tests/ha.rs`): two instances of the app share one database
+  and the gRPC stand-in runtime (which gains a `NAP <ms>` behaviour). The instance executing a
+  three-node run has its dispatcher, its lease renewal and its runs aborted mid-node with no
+  graceful shutdown (`TestApp::crash`); the other takes the run over within the lease and 5 s, the
+  interrupted node runs again as attempt 2, the run succeeds, every node succeeds once (on the wire
+  of both instances and in the usage ledger), the trace verifies with no span missing and the lease
+  history names both holders. Further tests: a former holder that comes back has its node write and
+  its spans refused and recorded as `fenced`; a node waiting for an approval waits on across the
+  takeover and resumes with the decision carried to its new request; a cancel of a sub-agent
+  recorded while nobody held the run is delivered by the new holder to the sub-agent of the same
+  name in the new attempt; an instance that stops renewing (`TestApp::stop_renewing`) notices the
+  takeover and stops its copy without writing, the chain verifying with no span missing (the live
+  former holder racing the new one; `TestApp::crash` stops the runs with the process, as a crash
+  does). More: a run cancelled while nobody held it starts no attempt on the new holder; a run
+  claimed by a replica of the version before leases is kept while it sends heartbeats and taken
+  over once it stops; a holder whose host vanished inside a write does not block the takeover; a
+  holder the database stops answering gives the run up before its lease runs out; a former holder's
+  late artifact replaces nothing; two hand-offs in a row leave a node its attempts; a node queued
+  again by a holder that died resumes at its next attempt; a peer set with a longer lease takes a
+  run over after the holder's lease.
+- Graceful hand-off on shutdown (`docs/HA.md`, shutting down; `docs/CONTRACT.md` §5): on SIGTERM a
+  backend replica drains instead of cancelling its runs. `/readyz` answers 503 (`draining`), its
+  dispatcher claims nothing more, every run it executes stops, writes its trace and releases its
+  lease (a `released` event at the next epoch), so a peer takes it over within one dispatcher poll
+  rather than after the lease; the HTTP server closes after at most 15 s. The Helm chart gets a
+  drain-aware readiness probe (every 2 s, out after three failures in a row, so a database slow for
+  a moment does not empty the Service), a configurable grace period
+  (`backend.terminationGracePeriodSeconds`), PodDisruptionBudgets for the backend, the runtime and
+  the frontend that allow `podDisruptionBudgets.maxUnavailable` evictions at once (they required
+  one pod to stay, which blocked node drains with one replica), optional HorizontalPodAutoscalers
+  for the backend and the runtime (`autoscaling.*`; `replicas` is left out of an autoscaled
+  Deployment), `backend.runLeaseSecs`, and the backend's data volume as values
+  (`backend.dataAccessMode`, `backend.dataStorageClass`, `backend.dataExistingClaim`; replicas on
+  several nodes need `ReadWriteMany`, and the chart's notes warn when replicas share a
+  `ReadWriteOnce` one); CI renders the chart with them on. The kustomize manifests get the same
+  readiness probe and `NEXC_RUN_LEASE_SECS`. `docker-compose.yml` runs `NEXC_BACKEND_REPLICAS`
+  backend replicas (`.env`, default 1, so a later `docker compose up -d` keeps them), documents
+  running two, passes `NEXC_RUN_LEASE_SECS` and gives the backend 30 s to drain.
 - Documentation of high availability: **Operate, High availability** on the site
   (`site/operate/ha.md`) shows `docs/HA.md` (the model, the failure modes with their RTO and RPO,
   deploying, shutting down, seeing takeovers happen, retrying writes); the contract documents the

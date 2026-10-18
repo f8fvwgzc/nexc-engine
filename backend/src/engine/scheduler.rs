@@ -72,15 +72,6 @@ use crate::{kernel, memory, orchestrator};
 
 /// How often the dispatcher looks for queued runs and for leases that ran out.
 const DISPATCH_POLL: Duration = Duration::from_secs(2);
-
-/// How long a lease is trusted here without the database confirming it:
-/// two thirds of it, counted from when the last confirmed request was sent.
-/// The database lets it run out a whole lease after that, so a holder cut
-/// off from the database stops its runs a third of a lease before any peer
-/// can take them over, and two holders never execute a run at once.
-pub fn trusted_for(lease: Duration) -> Duration {
-    lease * 2 / 3
-}
 const CANCEL_POLL: Duration = Duration::from_secs(1);
 /// The decision of the `policy` span on a node whose attempt a takeover interrupted.
 pub const INTERRUPTED_DECISION: &str = "interrupted";
@@ -88,6 +79,15 @@ pub const INTERRUPTED_DECISION: &str = "interrupted";
 pub const REATTACHED_DECISION: &str = "reattached";
 /// The rule of both: the run's lease.
 pub const LEASE_RULE: &str = "lease";
+
+/// How long a lease is trusted here without the database confirming it:
+/// two thirds of it, counted from when the last confirmed request was sent.
+/// The database lets it run out a whole lease after that, so a holder cut
+/// off from the database stops its runs a third of a lease before any peer
+/// can take them over.
+fn trusted_for(lease: Duration) -> Duration {
+    lease * 2 / 3
+}
 
 /// Options of `POST /graphs/{gid}/runs`.
 #[derive(Debug, Clone, Default)]
