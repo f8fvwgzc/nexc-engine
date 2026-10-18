@@ -112,4 +112,20 @@ test('summarise the audit', () => {
     };
   });
   writeFileSync(join(AUDIT_DIR, 'summary.json'), JSON.stringify(summary, null, 2));
+
+  // Loading and error states, by route.
+  const statesDir = join(AUDIT_DIR, 'states');
+  if (existsSync(statesDir)) {
+    const states: Record<string, Record<string, unknown>> = {};
+    for (const file of readdirSync(statesDir)) {
+      const r = JSON.parse(readFileSync(join(statesDir, file), 'utf8')) as {
+        route: string;
+        mode: string;
+        width: number;
+        state: unknown;
+      };
+      (states[r.route] ??= {})[`${r.mode}/${r.width}`] = r.state;
+    }
+    writeFileSync(join(AUDIT_DIR, 'states.json'), JSON.stringify(states, null, 2));
+  }
 });

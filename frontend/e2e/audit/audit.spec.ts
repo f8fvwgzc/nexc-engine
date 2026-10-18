@@ -215,3 +215,47 @@ for (const route of APP_ROUTES) {
     }
   }
 }
+
+/** What a page shows while its data is on the way, and when it cannot be had. */
+async function stateRecord(page: Page) {
+  return page.evaluate(() => ({
+    skeletons: document.querySelectorAll('[data-slot="skeleton"]').length,
+    busy: document.querySelectorAll('[aria-busy="true"]').length,
+    spinners: document.querySelectorAll('[data-slot="spinner"]').length,
+    loadingText: /Loading/i.test(document.querySelector('#main')?.textContent ?? ''),
+    alerts: [...document.querySelectorAll('[role="alert"]')].map((a) =>
+      a.textContent?.slice(0, 80),
+    ),
+    emptyStates: [...document.querySelectorAll('[data-slot="empty"]')].map((e) => ({
+      title: e.querySelector('[data-slot="empty-title"]')?.textContent ?? '',
+      retry: [...e.querySelectorAll('button')].some((b) =>
+        /try again|retry/i.test(b.textContent ?? ''),
+      ),
+    })),
+    h1: [...document.querySelectorAll('h1')].map((h) => h.textContent),
+  }));
+}
+
+for (const route of APP_ROUTES) {
+  if (ONLY && !ONLY.includes(route.name)) continue;
+  if (route.signedOut) continue;
+  for (const mode of ['loading', 'error'] as const) {
+    for (const width of [375, 1280] as const) {
+      test(`${route.name} ${mode} light ${width}`, async ({ page }) => {
+        await page.setViewportSize({ width, height: HEIGHT[width] });
+        await openRoute(page, route, {
+          mode,
+          theme: 'light',
+          settle: mode === 'loading' ? 1_500 : 10_000,
+        });
+        const shot = join(AUDIT_DIR, 'shots', mode, 'light', String(width), `${route.name}.png`);
+        mkdirSync(dirname(shot), { recursive: true });
+        await page.screenshot({ path: shot, animations: 'disabled' });
+        const record = { route: route.name, mode, width, state: await stateRecord(page) };
+        const out = join(AUDIT_DIR, 'states', `${route.name}.${mode}.${width}.json`);
+        mkdirSync(dirname(out), { recursive: true });
+        writeFileSync(out, JSON.stringify(record, null, 2));
+      });
+    }
+  }
+}

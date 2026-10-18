@@ -10,6 +10,8 @@ export const NOW = new Date('2026-10-14T12:00:00Z');
 export interface OpenOptions {
   mode: DataMode;
   theme: 'light' | 'dark';
+  /** How long to wait for loading placeholders to go (default 10 s). */
+  settle?: number;
 }
 
 export interface Opened extends MockLog {
@@ -34,7 +36,7 @@ export async function openRoute(
     signedOut: route.signedOut,
   });
   await page.goto(route.path);
-  const stuckLoading = await waitForSettled(page);
+  const stuckLoading = await waitForSettled(page, options.settle);
   return Object.assign(log, { stuckLoading });
 }
 

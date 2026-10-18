@@ -21,8 +21,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   fixture answers or an uncaught error; `pnpm e2e:audit` is the audit tool: every route at 375,
   768 and 1280 px, light and dark, both data sets, with a full-page screenshot and a record of
   axe, the layout check, unnamed icon controls, silent truncation, headings, empty states,
-  focus visibility and refetches under `frontend/e2e/.audit/` (not committed). Vitest now only
-  collects `src/**/*.test.*`.
+  focus visibility and refetches under `frontend/e2e/.audit/` (not committed), plus every page
+  while its data loads and when its requests fail. Vitest now only collects `src/**/*.test.*`.
+  `frontend/e2e/AUDIT.md` records what the audit found: 33 findings on layout, headers,
+  controls, accessibility, empty, loading and error states, and caching.
 - Documentation site (`site/`, VitePress): the repository's Markdown rendered with a sidebar,
   full-text search, a dark theme, mermaid diagrams and the API reference (Scalar over
   `site/public/openapi.json`, a committed export of `nexc openapi`), in six sections: Start,

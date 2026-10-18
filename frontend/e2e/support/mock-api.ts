@@ -2,8 +2,14 @@ import type { Page, Route } from '@playwright/test';
 
 import { fixtures } from '../fixtures';
 
-/** `full`: a workspace in use. `empty`: the same workspace before anything was made in it. */
-export type DataMode = 'full' | 'empty';
+/**
+ * `full`: a workspace in use. `empty`: the same workspace before anything was made in it.
+ * `loading`: the workspace data never arrives (skeletons). `error`: every workspace call fails.
+ */
+export type DataMode = 'full' | 'empty' | 'loading' | 'error';
+
+/** What the shell needs to stand up at all: answered in every mode. */
+const SHELL = /^\/(auth\/|workspaces$|orchestrator\/)/;
 
 /** Who is signed in: a workspace member, or a platform administrator (the console). */
 export type Persona = 'member' | 'admin';
@@ -251,6 +257,10 @@ export async function mockApi(page: Page, options: MockOptions): Promise<MockLog
       }
       if (method === 'GET' && path === '/auth/me') return route.fulfill({ json: user });
 
+      if (!SHELL.test(path) && options.mode === 'loading') return;
+      if (!SHELL.test(path) && options.mode === 'error') {
+        return route.fulfill({ status: 500, json: problem(500, 'Internal Server Error') });
+      }
       for (const { method: m, regex, names, handler } of compiled) {
         if (m !== method) continue;
         const match = regex.exec(path);
