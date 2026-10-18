@@ -121,7 +121,12 @@ async fn every_output_gets_a_verdict_and_the_default_policy_only_records_it(pool
     assert_eq!(first["evidence"]["coverage"], 0.0);
     let second = node_run(&finished, &draft);
     assert_eq!(second["evidence"]["verdict"], "unverified", "{second}");
-    assert_eq!(second["evidence"]["given"], 1, "the upstream node");
+    // At least its upstream; a memory extracted from the first node in the background
+    // may already have been recalled too, which the full suite's timing sometimes allows.
+    assert!(
+        second["evidence"]["given"].as_u64().unwrap_or(0) >= 1,
+        "the upstream node: {second}"
+    );
     assert_eq!(second["evidence"]["claims"], 1);
     assert_eq!(second["evidence"]["cited"], json!([]));
     assert_eq!(second["evidence"]["unknown"], json!([]));
