@@ -59,6 +59,7 @@ export type AccountEvent = z.infer<typeof accountEventSchema>;
 export const signInMethodsQuery = () =>
   queryOptions({
     queryKey: ['account', 'sign-in'] as const,
+    staleTime: FRESH.setup,
     queryFn: ({ signal }) => apiRequest('/auth/identities', signInMethodsSchema, { signal }),
   });
 
