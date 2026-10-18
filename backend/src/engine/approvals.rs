@@ -2,9 +2,10 @@
 //! whose decision is `require_approval`), the backend records the request,
 //! pauses the node, tells the approvers, and watches the approvals table
 //! until someone decides or the wait runs out; then it hands the decision to
-//! the runtime (`POST /v1/approvals/{id}`), records it as an `approval` span
-//! and resumes the node. The table is the source of truth, so the handler
-//! that takes the decision may run on any backend instance.
+//! the runtime (an `approval_decision` command down the gRPC stream, or
+//! `POST /v1/approvals/{id}` on the NDJSON path), records it as an
+//! `approval` span and resumes the node. The table is the source of truth,
+//! so the handler that takes the decision may run on any backend instance.
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -12,6 +13,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -23,6 +25,7 @@ use crate::domain::trace::{SpanDraft, SpanKind, SpanStatus};
 use crate::realtime::events::LogLevel;
 use crate::repo;
 use crate::repo::approvals::ApprovalRequest;
+use crate::rpc::runtime::{BackendCommand, backend_command};
 
 /// How often a pending approval is looked at.
 const POLL: Duration = Duration::from_secs(1);
@@ -31,7 +34,17 @@ const POLL: Duration = Duration::from_secs(1);
 /// names one of them ran with permission.
 pub type Granted = Arc<Mutex<HashSet<Uuid>>>;
 
+/// How a decision reaches the runtime holding the call.
+#[derive(Debug, Clone)]
+pub enum Delivery {
+    /// `POST /v1/approvals/{id}` with the runtime's bearer token (NDJSON).
+    Http,
+    /// An `approval_decision` command down the attempt's gRPC stream.
+    Stream(mpsc::UnboundedSender<BackendCommand>),
+}
+
 /// What the runtime asked for, read from its `policy` span.
+#[derive(Debug, Clone)]
 pub struct Request {
     pub approval_id: Uuid,
     pub span_id: Uuid,
@@ -70,6 +83,7 @@ pub async fn open(
     request: Request,
     stop: CancellationToken,
     granted: Granted,
+    delivery: Delivery,
 ) -> Option<JoinHandle<()>> {
     let Some(workspace_id) = ctx.workspace_id else {
         ctx.log(
@@ -148,6 +162,7 @@ pub async fn open(
         requested_at: approval.requested_at,
         stop,
         granted,
+        delivery,
     };
     Some(tokio::spawn(watch.run()))
 }
@@ -182,6 +197,7 @@ struct Watch {
     requested_at: DateTime<Utc>,
     stop: CancellationToken,
     granted: Granted,
+    delivery: Delivery,
 }
 
 impl Watch {
@@ -233,17 +249,39 @@ impl Watch {
 
     /// Hands the decision to the runtime holding the call.
     async fn deliver(&self, approval: &Approval) {
+        let decision = match approval.status {
+            ApprovalStatus::Approved => "approved",
+            _ => "denied",
+        };
+        let decided_by = approval.decided_by.as_ref().map_or("", |d| d.name.as_str());
+        if let Delivery::Stream(tx) = &self.delivery {
+            let command = BackendCommand {
+                command: Some(backend_command::Command::ApprovalDecision(
+                    crate::rpc::runtime::ApprovalDecision {
+                        approval_id: approval.id.to_string(),
+                        decision: decision.into(),
+                        reason: approval.decision_reason.clone(),
+                        decided_by: decided_by.into(),
+                    },
+                )),
+            };
+            if tx.send(command).is_err() {
+                self.ctx.log(
+                    LogLevel::Warn,
+                    format!(
+                        "the decision on {} found the runtime's stream closed",
+                        self.tool
+                    ),
+                );
+            }
+            return;
+        }
         let settings = &self.ctx.state.settings;
         let url = format!(
             "{}/v1/approvals/{}",
             settings.runtime_url.trim_end_matches('/'),
             approval.id
         );
-        let decision = match approval.status {
-            ApprovalStatus::Approved => "approved",
-            _ => "denied",
-        };
-        let decided_by = approval.decided_by.as_ref().map_or("", |d| d.name.as_str());
         let sent = self
             .ctx
             .state

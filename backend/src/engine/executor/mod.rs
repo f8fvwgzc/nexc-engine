@@ -4,6 +4,7 @@
 
 pub mod agent;
 pub mod llm;
+pub mod runtime_grpc;
 pub mod symphony;
 
 use std::sync::atomic::{AtomicI32, Ordering};

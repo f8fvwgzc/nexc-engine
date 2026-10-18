@@ -5,7 +5,9 @@ use std::time::Duration;
 
 use sqlx::PgPool;
 
-use crate::config::Settings;
+use tonic::transport::Channel;
+
+use crate::config::{RuntimeProtocol, Settings};
 use crate::engine::Engine;
 use crate::engine::executor::symphony::SymphonyBridge;
 use crate::http::middleware::rate_limit::RateLimiters;
@@ -23,6 +25,7 @@ use crate::security::agent_token::AgentTokenKeys;
 use crate::security::gate::SessionGate;
 use crate::security::jwt::JwtKeys;
 use crate::security::secret_box::SecretBox;
+use crate::security::signing::Signer;
 
 /// Cheap to clone: every field is reference counted.
 #[derive(Clone)]
@@ -50,6 +53,14 @@ pub struct AppState {
     /// The onto-intelli the audit's facts go to and questions come from;
     /// `None` turns "ask the audit" off (`NEXC_ONTO_URL` unset).
     pub ontology: Option<Arc<dyn OntologyBackend>>,
+    /// The channel to the runtime's gRPC endpoint (`NEXC_RUNTIME_PROTOCOL=grpc`).
+    pub runtime_grpc: Option<Channel>,
+    /// The tools gateway's outbound HTTP client (no redirects of its own).
+    pub gateway_http: reqwest::Client,
+    /// Signs the decisions the Agent Firewall API hands out.
+    pub firewall_signer: Arc<Signer>,
+    /// The external agents' decisions sessions open on this instance.
+    pub firewall_sessions: Arc<crate::firewall::Sessions>,
 }
 
 impl AppState {
@@ -94,7 +105,18 @@ impl AppState {
     ) -> anyhow::Result<Self> {
         let metrics = Arc::new(Metrics::default());
         let hub = Arc::new(Hub::default());
+        let runtime_grpc = match settings.runtime_protocol {
+            RuntimeProtocol::Grpc => Some(crate::engine::executor::runtime_grpc::channel(
+                &settings.runtime_grpc_url,
+            )?),
+            RuntimeProtocol::Ndjson => None,
+        };
+        let firewall_signer = Arc::new(Signer::from_seed(settings.firewall_signing_key.expose())?);
         Ok(AppState {
+            runtime_grpc,
+            gateway_http: crate::gateway::http_client()?,
+            firewall_signer,
+            firewall_sessions: Arc::default(),
             jwt: Arc::new(JwtKeys::new(
                 settings.jwt_secret.expose(),
                 settings.access_ttl,
@@ -102,7 +124,7 @@ impl AppState {
             agent_tokens: Arc::new(AgentTokenKeys::new(settings.agent_token_key.expose())),
             secret_box: Arc::new(SecretBox::new(settings.master_key.expose())),
             llm: Arc::new(LlmService::new(provider, metrics.clone())),
-            limiters: Arc::new(RateLimiters::default()),
+            limiters: Arc::new(RateLimiters::new(settings.gateway_calls_per_minute)),
             sessions: Arc::default(),
             engine: Arc::new(Engine::new(hub.instance())),
             symphony: Arc::new(SymphonyBridge::new(&settings)),

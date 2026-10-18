@@ -47,6 +47,8 @@ pub fn settings(overrides: &[(&str, &str)]) -> Settings {
         ),
         ("NEXC_DATA_DIR", data_dir.to_str().unwrap()),
         ("NEXC_MAX_ATTEMPTS", "2"),
+        // The NDJSON stand-in runtime serves most suites; the gRPC ones switch the wire.
+        ("NEXC_RUNTIME_PROTOCOL", "ndjson"),
         ("ANTHROPIC_API_KEY", "sk-test-not-a-real-key"),
     ]
     .iter()
