@@ -535,6 +535,11 @@ async fn work(
             None
         }
         Start::Resume { previous, released } => {
+            // A cancel asked for while nobody held the run stops it here before any node is
+            // queued again: nothing more is sent to the runtime or the provider for it.
+            if row.cancel_requested {
+                token.cancel();
+            }
             // Commands the former holder never took are this instance's now, before any node
             // starts again: a cancel of a sub-agent waits for the attempt that replaces its own.
             super::commands::deliver(state, row.id).await;
@@ -1034,7 +1039,8 @@ impl Execution {
 
     /// A node whose attempt the takeover interrupted: queued again for its
     /// next attempt, with an `interrupted` span on the trace, or failed when
-    /// that was its last attempt. Returns its status now.
+    /// that was its last attempt. In a run cancelled meanwhile it is left for
+    /// the run's end to cancel. Returns its status now.
     async fn interrupted(
         &self,
         resume: &Resume,
@@ -1042,8 +1048,13 @@ impl Execution {
         max_attempts: i32,
     ) -> NodeStatus {
         let attempt = stored.attempt;
+        let cancelled = self.token.is_cancelled();
         let last = attempt >= max_attempts;
-        let reason = if last {
+        let reason = if cancelled {
+            format!(
+                "attempt {attempt} was interrupted when the instance executing it stopped; the run was cancelled meanwhile"
+            )
+        } else if last {
             format!(
                 "attempt {attempt} was interrupted when the instance executing it stopped; it was the last of {max_attempts}"
             )
@@ -1059,8 +1070,11 @@ impl Execution {
             INTERRUPTED_DECISION,
             "interrupted",
             &reason,
-            json!({"attempt": attempt, "next_attempt": (!last).then_some(attempt + 1)}),
+            json!({"attempt": attempt, "next_attempt": (!last && !cancelled).then_some(attempt + 1)}),
         );
+        if cancelled {
+            return NodeStatus::Queued;
+        }
         if last {
             fail_node(&self.state, &self.data, stored.node_id, attempt, reason).await;
             return NodeStatus::Failed;
@@ -1179,9 +1193,10 @@ fn upstream_of(
     up
 }
 
-/// Watches the run every second: a cancel asked for on any instance, the run
-/// changing hands (the lease is lost at once rather than at the next write
-/// or renewal), agents quarantined elsewhere, operators' commands.
+/// Watches the run at once and then every second: a cancel asked for on
+/// any instance, the run changing hands (the lease is lost at once rather
+/// than at the next write or renewal), agents quarantined elsewhere,
+/// operators' commands.
 fn spawn_cancel_watcher(
     state: AppState,
     lease: Lease,
@@ -1191,13 +1206,17 @@ fn spawn_cancel_watcher(
     let stop = done.clone();
     let run_id = lease.run_id();
     tokio::spawn(async move {
+        // The first look is at once: a cancel asked for before the run started (or was taken
+        // over) here stops it before its nodes get far.
+        let mut pause = Duration::ZERO;
         loop {
             tokio::select! {
                 _ = stop.cancelled() => return,
                 _ = token.cancelled() => return,
                 _ = lease.stopped() => return,
-                _ = tokio::time::sleep(CANCEL_POLL) => {}
+                _ = tokio::time::sleep(pause) => {}
             }
+            pause = CANCEL_POLL;
             match repo::runs::watched(&state.db, run_id).await {
                 Ok(Some(watched)) => {
                     if let Some(epoch) = lease.epoch()

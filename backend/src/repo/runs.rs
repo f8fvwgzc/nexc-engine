@@ -46,6 +46,8 @@ pub struct RunRow {
     pub claimed_by: Option<Uuid>,
     /// Raised every time the run changes hands; writes are fenced on it.
     pub lease_epoch: i64,
+    /// Someone asked for the run to stop (`POST /runs/{id}/cancel`).
+    pub cancel_requested: bool,
 }
 
 impl RunRow {
@@ -89,6 +91,7 @@ impl FromRow<'_, PgRow> for RunRow {
             policy_versions: versions_col(row, "policy_versions")?,
             claimed_by: row.try_get("claimed_by")?,
             lease_epoch: row.try_get("lease_epoch")?,
+            cancel_requested: row.try_get("cancel_requested")?,
         })
     }
 }

@@ -33,7 +33,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with the decision already taken (`approval` spans with `reattached` and `carried_from`); the
   trace chain continues from the last span written, so `GET /runs/{id}/trace/verify` stays `ok`;
   commands the former holder never took (`run_commands`, now with the epoch they were addressed
-  to) are taken by the new one, a sub-agent's cancel carried to the attempt that replaces its own.
+  to) are taken by the new one, a sub-agent's cancel carried to the attempt that replaces its own;
+  a run cancelled while nobody held it is cancelled before any node is queued again (the run's
+  watcher also takes its first look at once instead of after a second).
   A failed write stops the run on that replica instead of letting it go on from a state the
   database does not have, span batches are retried with back-off for two minutes (a database
   failover), and runs are no longer failed as orphans after 60 s without a heartbeat. The

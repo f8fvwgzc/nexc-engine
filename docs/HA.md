@@ -31,7 +31,8 @@ Resuming a run keeps everything that was committed:
 The trace's hash chain continues from the last span written, so `GET /runs/{rid}/trace/verify`
 stays `ok` across a takeover. Commands sent into the run (`run_commands`, the cancel of one
 sub-agent) are addressed to whoever holds the lease: a command the former holder never took is
-taken and delivered by the new one.
+taken and delivered by the new one. A run cancelled while nobody held it is cancelled by the new
+holder before any node is queued again: nothing more is sent to the runtime or the provider.
 
 Execution is at least once, recording is exactly once. A node attempt cut short by a crash is
 run again, so a tool it called before the crash may be called twice; its success, its output and

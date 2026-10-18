@@ -651,6 +651,55 @@ async fn a_command_the_dead_instance_never_took_is_delivered_by_the_new_one(pool
 }
 
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_run_cancelled_while_nobody_holds_it_runs_nothing_more_on_takeover(pool: PgPool) {
+    let (url, seen) = fake_grpc_runtime().await;
+    let a = instance(&pool, &url).await;
+    let (token, _) = a.register("owner@example.com").await;
+    scribe(&a, &token).await;
+    let (gid, nodes) = chain_of(&a, &token, &["NAP 8000 Draft", "Final"]).await;
+    let mut on_a = a.events(&gid);
+    let rid = start_run(&a, &token, &gid).await;
+    until_status(&mut on_a, &nodes[0], "running").await;
+    collect_until(&mut on_a, "node.output").await;
+    a.crash();
+    let b = instance(&pool, &url).await;
+    // The owner cancels while nobody executes the run: only recorded, nothing runs here to stop.
+    let (status, cancelled) = call(
+        &b,
+        Method::POST,
+        &format!("/runs/{rid}/cancel"),
+        &token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{cancelled}");
+    assert_eq!(cancelled["status"], "running", "{cancelled}");
+    until_held_by(
+        &pool,
+        &rid,
+        b.state.engine.instance(),
+        Duration::from_secs(LEASE_SECS + 5),
+    )
+    .await;
+    let run = until_finished(&b, &token, &rid).await;
+    assert_eq!(run["status"], "cancelled", "{run}");
+    for node_run in run["node_runs"].as_array().unwrap() {
+        assert_eq!(node_run["status"], "cancelled", "{run}");
+    }
+    // The new holder sent no attempt to the runtime: the cancel took effect before any node.
+    let ran = executed(&seen);
+    assert_eq!(ran["NAP 8000 Draft"], 1, "{ran:?}");
+    assert!(!ran.contains_key("Final"), "{ran:?}");
+    let spans = spans_of(&b, &token, &rid).await;
+    let interrupted = spans
+        .iter()
+        .find(|s| s["attributes"]["decision"] == "interrupted")
+        .expect("the interrupted attempt is on the trace");
+    assert_eq!(interrupted["attributes"]["next_attempt"], Value::Null);
+    assert_eq!(verified(&b, &token, &rid).await["ok"], true);
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
 async fn a_holder_cut_off_from_its_lease_stops_by_itself(pool: PgPool) {
     let (url, seen) = fake_grpc_runtime().await;
     let a = instance(&pool, &url).await;
