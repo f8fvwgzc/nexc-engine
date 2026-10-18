@@ -169,9 +169,21 @@ async fn every_output_gets_a_verdict_and_the_default_policy_only_records_it(pool
         .iter()
         .find(|s| s["kind"] == "data_read" && s["node_id"] == draft)
         .unwrap();
-    assert_eq!(
-        read["attributes"]["citation_ids"],
-        json!([format!("node:{research}")])
+    // The ids the model was told to cite: its upstream node, and a memory extracted from
+    // the first node in the background when the full suite's timing let it be recalled.
+    let upstream = format!("node:{research}");
+    let cited: Vec<&str> = read["attributes"]["citation_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(cited.contains(&upstream.as_str()), "{cited:?}");
+    assert!(
+        cited
+            .iter()
+            .all(|id| *id == upstream || id.starts_with("mem:")),
+        "{cited:?}"
     );
     // A cached result keeps the verdict it got.
     let mut rx = app.events(&gid);
