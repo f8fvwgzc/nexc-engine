@@ -4,6 +4,7 @@
 pub mod account;
 pub mod agents;
 pub mod artifacts;
+pub mod audit;
 pub mod auth;
 pub mod cycles;
 pub mod edges;

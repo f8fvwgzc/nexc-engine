@@ -119,6 +119,8 @@ pub struct Metrics {
     pub spans: LabeledCounter,
     /// From a span being emitted by an executor to its `trace.span` fan-out.
     pub span_fanout: Histogram,
+    /// Audit questions answered, by mode (`deterministic`, `llm`).
+    pub onto_asks: LabeledCounter,
 }
 
 impl Default for Metrics {
@@ -136,6 +138,7 @@ impl Default for Metrics {
             run_duration: Histogram::new(&RUN_BUCKETS),
             spans: LabeledCounter::default(),
             span_fanout: Histogram::new(&SPAN_BUCKETS),
+            onto_asks: LabeledCounter::default(),
         }
     }
 }
@@ -251,6 +254,13 @@ impl Metrics {
         );
         self.span_fanout
             .render(&mut out, "nexc_trace_span_fanout_seconds");
+        header(
+            &mut out,
+            "nexc_audit_asks_total",
+            "counter",
+            "Audit questions answered, by mode (deterministic, llm).",
+        );
+        self.onto_asks.render(&mut out, "nexc_audit_asks_total");
         out
     }
 }

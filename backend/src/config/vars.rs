@@ -164,6 +164,24 @@ pub const ENV_VARS: &[EnvVar] = &[
         "agent command for texc-symphony (default: Symphony's own, Codex)",
     ),
     var(
+        "NEXC_ONTO_URL",
+        "",
+        false,
+        "onto-intelli gRPC endpoint (http://host:50051); empty turns \"ask the audit\" off",
+    ),
+    var(
+        "NEXC_ONTO_TOKEN",
+        "",
+        true,
+        "bearer token onto-intelli knows the backend by",
+    ),
+    var(
+        "NEXC_ONTO_WORKSPACE_PREFIX",
+        "nexc-",
+        false,
+        "prefix of the onto-intelli workspace holding each nexc workspace's facts",
+    ),
+    var(
         "NEXC_MAX_CONCURRENCY",
         "4",
         false,

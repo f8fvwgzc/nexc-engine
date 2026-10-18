@@ -33,6 +33,9 @@ pub enum AppError {
     /// 429 – rate limited; retry after the given number of seconds.
     #[error("too many requests")]
     RateLimited { retry_after_secs: u64 },
+    /// 503 – a service this request needs is off or not reachable (the audit's onto-intelli).
+    #[error("{0}")]
+    Unavailable(String),
     /// 500 – unexpected failure; details are logged, never returned.
     #[error(transparent)]
     Internal(#[from] anyhow::Error),

@@ -6,6 +6,8 @@ use std::time::Duration;
 use crate::app::http_client;
 use crate::config::Settings;
 use crate::domain::settings::LlmProviderKind;
+use crate::ontology::OntologyBackend;
+use crate::ontology::grpc::GrpcOntology;
 use crate::orchestrator::health::probe;
 use crate::repo;
 
@@ -47,6 +49,7 @@ pub async fn run() -> ExitCode {
     };
     check_database(&mut r, &settings).await;
     check_backends(&mut r, &settings).await;
+    check_ontology(&mut r, &settings).await;
     check_llm(&mut r, &settings);
     if r.failed {
         ExitCode::FAILURE
@@ -137,6 +140,46 @@ async fn check_backends(r: &mut Report, settings: &Settings) {
             health.detail.unwrap_or_else(|| "reachable".into())
         ),
     );
+}
+
+/// onto-intelli, the audit's query engine: disabled, reachable (with its
+/// version and model), or not.
+async fn check_ontology(r: &mut Report, settings: &Settings) {
+    let Some(url) = &settings.onto_url else {
+        return r.line(
+            Level::Ok,
+            "onto-intelli",
+            "disabled (set NEXC_ONTO_URL to ask the audit)",
+        );
+    };
+    let token = settings.onto_token.as_ref().map(|t| t.expose().as_str());
+    let backend = match GrpcOntology::new(url, token) {
+        Ok(backend) => backend,
+        Err(err) => return r.line(Level::Fail, "onto-intelli", err.to_string()),
+    };
+    match tokio::time::timeout(Duration::from_secs(3), backend.health()).await {
+        Ok(Ok(health)) => r.line(
+            Level::Ok,
+            "onto-intelli",
+            format!(
+                "{url}: onto-intelli {} (revision {}, explains with {}{})",
+                health.version,
+                health.revision,
+                health.llm,
+                if health.llm_available {
+                    ""
+                } else {
+                    ", unavailable"
+                }
+            ),
+        ),
+        Ok(Err(err)) => r.line(Level::Warn, "onto-intelli", format!("{url}: {err}")),
+        Err(_) => r.line(
+            Level::Warn,
+            "onto-intelli",
+            format!("{url}: no answer within 3 seconds"),
+        ),
+    }
 }
 
 fn check_llm(r: &mut Report, settings: &Settings) {

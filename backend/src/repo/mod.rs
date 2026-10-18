@@ -75,6 +75,7 @@ pub mod knowledge_vectors;
 pub mod map;
 pub mod memories;
 pub mod nodes;
+pub mod onto_export;
 pub mod outbox;
 pub mod plans;
 pub mod platform;
