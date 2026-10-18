@@ -685,7 +685,7 @@ async fn groups_give_roles_and_take_back_only_what_they_gave(pool: PgPool) {
         .execute(&pool)
         .await
         .unwrap();
-    let (_, user) = signed_in(&app, &stub, root()).await;
+    let (_, user) = signed_in(&app, &stub, root().groups(&[])).await;
     assert_eq!(user["role"], "admin");
 
     // Workspace roles: the highest of the person's groups.
@@ -750,7 +750,7 @@ async fn groups_give_roles_and_take_back_only_what_they_gave(pool: PgPool) {
     let guest = || Assertion::person("sub-guest", "guest@example.com");
     let (_, user) = signed_in(&app, &stub, guest().groups(&["leads"])).await;
     assert_eq!(role_in(&pool, &wid, &user).await.as_deref(), Some("admin"));
-    let (_, user) = signed_in(&app, &stub, guest()).await;
+    let (_, user) = signed_in(&app, &stub, guest().groups(&[])).await;
     assert_eq!(role_in(&pool, &wid, &user).await.as_deref(), Some("guest"));
 
     // Groups the ID token does not carry are read from userinfo.
@@ -761,6 +761,58 @@ async fn groups_give_roles_and_take_back_only_what_they_gave(pool: PgPool) {
     )
     .await;
     assert_eq!(role_in(&pool, &wid, &user).await.as_deref(), Some("member"));
+}
+
+/// A provider that leaves the groups claim out (an Entra ID overage, a mapper
+/// not added to the token, a userinfo answer that is a signed JWT) says
+/// nothing about groups: the roles they gave stay, and only a list that is
+/// there, empty or not, gives and takes back.
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_sign_in_without_the_groups_claim_changes_no_role(pool: PgPool) {
+    let stub = Stub::start().await;
+    let plain = TestApp::new(pool.clone(), &[]).await;
+    let (owner, _) = plain.register("owner@example.com").await;
+    let (_, list) = call(&plain, Method::GET, "/workspaces", &owner, None).await;
+    let wid = list[0]["id"].as_str().unwrap().to_owned();
+    let mapping = format!("eng={wid}:member");
+    let app = app(
+        pool.clone(),
+        &stub,
+        &[
+            ("NEXC_OIDC_ADMIN_GROUPS", "nexc-admins"),
+            ("NEXC_OIDC_WORKSPACE_ROLES", &mapping),
+        ],
+    )
+    .await;
+
+    let root = || Assertion::person("sub-root", "root@example.com");
+    let (_, user) = signed_in(&app, &stub, root().groups(&["nexc-admins"])).await;
+    assert_eq!(user["role"], "admin");
+    let (_, user) = signed_in(&app, &stub, root()).await;
+    assert_eq!(user["role"], "admin", "no claim takes nothing back");
+
+    let dev = || Assertion::person("sub-dev", "dev@example.com");
+    let (_, user) = signed_in(&app, &stub, dev().groups(&["eng"])).await;
+    assert_eq!(role_in(&pool, &wid, &user).await.as_deref(), Some("member"));
+    let logged = audit_of(&pool, &wid).await.len();
+    let (token, user) = signed_in(&app, &stub, dev()).await;
+    assert_eq!(role_in(&pool, &wid, &user).await.as_deref(), Some("member"));
+    assert_eq!(audit_of(&pool, &wid).await.len(), logged, "nothing changed");
+    let (_, theirs) = call(&app, Method::GET, "/workspaces", &token, None).await;
+    assert_eq!(theirs.as_array().unwrap().len(), 1, "no personal workspace");
+
+    // An empty list is a sign-in without the groups.
+    let (_, user) = signed_in(&app, &stub, dev().groups(&[])).await;
+    assert_eq!(role_in(&pool, &wid, &user).await, None);
+    let (_, user) = signed_in(&app, &stub, root().groups(&[])).await;
+    assert_eq!(user["role"], "user");
+
+    // A first sign-in without the claim makes a plain account with a workspace of its own.
+    let (token, user) =
+        signed_in(&app, &stub, Assertion::person("sub-new", "new@example.com")).await;
+    assert_eq!(user["role"], "user");
+    let (_, theirs) = call(&app, Method::GET, "/workspaces", &token, None).await;
+    assert_eq!(theirs.as_array().unwrap().len(), 1);
 }
 
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]

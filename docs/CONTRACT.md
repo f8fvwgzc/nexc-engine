@@ -1362,7 +1362,9 @@ the authorization code flow with PKCE (`S256`), as a confidential client.
    role the account had before is restored, or it leaves the workspace), unless the role was changed
    by hand since. Each change is in that workspace's audit log, by `system`. A workspace never loses
    its last owner this way, and a platform administrator works in no workspace, so the mapping
-   leaves one's memberships alone.
+   leaves one's memberships alone. A sign-in whose ID token and userinfo answer carry no groups
+   claim says nothing about groups: every role stays as it is (a warning is logged). Only a claim
+   that is there, an empty list included, gives and takes back.
 6. A suspended account is refused (`sign_in_failed`). Otherwise a session starts exactly as
    `POST /auth/login` starts one (`sso_signed_in`): the `nexc_refresh` cookie, and the browser goes
    to the `return_to` path. The local second factor is not asked: the provider authenticates, and

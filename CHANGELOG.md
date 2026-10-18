@@ -29,7 +29,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   refused; a state replayed, finished in another browser, older than ten minutes, made up or
   declined at the provider; key rotation with one refetch and none for a made-up key id; ES256;
   the admin groups and the workspace mapping giving roles and taking back only what they gave,
-  groups from userinfo; password sign-in off with the break-glass administrator still let in;
+  groups from userinfo, a sign-in without the groups claim changing no role; password sign-in off with the break-glass administrator still let in;
   `return_to` never leaving the site; a suspended account refused; `GET /auth/providers` and
   `GET /auth/identities`. `backend/tests/worst_case.rs` sends hostile values in every parameter
   and cookie of the two routes (every answer a redirect to the provider or to this site), races
@@ -58,7 +58,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the platform role and the workspace mapping gives workspace roles at every sign-in, and both take
   back what they gave once the group is gone (the role before is restored; a role changed by hand,
   a platform role given in the console and a workspace's last owner are left alone); each workspace
-  change is in its audit log, by `system`. The callback starts the session exactly as a password
+  change is in its audit log, by `system`. A sign-in without the groups claim at all (an Entra ID
+  overage, a mapper left out of the token) changes no role and logs a warning naming the claim;
+  only a claim that is there, even empty, takes roles back. The callback starts the session exactly as a password
   sign-in does and sends the browser to a same-origin `return_to` path (another site, `//host`,
   `/\host` and encoded slashes fall back to `/app`), with no token in any address; refusals go to
   `/login?sso_error=<code>`. Suspended accounts are refused; the local second factor is not asked.

@@ -37,6 +37,7 @@ At every sign-in the person's groups are applied:
 
 - **Platform administrators.** A member of one of `NEXC_OIDC_ADMIN_GROUPS` becomes a platform administrator, and stops being one at the first sign-in without the group. A platform role given in the console is never taken back by a sign-in. An account that is the only owner of a workspace other people work in is not made an administrator (a platform administrator works in no workspace); the server logs it.
 - **Workspace roles.** Each workspace named in `NEXC_OIDC_WORKSPACE_ROLES` gets the highest role of the person's groups. The mapping raises a role and never lowers one it did not give. Once no group gives a role any more, the role the mapping gave is taken back: the account goes back to the role it had before, or leaves the workspace. A role someone changed by hand since is left alone, and a workspace never loses its last owner this way. Every change is in the workspace's audit log, by `system`, naming the group.
+- **No groups claim.** A sign-in whose ID token and userinfo answer carry no `NEXC_OIDC_GROUPS_CLAIM` says nothing about groups, so it gives and takes back nothing: every role stays as it is, and the server logs a warning naming the claim. Only a claim that is there, even an empty list, gives and takes back. Check the claim name and the provider's mapper when roles never change.
 
 ### Password sign-in, and the break-glass administrator
 
@@ -71,7 +72,7 @@ Realm roles instead of groups: `NEXC_OIDC_GROUPS_CLAIM=realm_access.roles`.
 
 ### Microsoft Entra ID
 
-Register an application (single tenant) with a *Web* redirect URI, and create a client secret under *Certificates & secrets*. Under *Token configuration*, add the optional claim `email` to the ID token, and a groups claim (*Security groups*, emitted in the ID token as group object IDs, so the mapping names object IDs). A person in more than 200 groups gets an overage claim instead, which is not read: limit the claim to *Groups assigned to the application*.
+Register an application (single tenant) with a *Web* redirect URI, and create a client secret under *Certificates & secrets*. Under *Token configuration*, add the optional claim `email` to the ID token, and a groups claim (*Security groups*, emitted in the ID token as group object IDs, so the mapping names object IDs). A person in more than 200 groups gets an overage claim (`_claim_names`) instead, which is not read: their roles then stay as they are at every sign-in, and the server logs a warning. Limit the claim to *Groups assigned to the application*.
 
 ```bash
 NEXC_OIDC_ISSUER=https://login.microsoftonline.com/<tenant id>/v2.0

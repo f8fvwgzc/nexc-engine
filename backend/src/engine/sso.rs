@@ -13,7 +13,10 @@
 //! recorded as the mapping's (with the role it replaced), and a sign-in
 //! without the group restores what was there before, unless someone changed
 //! the role by hand since. A platform role given in the console is never
-//! touched; one the admin groups gave is taken back without them.
+//! touched; one the admin groups gave is taken back without them. A sign-in
+//! whose provider says nothing about groups (no groups claim in the ID token
+//! nor in the userinfo answer) is not a sign-in without them: nothing is
+//! known, so no role is given or taken back.
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -75,9 +78,19 @@ pub async fn sign_in(
         note(state, id, AccountEventKind::SignInFailed, Some(ip), detail).await;
         return Ok(Resolution::Refused(Refusal::Suspended));
     }
-    let groups = identity.profile.groups.clone().unwrap_or_default();
-    let role = platform_role(state, settings, &account, &groups).await?;
-    workspace_roles(state, settings, &account.user, role, &groups).await?;
+    let groups = identity.profile.groups.as_deref();
+    let role = match groups {
+        Some(groups) => platform_role(state, settings, &account, groups).await?,
+        None => {
+            if !settings.admin_groups.is_empty() || !settings.workspace_roles.is_empty() {
+                tracing::warn!(user_id = %id, claim = %settings.groups_claim,
+                    "single sign-on: neither the ID token nor the userinfo answer carries the groups claim; \
+                     the account's roles are left as they are");
+            }
+            account.user.role
+        }
+    };
+    workspace_roles(state, settings, &account.user, role, groups).await?;
     let user = repo::users::find(&state.db, id)
         .await
         .or_not_found("user")?;
@@ -247,7 +260,8 @@ struct Change {
 }
 
 /// Applies the workspace role mapping: what the groups give is given, what
-/// the mapping gave and the groups no longer give is taken back. A platform
+/// the mapping gave and the groups no longer give is taken back; with no
+/// groups known (`None`) nothing is given or taken back. A platform
 /// administrator works in no workspace, so nothing changes for one. An
 /// account left without any workspace gets a personal one.
 async fn workspace_roles(
@@ -255,7 +269,7 @@ async fn workspace_roles(
     settings: &OidcSettings,
     account: &User,
     role: Role,
-    groups: &[String],
+    groups: Option<&[String]>,
 ) -> Result<(), AppError> {
     if role == Role::Admin {
         return Ok(());
@@ -266,7 +280,7 @@ async fn workspace_roles(
     for mapping in settings
         .workspace_roles
         .iter()
-        .filter(|m| groups.contains(&m.group))
+        .filter(|m| groups.is_some_and(|groups| groups.contains(&m.group)))
     {
         let Some((workspace, _)) = repo::workspaces::by_ref(&state.db, &mapping.workspace).await?
         else {
@@ -284,7 +298,11 @@ async fn workspace_roles(
     let mut tx = state.db.begin().await?;
     // One sign-in of an account applies the mapping at a time.
     repo::sso::account(&mut *tx, id).await?;
-    let grants = repo::sso::lock_grants(&mut tx, id).await?;
+    let grants = match groups {
+        Some(_) => repo::sso::lock_grants(&mut tx, id).await?,
+        // Unknown groups take nothing back.
+        None => Vec::new(),
+    };
     let mut changes = Vec::new();
     for (&workspace, &(want, group)) in &wanted {
         let current = repo::workspaces::role_of(&mut *tx, workspace, id).await?;
