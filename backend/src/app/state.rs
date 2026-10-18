@@ -127,7 +127,10 @@ impl AppState {
             agent_tokens: Arc::new(AgentTokenKeys::new(settings.agent_token_key.expose())),
             secret_box: Arc::new(SecretBox::new(settings.master_key.expose())),
             llm: Arc::new(LlmService::new(provider, metrics.clone())),
-            limiters: Arc::new(RateLimiters::new(settings.gateway_calls_per_minute)),
+            limiters: Arc::new(RateLimiters::new(
+                settings.gateway_calls_per_minute,
+                settings.api_calls_per_minute,
+            )),
             sessions: Arc::default(),
             engine: Arc::new(Engine::new(hub.instance())),
             symphony: Arc::new(SymphonyBridge::new(&settings)),

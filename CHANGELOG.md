@@ -9,6 +9,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `make prove-api`: the API's latency per endpoint under load, measured and gated. A Rust
+  measurement test (`backend/tests/api_latency.rs`, `--ignored`, run in release like the other
+  prove targets) seeds a workspace with one of everything on the demo provider, then drives every
+  documented `GET` and the main writes (an issue filed, a node added, a run started) with 64
+  concurrent callers for a fixed number of requests each through the real router in process
+  (no socket between the caller and axum, so the figures are the server's own, PostgreSQL
+  included), and measures the three gRPC services over loopback: the runtime's `Execute` stream
+  against the stand-in runtime, onto-intelli's `Ask` against the stub server, and the Agent
+  Firewall's `AuthorizeAction` in process and over the wire, with `grpc.health.v1/Check` on the
+  same server as the transport alone. Every row is the best of two rounds and shows p50, p99 and
+  max; the targets at p99 are 20 ms for reads (200 ms for the whole-workspace aggregates, the
+  SecOps overview, search, the map, usage, the day summary, transfers, knowledge search and
+  memory topics, and for the server's status page, which probes what it runs on), 50 ms for
+  writes and 1 ms for the gRPC calls with the work itself excluded, and a
+  missed target fails the test, so the table gates CI. The first rows show the floor under every
+  read, PostgreSQL's own round trip at one caller and at 64 with the harness's pool and with the
+  server's default pool of 20. `NEXC_PROVE_API_CALLERS`, `NEXC_PROVE_API_REQUESTS`,
+  `NEXC_PROVE_API_ROUNDS`, `NEXC_PROVE_API_DB_CONNECTIONS` and `NEXC_PROVE_API_TARGET_SCALE`
+  size it for a smaller machine. The table, the machine and the build it was taken on are in
+  `docs/PERFORMANCE.md`; the API's per-account rate limit became a setting on the way
+  (`NEXC_API_CALLS_PER_MINUTE`, 600 as before) so a load test can lift it on its own server.
 - A2A adapter, the console: the agent card gets an **A2A** tab with the switch that publishes
   the agent (admins; disabled for an external agent, with the reason), the addresses of its card,
   its well-known card and its JSON-RPC endpoint under the console's origin with a copy each, and
@@ -822,6 +843,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- The per-account API rate limit is a setting, `NEXC_API_CALLS_PER_MINUTE` (600, the burst a
+  fifth of it, as before), so a load test or an automation account can be given more on its own
+  server.
 - The project is licensed under the MIT License instead of Apache-2.0. No dependency requires a
   stricter licence: every one is MIT, BSD, ISC, Apache-2.0 or similar, with two npm packages
   under MPL-2.0, which only covers changes to those packages' own files.

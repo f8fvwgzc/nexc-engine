@@ -194,6 +194,12 @@ pub const ENV_VARS: &[EnvVar] = &[
         "let A2A counterparts be registered on private and loopback hosts (development only)",
     ),
     var(
+        "NEXC_API_CALLS_PER_MINUTE",
+        "600",
+        false,
+        "authenticated API requests one account may make per minute (burst a fifth of it)",
+    ),
+    var(
         "NEXC_GATEWAY_CALLS_PER_MINUTE",
         "120",
         false,

@@ -89,6 +89,8 @@ pub struct Settings {
     pub firewall_signing_key: Secret<[u8; 32]>,
     /// OTLP/gRPC endpoint the trace is exported to (`http://host:4317`); unset keeps it off.
     pub otlp_endpoint: Option<String>,
+    /// Authenticated API requests one account may make per minute (burst a fifth of it).
+    pub api_calls_per_minute: u32,
     /// Gateway calls one agent may make per minute.
     pub gateway_calls_per_minute: u32,
     /// Longest one gateway call may take, the tool included.
@@ -224,6 +226,7 @@ impl Settings {
             grpc_addr: r.grpc_addr(),
             firewall_signing_key: Secret::new(r.firewall_signing_key()),
             otlp_endpoint: r.optional("NEXC_OTLP_ENDPOINT"),
+            api_calls_per_minute: r.parse("NEXC_API_CALLS_PER_MINUTE", 600),
             gateway_calls_per_minute: r.parse("NEXC_GATEWAY_CALLS_PER_MINUTE", 120),
             gateway_timeout: Duration::from_secs(r.parse("NEXC_GATEWAY_TIMEOUT_SECS", 30)),
             gateway_max_response_bytes: r.parse("NEXC_GATEWAY_MAX_RESPONSE_BYTES", 1024 * 1024),
@@ -289,6 +292,9 @@ impl Settings {
         }
         if !(self.public_url.starts_with("http://") || self.public_url.starts_with("https://")) {
             errors.push("NEXC_PUBLIC_URL must start with http:// or https://".into());
+        }
+        if !(5..=10_000_000).contains(&self.api_calls_per_minute) {
+            errors.push("NEXC_API_CALLS_PER_MINUTE must be between 5 and 10000000".into());
         }
         if !(1..=10_000).contains(&self.gateway_calls_per_minute) {
             errors.push("NEXC_GATEWAY_CALLS_PER_MINUTE must be between 1 and 10000".into());
