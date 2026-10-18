@@ -6,6 +6,6 @@ This page installs the same deployment as the [kustomize manifests](/operate/kub
 
 ## Values
 
-The chart's `values.yaml` is the reference for every option; its comments say what each one does.
+The chart's `values.yaml` is the reference for every option. Its comments say what each one does.
 
 <<< ../../deploy/helm/nexc-engine/values.yaml

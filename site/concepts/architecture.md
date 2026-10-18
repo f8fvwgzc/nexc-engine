@@ -1,6 +1,8 @@
 # Architecture
 
-This page describes the components of nexc-engine, how a person is authenticated, how the system scales, which worst cases are tested and where its security boundaries are; the request flows are on [Graphs and plans](/concepts/graphs).
+This page describes the components of nexc-engine, how a person is authenticated, how the system scales, which worst cases are tested and where its security boundaries are.
+
+The request flows are on [Graphs and plans](/concepts/graphs).
 
 <!--@include: ../../docs/ARCHITECTURE.md#components-->
 

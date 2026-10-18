@@ -12,7 +12,7 @@ This page describes the gateway every external call of an agent goes through, an
 
 | Setting                                                       | Where                                                                                      |
 | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| MCP servers a workspace offers its agents                     | **Settings, MCP servers**; `/workspaces/{wid}/mcp-servers` in the [endpoints](/reference/endpoints) |
-| A2A counterparts                                              | **Settings, A2A counterparts**; see [A2A on the firewall](/secops/a2a)                   |
-| Calls per minute, timeout, largest response                   | `NEXC_GATEWAY_*` in [Environment variables](/reference/environment); `backend.gateway` in the [Helm chart](/operate/helm) |
+| MCP servers a workspace offers its agents                     | **Settings, MCP servers**, and `/workspaces/{wid}/mcp-servers` in the [endpoints](/reference/endpoints) |
+| A2A counterparts                                              | **Settings, A2A counterparts**. See [A2A on the firewall](/secops/a2a)                   |
+| Calls per minute, timeout, largest response                   | `NEXC_GATEWAY_*` in [Environment variables](/reference/environment), or `backend.gateway` in the [Helm chart](/operate/helm) |
 | Which tools and hosts an agent may use                        | Its capabilities and policy, see [Identity](/secops/identity) and [Policy and defend](/secops/policy) |

@@ -12,11 +12,11 @@ New statements are consolidated against what is already stored, in the way of Me
 
 ## Retrieval
 
-When a node or a plan is prepared, memories are retrieved by a hybrid score: the cosine similarity of embeddings, BM25 over the text, and recency weighted by importance. The ones that score best go into the prompt as context, wrapped as data rather than instructions. With the `pgvector` extension the embedding search uses an HNSW index; see [Infrastructure](/operate/infrastructure).
+When a node or a plan is prepared, memories are retrieved by a hybrid score: the cosine similarity of embeddings, BM25 over the text, and recency weighted by importance. The ones that score best go into the prompt as context, wrapped as data rather than instructions. With the `pgvector` extension the embedding search uses an HNSW index. See [Infrastructure](/operate/infrastructure).
 
 ## Scopes and labels
 
-An agent recalls memories only from the namespaces its capabilities allow (`data.memory_namespaces`) and only those whose label its clearance covers; see [Identity](/secops/identity). A workspace admin classifies a memory with `PATCH /memories/{id}`, and the change is audited as `classification_changed`.
+An agent recalls memories only from the namespaces its capabilities allow (`data.memory_namespaces`) and only those whose label its clearance covers. See [Identity](/secops/identity). A workspace admin classifies a memory with `PATCH /memories/{id}`, and the change is audited as `classification_changed`.
 
 ## Where to look
 

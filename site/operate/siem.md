@@ -19,7 +19,7 @@ curl -sS -H "Authorization: Bearer $TOKEN" \
   | while read -r line; do printf '%s\n' "$line" | jq -c .; done
 ```
 
-The bearer token is an access token of a workspace admin; see the conventions of [the contract](/reference/). The shapes of `Alert` and `AuditEntry` are in the [types](/reference/types).
+The bearer token is an access token of a workspace admin. The conventions are on [the contract](/reference/). The shapes of `Alert` and `AuditEntry` are in the [types](/reference/types).
 
 ## Other ways out
 

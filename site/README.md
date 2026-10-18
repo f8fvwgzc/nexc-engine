@@ -7,7 +7,7 @@ This folder builds the nexc-engine documentation from the Markdown the repositor
 | Command           | What it does                                                                        |
 | ----------------- | ----------------------------------------------------------------------------------- |
 | `make docs`       | Builds the site and serves it on http://localhost:4173/nexc-engine/                 |
-| `make docs-build` | Builds it to `site/.vitepress/dist`; fails on a link to a page that does not exist  |
+| `make docs-build` | Builds it to `site/.vitepress/dist` and fails on a link to a page that does not exist |
 | `make docs-dev`   | Serves it with live reload on http://localhost:5174/nexc-engine/                    |
 | `make openapi`    | Refreshes `public/openapi.json`, the document the API reference shows               |
 
@@ -52,4 +52,21 @@ A source is cut into regions with marker comments, invisible on GitHub:
 
 Inside a code block the marker is a line comment, `// #region alerts`. To put a new part of a source on the site, add a pair of markers around it and include the region from a page. To add a new source file, add its path to `ROUTES` in `.vitepress/repo-links.ts` so links to it resolve, and its page to the sidebar in `.vitepress/config.ts`.
 
-Screenshots are copied from `docs/media` into `public/media` at build time, and the favicon from the app; neither copy is committed.
+Screenshots are copied from `docs/media` into `public/media` at build time, and the favicon from the app. Neither copy is committed.
+
+## Writing for the site
+
+The style is the one of the project's own documents, made explicit:
+
+| Rule                                   | In practice                                                                                                                                  |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Sentence case                          | "Install in 60 seconds", not "Install In 60 Seconds". Product names keep their capitals: AgentSecOps, Docker Compose, Claude.                 |
+| One idea per sentence                  | A sentence that needs a semicolon usually wants to be two. Keep most sentences under twenty-five words.                                      |
+| One sentence of purpose                | Every page starts with one sentence that says what the page is for. It is the only paragraph between the title and the first heading or include. |
+| Tables for options                     | Settings, commands, comparisons and choices go in a table. How something works is prose.                                                     |
+| No em dashes                           | Use a comma, a colon, or a new sentence.                                                                                                     |
+| Name things as the app does            | **Settings, Alerts** (bold, the path with commas), `NEXC_PUBLIC_URL`, `make demo-secops`.                                                    |
+| Say it once                            | Link to the page that explains a thing rather than explaining it again. Prose that exists in a source file is included as a region.           |
+| Code in backticks, commands pasteable  | Paths, variables and values in backticks. Commands in `sh` blocks that work when pasted.                                                     |
+
+The landing page of each section (`start/index.md`, `concepts/index.md`, `secops/index.md`, `operate/index.md`, `reference/index.md`) is the model: a purpose sentence, a table of its pages with one line each on what they are for, then the included overview.

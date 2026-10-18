@@ -6,7 +6,7 @@ This page gets nexc-engine running with Docker Compose, then shows the same stac
 
 <!--@include: ../../README.md#quickstart-->
 
-Demo mode and how to leave it are on [Demo mode](/start/demo); the providers are on [Claude and local models](/start/models). Running the stack on a server, behind TLS, is on [Docker Compose](/operate/compose).
+Demo mode and how to leave it are on [Demo mode](/start/demo). The providers are on [Claude and local models](/start/models). Running the stack on a server, behind TLS, is on [Docker Compose](/operate/compose).
 
 ## From a checkout
 

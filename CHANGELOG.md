@@ -20,7 +20,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `make docs` builds and serves it; `.github/workflows/docs.yml` publishes it to GitHub Pages on
   every push to `main` and on tags (once Pages is enabled in the repository settings), and CI
   builds it on pull requests without deploying. The README carries a Docs badge, and the account
-  menu of the app links to the documentation and to the server's API reference.
+  menu of the app links to the documentation and to the server's API reference. `site/README.md`
+  says how the site is assembled and carries the style guide its pages follow: sentence case,
+  one idea per sentence, one sentence of purpose at the top of every page, tables for options,
+  no em dashes.
 - A2A adapter, the console: the agent card gets an **A2A** tab with the switch that publishes
   the agent (admins; disabled for an external agent, with the reason), the addresses of its card,
   its well-known card and its JSON-RPC endpoint under the console's origin with a copy each, and

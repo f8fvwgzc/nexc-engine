@@ -10,11 +10,11 @@ The page is the one screen a CISO wants to see. Its parts:
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Agents             | Every agent of the workspace with its status and its risk score. An agent opens its card.                                                                                                                                                        |
 | Live feed          | Spans and alerts as they happen, over SSE.                                                                                                                                                                                                       |
-| Approvals          | Decided in place; an approval also lands in the inbox of the approvers.                                                                                                                                                                          |
-| Alerts             | Acknowledged in place; where they go beyond the console is on [Alerts](/operate/alerts).                                                                                                                                                        |
+| Approvals          | Decided in place. An approval also lands in the inbox of the approvers.                                                                                                                                                                          |
+| Alerts             | Acknowledged in place. Where they go beyond the console is on [Alerts](/operate/alerts).                                                                                                                                                        |
 | Risk               | The risk score over the last fourteen days.                                                                                                                                                                                                      |
 | Policies           | The resolved policy of any agent, the level that set each rule, and a diff between versions.                                                                                                                                                     |
-| Ask the audit      | The audit's questions, answered by onto-intelli with the facts cited; see [Ask the audit](/secops/audit).                                                                                                                                       |
+| Ask the audit      | The audit's questions, answered by onto-intelli with the facts cited. See [Ask the audit](/secops/audit).                                                                                                                                       |
 | Trace explorer     | Spans across every run, narrowed by agent, kind, decision, tool, host, run and time. The kind `inbound` marks A2A tasks received.                                                                                                                |
 
 ## The agent card
@@ -28,7 +28,7 @@ The card is the ID card of the agent: purpose, owner, team, scopes, model, budge
 | **Settings, Policies**            | The policy editor for the workspace, its teams and its agents, with every version kept.             |
 | **Settings, Alerts**              | The alerts of the workspace and the destinations they are routed to.                                 |
 | **Settings, MCP servers**         | The servers the [tools gateway](/secops/gateway) offers to agents.                                   |
-| **Settings, A2A counterparts**    | The remote agents this workspace may call and that may call it; see [A2A on the firewall](/secops/a2a). |
+| **Settings, A2A counterparts**    | The remote agents this workspace may call and that may call it. See [A2A on the firewall](/secops/a2a). |
 | **Settings, Audit log**           | Every change to membership, policies, classifications and agents.                                    |
 | **Inbox**                         | Where approvals wait for a decision.                                                                 |
 | A run's page                      | The trace of that run, with the chain verified.                                                      |
