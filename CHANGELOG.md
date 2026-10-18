@@ -1177,6 +1177,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   is a list item, its unread count is spoken as text, a graph that cannot be loaded no longer
   leaves a skeleton in the breadcrumb, and the 404 and route-error states have an `h1` (and a
   `main` outside the shells).
+- UI pass, the pages (`frontend/e2e/AUDIT.md` lists every finding): every page sits in a
+  `PageContainer`, so a title no longer jumps between 23, 63, 123 and 183 px from page to page;
+  the graph cards fit a phone (they overflowed it by 474 px) and are a stretched link beside
+  their menu instead of a link under it; tables drop their secondary columns on a phone and a
+  tablet (runs, sessions, agents, node runs, members) and say the rest in the row; the
+  AgentSecOps tiles go three to a row until the console is wide enough for nine; the canvas
+  legend and the run's progress share one bottom bar instead of overlapping; the session tree
+  sizes its columns by its own width; the org chart opens centred on its root; inbox
+  approvals, issue rows, memories, platform accounts and workspaces are laid out for a phone.
+  Every icon-only control is an `IconButton` with a tooltip; truncated names carry their full
+  text on hover; list rows and fields show focus; targets are at least 24 px. List pages lead
+  an empty workspace to the first step (Teams from Issues, the file picker from Knowledge, a
+  graph from Sessions, Memory and Usage, the name field from Projects, the policies from
+  Alerts), Usage and the workspace map have an empty state, and a failed load is an
+  `ErrorState` with **Try again** instead of red text, or, worse, an empty state that told
+  the reader to create what may exist (Issues, Sessions, Knowledge, Memory, Project). The
+  primary action of A2A counterparts, MCP servers and Alert destinations moved into the page
+  header, as on the other pages; the graph canvas and the project page have an `h1`.
 - The per-account API rate limit is a setting, `NEXC_API_CALLS_PER_MINUTE` (600, the burst a
   fifth of it, as before), so a load test or an automation account can be given more on its own
   server.

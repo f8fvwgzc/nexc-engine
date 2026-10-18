@@ -13,9 +13,11 @@ import { Suspense, useState } from 'react';
 
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { IconButton } from '@/components/custom-ui/icon-button';
 import { OptionSelect } from '@/components/custom-ui/option-select';
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { PageSkeleton } from '@/components/layout/page-skeleton';
+import { ContentSkeleton, PageSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -189,14 +191,12 @@ function TeamRoster({
             </span>
             {member.role === 'owner' && <Badge variant="secondary">Owner</Badge>}
             {canManage && (
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={`Remove ${member.name} from ${team.name}`}
+              <IconButton
+                label={`Remove ${member.name} from ${team.name}`}
                 onClick={() => remove.mutate(member.user_id)}
               >
                 <Trash2Icon />
-              </Button>
+              </IconButton>
             )}
           </li>
         ))}
@@ -304,15 +304,13 @@ function TeamCard({ workspace, team }: { workspace: Workspace; team: Team }) {
           </Button>
         )}
         {canManage && (
-          <Button
-            variant="ghost"
-            size="icon-sm"
+          <IconButton
             className="text-destructive"
-            aria-label={`Delete ${team.name}`}
+            label={`Delete ${team.name}`}
             onClick={() => setDeleting(true)}
           >
             <Trash2Icon />
-          </Button>
+          </IconButton>
         )}
       </div>
       {open && <TeamRoster workspace={workspace} team={team} canManage={canManage} />}
@@ -371,10 +369,10 @@ function TeamList({ workspace, onCreate }: { workspace: Workspace; onCreate?: ()
 function Teams() {
   const { current } = useCurrentWorkspace();
   const [creating, setCreating] = useState(false);
-  if (!current) return <PageSkeleton />;
+  if (!current) return <PageSkeleton width="narrow" />;
   const canCreate = current.role !== 'guest';
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-6 p-4 sm:p-6">
+    <PageContainer width="narrow">
       <PageHeader
         title="Teams"
         description={`The teams of ${current.name}. Public teams are open to every member; private teams only to the people in them.`}
@@ -387,7 +385,7 @@ function Teams() {
           )
         }
       />
-      <Suspense fallback={<PageSkeleton />}>
+      <Suspense fallback={<ContentSkeleton />}>
         <TeamList
           key={current.id}
           workspace={current}
@@ -395,7 +393,7 @@ function Teams() {
         />
       </Suspense>
       <NewTeamDialog workspace={current} open={creating} onClose={() => setCreating(false)} />
-    </div>
+    </PageContainer>
   );
 }
 

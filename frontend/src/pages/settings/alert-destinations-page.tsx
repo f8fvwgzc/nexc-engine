@@ -9,9 +9,13 @@ import { AnimatedButton } from '@/components/custom-ui/animated-button';
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
 import { CopyButton } from '@/components/custom-ui/copy-button';
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { ErrorState } from '@/components/custom-ui/error-state';
 import { FormField } from '@/components/custom-ui/form-field';
 import { OptionSelect } from '@/components/custom-ui/option-select';
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
+import { IconButton } from '@/components/custom-ui/icon-button';
+import { WithTooltip } from '@/components/custom-ui/with-tooltip';
 import { PageSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Badge } from '@/components/ui/badge';
@@ -370,13 +374,19 @@ function DestinationRow({
           )}
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          <Switch
-            size="sm"
-            checked={destination.enabled}
-            disabled={toggle.isPending}
-            onCheckedChange={(enabled) => toggle.mutate(enabled)}
-            aria-label={`${destination.enabled ? 'Disable' : 'Enable'} ${destination.name}`}
-          />
+          <WithTooltip
+            label={
+              destination.enabled ? 'On: switch off to stop sending' : 'Off: switch on to send'
+            }
+          >
+            <Switch
+              size="sm"
+              checked={destination.enabled}
+              disabled={toggle.isPending}
+              onCheckedChange={(enabled) => toggle.mutate(enabled)}
+              aria-label={`${destination.enabled ? 'Disable' : 'Enable'} ${destination.name}`}
+            />
+          </WithTooltip>
           <Button
             size="sm"
             variant="outline"
@@ -397,14 +407,9 @@ function DestinationRow({
             <HistoryIcon />
             Log
           </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => setRemoving(true)}
-            aria-label={`Remove ${destination.name}`}
-          >
+          <IconButton label={`Remove ${destination.name}`} onClick={() => setRemoving(true)}>
             <Trash2Icon />
-          </Button>
+          </IconButton>
           <ConfirmDialog
             open={removing}
             onOpenChange={setRemoving}
@@ -421,31 +426,34 @@ function DestinationRow({
   );
 }
 
-function Destinations({ workspace }: { workspace: Workspace }) {
-  const { data, isPending, error } = useQuery(alertDestinationsQuery(workspace.id));
-  const [adding, setAdding] = useState(false);
+function Destinations({
+  workspace,
+  adding,
+  setAdding,
+}: {
+  workspace: Workspace;
+  adding: boolean;
+  setAdding: (adding: boolean) => void;
+}) {
+  const { data, isPending, error, refetch } = useQuery(alertDestinationsQuery(workspace.id));
   const [issued, setIssued] = useState<IssuedAlertDestination | null>(null);
   if (isPending) return <Skeleton className="h-40 rounded-xl" />;
   if (error) {
     return (
-      <p role="alert" className="text-sm text-destructive">
-        {errorMessage(error)}
-      </p>
+      <ErrorState
+        title="Couldn’t load the destinations"
+        error={error}
+        onRetry={() => void refetch()}
+      />
     );
   }
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      {data.length > 0 && (
         <p className="text-[13px] text-muted-foreground">
-          {data.length === 0
-            ? 'No destinations yet.'
-            : `${data.length} destination${data.length === 1 ? '' : 's'}; a destination that fails 50 times in a row is switched off and an alert says so.`}
+          {`${data.length} destination${data.length === 1 ? '' : 's'}; a destination that fails 50 times in a row is switched off and an alert says so.`}
         </p>
-        <Button size="sm" onClick={() => setAdding(true)}>
-          <PlusIcon />
-          Add a destination
-        </Button>
-      </div>
+      )}
       {data.length === 0 ? (
         <EmptyState
           icon={WebhookIcon}
@@ -473,17 +481,26 @@ function Destinations({ workspace }: { workspace: Workspace }) {
 
 export default function AlertDestinationsSettingsPage() {
   const { current } = useCurrentWorkspace();
-  if (!current) return <PageSkeleton />;
+  const [adding, setAdding] = useState(false);
+  if (!current) return <PageSkeleton width="narrow" />;
   const allowed = isWorkspaceAdmin(current.role);
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-6 p-4 sm:p-6">
+    <PageContainer width="narrow">
       <Seo title="Alert destinations" noIndex />
       <PageHeader
         title="Alert destinations"
         description={`Where the alerts of ${current.name} go beyond the console: a signed JSON webhook for a SIEM, a Slack channel. Approvals can go along.`}
+        actions={
+          allowed && (
+            <Button onClick={() => setAdding(true)}>
+              <PlusIcon />
+              Add a destination
+            </Button>
+          )
+        }
       />
       {allowed ? (
-        <Destinations key={current.id} workspace={current} />
+        <Destinations key={current.id} workspace={current} adding={adding} setAdding={setAdding} />
       ) : (
         <EmptyState
           icon={WebhookIcon}
@@ -491,6 +508,6 @@ export default function AlertDestinationsSettingsPage() {
           description="Ask an owner or admin of this workspace."
         />
       )}
-    </div>
+    </PageContainer>
   );
 }

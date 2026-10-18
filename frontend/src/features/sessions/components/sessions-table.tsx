@@ -21,13 +21,13 @@ export function SessionsTable({ rows }: { rows: SessionSummary[] }) {
           <TableRow>
             <TableHead>Run</TableHead>
             <TableHead>Status</TableHead>
-            <TableHead>Agents</TableHead>
-            <TableHead className="text-right">Nodes</TableHead>
-            <TableHead className="text-right">Turns · calls</TableHead>
-            <TableHead className="text-right">Tokens</TableHead>
-            <TableHead className="text-right">Cost</TableHead>
-            <TableHead className="text-right">Duration</TableHead>
-            <TableHead>Started</TableHead>
+            <TableHead className="hidden md:table-cell">Agents</TableHead>
+            <TableHead className="hidden text-right lg:table-cell">Nodes</TableHead>
+            <TableHead className="hidden text-right lg:table-cell">Turns · calls</TableHead>
+            <TableHead className="hidden text-right sm:table-cell">Tokens</TableHead>
+            <TableHead className="hidden text-right sm:table-cell">Cost</TableHead>
+            <TableHead className="hidden text-right md:table-cell">Duration</TableHead>
+            <TableHead className="hidden sm:table-cell">Started</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -37,6 +37,7 @@ export function SessionsTable({ rows }: { rows: SessionSummary[] }) {
                 <Link
                   to={`/app/sessions/${s.run_id}`}
                   className="block truncate font-medium underline-offset-4 group-hover:underline"
+                  title={`${s.run_id.slice(0, 8)} · ${s.graph_name}`}
                 >
                   <span className="font-mono text-xs">{s.run_id.slice(0, 8)}</span>
                   <span className="ml-2 text-muted-foreground">{s.graph_name}</span>
@@ -45,33 +46,38 @@ export function SessionsTable({ rows }: { rows: SessionSummary[] }) {
               <TableCell>
                 <StatusBadge status={s.status} />
               </TableCell>
-              <TableCell className="max-w-48 truncate">
+              <TableCell
+                className="hidden max-w-48 truncate md:table-cell"
+                title={s.agents.map((a) => a.name).join(', ')}
+              >
                 {s.agents.length === 0 ? (
                   <span className="text-muted-foreground">—</span>
                 ) : (
                   s.agents.map((a) => a.name).join(', ')
                 )}
               </TableCell>
-              <TableCell className="text-right tabular-nums">{s.nodes}</TableCell>
-              <TableCell className="text-right tabular-nums">
+              <TableCell className="hidden text-right tabular-nums lg:table-cell">
+                {s.nodes}
+              </TableCell>
+              <TableCell className="hidden text-right tabular-nums lg:table-cell">
                 {s.rollup.llm_calls} · {s.rollup.tool_calls}
                 {s.rollup.denials > 0 && (
                   <span className="text-destructive"> · {s.rollup.denials} denied</span>
                 )}
               </TableCell>
               <TableCell
-                className="text-right tabular-nums"
+                className="hidden text-right tabular-nums sm:table-cell"
                 title={`${formatTokens(s.rollup.tokens_in)} in · ${formatTokens(s.rollup.tokens_out)} out · ${formatTokens(s.rollup.tokens_cached)} cached`}
               >
                 {formatTokens(s.rollup.tokens_in + s.rollup.tokens_out)}
               </TableCell>
-              <TableCell className="text-right tabular-nums">
+              <TableCell className="hidden text-right tabular-nums sm:table-cell">
                 {formatCost(s.rollup.cost_usd)}
               </TableCell>
-              <TableCell className="text-right tabular-nums">
+              <TableCell className="hidden text-right tabular-nums md:table-cell">
                 {s.duration_ms === null ? '—' : formatDuration(s.duration_ms)}
               </TableCell>
-              <TableCell className="text-muted-foreground">
+              <TableCell className="hidden whitespace-nowrap text-muted-foreground sm:table-cell">
                 {formatRelative(s.started_at ?? s.created_at)}
               </TableCell>
             </TableRow>

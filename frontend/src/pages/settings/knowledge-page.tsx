@@ -7,13 +7,17 @@ import {
   SearchIcon,
   Trash2Icon,
   UploadIcon,
+  XIcon,
 } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useRef, useState, type RefObject } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { ErrorState } from '@/components/custom-ui/error-state';
+import { IconButton } from '@/components/custom-ui/icon-button';
 import { OptionSelect } from '@/components/custom-ui/option-select';
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { PageSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
@@ -68,8 +72,16 @@ const STATUS_LABEL: Record<DocumentStatus, string> = {
 };
 
 /** Drop files or pick them; they are sent one after another and each reports its own outcome. */
-function Uploader({ workspace, onDone }: { workspace: Workspace; onDone: () => void }) {
-  const input = useRef<HTMLInputElement>(null);
+function Uploader({
+  workspace,
+  onDone,
+  input,
+}: {
+  workspace: Workspace;
+  onDone: () => void;
+  /** The hidden file input, so the empty state can open the picker too. */
+  input: RefObject<HTMLInputElement | null>;
+}) {
   const [over, setOver] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [problems, setProblems] = useState<string[]>([]);
@@ -166,7 +178,9 @@ function DocumentRow({
     <li className="flex min-h-10 flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-[13px]">
       <FileTextIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
       <span className="min-w-0 flex-1 basis-48">
-        <span className="block truncate font-medium">{document.name}</span>
+        <span className="block truncate font-medium" title={document.name}>
+          {document.name}
+        </span>
         {document.status === 'failed' && (
           <span className="block text-xs text-destructive">{document.error}</span>
         )}
@@ -206,16 +220,14 @@ function DocumentRow({
       <span className="hidden w-24 text-right text-xs text-muted-foreground sm:block">
         {formatRelative(document.created_at)}
       </span>
-      <Button
-        variant="ghost"
-        size="icon-sm"
+      <IconButton
         className="text-muted-foreground hover:text-destructive"
-        aria-label={`Remove ${document.name}`}
+        label={`Remove ${document.name}`}
         disabled={!canDelete}
         onClick={onDelete}
       >
         <Trash2Icon />
-      </Button>
+      </IconButton>
     </li>
   );
 }
@@ -233,7 +245,13 @@ function Documents({ workspace }: { workspace: Workspace }) {
     setPage(0);
   }
   // One more than a page is asked for, to know whether a next page exists.
-  const { data: fetched, isPending } = useQuery(
+  const picker = useRef<HTMLInputElement>(null);
+  const {
+    data: fetched,
+    isPending,
+    error,
+    refetch,
+  } = useQuery(
     documentsQuery(workspace.id, {
       q: name || undefined,
       limit: PAGE_SIZE + 1,
@@ -258,7 +276,7 @@ function Documents({ workspace }: { workspace: Workspace }) {
 
   return (
     <section aria-label="Documents" className="space-y-3">
-      <Uploader workspace={workspace} onDone={() => void reload()} />
+      <Uploader workspace={workspace} onDone={() => void reload()} input={picker} />
       <Input
         type="search"
         value={q}
@@ -267,7 +285,13 @@ function Documents({ workspace }: { workspace: Workspace }) {
         className="h-8 max-w-xs text-[13px]"
         onChange={(e) => setQ(e.target.value)}
       />
-      {isPending ? (
+      {error && !fetched ? (
+        <ErrorState
+          title="Couldn’t load the documents"
+          error={error}
+          onRetry={() => void refetch()}
+        />
+      ) : isPending ? (
         <div className="space-y-2" aria-busy>
           {[0, 1, 2].map((i) => (
             <Skeleton key={i} className="h-10 w-full" />
@@ -281,6 +305,19 @@ function Documents({ workspace }: { workspace: Workspace }) {
             name
               ? 'Try fewer letters.'
               : 'Add the files your workspace works from. Agents and the planner read the passages that bear on their task.'
+          }
+          action={
+            name ? (
+              <Button variant="outline" onClick={() => setQ('')}>
+                <XIcon />
+                Clear the filter
+              </Button>
+            ) : (
+              <Button onClick={() => picker.current?.click()}>
+                <UploadIcon />
+                Choose files
+              </Button>
+            )
           }
         />
       ) : (
@@ -641,7 +678,11 @@ function SettingsForm({ workspace, stored }: { workspace: Workspace; stored: Kno
 }
 
 function Knowledge({ workspace }: { workspace: Workspace }) {
-  const { data: settings } = useQuery(knowledgeSettingsQuery(workspace.id));
+  const {
+    data: settings,
+    error: settingsError,
+    refetch: refetchSettings,
+  } = useQuery(knowledgeSettingsQuery(workspace.id));
   if (workspace.role === 'guest') {
     return (
       <EmptyState
@@ -658,6 +699,13 @@ function Knowledge({ workspace }: { workspace: Workspace }) {
       <TrySearch workspace={workspace} />
       {settings ? (
         <SettingsForm key={JSON.stringify(settings)} workspace={workspace} stored={settings} />
+      ) : settingsError ? (
+        <ErrorState
+          compact
+          title="Couldn’t load the embedding settings"
+          error={settingsError}
+          onRetry={() => void refetchSettings()}
+        />
       ) : (
         <Skeleton className="h-64 w-full rounded-lg" />
       )}
@@ -668,13 +716,17 @@ function Knowledge({ workspace }: { workspace: Workspace }) {
 export default function KnowledgeSettingsPage() {
   const { current } = useCurrentWorkspace();
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-6 p-4 sm:p-6">
+    <PageContainer width="narrow">
       <Seo title="Knowledge" noIndex />
       <PageHeader
         title="Knowledge"
         description="Documents your workspace works from. They are split into passages, and the ones that bear on a task are given to the nodes and the planner, with their source."
       />
-      {current ? <Knowledge key={current.id} workspace={current} /> : <PageSkeleton />}
-    </div>
+      {current ? (
+        <Knowledge key={current.id} workspace={current} />
+      ) : (
+        <PageSkeleton width="narrow" />
+      )}
+    </PageContainer>
   );
 }

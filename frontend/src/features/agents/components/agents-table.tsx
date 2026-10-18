@@ -1,6 +1,6 @@
 import { IdCardIcon, PencilIcon, Trash2Icon } from 'lucide-react';
 
-import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/custom-ui/icon-button';
 import {
   Table,
   TableBody,
@@ -30,12 +30,12 @@ export function AgentsTable({ agents, onOpen, onEdit, onDelete }: AgentsTablePro
         <TableHeader>
           <TableRow>
             <TableHead>Agent</TableHead>
-            <TableHead>Role</TableHead>
-            <TableHead>Model</TableHead>
-            <TableHead>Reports to</TableHead>
+            <TableHead className="hidden sm:table-cell">Role</TableHead>
+            <TableHead className="hidden 2xl:table-cell">Model</TableHead>
+            <TableHead className="hidden lg:table-cell">Reports to</TableHead>
             <TableHead>Status</TableHead>
-            <TableHead>Budget</TableHead>
-            <TableHead>Heartbeat</TableHead>
+            <TableHead className="hidden md:table-cell">Budget</TableHead>
+            <TableHead className="hidden lg:table-cell">Heartbeat</TableHead>
             <TableHead className="w-28">
               <span className="sr-only">Actions</span>
             </TableHead>
@@ -44,7 +44,7 @@ export function AgentsTable({ agents, onOpen, onEdit, onDelete }: AgentsTablePro
         <TableBody>
           {agents.map((agent) => (
             <TableRow key={agent.id}>
-              <TableCell>
+              <TableCell className="min-w-40 whitespace-normal">
                 <button
                   type="button"
                   className="text-left font-medium hover:underline"
@@ -57,51 +57,42 @@ export function AgentsTable({ agents, onOpen, onEdit, onDelete }: AgentsTablePro
                   {agent.title ? ' · ' : ''}policy v{agent.policy_version}
                 </p>
               </TableCell>
-              <TableCell>
+              <TableCell className="hidden sm:table-cell">
                 <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{agent.role}</code>
               </TableCell>
-              <TableCell className="text-muted-foreground">
+              <TableCell className="hidden text-muted-foreground 2xl:table-cell">
                 {agent.model || 'default'} · {agent.runtime}
               </TableCell>
-              <TableCell className="text-muted-foreground">
+              <TableCell className="hidden text-muted-foreground lg:table-cell">
                 {agent.reports_to ? (names.get(agent.reports_to) ?? '—') : '—'}
               </TableCell>
               <TableCell>
                 <AgentStatusBadge status={agent.status} />
               </TableCell>
-              <TableCell>
+              <TableCell className="hidden md:table-cell">
                 <BudgetProgress spent={agent.spent_tokens} budget={agent.budget_tokens} />
               </TableCell>
-              <TableCell className="text-muted-foreground">
+              <TableCell className="hidden whitespace-nowrap text-muted-foreground lg:table-cell">
                 {agent.heartbeat_at ? formatRelative(agent.heartbeat_at) : 'never'}
               </TableCell>
               <TableCell>
                 <div className="flex justify-end gap-1">
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label={`Open the card of ${agent.name}`}
+                  <IconButton
+                    label={`Open the card of ${agent.name}`}
                     onClick={() => onOpen(agent)}
                   >
                     <IdCardIcon />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label={`Edit ${agent.name}`}
-                    onClick={() => onEdit(agent)}
-                  >
+                  </IconButton>
+                  <IconButton label={`Edit ${agent.name}`} onClick={() => onEdit(agent)}>
                     <PencilIcon />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label={`Delete ${agent.name}`}
+                  </IconButton>
+                  <IconButton
+                    label={`Delete ${agent.name}`}
                     className="text-destructive"
                     onClick={() => onDelete(agent)}
                   >
                     <Trash2Icon />
-                  </Button>
+                  </IconButton>
                 </div>
               </TableCell>
             </TableRow>

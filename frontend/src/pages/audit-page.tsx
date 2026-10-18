@@ -1,8 +1,11 @@
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { ScrollTextIcon } from 'lucide-react';
+import { ScrollTextIcon, UsersIcon } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { ErrorState } from '@/components/custom-ui/error-state';
 import { PersonGlyph } from '@/components/custom-ui/issue-glyphs';
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { PageSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
@@ -11,7 +14,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { AskAuditPanel } from '@/features/audit/components/ask-audit-panel';
 import { AUDIT_PAGE_SIZE, auditPage } from '@/features/workspaces/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
-import { errorMessage } from '@/lib/api/errors';
 import { formatDateTime, formatRelative } from '@/lib/format';
 import { qk } from '@/lib/query-keys';
 import type { AuditAction, AuditEntry } from '@/schemas/audit';
@@ -93,7 +95,7 @@ function Entry({ entry }: { entry: AuditEntry }) {
 }
 
 function Log({ workspace }: { workspace: Workspace }) {
-  const { data, error, isPending, hasNextPage, fetchNextPage, isFetchingNextPage } =
+  const { data, error, isPending, hasNextPage, fetchNextPage, isFetchingNextPage, refetch } =
     useInfiniteQuery({
       queryKey: qk.audit(workspace.id),
       queryFn: ({ pageParam, signal }) => auditPage(workspace.id, pageParam, signal),
@@ -113,9 +115,11 @@ function Log({ workspace }: { workspace: Workspace }) {
   }
   if (error) {
     return (
-      <p role="alert" className="text-sm text-destructive">
-        {errorMessage(error)}
-      </p>
+      <ErrorState
+        title="Couldn’t load the audit log"
+        error={error}
+        onRetry={() => void refetch()}
+      />
     );
   }
   const entries = data.pages.flat();
@@ -125,6 +129,14 @@ function Log({ workspace }: { workspace: Workspace }) {
         icon={ScrollTextIcon}
         title="Nothing recorded yet"
         description="Changes to members, teams, the workspace credential, guardrails and labels are listed here from now on."
+        action={
+          <Button variant="outline" asChild>
+            <Link to="/app/settings/members">
+              <UsersIcon />
+              Invite a member
+            </Link>
+          </Button>
+        }
       />
     );
   }
@@ -151,10 +163,10 @@ function Log({ workspace }: { workspace: Workspace }) {
 
 function Audit() {
   const { current } = useCurrentWorkspace();
-  if (!current) return <PageSkeleton />;
+  if (!current) return <PageSkeleton width="narrow" />;
   const allowed = current.role === 'owner' || current.role === 'admin';
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-6 p-4 sm:p-6">
+    <PageContainer width="narrow">
       <PageHeader
         title="Audit log"
         description={`What the agents of ${current.name} did, asked of the record, and who changed its members, teams, credential and rules, newest first.`}
@@ -169,7 +181,7 @@ function Audit() {
           description="Ask an owner or admin of this workspace."
         />
       )}
-    </div>
+    </PageContainer>
   );
 }
 

@@ -2,11 +2,11 @@ import { useQuery } from '@tanstack/react-query';
 import { DownloadIcon, FileIcon } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 
-import { Markdown } from '@/components/custom-ui/markdown';
 import { CopyButton } from '@/components/custom-ui/copy-button';
+import { IconButton } from '@/components/custom-ui/icon-button';
+import { Markdown } from '@/components/custom-ui/markdown';
 import { StatusBadge } from '@/components/custom-ui/status-badge';
 import { displayStatus } from '@/components/custom-ui/status-meta';
-import { Button } from '@/components/ui/button';
 import { artifactsQuery, downloadArtifact } from '@/features/runs/api';
 import { CitationChips, EvidenceBadge } from '@/features/runs/components/evidence';
 import { parseCitations } from '@/features/runs/evidence';
@@ -45,14 +45,12 @@ function NodeArtifacts({ runId, nodeId }: { runId: string; nodeId: string }) {
             <FileIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
             <span className="min-w-0 flex-1 truncate font-mono text-xs">{artifact.path}</span>
             <span className="text-xs text-muted-foreground">{formatBytes(artifact.size)}</span>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={`Download ${artifact.path}`}
+            <IconButton
+              label={`Download ${artifact.path}`}
               onClick={() => downloadArtifact(artifact).catch((e) => toast.error(errorMessage(e)))}
             >
               <DownloadIcon />
-            </Button>
+            </IconButton>
           </li>
         ))}
       </ul>

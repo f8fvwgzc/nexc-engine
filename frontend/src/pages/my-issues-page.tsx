@@ -1,7 +1,8 @@
 import { useState } from 'react';
 
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { PageSkeleton } from '@/components/layout/page-skeleton';
+import { ContentSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Button } from '@/components/ui/button';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
@@ -24,7 +25,7 @@ export default function MyIssuesPage() {
   const me = useAuthStore((s) => s.user?.id);
   const [tab, setTab] = useState<Tab>('assigned');
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-5 p-4 sm:p-6">
+    <PageContainer>
       <Seo title="My issues" noIndex />
       <PageHeader
         title="My issues"
@@ -55,8 +56,8 @@ export default function MyIssuesPage() {
           person={tab === 'assigned' ? { assignee_id: me } : { creator_id: me }}
         />
       ) : (
-        <PageSkeleton />
+        <ContentSkeleton />
       )}
-    </div>
+    </PageContainer>
   );
 }

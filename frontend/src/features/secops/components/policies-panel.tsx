@@ -3,13 +3,14 @@ import { GavelIcon } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
+import { ErrorState } from '@/components/custom-ui/error-state';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
+import { ScrollRegion } from '@/components/custom-ui/scroll-region';
 import { Skeleton } from '@/components/ui/skeleton';
 import { policiesQuery } from '@/features/policies/api';
 import { DocumentDiff } from '@/features/policies/components/policy-versions';
 import { ResolvedPolicyView } from '@/features/policies/components/resolved-policy';
 import { teamsQuery } from '@/features/workspaces/api';
-import { errorMessage } from '@/lib/api/errors';
 import type { Agent } from '@/schemas/agent';
 import type { PolicyScope } from '@/schemas/policy';
 import type { SecopsOverview } from '@/schemas/secops';
@@ -24,6 +25,7 @@ function VersionDiff({ workspaceId, level }: { workspaceId: string; level: Level
     data: versions,
     isPending,
     error,
+    refetch,
   } = useQuery(
     policiesQuery(workspaceId, level.scope, level.scope === 'workspace' ? undefined : level.id),
   );
@@ -32,9 +34,12 @@ function VersionDiff({ workspaceId, level }: { workspaceId: string; level: Level
   if (isPending) return <Skeleton className="h-24 rounded-lg" />;
   if (error) {
     return (
-      <p role="alert" className="text-xs text-destructive">
-        {errorMessage(error)}
-      </p>
+      <ErrorState
+        compact
+        title="Couldn’t load the versions"
+        error={error}
+        onRetry={() => void refetch()}
+      />
     );
   }
   if (versions.length === 0) {
@@ -163,9 +168,12 @@ export function PoliciesPanel({
               </NativeSelect>
             </div>
             {picked && (
-              <div className="max-h-80 overflow-y-auto">
+              <ScrollRegion
+                label={`Effective policy of ${picked.name}`}
+                className="max-h-80 overflow-y-auto"
+              >
                 <ResolvedPolicyView workspaceId={workspaceId} agentId={picked.id} />
-              </div>
+              </ScrollRegion>
             )}
           </section>
           {admin && (

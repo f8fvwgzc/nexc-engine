@@ -157,8 +157,20 @@ export function RegistryPanel({
       }
     >
       {shown.length === 0 ? (
-        <PanelEmpty>
-          {agents.length === 0 ? 'No agents in this workspace yet.' : 'No agent matches.'}
+        <PanelEmpty
+          icon={BotIcon}
+          action={
+            agents.length === 0 && member ? (
+              <Button size="sm" onClick={() => setAdding(true)}>
+                <PlusIcon />
+                Create from a template
+              </Button>
+            ) : undefined
+          }
+        >
+          {agents.length === 0
+            ? 'No agents in this workspace yet: each starts from a role template with its policy.'
+            : 'No agent matches the filter.'}
         </PanelEmpty>
       ) : (
         <ul className="divide-y" aria-label="Agents">
@@ -178,6 +190,7 @@ export function RegistryPanel({
                     <button
                       type="button"
                       onClick={() => onOpen(agent)}
+                      title={agent.name}
                       className="truncate text-sm font-medium hover:underline focus-visible:underline focus-visible:outline-none"
                     >
                       {agent.name}

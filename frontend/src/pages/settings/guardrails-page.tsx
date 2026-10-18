@@ -1,5 +1,6 @@
 import { Suspense } from 'react';
 
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { Seo } from '@/components/seo/seo';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -7,7 +8,7 @@ import { GuardrailsCard } from '@/features/settings/components/guardrails-card';
 
 export default function GuardrailsSettingsPage() {
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-6 p-4 sm:p-6">
+    <PageContainer width="narrow">
       <Seo title="Guardrails" noIndex />
       <PageHeader
         title="Guardrails"
@@ -16,6 +17,6 @@ export default function GuardrailsSettingsPage() {
       <Suspense fallback={<Skeleton className="h-72 rounded-xl" />}>
         <GuardrailsCard />
       </Suspense>
-    </div>
+    </PageContainer>
   );
 }

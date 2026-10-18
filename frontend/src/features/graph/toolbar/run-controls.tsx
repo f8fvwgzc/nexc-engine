@@ -2,7 +2,7 @@ import { ChevronDownIcon, PlayIcon, SquareIcon } from 'lucide-react';
 import { useState } from 'react';
 
 import { AnimatedButton } from '@/components/custom-ui/animated-button';
-import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/custom-ui/icon-button';
 import { ButtonGroup } from '@/components/ui/button-group';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -46,9 +46,9 @@ export function RunControls({ graphId, disabled }: { graphId: string; disabled: 
       </AnimatedButton>
       <Popover>
         <PopoverTrigger asChild>
-          <Button size="icon-sm" disabled={disabled} aria-label="Run options">
+          <IconButton disabled={disabled} label="Run options">
             <ChevronDownIcon />
-          </Button>
+          </IconButton>
         </PopoverTrigger>
         <PopoverContent align="end" className="w-72">
           <div className="flex items-start justify-between gap-4">

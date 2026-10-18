@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from '@tanstack/react-query';
 import { FolderKanbanIcon, PlusIcon } from 'lucide-react';
-import { Suspense, useState } from 'react';
+import { Suspense, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { EmptyState } from '@/components/custom-ui/empty-state';
 import { PersonGlyph } from '@/components/custom-ui/issue-glyphs';
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { PageSkeleton } from '@/components/layout/page-skeleton';
+import { PageSkeleton, TableSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,7 +19,7 @@ import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace
 import { qk } from '@/lib/query-keys';
 import type { Workspace } from '@/schemas/workspace';
 
-function ProjectList({ workspace }: { workspace: Workspace }) {
+function ProjectList({ workspace, onCreate }: { workspace: Workspace; onCreate?: () => void }) {
   const { data: projects } = useSuspenseQuery(projectsQuery(workspace.id));
   // Guests cannot list members; a lead then shows without a name.
   const { data: members = [] } = useQuery({
@@ -31,6 +32,14 @@ function ProjectList({ workspace }: { workspace: Workspace }) {
         icon={FolderKanbanIcon}
         title="No projects yet"
         description="A project groups issues from any team around one outcome, such as a launch."
+        action={
+          onCreate && (
+            <Button onClick={onCreate}>
+              <PlusIcon />
+              Name your first project
+            </Button>
+          )
+        }
       />
     );
   }
@@ -50,11 +59,13 @@ function ProjectList({ workspace }: { workspace: Workspace }) {
             <li key={project.id}>
               <Link
                 to={`/app/projects/${project.id}`}
-                className="flex min-h-10 flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-[13px] transition-colors outline-none hover:bg-muted/60 focus-visible:bg-muted/60"
+                className="flex min-h-10 flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-[13px] transition-colors outline-none hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
               >
                 <span className="flex min-w-0 flex-1 basis-48 items-center gap-2">
                   <FolderKanbanIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                  <span className="truncate font-medium">{project.name}</span>
+                  <span className="truncate font-medium" title={project.name}>
+                    {project.name}
+                  </span>
                 </span>
                 <span className="w-24 text-muted-foreground">
                   {projectStatusLabel(project.status)}
@@ -87,6 +98,7 @@ function ProjectList({ workspace }: { workspace: Workspace }) {
 function Projects({ workspace }: { workspace: Workspace }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState('');
+  const nameRef = useRef<HTMLInputElement>(null);
   const create = useMutation({
     mutationFn: () => createProject(workspace.id, { name: name.trim() }),
     meta: { successMessage: 'Project created' },
@@ -96,7 +108,7 @@ function Projects({ workspace }: { workspace: Workspace }) {
     },
   });
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-5 p-4 sm:p-6">
+    <PageContainer>
       <PageHeader
         title="Projects"
         description={`Outcomes ${workspace.name} is working towards. Open one to see its issues.`}
@@ -110,6 +122,7 @@ function Projects({ workspace }: { workspace: Workspace }) {
           }}
         >
           <Input
+            ref={nameRef}
             value={name}
             maxLength={200}
             placeholder="New project name"
@@ -123,10 +136,13 @@ function Projects({ workspace }: { workspace: Workspace }) {
           </Button>
         </form>
       )}
-      <Suspense fallback={<PageSkeleton />}>
-        <ProjectList workspace={workspace} />
+      <Suspense fallback={<TableSkeleton rows={4} />}>
+        <ProjectList
+          workspace={workspace}
+          onCreate={workspace.role !== 'guest' ? () => nameRef.current?.focus() : undefined}
+        />
       </Suspense>
-    </div>
+    </PageContainer>
   );
 }
 

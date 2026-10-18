@@ -1,8 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
+import { HistoryIcon, UsersIcon } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
+import { EmptyState } from '@/components/custom-ui/empty-state';
+import { ErrorState } from '@/components/custom-ui/error-state';
 import { PersonGlyph } from '@/components/custom-ui/issue-glyphs';
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { Seo } from '@/components/seo/seo';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   platformEventsQuery,
@@ -10,7 +16,6 @@ import {
   type PlatformEvent,
 } from '@/features/platform/api';
 import { PLATFORM_PAGE_SIZE, usePlatformPage } from '@/features/platform/paged-list';
-import { errorMessage } from '@/lib/api/errors';
 import { formatDateTime, formatRelative } from '@/lib/format';
 
 /** What the administrator did, to be followed by the entry's subject. */
@@ -52,10 +57,10 @@ function Entry({ event }: { event: PlatformEvent }) {
 
 export default function PlatformActivityPage() {
   const { page, search, controls } = usePlatformPage('Search the log…');
-  const { data, isPending, error } = useQuery(platformEventsQuery(page));
+  const { data, isPending, error, refetch } = useQuery(platformEventsQuery(page));
   const rows = data?.slice(0, PLATFORM_PAGE_SIZE) ?? [];
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-5 p-4 sm:p-6">
+    <PageContainer width="narrow">
       <Seo title="Activity" noIndex />
       <PageHeader
         title="Activity"
@@ -63,18 +68,28 @@ export default function PlatformActivityPage() {
       />
       {search}
       {error ? (
-        <p role="alert" className="text-sm text-destructive">
-          {errorMessage(error)}
-        </p>
+        <ErrorState title="Couldn’t load the log" error={error} onRetry={() => void refetch()} />
       ) : isPending ? (
         <Skeleton className="h-64 w-full rounded-lg" />
+      ) : rows.length === 0 && !page.q ? (
+        <EmptyState
+          icon={HistoryIcon}
+          title="Nothing done from the console yet"
+          description="Role changes, suspensions, owners assigned and accounts erased are logged here as they happen."
+          action={
+            <Button variant="outline" asChild>
+              <Link to="/app/platform/users">
+                <UsersIcon />
+                Open Accounts
+              </Link>
+            </Button>
+          }
+        />
       ) : (
         <ul className="divide-y overflow-hidden rounded-lg border">
           {rows.length === 0 && (
             <li className="px-3 py-6 text-center text-[13px] text-muted-foreground">
-              {page.q
-                ? 'Nothing in the log matches.'
-                : 'Nothing has been done from the console yet.'}
+              Nothing in the log matches.
             </li>
           )}
           {rows.map((event) => (
@@ -83,6 +98,6 @@ export default function PlatformActivityPage() {
         </ul>
       )}
       {controls(data?.length ?? 0)}
-    </div>
+    </PageContainer>
   );
 }

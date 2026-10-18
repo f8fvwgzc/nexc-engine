@@ -1,7 +1,7 @@
 import { XIcon } from 'lucide-react';
 
+import { IconButton } from '@/components/custom-ui/icon-button';
 import { NodeKindIcon } from '@/components/custom-ui/node-kind-icon';
-import { Button } from '@/components/ui/button';
 import {
   Sheet,
   SheetContent,
@@ -91,9 +91,9 @@ export function NodePanel({ node, onDelete }: NodePanelProps) {
         <h2 className="min-w-0 text-sm font-semibold">
           <PanelTitle node={node} />
         </h2>
-        <Button variant="ghost" size="icon-sm" aria-label="Close inspector" onClick={close}>
+        <IconButton label="Close inspector" onClick={close}>
           <XIcon />
-        </Button>
+        </IconButton>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         <PanelBody key={node.id} node={node} onDelete={() => onDelete(node.id)} />

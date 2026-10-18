@@ -53,7 +53,28 @@ export function Panel({
   );
 }
 
-/** A quiet line for an empty panel. */
-export function PanelEmpty({ children }: { children: ReactNode }) {
-  return <p className="px-1 py-6 text-center text-xs text-muted-foreground">{children}</p>;
+/**
+ * What an empty panel says: one sentence, under the panel's own icon when it is given one, and
+ * the next step when there is one. The panel's title already names what is missing.
+ */
+export function PanelEmpty({
+  children,
+  icon: Icon,
+  action,
+}: {
+  children: ReactNode;
+  icon?: LucideIcon;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-2 px-3 py-6 text-center">
+      {Icon && (
+        <span className="flex size-8 items-center justify-center rounded-lg bg-brand/10 text-brand">
+          <Icon className="size-4" aria-hidden />
+        </span>
+      )}
+      <p className="max-w-xs text-xs text-pretty text-muted-foreground">{children}</p>
+      {action}
+    </div>
+  );
 }

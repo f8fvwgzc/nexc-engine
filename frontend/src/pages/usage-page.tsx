@@ -2,17 +2,23 @@ import { useSuspenseQuery } from '@tanstack/react-query';
 import {
   ArrowDownToLineIcon,
   ArrowUpFromLineIcon,
+  ChartColumnIcon,
   CoinsIcon,
+  NetworkIcon,
   PhoneCallIcon,
   ScissorsIcon,
 } from 'lucide-react';
 import { Suspense, useState, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 
+import { EmptyState } from '@/components/custom-ui/empty-state';
 import { OptionSelect } from '@/components/custom-ui/option-select';
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { StatTile } from '@/components/custom-ui/stat-tile';
-import { PageSkeleton } from '@/components/layout/page-skeleton';
+import { ContentSkeleton, PageSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
+import { Button } from '@/components/ui/button';
 import {
   Table,
   TableBody,
@@ -123,6 +129,23 @@ function Breakdown({
 function Report({ workspace, days }: { workspace: Workspace; days: number }) {
   const { data: report } = useSuspenseQuery(usageQuery(workspace.id, days));
   const { totals } = report;
+  if (totals.calls === 0) {
+    return (
+      <EmptyState
+        icon={ChartColumnIcon}
+        title={`No model calls in the last ${days} days`}
+        description="Planning a graph, running its nodes, the assistant and the memory all call a model; what they spend shows here by member, model, purpose and day."
+        action={
+          <Button asChild>
+            <Link to="/app">
+              <NetworkIcon />
+              Open a graph to run
+            </Link>
+          </Button>
+        }
+      />
+    );
+  }
   return (
     <div className="space-y-6">
       {report.scope === 'own' && (
@@ -130,7 +153,7 @@ function Report({ workspace, days }: { workspace: Workspace; days: number }) {
           This is your own usage in {workspace.name}. Workspace admins see every member.
         </p>
       )}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <StatTile label="LLM calls" value={formatInteger(totals.calls)} icon={PhoneCallIcon} />
         <StatTile
           label="Tokens in"
@@ -211,9 +234,9 @@ function Report({ workspace, days }: { workspace: Workspace; days: number }) {
 function Usage() {
   const { current } = useCurrentWorkspace();
   const [days, setDays] = useState('30');
-  if (!current) return <PageSkeleton />;
+  if (!current) return <PageSkeleton width="narrow" />;
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-6 p-4 sm:p-6">
+    <PageContainer width="narrow">
       <PageHeader
         title="Usage"
         description={`Tokens spent in ${current.name}: by whom, on which model, for what, and on whose account.`}
@@ -227,10 +250,10 @@ function Usage() {
           />
         }
       />
-      <Suspense fallback={<PageSkeleton />}>
+      <Suspense fallback={<ContentSkeleton />}>
         <Report key={`${current.id}:${days}`} workspace={current} days={Number(days)} />
       </Suspense>
-    </div>
+    </PageContainer>
   );
 }
 

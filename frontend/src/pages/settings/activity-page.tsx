@@ -4,16 +4,17 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { ErrorState } from '@/components/custom-ui/error-state';
 import { PersonGlyph } from '@/components/custom-ui/issue-glyphs';
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { PageSkeleton } from '@/components/layout/page-skeleton';
+import { ContentSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { timelineDaysQuery, timelineQuery } from '@/features/insight/api';
 import { DaySummaryCard } from '@/features/insight/day-summary';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
-import { errorMessage } from '@/lib/api/errors';
 import type { TimelineEntry } from '@/schemas/insight';
 import { isWorkspaceAdmin, type Workspace } from '@/schemas/workspace';
 
@@ -77,7 +78,7 @@ function href(entry: TimelineEntry): string | null {
 }
 
 function Day({ workspace, day }: { workspace: Workspace; day: string }) {
-  const { data: entries, isPending, error } = useQuery(timelineQuery(workspace.id, day));
+  const { data: entries, isPending, error, refetch } = useQuery(timelineQuery(workspace.id, day));
   if (isPending) {
     return (
       <div className="space-y-2" aria-busy>
@@ -89,9 +90,7 @@ function Day({ workspace, day }: { workspace: Workspace; day: string }) {
   }
   if (error) {
     return (
-      <p role="alert" className="text-sm text-destructive">
-        {errorMessage(error)}
-      </p>
+      <ErrorState title="Couldn’t load that day" error={error} onRetry={() => void refetch()} />
     );
   }
   if (entries.length === 0) {
@@ -166,7 +165,7 @@ function Activity({ workspace }: { workspace: Workspace }) {
           />
         </label>
         {days.length > 0 && (
-          <ul aria-label="Busy days in the last 30" className="flex flex-wrap items-end gap-1">
+          <ul aria-label="Busy days in the last 30" className="flex flex-wrap items-end">
             {days
               .slice()
               .reverse()
@@ -177,10 +176,11 @@ function Activity({ workspace }: { workspace: Workspace }) {
                     aria-pressed={d.day === day}
                     title={`${dayFormat.format(new Date(`${d.day}T00:00:00Z`))}: ${d.events} events`}
                     onClick={() => setDay(d.day)}
-                    className="flex h-10 w-4 items-end rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring aria-pressed:[&>span]:bg-primary"
+                    className="flex h-10 w-[1.6rem] items-end justify-center rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring aria-pressed:[&>span]:bg-primary"
                   >
+                    {/* A 24 px wide target around a narrow bar. */}
                     <span
-                      className="w-full rounded-sm bg-muted-foreground/40"
+                      className="w-3 rounded-sm bg-muted-foreground/40"
                       style={{ height: `${Math.max(12, (d.events / most) * 100)}%` }}
                     />
                     <span className="sr-only">
@@ -200,14 +200,14 @@ function Activity({ workspace }: { workspace: Workspace }) {
 export default function ActivityPage() {
   const { current } = useCurrentWorkspace();
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-6 p-4 sm:p-6">
+    <PageContainer width="narrow">
       <Seo title="Activity" noIndex />
       <PageHeader
         title="Activity"
         description="What happened in the workspace on a day: people, teams, issues, graphs, runs, documents and memory, newest first, with a summary the workspace's AI writes when you ask."
       />
       {!current ? (
-        <PageSkeleton />
+        <ContentSkeleton />
       ) : isWorkspaceAdmin(current.role) ? (
         <Activity key={current.id} workspace={current} />
       ) : (
@@ -217,6 +217,6 @@ export default function ActivityPage() {
           description="It shows every team's work. Ask an owner or admin."
         />
       )}
-    </div>
+    </PageContainer>
   );
 }

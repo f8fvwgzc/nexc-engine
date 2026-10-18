@@ -17,11 +17,17 @@ import { formatInteger, formatRelative } from '@/lib/format';
 import { SEVERITY_META } from '@/schemas/policy';
 import type { SecopsOverview } from '@/schemas/secops';
 
+/**
+ * Three to a row, and all nine in one only where the console is wide enough to give each its
+ * label in full (the grid follows the console's width, not the window's: the sidebar takes some).
+ */
+const GRID = 'grid grid-cols-2 gap-3 @xl:grid-cols-3 @[84rem]:grid-cols-9 [&>*]:min-w-0';
+
 /** The nine numbers at the top of the console. */
 export function SecopsStats({ overview }: { overview: SecopsOverview | undefined }) {
   if (!overview) {
     return (
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-9" aria-busy>
+      <div className={GRID} aria-busy>
         {Array.from({ length: 9 }, (_, i) => (
           <Skeleton key={i} className="h-[5.5rem] rounded-xl" />
         ))}
@@ -45,7 +51,7 @@ export function SecopsStats({ overview }: { overview: SecopsOverview | undefined
     agents.over_budget > 0 ? `${agents.over_budget} over budget` : null,
   ].filter(Boolean);
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-9">
+    <div className={GRID}>
       <StatTile
         label="Agents"
         value={formatInteger(agents.active)}

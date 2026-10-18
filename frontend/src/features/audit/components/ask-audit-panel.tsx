@@ -54,7 +54,7 @@ function ModeBadge({ answer }: { answer: AuditAnswer }) {
         data-mode="deterministic"
         style={{ '--badge-color': 'var(--status-succeeded)' } as React.CSSProperties}
         className={cn(
-          'inline-flex h-5 items-center gap-1.5 rounded-full px-2 text-[11px] font-medium text-[var(--badge-color)]',
+          'inline-flex h-5 items-center gap-1.5 rounded-full px-2 text-[11px] font-medium text-badge',
           'bg-[color-mix(in_oklch,var(--badge-color)_12%,transparent)]',
         )}
       >
@@ -246,9 +246,11 @@ export function AskAuditPanel({
     inputRef.current?.focus();
   };
 
+  // Compact, it sits in a console panel that is already the "Ask the audit" region.
+  const Frame = compact ? 'div' : 'section';
   return (
-    <section
-      aria-label="Ask the audit"
+    <Frame
+      aria-label={compact ? undefined : 'Ask the audit'}
       className={cn('space-y-3 rounded-lg border p-4', compact && 'p-3', className)}
     >
       {!compact && (
@@ -323,6 +325,6 @@ export function AskAuditPanel({
           )}
         </div>
       )}
-    </section>
+    </Frame>
   );
 }

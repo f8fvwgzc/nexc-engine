@@ -76,7 +76,7 @@ function RecentSpans({ card }: { card: AgentCard }) {
           <li key={span.id}>
             <Link
               to={`/app/runs/${span.run_id}?span=${span.id}`}
-              className="flex items-center gap-2 px-3 py-1.5 text-xs outline-none hover:bg-muted/60 focus-visible:bg-muted/60"
+              className="flex items-center gap-2 px-3 py-1.5 text-xs outline-none hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
             >
               <Icon
                 className={cn(
@@ -143,7 +143,7 @@ function EvidenceSummary({ card }: { card: AgentCard }) {
               <li key={`${output.run_id}-${output.node_id}`}>
                 <Link
                   to={`/app/runs/${output.run_id}`}
-                  className="flex items-center gap-2 px-3 py-1.5 outline-none hover:bg-muted/60 focus-visible:bg-muted/60"
+                  className="flex items-center gap-2 px-3 py-1.5 outline-none hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
                 >
                   <span
                     data-verdict={output.verdict}

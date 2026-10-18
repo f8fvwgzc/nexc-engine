@@ -2,6 +2,7 @@ import { PlusIcon, ShapesIcon, Trash2Icon } from 'lucide-react';
 import { useState } from 'react';
 
 import { AnimatedButton } from '@/components/custom-ui/animated-button';
+import { IconButton } from '@/components/custom-ui/icon-button';
 import { NODE_TYPE_ICON_NAMES } from '@/components/custom-ui/node-kind-meta';
 import { Button } from '@/components/ui/button';
 import {
@@ -142,17 +143,15 @@ function OntologyEditor({ graph, onDone }: { graph: Graph; onDone: () => void })
                         </option>
                       ))}
                     </select>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
+                    <IconButton
                       className="shrink-0 text-destructive"
                       disabled={used > 0}
-                      aria-label={`Remove ${t.label || 'type'}`}
+                      label={`Remove ${t.label || 'type'}`}
                       title={used > 0 ? `Used by ${used} node(s)` : 'Remove'}
                       onClick={() => setNodeTypes((list) => list.filter((x) => x.uid !== t.uid))}
                     >
                       <Trash2Icon />
-                    </Button>
+                    </IconButton>
                   </div>
                   <Input
                     value={t.description}
@@ -233,19 +232,17 @@ function OntologyEditor({ graph, onDone }: { graph: Graph; onDone: () => void })
                       checked={t.blocking}
                       onChange={(blocking) => patchRelation(t.uid, { blocking })}
                     />
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
+                    <IconButton
                       className="shrink-0 text-destructive"
                       disabled={used > 0}
-                      aria-label={`Remove ${t.label || 'relation'}`}
+                      label={`Remove ${t.label || 'relation'}`}
                       title={used > 0 ? `Used by ${used} edge(s)` : 'Remove'}
                       onClick={() =>
                         setRelationTypes((list) => list.filter((x) => x.uid !== t.uid))
                       }
                     >
                       <Trash2Icon />
-                    </Button>
+                    </IconButton>
                   </div>
                   <div className="flex items-center gap-2">
                     <Input

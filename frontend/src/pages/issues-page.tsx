@@ -8,13 +8,16 @@ import {
   NetworkIcon,
   PlusIcon,
   Trash2Icon,
+  UsersIcon,
   WorkflowIcon,
 } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { ErrorState } from '@/components/custom-ui/error-state';
+import { IconButton } from '@/components/custom-ui/icon-button';
 import {
   LabelChip,
   PersonGlyph,
@@ -22,6 +25,7 @@ import {
   StateGlyph,
 } from '@/components/custom-ui/issue-glyphs';
 import { OptionSelect } from '@/components/custom-ui/option-select';
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { PageSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
@@ -330,15 +334,13 @@ function IssueDialog({
               Plan as graph
             </Button>
           )}
-          <Button
-            variant="ghost"
-            size="icon-sm"
+          <IconButton
             className="text-muted-foreground hover:text-destructive"
-            aria-label={`Delete ${issue.identifier}`}
+            label={`Delete ${issue.identifier}`}
             onClick={() => setConfirming(true)}
           >
             <Trash2Icon />
-          </Button>
+          </IconButton>
         </DialogHeader>
         <div className="grid min-h-0 flex-1 overflow-y-auto md:grid-cols-[minmax(0,1fr)_15rem] md:overflow-hidden">
           <div className="min-w-0 space-y-4 p-5 md:overflow-y-auto">
@@ -523,14 +525,14 @@ function IssueRow({ issue, onOpen }: { issue: Issue; onOpen: () => void }) {
       <button
         type="button"
         onClick={onOpen}
-        className="flex h-9 w-full items-center gap-2.5 px-3 text-left text-[13px] transition-colors outline-none hover:bg-muted/60 focus-visible:bg-muted/60"
+        className="flex h-9 w-full items-center gap-2.5 px-3 text-left text-[13px] transition-colors outline-none hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
       >
         <PriorityGlyph priority={issue.priority} />
-        <span className="w-16 shrink-0 font-mono text-xs text-muted-foreground">
+        <span className="hidden w-16 shrink-0 font-mono text-xs text-muted-foreground sm:block">
           {issue.identifier}
         </span>
         <StateGlyph category={issue.state.category} color={issue.state.color} />
-        <span className="min-w-0 flex-1 truncate">
+        <span className="min-w-0 flex-1 truncate" title={`${issue.identifier} ${issue.title}`}>
           {issue.title}
           {issue.parent && (
             <span className="ml-2 text-xs text-muted-foreground">
@@ -735,7 +737,8 @@ export function IssueExplorer({
   const [openId, setOpenId] = useState<string | null>(() => params.get('issue'));
   const [view, setView] = useState<View>(rememberedView);
   const debouncedQ = useDebouncedValue(q.trim(), 300);
-  const { data: teams = [] } = useQuery(teamsQuery(workspace.id));
+  const teamsResult = useQuery(teamsQuery(workspace.id));
+  const teams = teamsResult.data ?? [];
   const { data: labels = [] } = useQuery(labelsQuery(workspace.id));
   // A label deleted elsewhere stops filtering.
   const activeLabel = labels.some((l) => l.id === labelId) ? labelId : ALL;
@@ -745,7 +748,7 @@ export function IssueExplorer({
     enabled: teamId !== ALL,
   });
   const activeCycle = teamId !== ALL && teamCycles.some((c) => c.id === cycleId) ? cycleId : ALL;
-  const { data: issues, isPending } = useQuery(
+  const issuesResult = useQuery(
     issuesQuery(workspace.id, {
       team_id: teamId === ALL ? undefined : teamId,
       project_id: project?.id,
@@ -757,6 +760,14 @@ export function IssueExplorer({
       q: debouncedQ || undefined,
     }),
   );
+  const issues = issuesResult.data;
+  const isPending = issuesResult.isPending || teamsResult.isPending;
+  // A list that could not be read is not an empty one.
+  const loadError = teamsResult.error ?? issuesResult.error;
+  const retry = () => {
+    if (teamsResult.error) void teamsResult.refetch();
+    if (issuesResult.error) void issuesResult.refetch();
+  };
   const listed = issues?.find((i) => i.id === openId);
   // The opened issue is read again on its own: the list may be minutes old, and a linked
   // issue may be closed or filtered out of it. The list's copy shows until the fresh one lands.
@@ -826,20 +837,14 @@ export function IssueExplorer({
     >
       <PlusIcon />
       New issue
-      <kbd className="ml-1 rounded border border-primary-foreground/30 px-1 font-mono text-[10px]">
+      <kbd className="ml-1 hidden rounded border border-primary-foreground/30 px-1 font-mono text-[10px] sm:inline">
         C
       </kbd>
     </Button>
   );
 
   return (
-    <div
-      className={
-        project || person
-          ? 'w-full space-y-4'
-          : `mx-auto w-full space-y-5 p-4 sm:p-6 ${view === 'board' ? 'max-w-none' : 'max-w-5xl'}`
-      }
-    >
+    <ExplorerFrame embedded={Boolean(project || person)} board={view === 'board'}>
       {!project && !person && (
         <PageHeader
           title="Issues"
@@ -910,33 +915,41 @@ export function IssueExplorer({
         </label>
         {(project || person) && newIssueButton}
         <div role="group" aria-label="View" className="flex rounded-md border p-0.5">
-          <Button
+          <IconButton
             variant={view === 'list' ? 'secondary' : 'ghost'}
-            size="icon-sm"
-            aria-label="List view"
+            label="List view"
             aria-pressed={view === 'list'}
             onClick={() => chooseView('list')}
           >
             <ListIcon />
-          </Button>
-          <Button
+          </IconButton>
+          <IconButton
             variant={view === 'board' ? 'secondary' : 'ghost'}
-            size="icon-sm"
-            aria-label="Board view"
+            label="Board view"
             aria-pressed={view === 'board'}
             onClick={() => chooseView('board')}
           >
             <KanbanIcon />
-          </Button>
+          </IconButton>
         </div>
       </div>
-      {isPending ? (
+      {loadError ? (
+        <ErrorState title="Couldn’t load the issues" error={loadError} onRetry={retry} />
+      ) : isPending ? (
         <IssueListSkeleton />
       ) : teams.length === 0 ? (
         <EmptyState
           icon={CircleDotIcon}
           title="Create a team first"
           description="Issues belong to a team. Add one under Teams, then come back."
+          action={
+            <Button asChild>
+              <Link to="/app/settings/teams">
+                <UsersIcon />
+                Open Teams
+              </Link>
+            </Button>
+          }
         />
       ) : view === 'board' && boardTeam ? (
         <IssueBoard
@@ -989,8 +1002,23 @@ export function IssueExplorer({
           onClose={closeIssue}
         />
       )}
-    </div>
+    </ExplorerFrame>
   );
+}
+
+/** The explorer's frame: the page's own, or a plain column inside another page. */
+function ExplorerFrame({
+  embedded,
+  board,
+  children,
+}: {
+  embedded: boolean;
+  board: boolean;
+  children: ReactNode;
+}) {
+  if (embedded) return <div className="w-full space-y-4">{children}</div>;
+  // A board's columns may take the whole width.
+  return <PageContainer className={board ? 'max-w-none' : undefined}>{children}</PageContainer>;
 }
 
 export default function IssuesPage() {

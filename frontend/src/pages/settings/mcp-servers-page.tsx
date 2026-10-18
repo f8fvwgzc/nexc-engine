@@ -8,9 +8,12 @@ import { toast } from 'sonner';
 import { AnimatedButton } from '@/components/custom-ui/animated-button';
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { ErrorState } from '@/components/custom-ui/error-state';
 import { FormField } from '@/components/custom-ui/form-field';
 import { OptionSelect } from '@/components/custom-ui/option-select';
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
+import { IconButton } from '@/components/custom-ui/icon-button';
 import { PageSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Badge } from '@/components/ui/badge';
@@ -267,14 +270,9 @@ function ServerRow({ server, workspace }: { server: McpServer; workspace: Worksp
             <RefreshCwIcon />
             Check
           </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => setRemoving(true)}
-            aria-label={`Remove ${server.name}`}
-          >
+          <IconButton label={`Remove ${server.name}`} onClick={() => setRemoving(true)}>
             <Trash2Icon />
-          </Button>
+          </IconButton>
           <ConfirmDialog
             open={removing}
             onOpenChange={setRemoving}
@@ -290,33 +288,30 @@ function ServerRow({ server, workspace }: { server: McpServer; workspace: Worksp
   );
 }
 
-function Servers({ workspace }: { workspace: Workspace }) {
-  const { data: servers, isPending, error } = useQuery(mcpServersQuery(workspace.id));
-  const [adding, setAdding] = useState(false);
+function Servers({
+  workspace,
+  adding,
+  setAdding,
+}: {
+  workspace: Workspace;
+  adding: boolean;
+  setAdding: (adding: boolean) => void;
+}) {
+  const { data: servers, isPending, error, refetch } = useQuery(mcpServersQuery(workspace.id));
   const admin = isWorkspaceAdmin(workspace.role);
   if (isPending) return <Skeleton className="h-40 rounded-xl" />;
   if (error) {
     return (
-      <p role="alert" className="text-sm text-destructive">
-        {errorMessage(error)}
-      </p>
+      <ErrorState title="Couldn’t load the servers" error={error} onRetry={() => void refetch()} />
     );
   }
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      {servers.length > 0 && (
         <p className="text-[13px] text-muted-foreground">
-          {servers.length === 0
-            ? 'No servers registered.'
-            : `${servers.length} server${servers.length === 1 ? '' : 's'}; agents call their tools through the gateway, under the policy.`}
+          {`${servers.length} server${servers.length === 1 ? '' : 's'}; agents call their tools through the gateway, under the policy.`}
         </p>
-        {admin && (
-          <Button size="sm" onClick={() => setAdding(true)}>
-            <PlusIcon />
-            Register a server
-          </Button>
-        )}
-      </div>
+      )}
       {servers.length === 0 ? (
         <EmptyState
           icon={PlugZapIcon}
@@ -342,15 +337,24 @@ function Servers({ workspace }: { workspace: Workspace }) {
 
 export default function McpServersSettingsPage() {
   const { current } = useCurrentWorkspace();
-  if (!current) return <PageSkeleton />;
+  const [adding, setAdding] = useState(false);
+  if (!current) return <PageSkeleton width="narrow" />;
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-6 p-4 sm:p-6">
+    <PageContainer width="narrow">
       <Seo title="MCP servers" noIndex />
       <PageHeader
         title="MCP servers"
         description={`The tools gateway of ${current.name}: servers the backend calls on an agent's behalf. The agent runtime never reaches them; a call goes up the stream, is decided here and comes back as a result.`}
+        actions={
+          isWorkspaceAdmin(current.role) && (
+            <Button onClick={() => setAdding(true)}>
+              <PlusIcon />
+              Register a server
+            </Button>
+          )
+        }
       />
-      <Servers workspace={current} />
-    </div>
+      <Servers key={current.id} workspace={current} adding={adding} setAdding={setAdding} />
+    </PageContainer>
   );
 }

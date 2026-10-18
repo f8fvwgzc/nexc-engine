@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { RefreshCwIcon, ShieldAlertIcon, ShieldCheckIcon, ShieldIcon } from 'lucide-react';
 
-import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/custom-ui/icon-button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { errorMessage } from '@/lib/api/errors';
 
@@ -24,15 +24,13 @@ export function TraceVerification({ runId, active }: { runId: string; active: bo
   }
   if (verify.isPending) return <Skeleton className="h-6 w-48 rounded-full" />;
   const again = (
-    <Button
-      variant="ghost"
-      size="icon-sm"
-      aria-label="Verify the trace again"
+    <IconButton
+      label="Verify the trace again"
       disabled={verify.isFetching}
       onClick={() => void verify.refetch()}
     >
       <RefreshCwIcon className={verify.isFetching ? 'motion-safe:animate-spin' : undefined} />
-    </Button>
+    </IconButton>
   );
   if (verify.isError) {
     return (

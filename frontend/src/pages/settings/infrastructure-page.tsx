@@ -3,7 +3,9 @@ import { ServerIcon } from 'lucide-react';
 import { useState } from 'react';
 
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
+import { ScrollRegion } from '@/components/custom-ui/scroll-region';
 import { Seo } from '@/components/seo/seo';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -167,7 +169,7 @@ function Latency() {
       {shown.length === 0 ? (
         <p className="text-[13px] text-muted-foreground">Nothing answered in the window yet.</p>
       ) : (
-        <div className="overflow-x-auto">
+        <ScrollRegion label="Latency per endpoint" className="overflow-x-auto">
           <table className="w-full text-[13px]">
             <thead className="text-left text-muted-foreground">
               <tr>
@@ -197,7 +199,7 @@ function Latency() {
               {hidden} more endpoint{hidden === 1 ? '' : 's'} with a lower p99.
             </p>
           )}
-        </div>
+        </ScrollRegion>
       )}
     </section>
   );
@@ -265,7 +267,7 @@ function Check() {
 export default function InfrastructurePage() {
   const admin = useAuthStore((s) => s.user?.role === 'admin');
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-6 p-4 sm:p-6">
+    <PageContainer width="narrow">
       <Seo title="Infrastructure" noIndex />
       <PageHeader
         title="Infrastructure"
@@ -284,6 +286,6 @@ export default function InfrastructurePage() {
           description="This is about the installation, not about one workspace."
         />
       )}
-    </div>
+    </PageContainer>
   );
 }

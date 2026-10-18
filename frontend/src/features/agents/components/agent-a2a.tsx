@@ -58,7 +58,7 @@ function TaskRow({ task }: { task: A2aTask }) {
     <li>
       <Link
         to={`/app/runs/${task.run_id}`}
-        className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-1.5 text-xs outline-none hover:bg-muted/60 focus-visible:bg-muted/60"
+        className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-1.5 text-xs outline-none hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
       >
         <span className="min-w-0 flex-1 truncate" title={task.title}>
           {task.title}

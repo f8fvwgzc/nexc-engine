@@ -4,6 +4,7 @@ import { useId, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { ErrorState } from '@/components/custom-ui/error-state';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
@@ -17,7 +18,6 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { SPAN_KIND_META } from '@/features/runs/span-kinds';
-import { errorMessage } from '@/lib/api/errors';
 import { durationBetween, formatDateTime, formatDuration } from '@/lib/format';
 import { qk } from '@/lib/query-keys';
 import { cn } from '@/lib/utils';
@@ -207,9 +207,11 @@ export function TraceExplorer({ workspaceId, agents }: TraceExplorerProps) {
       {query.isPending ? (
         <Skeleton className="h-48 rounded-xl" />
       ) : query.error ? (
-        <p role="alert" className="text-sm text-destructive">
-          {errorMessage(query.error)}
-        </p>
+        <ErrorState
+          title="Couldn’t load the spans"
+          error={query.error}
+          onRetry={() => void query.refetch()}
+        />
       ) : spans.length === 0 ? (
         <EmptyState
           icon={WaypointsIcon}

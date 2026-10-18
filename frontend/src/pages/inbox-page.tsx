@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   CheckCheckIcon,
   CheckIcon,
+  CircleDotIcon,
   InboxIcon,
   SirenIcon,
   UserCheckIcon,
@@ -13,7 +14,9 @@ import { toast } from 'sonner';
 
 import { AnimatedButton } from '@/components/custom-ui/animated-button';
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { ErrorState } from '@/components/custom-ui/error-state';
 import { PersonGlyph } from '@/components/custom-ui/issue-glyphs';
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { PageSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
@@ -50,12 +53,12 @@ const VERB: Record<'assigned' | 'comment' | 'state' | 'due', string> = {
 };
 
 const ROW =
-  'flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] transition-colors outline-none hover:bg-muted/60 focus-visible:bg-muted/60';
+  'flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] transition-colors outline-none hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset';
 
 function Unread({ read }: { read: boolean }) {
   return (
     <span
-      aria-label={read ? undefined : 'Unread'}
+      {...(read ? { 'aria-hidden': true } : { role: 'img', 'aria-label': 'Unread' })}
       className={`size-1.5 shrink-0 rounded-full ${read ? 'bg-transparent' : 'bg-primary'}`}
     />
   );
@@ -68,7 +71,10 @@ function IssueEntry({ n, onOpen }: { n: Notification; onOpen: (n: Notification) 
     <button type="button" onClick={() => onOpen(n)} className={ROW}>
       <Unread read={read} />
       <PersonGlyph name={n.kind === 'due' ? 'Reminder' : n.actor?.name} />
-      <span className={`min-w-0 flex-1 truncate ${read ? 'text-muted-foreground' : ''}`}>
+      <span
+        className={`min-w-0 flex-1 truncate ${read ? 'text-muted-foreground' : ''}`}
+        title={`${n.issue.identifier} ${n.issue.title}`}
+      >
         <span className="font-medium">
           {n.kind === 'due' ? 'Your issue' : (n.actor?.name ?? 'Someone who left')}
         </span>{' '}
@@ -118,10 +124,13 @@ function ApprovalEntry({ n, workspaceId }: DecideProps) {
   const read = n.read_at !== null;
   const pending = approval.status === 'pending';
   return (
-    <div className={`${ROW} cursor-default`}>
+    // On a phone the request takes the first line and the buttons the second.
+    <div className={`${ROW} cursor-default flex-wrap`}>
       <Unread read={read} />
       <UserCheckIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-      <span className={`min-w-0 flex-1 ${read ? 'text-muted-foreground' : ''}`}>
+      <span
+        className={`min-w-0 flex-1 basis-[calc(100%-2.75rem)] sm:basis-0 ${read ? 'text-muted-foreground' : ''}`}
+      >
         <span className="font-medium">{displayPrincipal(approval.principal)}</span> asks to run{' '}
         <code className="rounded bg-muted px-1 py-0.5 text-xs">{approval.tool}</code>
         {approval.reason && (
@@ -140,7 +149,7 @@ function ApprovalEntry({ n, workspaceId }: DecideProps) {
         )}
       </span>
       {pending ? (
-        <span className="flex shrink-0 items-center gap-1">
+        <span className="ml-auto flex shrink-0 items-center gap-1">
           <AnimatedButton size="sm" loading={approve.isPending} onClick={() => approve.mutate()}>
             <CheckIcon />
             Approve
@@ -201,7 +210,10 @@ function AlertEntry({ n, onOpen }: { n: Notification; onOpen: (n: Notification) 
         style={{ color: meta.color }}
         aria-label={`${meta.label} alert`}
       />
-      <span className={`min-w-0 flex-1 truncate ${read ? 'text-muted-foreground' : ''}`}>
+      <span
+        className={`min-w-0 flex-1 truncate ${read ? 'text-muted-foreground' : ''}`}
+        title={`${alert.title} · ${displayPrincipal(alert.principal)} · ${alert.rule}`}
+      >
         <span className="font-medium">{alert.title}</span>
         <span className="text-muted-foreground">
           {' '}
@@ -218,7 +230,7 @@ function AlertEntry({ n, onOpen }: { n: Notification; onOpen: (n: Notification) 
 function List({ workspace }: { workspace: Workspace }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { data: inbox, isPending, error } = useQuery(inboxQuery(workspace.id));
+  const { data: inbox, isPending, error, refetch } = useQuery(inboxQuery(workspace.id));
   const read = useMutation({
     mutationFn: (ids?: string[]) => markInboxRead(workspace.id, ids),
     onSuccess: (next) => queryClient.setQueryData(qk.issues.inbox(workspace.id), next),
@@ -234,9 +246,7 @@ function List({ workspace }: { workspace: Workspace }) {
   }
   if (error) {
     return (
-      <p role="alert" className="text-sm text-destructive">
-        {errorMessage(error)}
-      </p>
+      <ErrorState title="Couldn’t load the inbox" error={error} onRetry={() => void refetch()} />
     );
   }
   if (inbox.length === 0) {
@@ -245,6 +255,14 @@ function List({ workspace }: { workspace: Workspace }) {
         icon={InboxIcon}
         title="Nothing for you yet"
         description="You hear here when an issue is assigned to you, when someone comments on or moves an issue you created or are assigned, when an issue of yours is due, when an agent's tool call waits for your approval, and when an agent needs a look."
+        action={
+          <Button variant="outline" asChild>
+            <Link to="/app/issues">
+              <CircleDotIcon />
+              Go to issues
+            </Link>
+          </Button>
+        }
       />
     );
   }
@@ -289,13 +307,13 @@ function Inbox() {
   const { current } = useCurrentWorkspace();
   if (!current) return <PageSkeleton />;
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-6 p-4 sm:p-6">
+    <PageContainer>
       <PageHeader
         title="Inbox"
         description={`What happened to your issues in ${current.name}, and what waits for your decision.`}
       />
       <List key={current.id} workspace={current} />
-    </div>
+    </PageContainer>
   );
 }
 

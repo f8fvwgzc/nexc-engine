@@ -1,11 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { BrainIcon, ChevronLeftIcon, ChevronRightIcon, SearchIcon } from 'lucide-react';
+import {
+  BrainIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  NetworkIcon,
+  SearchIcon,
+  XIcon,
+} from 'lucide-react';
 import { useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { ErrorState } from '@/components/custom-ui/error-state';
 import { OptionSelect } from '@/components/custom-ui/option-select';
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { TableSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
@@ -80,6 +89,8 @@ export default function MemoryPage() {
     data: fetched,
     isPending,
     isFetching,
+    error,
+    refetch,
   } = useQuery(
     memoriesQuery({
       workspace_id: workspaceId,
@@ -97,7 +108,7 @@ export default function MemoryPage() {
   const graphNames = new Map(graphs.map((g) => [g.id, g.name]));
 
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-6 p-4 sm:p-6">
+    <PageContainer width="narrow">
       <Seo title="Memory" noIndex />
       <PageHeader
         title="Memory"
@@ -160,7 +171,13 @@ export default function MemoryPage() {
           )}
         </div>
       )}
-      {isPending ? (
+      {error && !fetched ? (
+        <ErrorState
+          title="Couldn’t load the memories"
+          error={error}
+          onRetry={() => void refetch()}
+        />
+      ) : isPending ? (
         <TableSkeleton rows={4} />
       ) : memories && (memories.length > 0 || page > 0) ? (
         <div className="space-y-3">
@@ -198,8 +215,23 @@ export default function MemoryPage() {
           title={debouncedQ ? 'No matching memories' : 'No memories yet'}
           description={
             debouncedQ
-              ? 'Try different words — search is semantic, not exact.'
+              ? 'Try different words: search is semantic, not exact.'
               : 'Memories are written by agents as they run your graphs.'
+          }
+          action={
+            debouncedQ ? (
+              <Button variant="outline" onClick={() => setQ('')}>
+                <XIcon />
+                Clear the search
+              </Button>
+            ) : (
+              <Button asChild>
+                <Link to="/app">
+                  <NetworkIcon />
+                  Open a graph to run
+                </Link>
+              </Button>
+            )
           }
         />
       )}
@@ -237,6 +269,6 @@ export default function MemoryPage() {
           setOpened(null);
         }}
       />
-    </div>
+    </PageContainer>
   );
 }

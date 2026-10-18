@@ -4,6 +4,7 @@ import { Suspense } from 'react';
 import { Link } from 'react-router-dom';
 
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { PageSkeleton, TableSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
@@ -26,7 +27,7 @@ function RecentRuns() {
     .slice(0, MAX_ROWS);
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-6 p-4 sm:p-6">
+    <PageContainer>
       <PageHeader title="Runs" description="Recent executions across all of your graphs." />
       {loading && rows.length === 0 ? (
         <TableSkeleton />
@@ -44,7 +45,7 @@ function RecentRuns() {
       ) : (
         <RunsTable rows={rows} />
       )}
-    </div>
+    </PageContainer>
   );
 }
 

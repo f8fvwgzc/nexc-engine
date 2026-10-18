@@ -12,10 +12,12 @@ import { useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { ErrorState } from '@/components/custom-ui/error-state';
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { StatusBadge } from '@/components/custom-ui/status-badge';
 import { STATUS_META } from '@/components/custom-ui/status-meta';
-import { PageSkeleton } from '@/components/layout/page-skeleton';
+import { ContentSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Button } from '@/components/ui/button';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
@@ -41,7 +43,7 @@ import {
 } from '@/features/sessions/tree';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { errorMessage } from '@/lib/api/errors';
+import { ApiError } from '@/lib/api/errors';
 import { formatCost, formatDuration } from '@/lib/format';
 import { isRunActive } from '@/schemas/run';
 import { SESSION_STATUSES, type SessionStatus } from '@/schemas/session';
@@ -127,13 +129,32 @@ function SessionView({ runId }: { runId: string }) {
   );
   const selectedRow = rows.find((r) => r.key === selected) ?? rows[0] ?? null;
 
-  if (session.isPending) return <PageSkeleton />;
-  if (session.isError || !data) {
+  if (session.isPending) return <ContentSkeleton />;
+  // A missing run is not an outage: the first gets a way back, the second a retry.
+  const missing = session.error instanceof ApiError && session.error.status === 404;
+  if (session.isError && !missing) {
+    return (
+      <ErrorState
+        title="Couldn’t load this session"
+        error={session.error}
+        onRetry={() => void session.refetch()}
+      />
+    );
+  }
+  if (!data) {
     return (
       <EmptyState
         icon={ListTreeIcon}
         title="This session cannot be opened"
-        description={session.error ? errorMessage(session.error) : 'The run was not found.'}
+        description="The run was not found: it may have been deleted, or it belongs to another workspace."
+        action={
+          <Button variant="outline" asChild>
+            <Link to="/app/sessions">
+              <ArrowLeftIcon />
+              All sessions
+            </Link>
+          </Button>
+        }
       />
     );
   }
@@ -241,9 +262,12 @@ function SessionView({ runId }: { runId: string }) {
     <div className="space-y-3">
       <RowSummary row={selectedRow} />
       {trace.isError && (
-        <p role="alert" className="text-sm text-destructive">
-          {errorMessage(trace.error)}
-        </p>
+        <ErrorState
+          compact
+          title="Couldn’t load the spans"
+          error={trace.error}
+          onRetry={() => void trace.refetch()}
+        />
       )}
       <SpanTimeline
         title={selectedRow.title}
@@ -298,7 +322,7 @@ export default function SessionPage() {
   const { runId = '' } = useParams();
   const short = runId.slice(0, 8);
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-4 p-4 sm:p-6">
+    <PageContainer width="wide">
       <Seo title={`Session ${short}`} noIndex />
       <PageHeader
         title={`Session ${short}`}
@@ -313,6 +337,6 @@ export default function SessionPage() {
         }
       />
       <SessionView key={runId} runId={runId} />
-    </div>
+    </PageContainer>
   );
 }

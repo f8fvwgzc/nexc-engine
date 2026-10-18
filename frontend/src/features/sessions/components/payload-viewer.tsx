@@ -2,8 +2,8 @@ import { ChevronRightIcon, EyeOffIcon } from 'lucide-react';
 import { useId, useState } from 'react';
 
 import { CopyButton } from '@/components/custom-ui/copy-button';
+import { IconButton } from '@/components/custom-ui/icon-button';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { formatBytes } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { PAYLOAD_KIND_LABEL, type SpanPayload } from '@/schemas/session';
@@ -30,17 +30,16 @@ export function PayloadViewer({ payload }: { payload: SpanPayload }) {
       data-kind={payload.kind}
     >
       <header className="flex flex-wrap items-center gap-2 px-2 py-1.5 text-xs">
-        <Button
+        <IconButton
           type="button"
-          variant="ghost"
           size="icon-xs"
           aria-expanded={open}
           aria-controls={bodyId}
-          aria-label={open ? 'Fold the payload' : 'Unfold the payload'}
+          label={open ? 'Fold the payload' : 'Unfold the payload'}
           onClick={() => setOpen((o) => !o)}
         >
           <ChevronRightIcon className={cn('transition-transform', open && 'rotate-90')} />
-        </Button>
+        </IconButton>
         <span className="font-medium">{PAYLOAD_KIND_LABEL[payload.kind]}</span>
         <span className="text-muted-foreground tabular-nums">{formatBytes(payload.size)}</span>
         {(payload.redactions > 0 || markers > 0) && (

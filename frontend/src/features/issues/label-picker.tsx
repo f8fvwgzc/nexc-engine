@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PlusIcon, TagIcon, Trash2Icon } from 'lucide-react';
 import { useState } from 'react';
 
+import { IconButton } from '@/components/custom-ui/icon-button';
 import { LabelChip } from '@/components/custom-ui/issue-glyphs';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -94,16 +95,15 @@ export function LabelPicker({
                     <span className="truncate">{label.name}</span>
                   </label>
                   {canRemove && (
-                    <Button
-                      variant="ghost"
+                    <IconButton
                       size="icon"
                       className="size-6 text-muted-foreground hover:text-destructive"
-                      aria-label={`Delete label ${label.name} from the workspace`}
+                      label={`Delete label ${label.name} from the workspace`}
                       disabled={remove.isPending}
                       onClick={() => remove.mutate(label.id)}
                     >
                       <Trash2Icon className="size-3.5" />
-                    </Button>
+                    </IconButton>
                   )}
                 </li>
               ))}
@@ -125,16 +125,16 @@ export function LabelPicker({
                 className="h-7 text-[13px]"
                 onChange={(e) => setName(e.target.value)}
               />
-              <Button
+              <IconButton
                 type="submit"
                 size="icon"
                 variant="outline"
                 className="size-7 shrink-0"
-                aria-label="Create label"
+                label="Create label"
                 disabled={!name.trim() || add.isPending}
               >
                 <PlusIcon className="size-3.5" />
-              </Button>
+              </IconButton>
             </form>
           )}
           {(add.error ?? remove.error) && (

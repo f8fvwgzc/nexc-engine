@@ -18,23 +18,28 @@ export function MemoryList({ memories, graphNames, onOpen }: MemoryListProps) {
           <button
             type="button"
             onClick={() => onOpen(memory)}
-            className="flex min-h-10 w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] transition-colors outline-none hover:bg-muted/60 focus-visible:bg-muted/60"
+            className="flex min-h-10 w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] transition-colors outline-none hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
           >
-            <Badge variant="secondary" className="w-24 shrink-0 justify-center capitalize">
+            <Badge variant="secondary" className="shrink-0 justify-center capitalize sm:w-24">
               {memory.kind}
             </Badge>
-            <span className="min-w-0 flex-1 truncate">{memory.content}</span>
+            <span className="line-clamp-2 min-w-0 flex-1 sm:line-clamp-1" title={memory.content}>
+              {memory.content}
+            </span>
             {memory.score !== null && (
               <span className="shrink-0 text-xs font-medium text-brand tabular-nums">
                 {(memory.score * 100).toFixed(0)}%
               </span>
             )}
             {memory.graph_id && (
-              <span className="hidden max-w-40 shrink-0 truncate text-xs text-muted-foreground md:block">
+              <span
+                className="hidden max-w-40 shrink-0 truncate text-xs text-muted-foreground md:block"
+                title={graphNames.get(memory.graph_id)}
+              >
                 {graphNames.get(memory.graph_id) ?? 'graph'}
               </span>
             )}
-            <span className="w-24 shrink-0 text-right text-xs text-muted-foreground tabular-nums">
+            <span className="hidden w-24 shrink-0 text-right text-xs text-muted-foreground tabular-nums sm:block">
               {formatRelative(memory.updated_at)}
             </span>
           </button>

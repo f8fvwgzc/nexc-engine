@@ -73,7 +73,7 @@ export function SubIssues({
               <button
                 type="button"
                 onClick={() => onOpen(part.id)}
-                className="flex h-8 w-full items-center gap-2.5 px-3 text-left text-[13px] outline-none hover:bg-muted/60 focus-visible:bg-muted/60"
+                className="flex h-8 w-full items-center gap-2.5 px-3 text-left text-[13px] outline-none hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
               >
                 <StateGlyph category={part.state.category} color={part.state.color} />
                 <span className="shrink-0 font-mono text-xs text-muted-foreground">

@@ -2,9 +2,9 @@ import { ArrowRightIcon, SaveIcon, Trash2Icon, XIcon } from 'lucide-react';
 import { useState } from 'react';
 
 import { GlassCard } from '@/components/custom-ui/glass-card';
+import { IconButton } from '@/components/custom-ui/icon-button';
 import { relationLabel } from '@/components/custom-ui/node-kind-meta';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import type { Graph, GraphEdge } from '@/schemas/graph';
 import { useGraphStore } from '@/stores/graph-store';
@@ -33,9 +33,9 @@ function ReasonForm({ graphId, edge }: { graphId: string; edge: GraphEdge }) {
         placeholder="Why are these two related?"
         className="h-8 text-sm"
       />
-      <Button type="submit" size="icon-sm" disabled={!dirty || isPending} aria-label="Save reason">
+      <IconButton type="submit" disabled={!dirty || isPending} label="Save reason">
         <SaveIcon />
-      </Button>
+      </IconButton>
     </form>
   );
 }
@@ -68,24 +68,20 @@ export function EdgeInspector({
           {relationLabel(relation, edge.kind)}
           {edge.blocking ? ' · blocking' : ''}
         </Badge>
-        <Button
-          variant="ghost"
-          size="icon-sm"
+        <IconButton
           className="shrink-0 text-destructive"
-          aria-label="Delete edge"
+          label="Delete edge"
           onClick={() => onDelete(edge.id)}
         >
           <Trash2Icon />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-sm"
+        </IconButton>
+        <IconButton
           className="shrink-0"
-          aria-label="Close edge inspector"
+          label="Close edge inspector"
           onClick={() => selectEdge(null)}
         >
           <XIcon />
-        </Button>
+        </IconButton>
       </div>
       <ReasonForm key={`${edge.id}:${edge.reason}`} graphId={graph.id} edge={edge} />
     </GlassCard>

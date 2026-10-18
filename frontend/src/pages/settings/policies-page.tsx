@@ -3,6 +3,7 @@ import { GavelIcon } from 'lucide-react';
 import { useState } from 'react';
 
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { PageSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
@@ -110,10 +111,10 @@ function Policies({ workspace }: { workspace: Workspace }) {
 
 export default function PoliciesSettingsPage() {
   const { current } = useCurrentWorkspace();
-  if (!current) return <PageSkeleton />;
+  if (!current) return <PageSkeleton width="narrow" />;
   const allowed = isWorkspaceAdmin(current.role);
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-6 p-4 sm:p-6">
+    <PageContainer width="narrow">
       <Seo title="Policies" noIndex />
       <PageHeader
         title="Policies"
@@ -128,6 +129,6 @@ export default function PoliciesSettingsPage() {
           description="Ask an owner or admin of this workspace."
         />
       )}
-    </div>
+    </PageContainer>
   );
 }

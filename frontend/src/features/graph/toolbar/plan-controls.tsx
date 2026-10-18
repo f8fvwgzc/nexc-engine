@@ -2,6 +2,7 @@ import { CheckIcon, SparklesIcon, XIcon } from 'lucide-react';
 import { useState } from 'react';
 
 import { AnimatedButton } from '@/components/custom-ui/animated-button';
+import { IconButton } from '@/components/custom-ui/icon-button';
 import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -79,9 +80,9 @@ export function PlanControls({ graphId, onApplied }: PlanControlsProps) {
   }
 
   const discard = (
-    <Button variant="ghost" size="icon-sm" aria-label="Discard plan" onClick={clearPlan}>
+    <IconButton label="Discard plan" onClick={clearPlan}>
       <XIcon />
-    </Button>
+    </IconButton>
   );
 
   if (plan.status !== 'ready') {

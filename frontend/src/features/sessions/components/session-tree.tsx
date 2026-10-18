@@ -10,6 +10,7 @@ import {
 import { useRef, useState, type KeyboardEvent } from 'react';
 
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
+import { IconButton } from '@/components/custom-ui/icon-button';
 import { STATUS_META } from '@/components/custom-ui/status-meta';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -135,7 +136,8 @@ export function SessionTree({
     <div
       role="tree"
       aria-label="Session"
-      className={cn('divide-y rounded-xl border bg-card', className)}
+      // The tree's columns follow its own width (it shares the page with the span list).
+      className={cn('@container divide-y rounded-xl border bg-card', className)}
     >
       {rows.map((row, index) => {
         const Icon = row.kind === 'agent' && row.depth > 2 ? GitForkIcon : ICONS[row.kind];
@@ -170,20 +172,20 @@ export function SessionTree({
               style={{ paddingLeft: `${Math.min(row.depth, 6) * 0.9}rem` }}
             >
               {row.hasChildren ? (
-                <Button
+                <IconButton
                   type="button"
-                  variant="ghost"
                   size="icon-xs"
-                  aria-label={open ? `Fold ${row.title}` : `Unfold ${row.title}`}
+                  className="size-[1.6rem]"
+                  label={open ? `Fold ${row.title}` : `Unfold ${row.title}`}
                   onClick={(event) => {
                     event.stopPropagation();
                     onToggle(row.key);
                   }}
                 >
                   <ChevronRightIcon className={cn('transition-transform', open && 'rotate-90')} />
-                </Button>
+                </IconButton>
               ) : (
-                <span className="size-6 shrink-0" aria-hidden />
+                <span className="size-[1.6rem] shrink-0" aria-hidden />
               )}
               <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
               <StatusDot status={row.status} />
@@ -191,24 +193,27 @@ export function SessionTree({
                 <span className="block truncate font-medium" title={row.title}>
                   {row.title}
                 </span>
-                <span className="block truncate text-[11px] text-muted-foreground">
+                <span
+                  className="block truncate text-[11px] text-muted-foreground"
+                  title={row.error ? `${row.subtitle} · ${row.error}` : row.subtitle}
+                >
                   {row.subtitle}
                   {row.error ? ` · ${row.error}` : ''}
                 </span>
               </span>
             </div>
             <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground tabular-nums">
-              <span className="hidden lg:inline" title="Tokens in, out and cached">
+              <span className="hidden @2xl:inline" title="Tokens in, out and cached">
                 {tokensLabel(row.rollup)}
               </span>
-              <span className="hidden sm:inline" title="Model turns · tool calls · denials">
+              <span className="hidden @lg:inline" title="Model turns · tool calls · denials">
                 {row.rollup.llm_calls}t · {row.rollup.tool_calls}c
                 {row.rollup.denials > 0 ? ` · ${row.rollup.denials}d` : ''}
               </span>
-              <span className="w-14 text-right" title="Cost">
+              <span className="hidden w-14 text-right @sm:block" title="Cost">
                 {formatCost(row.rollup.cost_usd)}
               </span>
-              <span className="w-14 text-right" title="Duration">
+              <span className="hidden w-14 text-right @md:block" title="Duration">
                 {row.durationMs === null ? '—' : formatDuration(row.durationMs)}
               </span>
               {stoppable && (
@@ -218,6 +223,7 @@ export function SessionTree({
                       type="button"
                       variant="destructive"
                       size="xs"
+                      className="h-[1.6rem] min-w-[1.6rem]"
                       aria-label={row.kind === 'run' ? 'Stop the run' : `Stop ${row.title}`}
                       onClick={(event) => {
                         event.stopPropagation();
@@ -226,7 +232,7 @@ export function SessionTree({
                       }}
                     >
                       <SquareIcon className="fill-current" />
-                      <span className="hidden sm:inline">Stop</span>
+                      <span className="hidden @md:inline">Stop</span>
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>
