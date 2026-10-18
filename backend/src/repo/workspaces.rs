@@ -75,6 +75,24 @@ pub async fn create(
     .await
 }
 
+/// The id and name of the workspace a single sign-on group mapping names
+/// (by id or by slug), if it exists.
+pub async fn by_ref(
+    db: impl PgExecutor<'_>,
+    workspace: &crate::config::oidc::WorkspaceRef,
+) -> Result<Option<(Uuid, String)>, sqlx::Error> {
+    use crate::config::oidc::WorkspaceRef;
+    let (id, slug) = match workspace {
+        WorkspaceRef::Id(id) => (Some(*id), None),
+        WorkspaceRef::Slug(slug) => (None, Some(slug.as_str())),
+    };
+    sqlx::query_as("SELECT id, name FROM workspaces WHERE id = $1 OR slug = $2")
+        .bind(id)
+        .bind(slug)
+        .fetch_optional(db)
+        .await
+}
+
 /// Whether a slug is taken.
 pub async fn slug_exists(db: impl PgExecutor<'_>, slug: &str) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM workspaces WHERE slug = $1)")

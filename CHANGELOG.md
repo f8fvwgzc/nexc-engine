@@ -9,6 +9,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Single sign-on settings (OpenID Connect): `NEXC_OIDC_ISSUER` turns it on (unset keeps it off
+  and every other `NEXC_OIDC_*` variable is ignored), with `NEXC_OIDC_CLIENT_ID`,
+  `NEXC_OIDC_CLIENT_SECRET` (redacted), `NEXC_OIDC_REDIRECT_URL` (default `NEXC_PUBLIC_URL` +
+  `/api/v1/auth/oidc/callback`), `NEXC_OIDC_SCOPES` (`openid email profile`; `openid` is always
+  asked for), `NEXC_OIDC_DISPLAY_NAME` (`SSO`), `NEXC_OIDC_GROUPS_CLAIM` (`groups`),
+  `NEXC_OIDC_ADMIN_GROUPS`, `NEXC_OIDC_WORKSPACE_ROLES` (`group=workspace:role`, the workspace
+  by id or slug), `NEXC_OIDC_ALLOW_LOCAL_LOGIN` (`true`), `NEXC_OIDC_BREAK_GLASS_EMAIL` and
+  `NEXC_OIDC_REQUIRE_VERIFIED_EMAIL` (`true`). Every problem is reported at start-up (an
+  `http://` issuer or redirect URL in production, a missing client, a scope that is not one, an
+  unknown role). `nexc doctor` fetches the issuer's discovery document and its signing keys,
+  checks that the document is the issuer's own, uses usable endpoints and signs with RS256 or
+  ES256, names the redirect URL to register, warns when password sign-in is off without a
+  break-glass administrator, and checks that each mapped workspace exists. `nexc init` quotes
+  a default with a space, which `.env` needs (`backend/src/config/oidc.rs`,
+  `backend/src/security/oidc.rs`, `backend/src/cli/doctor.rs`).
 - Documentation site (`site/`, VitePress): the repository's Markdown rendered with a sidebar,
   full-text search, a dark theme, mermaid diagrams and the API reference (Scalar over
   `site/public/openapi.json`, a committed export of `nexc openapi`), in six sections: Start,

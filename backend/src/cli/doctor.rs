@@ -53,6 +53,7 @@ pub async fn run() -> ExitCode {
     check_ontology(&mut r, &settings).await;
     check_firewall(&mut r, &settings);
     check_otlp(&mut r, &settings).await;
+    check_sso(&mut r, &settings).await;
     check_llm(&mut r, &settings);
     if r.failed {
         ExitCode::FAILURE
@@ -289,6 +290,148 @@ async fn check_ontology(r: &mut Report, settings: &Settings) {
             format!("{url}: no answer within 3 seconds"),
         ),
     }
+}
+
+/// Single sign-on: off (and nothing of it half set), or the provider's
+/// discovery document and signing keys fetched and checked, with what the
+/// settings around it mean.
+async fn check_sso(r: &mut Report, settings: &Settings) {
+    use crate::config::oidc::CALLBACK_PATH;
+    use crate::security::oidc::OidcClient;
+
+    let Some(oidc) = &settings.oidc else {
+        let ignored: Vec<&str> = crate::config::vars::ENV_VARS
+            .iter()
+            .map(|var| var.name)
+            .filter(|name| name.starts_with("NEXC_OIDC_"))
+            .filter(|name| std::env::var(name).is_ok_and(|v| !v.trim().is_empty()))
+            .filter(|name| {
+                // `nexc init` writes these with their defaults.
+                let var = crate::config::vars::ENV_VARS
+                    .iter()
+                    .find(|v| v.name == *name);
+                var.is_none_or(|var| std::env::var(name).ok().as_deref() != Some(var.default))
+            })
+            .collect();
+        return if ignored.is_empty() {
+            r.line(
+                Level::Ok,
+                "sso",
+                "disabled (set NEXC_OIDC_ISSUER to sign in with an OpenID Connect provider)",
+            )
+        } else {
+            r.line(
+                Level::Warn,
+                "sso",
+                format!(
+                    "disabled: NEXC_OIDC_ISSUER is unset, so {} {} ignored",
+                    ignored.join(", "),
+                    if ignored.len() == 1 { "is" } else { "are" }
+                ),
+            )
+        };
+    };
+    let client = match OidcClient::new(oidc.clone(), settings.is_production()) {
+        Ok(client) => client,
+        Err(err) => return r.line(Level::Fail, "sso", err.to_string()),
+    };
+    match client.discovery().await {
+        Ok(doc) => {
+            r.line(
+                Level::Ok,
+                "sso",
+                format!(
+                    "{}: discovery read (authorize at {}, tokens at {})",
+                    oidc.issuer, doc.authorization_endpoint, doc.token_endpoint
+                ),
+            );
+            if doc.advertises_s256() == Some(false) {
+                r.line(
+                    Level::Warn,
+                    "sso",
+                    "the provider does not list S256 among its PKCE methods; sign-in sends an S256 challenge anyway",
+                );
+            }
+            match client.get_json(&doc.jwks_uri).await {
+                Ok(jwks) => {
+                    let keys = jwks["keys"].as_array().map_or(0, Vec::len);
+                    let level = if keys == 0 { Level::Fail } else { Level::Ok };
+                    r.line(
+                        level,
+                        "sso",
+                        format!("{}: {keys} signing key(s)", doc.jwks_uri),
+                    );
+                }
+                Err(err) => r.line(Level::Fail, "sso", err.to_string()),
+            }
+        }
+        Err(err) => r.line(
+            Level::Fail,
+            "sso",
+            format!("{}: {err}", client.discovery_url()),
+        ),
+    }
+    let callback = format!("redirect URL {}", oidc.redirect_url);
+    if reqwest::Url::parse(&oidc.redirect_url).is_ok_and(|u| u.path() == CALLBACK_PATH) {
+        r.line(
+            Level::Ok,
+            "sso",
+            format!("{callback} (register it at the provider)"),
+        );
+    } else {
+        r.line(
+            Level::Warn,
+            "sso",
+            format!("{callback}: its path is not {CALLBACK_PATH}; the proxy must route it there"),
+        );
+    }
+    match (oidc.allow_local_login, &oidc.break_glass_email) {
+        (true, _) => r.line(Level::Ok, "sso", "passwords sign in too"),
+        (false, Some(email)) => r.line(
+            Level::Ok,
+            "sso",
+            format!("password sign-in is off, except for the break-glass administrator {email}"),
+        ),
+        (false, None) => r.line(
+            Level::Warn,
+            "sso",
+            "password sign-in is off and NEXC_OIDC_BREAK_GLASS_EMAIL is unset: while the provider is down nobody signs in",
+        ),
+    }
+    if oidc.workspace_roles.is_empty() {
+        return;
+    }
+    let connect = repo::connect(settings.database_url.expose(), 1);
+    let Ok(Ok(pool)) = tokio::time::timeout(Duration::from_secs(10), connect).await else {
+        return r.line(
+            Level::Warn,
+            "sso",
+            "cannot check NEXC_OIDC_WORKSPACE_ROLES: no database",
+        );
+    };
+    for mapping in &oidc.workspace_roles {
+        match repo::workspaces::by_ref(&pool, &mapping.workspace).await {
+            Ok(Some((_, name))) => r.line(
+                Level::Ok,
+                "sso",
+                format!("group {} is {} of {name}", mapping.group, mapping.role),
+            ),
+            Ok(None) => r.line(
+                Level::Warn,
+                "sso",
+                format!(
+                    "group {}: no workspace is {}; the mapping is skipped",
+                    mapping.group, mapping.workspace
+                ),
+            ),
+            Err(err) => r.line(
+                Level::Warn,
+                "sso",
+                format!("cannot check {}: {err}", mapping.workspace),
+            ),
+        }
+    }
+    pool.close().await;
 }
 
 fn check_llm(r: &mut Report, settings: &Settings) {

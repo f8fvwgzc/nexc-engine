@@ -38,6 +38,10 @@ pub fn render() -> String {
             None if var.default.is_empty() => {
                 let _ = writeln!(out, "# {}=\n", var.name);
             }
+            // A `.env` value with a space must be quoted, or the whole file fails to parse.
+            None if var.default.contains(' ') => {
+                let _ = writeln!(out, "{}=\"{}\"\n", var.name, var.default);
+            }
             None => {
                 let _ = writeln!(out, "{}={}\n", var.name, var.default);
             }
@@ -83,6 +87,8 @@ mod tests {
             .filter(|l| !l.starts_with('#') && l.contains('='))
             .filter_map(|l| l.split_once('=').map(|(k, v)| (k.to_owned(), v.to_owned())))
             .collect();
+        let parsed: Result<Vec<_>, _> = dotenvy::from_read_iter(text.as_bytes()).collect();
+        assert!(parsed.is_ok(), "the whole file parses: {:?}", parsed.err());
         let settings = Settings::from_lookup(|k| map.get(k).cloned()).unwrap();
         assert_eq!(settings.jwt_secret.expose().len(), 43);
         assert!(
