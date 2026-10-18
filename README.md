@@ -90,6 +90,12 @@ key needed: an Analyst from a role template with its competency score, a traced 
 approval, a withheld document, a denial, an alert, a quarantine, the audit questions, the
 latency table (`make prove-agentsecops`) and the chain verified, printing the URLs to open.
 
+| The console after the demo (light)                                                                                                                       | The same screen (dark)                                                                                                            |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| <img src="docs/media/secops-light.png" alt="AgentSecOps console: agents, live feed of spans, approvals, alerts, risk, policies and the audit, light theme"> | <img src="docs/media/secops-dark.png" alt="AgentSecOps console in the dark theme">                                                |
+| **Trace explorer**                                                                                                                                       |                                                                                                                                   |
+| <img src="docs/media/secops-explorer.png" alt="Trace explorer: spans across every run, narrowed by agent, kind, decision, tool, host, run and time">      |                                                                                                                                   |
+
 ## Features
 
 |                                 |                                                                                                                                                                                                                                                      |
