@@ -14,10 +14,10 @@ BACKEND_MANIFEST := backend/Cargo.toml
 LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a;
 
 .PHONY: help init setup dev dev-backend dev-frontend dev-runtime db-up db-down db-shell \
-        backup backup-check restore prove prove-trace prove-identity prove-audit prove-policy prove-agentsecops test-worst-case \
+        backup backup-check restore prove prove-trace prove-identity prove-audit prove-policy prove-agentsecops prove-gateway test-worst-case \
         build test test-backend test-frontend test-runtime lint fmt check \
         docker-build docker-up docker-down docker-logs demo demo-onto demo-secops seed-demo \
-        minikube-up minikube-down k8s-render openapi doctor clean
+        minikube-up minikube-down k8s-render openapi proto-runtime doctor clean
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage: make \033[36m<target>\033[0m\n"} \
@@ -139,7 +139,11 @@ prove-policy: ## Policy resolution (target < 1 ms) and decisions under the resol
 	  | sed -n '/^prove-policy/,$$p' | grep -v '^test \|^$$\|test result'
 	cd agent-runtime && $(UV) run pytest -q -m prove -s tests/test_policy.py -k prove_policy 2>&1 | grep '^prove-policy'
 
-prove-agentsecops: prove-identity prove-policy prove-audit prove-trace ## The AgentSecOps latency table: identity and policy decisions, the audit's asks, the trace spine (needs PostgreSQL)
+prove-agentsecops: prove-identity prove-policy prove-audit prove-trace prove-gateway ## The AgentSecOps latency table: identity and policy decisions, the audit's asks, the trace spine (needs PostgreSQL)
+prove-gateway: ## Gateway overhead per call (target p99 < 1 ms, the tool excluded) and the runtime stream's per-event latency over gRPC and NDJSON (needs PostgreSQL: make db-up)
+	@$(LOAD_ENV) export DATABASE_URL="$${DATABASE_URL:-$$NEXC_DATABASE_URL}"; \
+	  $(CARGO) test --release --locked --manifest-path $(BACKEND_MANIFEST) --test gateway --test runtime_grpc prove_ -- --ignored --nocapture --test-threads=1 2>&1 \
+	  | grep '^prove-gateway\|prove-gateway:' | sed 's/^test [a-z_]* \.\.\. //'
 
 test-worst-case: ## Every documented route against missing/forged tokens, outsiders, hostile input, races and a 20,000-issue workspace
 	cd backend && cargo test --test worst_case
@@ -181,6 +185,9 @@ k8s-render: ## Render the kustomize manifests to stdout
 	@kubectl kustomize deploy/k8s
 
 ##@ Tooling
+
+proto-runtime: ## Regenerate the runtime's gRPC stubs from backend/proto/nexc/runtime/v1/runtime.proto
+	cd agent-runtime && $(UV) run python scripts/gen_proto.py
 
 openapi: ## Export the OpenAPI spec from the backend and regenerate frontend types
 	@mkdir -p .cache

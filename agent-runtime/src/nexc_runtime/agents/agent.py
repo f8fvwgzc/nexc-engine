@@ -11,6 +11,7 @@ from typing import Any
 
 from ..approvals import ApprovalRegistry, ApprovalTimeout
 from ..config import Settings
+from ..control import RunControl
 from ..injection import confirm_with_model, screen, withheld_notice
 from ..llm import LLMProvider, ToolCall, ToolResult, Turn
 from ..policy import AgentToken, decide_spawn
@@ -87,6 +88,10 @@ class RunScope:
     produces_artifact: bool = False
     # Where the backend delivers decisions on held tool calls (None: nothing can wait).
     approvals: ApprovalRegistry | None = None
+    # The backend's hold on the run over the gRPC stream (None on the NDJSON wire).
+    control: RunControl | None = None
+    # Tools the backend performs for the agents: `(name, description, input schema)`.
+    gateway_tools: tuple[tuple[str, str, dict[str, Any]], ...] = ()
 
 
 class Agent:
@@ -115,7 +120,9 @@ class Agent:
         # forbids the tool itself leaves it visible and refuses it when called.
         can_spawn = AgentRegistry.can_spawn(record) and record.depth < token.capabilities.max_depth
         self.tools: dict[str, Tool[Any]] = build_toolset(
-            can_spawn=can_spawn, allow_code_exec=scope.allow_code_exec
+            can_spawn=can_spawn,
+            allow_code_exec=scope.allow_code_exec,
+            gateway_tools=scope.gateway_tools,
         )
         self.system = build_system_prompt(
             name=record.name,
@@ -144,6 +151,7 @@ class Agent:
             token=self.token,
             principal=self.record.principal,
             approvals=scope.approvals,
+            control=scope.control,
         )
         self._ctx = ctx
         last_text = ""
@@ -151,6 +159,7 @@ class Agent:
         for number in range(1, scope.max_turns + 1):
             if self.budget.exhausted:
                 return self._give_up(last_text, "token budget exhausted")
+            self._take_policy_update(ctx)
             max_tokens = max(MIN_OUTPUT_TOKENS, min(MAX_OUTPUT_TOKENS, self.budget.remaining))
             turn_id = new_span_id()
             started = now_ns()
@@ -200,6 +209,21 @@ class Agent:
         return self._give_up(last_text, f"reached the limit of {scope.max_turns} turns")
 
     # --- internals --------------------------------------------------------------------------
+    def _take_policy_update(self, ctx: ToolContext) -> None:
+        """The root agent decides with the token the backend sent last (`policy_update`); a
+        sub-agent keeps the narrowed token it was born with."""
+        control = self.scope.control
+        if control is None or self.record.depth != 0:
+            return
+        fresh = control.take_token(self.token)
+        if fresh is not self.token:
+            self.token = fresh
+            ctx.token = fresh
+            self.scope.events.log(
+                "info",
+                f"{self.record.name}: policy updated to version {fresh.policy_version}",
+            )
+
     def _turn_span(self, span_id: str, started: int, number: int, turn: Turn | None) -> None:
         """Reports one model turn as an `llm_call` span (`turn` is None when the call failed)."""
         provider = self.scope.provider

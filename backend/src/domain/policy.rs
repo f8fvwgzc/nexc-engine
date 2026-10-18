@@ -152,6 +152,22 @@ impl Decision {
     }
 }
 
+/// Whether `tool` is one of `listed`: exact, or every tool of an MCP server
+/// under `mcp:<server>/*`.
+pub fn tool_matches(listed: &[String], tool: &str) -> bool {
+    listed.iter().any(|entry| {
+        entry == tool
+            || entry
+                .strip_suffix("/*")
+                .and_then(|prefix| prefix.strip_prefix("mcp:"))
+                .is_some_and(|server| {
+                    tool.strip_prefix("mcp:")
+                        .and_then(|rest| rest.split_once('/'))
+                        .is_some_and(|(s, _)| s == server)
+                })
+    })
+}
+
 /// Whether `host` is one of `allowed`: exact, or under a `*.` pattern.
 pub fn host_matches(allowed: &[String], host: &str) -> bool {
     let host = host.to_ascii_lowercase();
@@ -173,7 +189,7 @@ pub fn decide(caps: &Capabilities, action: &Action<'_>) -> Decision {
     match action {
         Action::Tool(name) => match &caps.tools {
             None => Decision::allow("tools.allow", "no tool restriction"),
-            Some(tools) if tools.iter().any(|t| t == name) => {
+            Some(tools) if tool_matches(tools, name) => {
                 Decision::allow("tools.allow", format!("{name} is in the allow-list"))
             }
             Some(_) => Decision::deny("tools.allow", format!("tool {name} is not allowed")),
@@ -457,7 +473,7 @@ pub fn decide_with(
 ) -> Decision {
     match action {
         Action::Tool(name) => {
-            if rules.tools_denied.iter().any(|t| t == name) {
+            if tool_matches(&rules.tools_denied, name) {
                 return Decision::deny("tools.deny", format!("tool {name} is denied by policy"));
             }
             let base = decide(caps, action);
@@ -465,7 +481,7 @@ pub fn decide_with(
                 return base;
             }
             let approval = &rules.require_approval;
-            if approval.tools.iter().any(|t| t == name) {
+            if tool_matches(&approval.tools, name) {
                 return Decision::require_approval(
                     "approvals.tools",
                     approval.approvers.clone(),
@@ -646,6 +662,29 @@ mod tests {
             }
             .subject(),
             "qa"
+        );
+    }
+
+    #[test]
+    fn gateway_tools_match_by_server() {
+        let listed = vec!["mcp:github/*".to_owned(), "fetch_url".to_owned()];
+        assert!(tool_matches(&listed, "mcp:github/search"));
+        assert!(tool_matches(&listed, "fetch_url"));
+        assert!(!tool_matches(&listed, "mcp:jira/search"));
+        assert!(!tool_matches(&listed, "mcp:github"));
+        let caps = Capabilities {
+            tools: Some(listed.clone()),
+            ..Capabilities::default()
+        };
+        assert!(decide(&caps, &Action::Tool("mcp:github/issues")).allowed);
+        assert!(!decide(&caps, &Action::Tool("write_file")).allowed);
+        let rules = Rules {
+            tools_denied: vec!["mcp:github/*".into()],
+            ..Rules::default()
+        };
+        assert_eq!(
+            decide_with(&caps, &rules, &[], &Action::Tool("mcp:github/issues")).rule,
+            "tools.deny"
         );
     }
 

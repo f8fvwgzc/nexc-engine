@@ -29,6 +29,7 @@ export const routeModules = {
   settingsGuardrails: () => import('@/pages/settings/guardrails-page'),
   settingsPolicies: () => import('@/pages/settings/policies-page'),
   settingsAlerts: () => import('@/pages/settings/alerts-page'),
+  settingsMcpServers: () => import('@/pages/settings/mcp-servers-page'),
   settingsKnowledge: () => import('@/pages/settings/knowledge-page'),
   settingsActivity: () => import('@/pages/settings/activity-page'),
   settingsMap: () => import('@/pages/settings/map-page'),

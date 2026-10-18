@@ -286,6 +286,10 @@ const NOT_COPIED: &[(&str, &str)] = &[
         "onto_export_cursors",
         "how far this server's export to its onto-intelli got; the target backfills the workspace into its own",
     ),
+    (
+        "agent_api_tokens",
+        "the credentials external agents hold toward this server's firewall API; they are issued again on the target",
+    ),
 ];
 
 /// A transfer is how a workspace takes all of its data with it. Whatever

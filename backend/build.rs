@@ -1,8 +1,10 @@
 //! Compiles the C kernels in `csrc/` into a static library linked into `nexc`,
-//! and the vendored onto-intelli proto into a tonic client and server (the
-//! server only serves the test stub). Only a C11 compiler is required (picked
-//! up by the `cc` crate from `CC`): the proto is compiled by protox, in Rust,
-//! so no `protoc` is needed on build machines.
+//! and the vendored protos into tonic clients and servers: onto-intelli (the
+//! server only serves the test stub), the agent runtime's stream (the client;
+//! the server serves the test stand-in) and the Agent Firewall API (the
+//! server, with its descriptor set for reflection). Only a C11 compiler is
+//! required (picked up by the `cc` crate from `CC`): the protos are compiled
+//! by protox, in Rust, so no `protoc` is needed on build machines.
 
 use std::path::PathBuf;
 
@@ -13,7 +15,11 @@ const SOURCES: [&str; 4] = [
     "csrc/sha256.c",
 ];
 
-const PROTO: &str = "onto_intelli/v1/onto_intelli.proto";
+const PROTOS: [&str; 3] = [
+    "onto_intelli/v1/onto_intelli.proto",
+    "nexc/runtime/v1/runtime.proto",
+    "nexc/firewall/v1/firewall.proto",
+];
 
 fn main() {
     println!("cargo:rerun-if-changed=csrc");
@@ -34,11 +40,18 @@ fn main() {
     }
 
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("proto");
-    println!("cargo:rerun-if-changed={}", root.join(PROTO).display());
-    let descriptors = protox::compile([PROTO], [&root]).expect("the vendored proto compiles");
+    for proto in PROTOS {
+        println!("cargo:rerun-if-changed={}", root.join(proto).display());
+    }
+    let descriptors = protox::compile(PROTOS, [&root]).expect("the vendored protos compile");
+    // The descriptor set, for gRPC server reflection on the Agent Firewall API.
+    let out = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR is set by cargo"));
+    let encoded = prost::Message::encode_to_vec(&descriptors);
+    std::fs::write(out.join("nexc_descriptors.bin"), encoded)
+        .expect("the descriptor set is written");
     tonic_prost_build::configure()
         .build_client(true)
         .build_server(true)
         .compile_fds(descriptors)
-        .expect("the onto-intelli services generate");
+        .expect("the services generate");
 }

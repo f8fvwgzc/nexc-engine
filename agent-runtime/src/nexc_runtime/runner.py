@@ -15,6 +15,7 @@ from .agents import Agent, AgentFailure, AgentRegistry, Budget, Census, Meter, R
 from .api.schemas import ExecuteRequest
 from .approvals import ApprovalRegistry
 from .config import Settings
+from .control import RunControl
 from .llm import DemoBrief, LLMError, LLMProvider, build_provider, redact
 from .policy import AgentToken, TokenError, decide_model_with, decide_tool_with, verify_token
 from .prompts import Upstream, build_task_prompt
@@ -62,8 +63,12 @@ async def execute(
     events: EventStream,
     provider_factory: ProviderFactory = default_provider_factory,
     approvals: ApprovalRegistry | None = None,
+    control: RunControl | None = None,
 ) -> None:
-    """Run the request to completion. Always ends the stream with exactly one terminal event."""
+    """Run the request to completion. Always ends the stream with exactly one terminal event.
+
+    `control` is the backend's hold on the run over the gRPC stream (gateway results, token
+    updates, the cancel); the NDJSON wire runs without one."""
     # Nothing starts without the backend's token: no workspace, no provider, no agent.
     try:
         token = verify_token(
@@ -93,6 +98,7 @@ async def execute(
                 events=events,
                 token=token,
                 approvals=approvals,
+                control=control,
             )
     except TimeoutError:
         events.error(f"run exceeded its time limit of {timeout}s", retryable=False)
@@ -101,7 +107,8 @@ async def execute(
     except AgentFailure as exc:
         events.error(redact(str(exc), secret), retryable=exc.retryable)
     except asyncio.CancelledError:
-        events.error("run cancelled", retryable=True)
+        reason = control.cancel_reason if control is not None else None
+        events.error(f"run cancelled: {reason}" if reason else "run cancelled", retryable=True)
         raise
     except Exception as exc:
         trace = redact("".join(traceback.format_exception(exc)), secret)
@@ -128,6 +135,7 @@ async def _run(
     events: EventStream,
     token: AgentToken,
     approvals: ApprovalRegistry | None,
+    control: RunControl | None = None,
 ) -> None:
     # The backend refuses a model outside the allow-list before dispatch; this is the same
     # rule applied to the model the provider really resolved.
@@ -155,6 +163,11 @@ async def _run(
         allow_code_exec=allow_code_exec,
         token_key=settings.agent_token_key(),
         approvals=approvals,
+        control=control,
+        # Gateway tools are performed by the backend over the stream; none without one.
+        gateway_tools=tuple((t.name, t.description, t.input_schema) for t in request.gateway_tools)
+        if control is not None
+        else (),
     )
     spec = request.agent
     # The policy's ceiling per run caps the budget whatever the agent has left.

@@ -16,10 +16,12 @@ requires-python = ">=3.12"
 dependencies = [
     "anthropic>=1.11.0",
     "fastapi>=0.142.2",
+    "grpclib>=0.4.9",
     "httpx>=0.28.1",
     "httpx2>=2.0",
     "openpyxl>=3.1.5",
     "pdfplumber>=0.11.10",
+    "protobuf>=7.36.2",
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
     "python-docx>=1.2.0",
@@ -44,11 +46,13 @@ packages = ["src/nexc_runtime"]
 
 [dependency-groups]
 dev = [
+    "grpcio-tools>=1.84.0",
     "mypy>=2.4.0",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "reportlab>=5.0.1",
     "ruff>=0.16.10",
+    "types-protobuf>=7.35.1.20260906",
 ]
 
 [tool.ruff]
@@ -62,6 +66,10 @@ ignore = ["PLR0913", "PLR2004", "PLR0911", "PLR0912"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106", "S108", "PLR2004", "PT018"]
+# Generated from the vendored proto (scripts/gen_proto.py): not ours to lint.
+"src/nexc_runtime/rpc/runtime_pb2.py" = ["ALL"]
+"src/nexc_runtime/rpc/runtime_pb2.pyi" = ["ALL"]
+"src/nexc_runtime/rpc/runtime_grpc.py" = ["ALL"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -73,6 +81,10 @@ mypy_path = "src"
 [[tool.mypy.overrides]]
 module = ["openpyxl.*", "reportlab.*"]  # ship no type information
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["nexc_runtime.rpc.runtime_pb2", "nexc_runtime.rpc.runtime_grpc"]  # generated
+ignore_errors = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

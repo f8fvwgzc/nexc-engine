@@ -89,6 +89,36 @@ export const infrastructureSchema = z.object({
   }),
   runtime_url: z.string(),
   runtime_reachable: z.boolean(),
+  /** `grpc` or `ndjson`: the wire the backend speaks to the runtime. */
+  runtime_protocol: z.string(),
+  runtime_grpc: z.object({
+    enabled: z.boolean(),
+    ok: z.boolean(),
+    url: z.string().nullable(),
+    detail: z.string().nullable(),
+  }),
+  /** The Agent Firewall API: where it listens and the key it signs with. */
+  firewall: z.object({
+    enabled: z.boolean(),
+    addr: z.string().nullable(),
+    public_key: z.string(),
+    open_sessions: z.number().int(),
+  }),
+  /** The OpenTelemetry export of the trace. */
+  otlp: z.object({
+    enabled: z.boolean(),
+    endpoint: z.string().nullable(),
+    reachable: z.boolean(),
+    spans_exported: z.number().int(),
+    behind: z.number().int(),
+    last_exported_at: z.string().nullable(),
+    last_error: z.string().nullable(),
+  }),
+  gateway: z.object({
+    calls_per_minute: z.number().int(),
+    timeout_secs: z.number().int(),
+    max_response_bytes: z.number().int(),
+  }),
   embedding_model: z.string(),
   /** The onto-intelli the audit's facts go to; disabled when none is configured. */
   ontology: z.object({

@@ -20,8 +20,10 @@ use crate::domain::AppError;
 use crate::domain::status::BackendHealth;
 use crate::domain::validation::{FieldErrors, Validate};
 use crate::engine::knowledge;
+use crate::firewall::FirewallStatus;
 use crate::http::extract::{PlatformAdmin, ValidatedJson};
 use crate::http::problem::Problem;
+use crate::otlp::OtlpStatus;
 use crate::repo;
 
 const CHECK_TIMEOUT: Duration = Duration::from_secs(5);
@@ -49,6 +51,14 @@ pub struct DatabaseStatus {
     pub migrations_known: i64,
 }
 
+/// The tools gateway's limits.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct GatewayStatus {
+    pub calls_per_minute: u32,
+    pub timeout_secs: u64,
+    pub max_response_bytes: u64,
+}
+
 /// What the server runs on.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct Infrastructure {
@@ -56,6 +66,15 @@ pub struct Infrastructure {
     /// Where the agent runtime is expected, and whether it answers.
     pub runtime_url: String,
     pub runtime_reachable: bool,
+    /// `grpc` or `ndjson`: the wire the backend speaks to the runtime.
+    pub runtime_protocol: String,
+    /// The runtime's gRPC endpoint and whether it answers (disabled on `ndjson`).
+    pub runtime_grpc: BackendHealth,
+    /// The Agent Firewall API: where it listens and the key it signs with.
+    pub firewall: FirewallStatus,
+    /// The OpenTelemetry export of the trace.
+    pub otlp: OtlpStatus,
+    pub gateway: GatewayStatus,
     /// The server's embedding model (`builtin-hash-256` when none is configured).
     pub embedding_model: String,
     /// The onto-intelli the audit's facts go to ("ask the audit"); disabled when none is configured.
@@ -86,7 +105,9 @@ pub async fn status(
             .fetch_one(&state.db)
             .await?;
     let runtime = state.health.agent_runtime(&state).await;
+    let runtime_grpc = state.health.runtime_grpc(&state).await;
     let ontology = state.health.ontology(&state).await;
+    let otlp = crate::otlp::status(&state).await;
     // Any workspace resolves to the server's embedding when it set none of its own.
     let embedding_model = knowledge::server_embedding_model(&state);
     Ok(Json(Infrastructure {
@@ -100,6 +121,15 @@ pub async fn status(
         },
         runtime_url: state.settings.runtime_url.clone(),
         runtime_reachable: runtime.ok,
+        runtime_protocol: state.settings.runtime_protocol.to_string(),
+        runtime_grpc,
+        firewall: crate::firewall::status(&state),
+        otlp,
+        gateway: GatewayStatus {
+            calls_per_minute: state.settings.gateway_calls_per_minute,
+            timeout_secs: state.settings.gateway_timeout.as_secs(),
+            max_response_bytes: state.settings.gateway_max_response_bytes as u64,
+        },
         embedding_model,
         ontology,
         queue: "PostgreSQL (rows claimed with SKIP LOCKED)".into(),

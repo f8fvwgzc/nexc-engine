@@ -62,6 +62,7 @@ macro_rules! team_visible {
 
 pub mod account_events;
 pub mod agent_evaluations;
+pub mod agent_tokens;
 pub mod agents;
 pub mod alerts;
 pub mod approvals;
@@ -71,15 +72,18 @@ pub mod audit;
 pub mod baselines;
 pub mod cycles;
 pub mod edges;
+pub mod external_runs;
 pub mod graphs;
 pub mod insight;
 pub mod issues;
 pub mod knowledge;
 pub mod knowledge_vectors;
 pub mod map;
+pub mod mcp_servers;
 pub mod memories;
 pub mod nodes;
 pub mod onto_export;
+pub mod otlp_export;
 pub mod outbox;
 pub mod plans;
 pub mod platform;

@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     # --- network -----------------------------------------------------------------------------
     runtime_host: str = "0.0.0.0"  # noqa: S104 - the container binds every interface on purpose
     runtime_port: int = Field(default=8090, ge=1, le=65535)
+    # The gRPC stream (`AgentRuntime/Execute`), on the same host; 0 turns it off.
+    runtime_grpc_port: int = Field(default=8095, ge=0, le=65535)
 
     # --- security ----------------------------------------------------------------------------
     nexc_runtime_token: SecretStr = Field(

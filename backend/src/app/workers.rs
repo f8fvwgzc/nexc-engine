@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 use super::AppState;
 use crate::engine::{knowledge, scheduler};
 use crate::ontology::export;
-use crate::{orchestrator, realtime, repo};
+use crate::{firewall, orchestrator, otlp, realtime, repo};
 
 const HEARTBEAT_EVERY: Duration = Duration::from_secs(10);
 const HOUSEKEEPING_EVERY: Duration = Duration::from_secs(60);
@@ -32,6 +32,14 @@ pub fn spawn(state: &AppState, shutdown: CancellationToken) {
             "the audit's facts are exported to onto-intelli"
         );
     }
+    if otlp::spawn(state, shutdown.clone()) {
+        tracing::info!(
+            every_secs = otlp::TICK.as_secs(),
+            endpoint = state.settings.otlp_endpoint.as_deref().unwrap_or_default(),
+            "the trace is exported as OpenTelemetry spans"
+        );
+    }
+    tokio::spawn(firewall::run(state.clone(), shutdown.clone()));
     tokio::spawn(every(
         HEARTBEAT_EVERY,
         shutdown.clone(),
@@ -109,8 +117,13 @@ async fn housekeeping(state: &AppState) -> anyhow::Result<()> {
     repo::outbox::purge(&state.db).await?;
     repo::plans::fail_stale(&state.db).await?;
     export::purge_when_off(state).await?;
+    state
+        .firewall_sessions
+        .seal_idle(state, firewall::SESSION_IDLE)
+        .await;
     state.hub.prune();
     state.limiters.prune();
     state.engine.prune_dispatches();
+    state.gateway_registry.prune();
     Ok(())
 }

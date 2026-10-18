@@ -231,10 +231,24 @@ class Decision:
         return self.effect == "require_approval"
 
 
+def tool_matches(listed: tuple[str, ...], tool: str) -> bool:
+    """Whether `tool` is one of `listed`: exact, or every tool of an MCP server under
+    `mcp:<server>/*` (mirrors `policy::tool_matches` in the backend)."""
+    for entry in listed:
+        if entry == tool:
+            return True
+        if entry.startswith("mcp:") and entry.endswith("/*") and tool.startswith("mcp:"):
+            server = entry[len("mcp:") : -len("/*")]
+            rest = tool[len("mcp:") :]
+            if "/" in rest and rest.split("/", 1)[0] == server:
+                return True
+    return False
+
+
 def decide_tool(caps: Capabilities, name: str) -> Decision:
     if caps.tools is None:
         return Decision(True, "tools.allow", "no tool restriction")
-    if name in caps.tools:
+    if tool_matches(caps.tools, name):
         return Decision(True, "tools.allow", f"{name} is in the allow-list")
     return Decision(False, "tools.allow", f"tool {name} is not allowed")
 
@@ -259,12 +273,12 @@ def decide_tool_with(
 ) -> Decision:
     """A deny-list refuses first, then the capabilities, then an approval rule holds the call.
     `labels` are the classifications of the data the node was given."""
-    if name in rules.tools_denied:
+    if tool_matches(rules.tools_denied, name):
         return Decision(False, "tools.deny", f"tool {name} is denied by policy")
     base = decide_tool(caps, name)
     if not base.allowed:
         return base
-    if name in rules.approval_tools:
+    if tool_matches(rules.approval_tools, name):
         return Decision(
             False, "approvals.tools", f"tool {name} needs an approval", effect="require_approval"
         )

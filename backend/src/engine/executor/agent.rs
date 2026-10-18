@@ -1,5 +1,7 @@
-//! Executor backed by the Python agent runtime (`POST /v1/execute`, NDJSON
-//! stream; contract §8).
+//! Executor backed by the Python agent runtime (contract §8): the
+//! `AgentRuntime/Execute` gRPC stream ([`super::runtime_grpc`]), or the
+//! NDJSON stream of `POST /v1/execute` kept for one release. The events of
+//! both wires mean the same and are handled here the same way.
 
 use std::collections::HashMap;
 
@@ -13,9 +15,11 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use super::super::approvals::{self, Granted};
+use super::super::approvals::{self, Delivery, Granted};
 use super::super::artifacts::MAX_ARTIFACT_BYTES;
 use super::{ExecContext, ExecError, ExecOutput, NodeExecutor};
+use crate::config::RuntimeProtocol;
+use crate::domain::mcp::GatewayTool;
 use crate::domain::policy::{Action, Effect};
 use crate::domain::prompt::UpstreamOutput;
 use crate::domain::trace::{self, SPAN_LINE_MAX_BYTES, SpanDraft, SpanKind, SpanStatus};
@@ -24,7 +28,7 @@ use crate::security::agent_token::{AgentGrant, EXPIRY_SLACK};
 
 /// Longest NDJSON line accepted (a base64 artifact of 20 MiB plus envelope).
 const MAX_LINE_BYTES: usize = MAX_ARTIFACT_BYTES / 3 * 4 + 64 * 1024;
-const MAX_TURNS: u32 = 12;
+pub(super) const MAX_TURNS: u32 = 12;
 /// Spans kept from one node attempt; a runtime that sends more is not believed.
 const MAX_SPANS_PER_ATTEMPT: usize = 20_000;
 /// How far a runtime span id's clock may stray from the attempt's.
@@ -96,27 +100,122 @@ enum RuntimeLine {
     Unknown,
 }
 
+/// One event of the runtime, whatever wire it came over.
+#[derive(Debug)]
+pub(super) enum Event {
+    Log {
+        level: String,
+        message: String,
+    },
+    Delta(String),
+    Tokens {
+        input: i64,
+        output: i64,
+        cached: i64,
+    },
+    Spawn {
+        name: String,
+        role: String,
+    },
+    Artifact {
+        path: String,
+        mime: Option<String>,
+        /// The bytes, or why they could not be read.
+        content: Result<Vec<u8>, String>,
+    },
+    Result {
+        output: String,
+        tokens_in: i64,
+        tokens_out: i64,
+        tokens_cached: i64,
+    },
+    Error {
+        message: String,
+        retryable: bool,
+    },
+    /// A span and its size on the wire.
+    Span(Map<String, Value>, usize),
+    /// A tool call the policy holds (gRPC); the NDJSON wire asks through its `policy` span.
+    ApprovalRequest(approvals::Request),
+    Unknown,
+}
+
+impl From<RuntimeLine> for Event {
+    fn from(line: RuntimeLine) -> Self {
+        match line {
+            RuntimeLine::Log { level, message } => Event::Log { level, message },
+            RuntimeLine::Delta { text } => Event::Delta(text),
+            RuntimeLine::Tokens {
+                input,
+                output,
+                cached,
+            } => Event::Tokens {
+                input,
+                output,
+                cached,
+            },
+            RuntimeLine::Spawn { agent } => Event::Spawn {
+                name: agent.name,
+                role: agent.role,
+            },
+            RuntimeLine::Artifact {
+                path,
+                mime,
+                content_b64,
+            } => Event::Artifact {
+                path,
+                mime,
+                content: base64::engine::general_purpose::STANDARD
+                    .decode(content_b64.as_bytes())
+                    .map_err(|e| format!("invalid base64: {e}")),
+            },
+            RuntimeLine::Result {
+                output,
+                tokens_in,
+                tokens_out,
+                tokens_cached,
+            } => Event::Result {
+                output,
+                tokens_in,
+                tokens_out,
+                tokens_cached,
+            },
+            RuntimeLine::Error { message, retryable } => Event::Error { message, retryable },
+            RuntimeLine::Span(wire) => Event::Span(wire, 0),
+            RuntimeLine::Unknown => Event::Unknown,
+        }
+    }
+}
+
 /// What the stream of one attempt has said so far.
 #[derive(Debug)]
-struct Progress {
+pub struct Progress {
     usage: (i64, i64, i64),
     /// Spans kept so far.
     spans: usize,
     /// Runtime span id -> stored span id (they differ when the runtime's was unusable).
-    ids: HashMap<Uuid, Uuid>,
+    pub(super) ids: HashMap<Uuid, Uuid>,
     /// When the attempt began (span ids must come from about then).
     began: DateTime<Utc>,
     /// Sub-agents each principal has spawned so far (the fan-out re-check).
     spawns: HashMap<String, u8>,
     /// Approvals granted during the attempt (a held tool may run once with one).
-    granted: Granted,
-    /// Watchers of the approvals asked for; they stop with the attempt.
+    pub(super) granted: Granted,
+    /// Watchers of the approvals asked for; they settle when the attempt ends.
     watchers: Vec<JoinHandle<()>>,
+    /// Gateway calls under way; they are dropped when the attempt ends.
+    tasks: Vec<JoinHandle<()>>,
     stop: CancellationToken,
+    /// How decisions reach the runtime.
+    delivery: Delivery,
+    /// Whether approvals are asked for by `approval_request` events (gRPC)
+    /// rather than by `policy` spans (NDJSON).
+    approvals_from_events: bool,
 }
 
 impl Progress {
-    fn new() -> Self {
+    pub fn new(delivery: Delivery) -> Self {
+        let approvals_from_events = matches!(delivery, Delivery::Stream(_));
         Progress {
             usage: (0, 0, 0),
             spans: 0,
@@ -125,15 +224,29 @@ impl Progress {
             spawns: HashMap::new(),
             granted: Granted::default(),
             watchers: Vec::new(),
+            tasks: Vec::new(),
             stop: CancellationToken::new(),
+            delivery,
+            approvals_from_events,
         }
     }
 
-    /// Ends the attempt's approval watchers: a still-pending approval expires.
-    async fn close(self) {
+    /// Keeps a task of the attempt (a gateway call) to end with it.
+    pub(super) fn track(&mut self, task: JoinHandle<()>) {
+        self.tasks.retain(|t| !t.is_finished());
+        self.tasks.push(task);
+    }
+
+    /// Ends the attempt: a still-pending approval expires (its watcher
+    /// settles first), a gateway call still under way is dropped.
+    pub(super) async fn close(self) {
         self.stop.cancel();
         for watcher in self.watchers {
             let _ = watcher.await;
+        }
+        for task in self.tasks {
+            task.abort();
+            let _ = task.await;
         }
     }
 }
@@ -170,7 +283,7 @@ fn plausible_id(id: Uuid, began: DateTime<Utc>, now: DateTime<Utc>) -> bool {
 
 /// A runtime span line as a draft of this node's chain. The backend decides
 /// the node, run and workspace agent; the runtime only says what happened.
-fn span_from_wire(
+pub fn span_from_wire(
     wire: &Map<String, Value>,
     node_id: Uuid,
     agent_id: Option<Uuid>,
@@ -269,7 +382,7 @@ fn context(
 
 /// The per-run token: the principal, the run and node, the capabilities
 /// snapshot and the policy version, valid for the node's timeout plus slack.
-fn mint_token(ctx: &ExecContext) -> Result<String, ExecError> {
+pub(super) fn mint_token(ctx: &ExecContext) -> Result<String, ExecError> {
     let principal = ctx.principal();
     let grant = AgentGrant {
         principal: &principal,
@@ -290,7 +403,7 @@ fn mint_token(ctx: &ExecContext) -> Result<String, ExecError> {
 
 /// Tokens the run may spend: what the agent has left, capped by the
 /// policy's ceiling per run (0 means no agent budget).
-fn budget_tokens(ctx: &ExecContext) -> i64 {
+pub(super) fn budget_tokens(ctx: &ExecContext) -> i64 {
     let left = ctx
         .agent
         .as_ref()
@@ -301,7 +414,20 @@ fn budget_tokens(ctx: &ExecContext) -> i64 {
     }
 }
 
-fn request_body(ctx: &ExecContext, token: &str) -> serde_json::Value {
+/// Whether the node's type delivers a file and may run code.
+pub(super) fn produces_artifact(ctx: &ExecContext) -> bool {
+    ctx.node_type.as_ref().is_some_and(|t| t.produces_artifact)
+}
+
+pub(super) fn allow_code_exec(ctx: &ExecContext) -> bool {
+    ctx.code_exec_allowed && ctx.node_type.as_ref().is_some_and(|t| t.allow_code_exec)
+}
+
+fn request_body(
+    ctx: &ExecContext,
+    token: &str,
+    gateway_tools: &[GatewayTool],
+) -> serde_json::Value {
     let target = ctx.agent_target();
     let agent = ctx.agent.as_ref();
     let settings = &ctx.state.settings;
@@ -322,7 +448,7 @@ fn request_body(ctx: &ExecContext, token: &str) -> serde_json::Value {
             "content": ctx.node.content,
             "kind": ctx.node.kind,
             "kind_description": ctx.node_type.as_ref().map_or("", |t| t.description.as_str()),
-            "produces_artifact": ctx.node_type.as_ref().is_some_and(|t| t.produces_artifact),
+            "produces_artifact": produces_artifact(ctx),
         },
         "context": context(
             &ctx.goal,
@@ -340,22 +466,31 @@ fn request_body(ctx: &ExecContext, token: &str) -> serde_json::Value {
         "limits": {
             "max_turns": MAX_TURNS,
             "timeout_s": settings.node_timeout.as_secs(),
-            "allow_code_exec": ctx.code_exec_allowed
-                && ctx.node_type.as_ref().is_some_and(|t| t.allow_code_exec),
+            "allow_code_exec": allow_code_exec(ctx),
         },
+        "gateway_tools": gateway_tools,
     })
 }
 
 async fn run(ctx: &ExecContext) -> Result<ExecOutput, ExecError> {
+    let token = mint_token(ctx)?;
+    match ctx.state.settings.runtime_protocol {
+        RuntimeProtocol::Grpc => super::runtime_grpc::run(ctx, token).await,
+        RuntimeProtocol::Ndjson => run_ndjson(ctx, token).await,
+    }
+}
+
+/// `POST /v1/execute`: the NDJSON stream. Gateway tools are not offered on
+/// this wire (a tool request has no way back down).
+async fn run_ndjson(ctx: &ExecContext, token: String) -> Result<ExecOutput, ExecError> {
     let settings = &ctx.state.settings;
     let url = format!("{}/v1/execute", settings.runtime_url.trim_end_matches('/'));
-    let token = mint_token(ctx)?;
     let resp = ctx
         .state
         .http
         .post(&url)
         .bearer_auth(settings.runtime_token.expose())
-        .json(&request_body(ctx, &token))
+        .json(&request_body(ctx, &token, &[]))
         .send()
         .await
         .map_err(|e| {
@@ -370,7 +505,7 @@ async fn run(ctx: &ExecContext) -> Result<ExecOutput, ExecError> {
             ExecError::fatal(message)
         });
     }
-    let mut progress = Progress::new();
+    let mut progress = Progress::new(Delivery::Http);
     let outcome = stream(ctx, resp, &mut progress).await;
     progress.close().await;
     outcome
@@ -413,7 +548,6 @@ async fn handle_line(
     line: &[u8],
     progress: &mut Progress,
 ) -> Result<Option<ExecOutput>, ExecError> {
-    let usage = &mut progress.usage;
     let text = String::from_utf8_lossy(line);
     let text = text.trim();
     if text.is_empty() {
@@ -421,10 +555,25 @@ async fn handle_line(
     }
     let parsed: RuntimeLine = serde_json::from_str(text)
         .map_err(|e| ExecError::fatal(format!("agent runtime sent invalid JSON: {e}")))?;
-    match parsed {
-        RuntimeLine::Log { level, message } => ctx.log(parse_level(&level), message),
-        RuntimeLine::Delta { text } => ctx.output(&text),
-        RuntimeLine::Tokens {
+    let event = match parsed {
+        RuntimeLine::Span(wire) => Event::Span(wire, line.len()),
+        other => Event::from(other),
+    };
+    handle_event(ctx, event, progress).await
+}
+
+/// Handles one event of either wire; returns the output once the terminal
+/// `result` arrives, an error on the terminal `error`.
+pub(super) async fn handle_event(
+    ctx: &ExecContext,
+    event: Event,
+    progress: &mut Progress,
+) -> Result<Option<ExecOutput>, ExecError> {
+    let usage = &mut progress.usage;
+    match event {
+        Event::Log { level, message } => ctx.log(parse_level(&level), message),
+        Event::Delta(text) => ctx.output(&text),
+        Event::Tokens {
             input,
             output,
             cached,
@@ -434,30 +583,22 @@ async fn handle_line(
             usage.2 += cached.max(0);
             ctx.tokens(usage.0, usage.1);
         }
-        RuntimeLine::Spawn { agent } => {
-            ctx.log(
-                LogLevel::Info,
-                format!("spawned sub-agent {} ({})", agent.name, agent.role),
-            );
+        Event::Spawn { name, role } => {
+            ctx.log(LogLevel::Info, format!("spawned sub-agent {name} ({role})"));
         }
-        RuntimeLine::Artifact {
+        Event::Artifact {
             path,
             mime,
-            content_b64,
-        } => {
-            let saved = base64::engine::general_purpose::STANDARD
-                .decode(content_b64.as_bytes())
-                .map_err(|e| format!("invalid base64: {e}"));
-            match saved {
-                Ok(bytes) => {
-                    if let Err(err) = ctx.artifact(&path, mime.as_deref(), &bytes).await {
-                        ctx.log(LogLevel::Warn, format!("artifact `{path}` rejected: {err}"));
-                    }
+            content,
+        } => match content {
+            Ok(bytes) => {
+                if let Err(err) = ctx.artifact(&path, mime.as_deref(), &bytes).await {
+                    ctx.log(LogLevel::Warn, format!("artifact `{path}` rejected: {err}"));
                 }
-                Err(err) => ctx.log(LogLevel::Warn, format!("artifact `{path}` rejected: {err}")),
             }
-        }
-        RuntimeLine::Result {
+            Err(err) => ctx.log(LogLevel::Warn, format!("artifact `{path}` rejected: {err}")),
+        },
+        Event::Result {
             output,
             tokens_in,
             tokens_out,
@@ -474,13 +615,13 @@ async fn handle_line(
                 span_id: None,
             }));
         }
-        RuntimeLine::Error { message, retryable } => {
+        Event::Error { message, retryable } => {
             return Err(ExecError {
                 message: format!("agent runtime: {message}"),
                 retryable,
             });
         }
-        RuntimeLine::Span(wire) => {
+        Event::Span(wire, line_bytes) => {
             if progress.spans >= MAX_SPANS_PER_ATTEMPT {
                 if progress.spans == MAX_SPANS_PER_ATTEMPT {
                     ctx.log(
@@ -497,14 +638,18 @@ async fn handle_line(
                 ctx.node.id,
                 agent_id,
                 &ctx.principal(),
-                line.len(),
+                line_bytes,
                 progress,
             ) {
                 Ok(span) => {
                     progress.spans += 1;
                     let mismatch = recheck(ctx, progress, &span);
                     let span_id = span.id;
-                    let request = approvals::Request::from_span(&span);
+                    let request = if progress.approvals_from_events {
+                        None
+                    } else {
+                        approvals::Request::from_span(&span)
+                    };
                     let egress = (span.kind == SpanKind::ToolCall)
                         .then(|| span.attributes.get("egress_host").and_then(Value::as_str))
                         .flatten()
@@ -542,29 +687,63 @@ async fn handle_line(
                     if let Some((rule, detail)) = mismatch {
                         ctx.policy_mismatch(span_id, rule, detail).await;
                     } else if let Some(request) = request {
-                        // A tool call waits for a human: the node pauses until the decision.
-                        let watcher = approvals::open(
-                            ctx,
-                            request,
-                            progress.stop.clone(),
-                            progress.granted.clone(),
-                        )
-                        .await;
-                        progress.watchers.extend(watcher);
+                        open_approval(ctx, request, progress).await;
                     }
                 }
                 Err(warning) => ctx.log(LogLevel::Warn, warning),
             }
         }
-        RuntimeLine::Unknown => {}
+        Event::ApprovalRequest(request) => {
+            // The request names the policy span the runtime recorded; its stored id.
+            let mut request = request;
+            request.span_id = progress
+                .ids
+                .get(&request.span_id)
+                .copied()
+                .unwrap_or(request.span_id);
+            request.parent_id = request
+                .parent_id
+                .map(|p| progress.ids.get(&p).copied().unwrap_or(p));
+            open_approval(ctx, request, progress).await;
+        }
+        Event::Unknown => {}
     }
     Ok(None)
+}
+
+/// A tool call waits for a human: the node pauses until the decision.
+async fn open_approval(ctx: &ExecContext, request: approvals::Request, progress: &mut Progress) {
+    let watcher = approvals::open(
+        ctx,
+        request,
+        progress.stop.clone(),
+        progress.granted.clone(),
+        progress.delivery.clone(),
+    )
+    .await;
+    progress.watchers.extend(watcher);
 }
 
 /// Re-evaluates what the runtime reported against the capabilities the
 /// backend minted for the node: the rule and the detail of a disagreement.
 fn recheck(
     ctx: &ExecContext,
+    progress: &mut Progress,
+    span: &SpanDraft,
+) -> Option<(&'static str, String)> {
+    recheck_with(
+        &|action| ctx.decide(action),
+        &ctx.principal(),
+        progress,
+        span,
+    )
+}
+
+/// The re-check with `decide` as the policy and `principal` as the token's
+/// (the Agent Firewall API re-checks what external agents report the same way).
+pub fn recheck_with(
+    decide: &dyn Fn(&Action<'_>) -> crate::domain::policy::Decision,
+    principal: &str,
     progress: &mut Progress,
     span: &SpanDraft,
 ) -> Option<(&'static str, String)> {
@@ -580,19 +759,18 @@ fn recheck(
         return Some((
             "principal",
             format!(
-                "the runtime acted as `{reported}`, which is not {} or a sub-agent of it",
-                ctx.principal()
+                "the runtime acted as `{reported}`, which is not {principal} or a sub-agent of it"
             ),
         ));
     }
     let denied = |action: Action<'_>, what: String| {
-        let decision = ctx.decide(&action);
+        let decision = decide(&action);
         (!decision.allowed).then(|| (decision.rule, format!("{what}; {}", decision.reason)))
     };
     match span.kind {
         SpanKind::ToolCall => {
             let tool = text("tool").unwrap_or(&span.name);
-            let decision = ctx.decide(&Action::Tool(tool));
+            let decision = decide(&Action::Tool(tool));
             match decision.effect {
                 // A held tool may run once a human said yes; the span names the approval.
                 Effect::RequireApproval { .. } => {
@@ -649,7 +827,7 @@ fn recheck(
                 Some("egress") => Action::Egress(subject),
                 _ => return None,
             };
-            let ours = ctx.decide(&action);
+            let ours = decide(&action);
             let theirs = text("decision").unwrap_or("deny");
             (ours.verdict() != theirs).then(|| {
                 (
@@ -708,13 +886,18 @@ mod tests {
         assert!(matches!(parsed[7], RuntimeLine::Unknown));
         assert!(matches!(&parsed[8], RuntimeLine::Span(m) if m["name"] == "write_file"));
         assert_eq!(parse_level("warning"), LogLevel::Warn);
+        let artifact: RuntimeLine = serde_json::from_str(lines[4]).unwrap();
+        assert!(matches!(
+            Event::from(artifact),
+            Event::Artifact { content: Ok(bytes), .. } if bytes == b"hi"
+        ));
     }
 
     #[test]
     fn runtime_spans_are_read_field_by_field() {
         let node = Uuid::now_v7();
         let agent = Some(Uuid::now_v7());
-        let mut progress = Progress::new();
+        let mut progress = Progress::new(Delivery::Http);
         let turn = Uuid::now_v7();
         let wire = |v: Value| v.as_object().unwrap().clone();
         let first = span_from_wire(
@@ -809,7 +992,7 @@ mod tests {
             "agent://other/Writer",
             principal
         ));
-        let (node, mut progress) = (Uuid::now_v7(), Progress::new());
+        let (node, mut progress) = (Uuid::now_v7(), Progress::new(Delivery::Http));
         let wire = |v: Value| v.as_object().unwrap().clone();
         let child = span_from_wire(
             &wire(json!({"kind": "llm_call", "agent": "agent://ws/Writer/researcher-1"})),

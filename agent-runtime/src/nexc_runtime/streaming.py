@@ -1,7 +1,9 @@
-"""NDJSON event stream for `POST /v1/execute` (CONTRACT section 8).
+"""The event stream of one run (CONTRACT section 8), on either wire.
 
-Every line is one JSON object. The stream always ends with exactly one terminal event:
-`result` or `error`. Anything emitted after the terminal event is dropped.
+Every event is one object. The stream always ends with exactly one terminal event: `result` or
+`error`. Anything emitted after the terminal event is dropped. `lines()` serves the NDJSON wire
+of `POST /v1/execute` (one JSON object per line, artifacts base64-encoded); `events()` serves the
+gRPC stream, which turns each object into its message.
 """
 
 from __future__ import annotations
@@ -40,13 +42,16 @@ _EXTRA_MIME = {
     ".txt": "text/plain",
 }
 _SAFE_SEGMENT = re.compile(r"[^A-Za-z0-9._ -]+")
+# Events only the gRPC wire carries: they are answered with a command, which NDJSON has no
+# way to send. `lines()` leaves them out.
+STREAM_ONLY_EVENTS = frozenset({"approval_request", "tool_request"})
 
 
 class EventStream:
-    """A single-consumer queue of NDJSON lines with a guaranteed single terminal event."""
+    """A single-consumer queue of events with a guaranteed single terminal event."""
 
     def __init__(self) -> None:
-        self._queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        self._queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
         self._terminated = False
 
     @property
@@ -105,12 +110,53 @@ class EventStream:
         )
 
     def artifact(self, path: str, mime: str, content: bytes) -> None:
+        self._emit({"type": "artifact", "path": path, "mime": mime, "content": content})
+
+    def approval_request(
+        self,
+        *,
+        approval_id: str,
+        tool: str,
+        rule: str,
+        reason: str,
+        args_sha256: str,
+        span_id: str,
+        agent: str,
+        turn_span_id: str | None,
+    ) -> None:
+        """A held tool call asks for its decision (the gRPC wire; the policy span is the record)."""
         self._emit(
             {
-                "type": "artifact",
-                "path": path,
-                "mime": mime,
-                "content_b64": base64.b64encode(content).decode("ascii"),
+                "type": "approval_request",
+                "approval_id": approval_id,
+                "tool": tool,
+                "rule": rule,
+                "reason": reason,
+                "args_sha256": args_sha256,
+                "span_id": span_id,
+                "agent": agent,
+                "turn_span_id": turn_span_id,
+            }
+        )
+
+    def tool_request(
+        self,
+        *,
+        request_id: str,
+        tool: str,
+        arguments: dict[str, Any],
+        agent: str,
+        turn_span_id: str | None,
+    ) -> None:
+        """A gateway tool call for the backend to perform (the gRPC wire only)."""
+        self._emit(
+            {
+                "type": "tool_request",
+                "request_id": request_id,
+                "tool": tool,
+                "arguments": arguments,
+                "agent": agent,
+                "turn_span_id": turn_span_id,
             }
         )
 
@@ -128,28 +174,43 @@ class EventStream:
     def error(self, message: str, *, retryable: bool) -> None:
         self._terminal({"type": "error", "message": message, "retryable": retryable})
 
-    # --- consumer ---------------------------------------------------------------------------
-    async def lines(self) -> AsyncIterator[bytes]:
+    # --- consumers --------------------------------------------------------------------------
+    async def events(self) -> AsyncIterator[dict[str, Any]]:
+        """Every event as emitted, the terminal one last."""
         while True:
-            line = await self._queue.get()
-            if line is None:
+            event = await self._queue.get()
+            if event is None:
                 return
-            yield line
+            yield event
+
+    async def lines(self) -> AsyncIterator[bytes]:
+        """The NDJSON wire: events the backend reads line by line."""
+        async for event in self.events():
+            if event["type"] in STREAM_ONLY_EVENTS:
+                continue
+            yield _encode(event)
 
     # --- internals --------------------------------------------------------------------------
     def _emit(self, event: dict[str, Any]) -> None:
         if not self._terminated:
-            self._queue.put_nowait(_encode(event))
+            self._queue.put_nowait(event)
 
     def _terminal(self, event: dict[str, Any]) -> None:
         if self._terminated:
             return
-        self._queue.put_nowait(_encode(event))
+        self._queue.put_nowait(event)
         self._terminated = True
         self._queue.put_nowait(None)
 
 
 def _encode(event: dict[str, Any]) -> bytes:
+    if event["type"] == "artifact":
+        event = {
+            "type": "artifact",
+            "path": event["path"],
+            "mime": event["mime"],
+            "content_b64": base64.b64encode(event["content"]).decode("ascii"),
+        }
     return json.dumps(event, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
 
 

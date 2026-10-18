@@ -38,7 +38,7 @@ Tunables: `MINIKUBE_PROFILE`, `MINIKUBE_CPUS` (4), `MINIKUBE_MEMORY` (8192), `MI
 | `Deployment agent-runtime` (2 replicas) + `Service` | gets only `NEXC_RUNTIME_TOKEN` and runtime settings, workspace on an `emptyDir` |
 | `Deployment frontend` (2 replicas) + `Service` | nginx-unprivileged on 8080 |
 | `Ingress nexc` | class `nginx`, host `nexc.local`; `/api` → backend, `/` → frontend; SSE/WebSocket timeouts and no buffering |
-| `NetworkPolicy` ×5 | default deny ingress; frontend ← ingress; backend ← frontend + ingress; runtime ← backend; postgres ← backend |
+| `NetworkPolicy` ×5 | default deny ingress; frontend ← ingress; backend ← frontend + ingress; runtime ← backend (HTTP 8090 and the gRPC stream 8095); postgres ← backend. The Agent Firewall API (`NEXC_GRPC_ADDR`) is off by default and documented in the file for when you open it to another namespace |
 | `PodDisruptionBudget` ×3 | `minAvailable: 1` for backend, runtime and frontend |
 
 Every pod runs as non-root with `readOnlyRootFilesystem`, `allowPrivilegeEscalation: false`,

@@ -49,7 +49,10 @@ pub async fn run() -> ExitCode {
     };
     check_database(&mut r, &settings).await;
     check_backends(&mut r, &settings).await;
+    check_runtime_grpc(&mut r, &settings).await;
     check_ontology(&mut r, &settings).await;
+    check_firewall(&mut r, &settings);
+    check_otlp(&mut r, &settings).await;
     check_llm(&mut r, &settings);
     if r.failed {
         ExitCode::FAILURE
@@ -140,6 +143,112 @@ async fn check_backends(r: &mut Report, settings: &Settings) {
             health.detail.unwrap_or_else(|| "reachable".into())
         ),
     );
+}
+
+/// The runtime's gRPC endpoint (`AgentRuntime/Health`), the wire the backend
+/// speaks unless `NEXC_RUNTIME_PROTOCOL=ndjson`.
+async fn check_runtime_grpc(r: &mut Report, settings: &Settings) {
+    use crate::config::RuntimeProtocol;
+    if settings.runtime_protocol == RuntimeProtocol::Ndjson {
+        return r.line(
+            Level::Warn,
+            "runtime grpc",
+            "off: NEXC_RUNTIME_PROTOCOL=ndjson (the NDJSON wire is kept for one release)",
+        );
+    }
+    let url = settings.runtime_grpc_url.trim_end_matches('/');
+    let channel = match crate::engine::executor::runtime_grpc::channel(url) {
+        Ok(channel) => channel,
+        Err(err) => return r.line(Level::Fail, "runtime grpc", format!("{url}: {err}")),
+    };
+    let probe = async {
+        let mut client =
+            crate::rpc::runtime::agent_runtime_client::AgentRuntimeClient::new(channel);
+        let mut request = tonic::Request::new(crate::rpc::runtime::HealthRequest {});
+        if let Ok(bearer) = format!("Bearer {}", settings.runtime_token.expose()).parse() {
+            request.metadata_mut().insert("authorization", bearer);
+        }
+        client.health(request).await
+    };
+    match tokio::time::timeout(Duration::from_secs(3), probe).await {
+        Ok(Ok(reply)) => {
+            let reply = reply.into_inner();
+            r.line(
+                Level::Ok,
+                "runtime grpc",
+                format!(
+                    "{url}: runtime {} ({} run(s) active)",
+                    reply.version, reply.runs_active
+                ),
+            );
+        }
+        Ok(Err(status)) => r.line(
+            Level::Warn,
+            "runtime grpc",
+            format!("{url}: {} ({})", status.message(), status.code()),
+        ),
+        Err(_) => r.line(
+            Level::Warn,
+            "runtime grpc",
+            format!("{url}: no answer within 3 seconds"),
+        ),
+    }
+}
+
+/// The Agent Firewall API: where it will listen and the key it signs with.
+fn check_firewall(r: &mut Report, settings: &Settings) {
+    match settings.grpc_addr {
+        None => r.line(
+            Level::Ok,
+            "firewall api",
+            "disabled (set NEXC_GRPC_ADDR to serve the Agent Firewall API)",
+        ),
+        Some(addr) => match crate::security::signing::Signer::from_seed(
+            settings.firewall_signing_key.expose(),
+        ) {
+            Ok(signer) => r.line(
+                Level::Ok,
+                "firewall api",
+                format!(
+                    "{addr}: signs with Ed25519 key {}{}",
+                    hex::encode(signer.public_key()),
+                    if std::env::var("NEXC_FIREWALL_SIGNING_KEY").is_ok_and(|k| !k.is_empty()) {
+                        ""
+                    } else {
+                        " (derived from NEXC_MASTER_KEY)"
+                    }
+                ),
+            ),
+            Err(err) => r.line(Level::Fail, "firewall api", err.to_string()),
+        },
+    }
+}
+
+/// The OTLP collector the trace is exported to: disabled, reachable, or not.
+async fn check_otlp(r: &mut Report, settings: &Settings) {
+    let Some(endpoint) = &settings.otlp_endpoint else {
+        return r.line(
+            Level::Ok,
+            "otlp export",
+            "disabled (set NEXC_OTLP_ENDPOINT to export the trace as OpenTelemetry spans)",
+        );
+    };
+    let connect = async {
+        tonic::transport::Endpoint::from_shared(endpoint.clone())?
+            .connect_timeout(Duration::from_secs(3))
+            .connect()
+            .await
+            .map_err(anyhow::Error::from)
+    };
+    match tokio::time::timeout(Duration::from_secs(3), connect).await {
+        Ok(Ok(_)) => r.line(Level::Ok, "otlp export", format!("{endpoint}: reachable")),
+        Ok(Err(err)) => r.line(Level::Warn, "otlp export", format!("{endpoint}: {err}")),
+        Err(_) => r.line(
+            Level::Warn,
+            "otlp export",
+            format!("{endpoint}: no answer within 3 seconds"),
+        ),
+    }
 }
 
 /// onto-intelli, the audit's query engine: disabled, reachable (with its

@@ -125,6 +125,10 @@ pub struct Metrics {
     pub span_fanout: Histogram,
     /// Audit questions answered, by mode (`deterministic`, `llm`).
     pub onto_asks: LabeledCounter,
+    /// Decisions the Agent Firewall API handed out, by verdict.
+    pub firewall_decisions: LabeledCounter,
+    /// Gateway calls performed, by tool kind (`fetch_url`, `mcp`) and outcome.
+    pub gateway_calls: LabeledCounter,
 }
 
 impl Default for Metrics {
@@ -145,6 +149,8 @@ impl Default for Metrics {
             spans: LabeledCounter::default(),
             span_fanout: Histogram::new(&SPAN_BUCKETS),
             onto_asks: LabeledCounter::default(),
+            firewall_decisions: LabeledCounter::default(),
+            gateway_calls: LabeledCounter::default(),
         }
     }
 }
@@ -285,6 +291,22 @@ impl Metrics {
             "Audit questions answered, by mode (deterministic, llm).",
         );
         self.onto_asks.render(&mut out, "nexc_audit_asks_total");
+        header(
+            &mut out,
+            "nexc_firewall_decisions_total",
+            "counter",
+            "Decisions of the Agent Firewall API, by verdict.",
+        );
+        self.firewall_decisions
+            .render(&mut out, "nexc_firewall_decisions_total");
+        header(
+            &mut out,
+            "nexc_gateway_calls_total",
+            "counter",
+            "Tools gateway calls, by kind and outcome.",
+        );
+        self.gateway_calls
+            .render(&mut out, "nexc_gateway_calls_total");
         out
     }
 }

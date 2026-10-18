@@ -358,7 +358,7 @@ impl fmt::Display for PrincipalRole {
 }
 
 /// `serde_json::Value` ⇄ `google.protobuf.Struct` / `Value`.
-pub(crate) mod json {
+pub mod json {
     use prost_types::value::Kind;
     use prost_types::{ListValue, Struct};
     use serde_json::{Map, Number, Value};

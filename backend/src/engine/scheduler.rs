@@ -273,7 +273,7 @@ async fn finish_run(
 /// Writes the final hash of a run's trace chain to its workspace's audit
 /// log (`trace_sealed`, subject: the run id). A graph outside any workspace
 /// has no audit log; its seal lives on the run alone.
-async fn seal_audit(state: &AppState, row: &RunRow, hash: [u8; 32], spans: i64) {
+pub async fn seal_audit(state: &AppState, row: &RunRow, hash: [u8; 32], spans: i64) {
     let workspace = match repo::graphs::workspace_of(&state.db, row.graph_id).await {
         Ok(workspace) => workspace,
         Err(err) => {

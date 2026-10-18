@@ -5,7 +5,7 @@ mod secret;
 pub mod vars;
 
 use std::collections::HashSet;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -58,6 +58,10 @@ pub struct Settings {
     /// Claude Code CLI binary used by the `claude_code` provider.
     pub claude_bin: String,
     pub runtime_url: String,
+    /// How the backend speaks to the runtime: the gRPC stream, or the NDJSON stream of one release ago.
+    pub runtime_protocol: RuntimeProtocol,
+    /// The runtime's gRPC endpoint (`http://host:8095`).
+    pub runtime_grpc_url: String,
     pub runtime_token: Secret<String>,
     /// Signs the per-run agent tokens the runtime verifies: `NEXC_AGENT_TOKEN_KEY`,
     /// or derived from the runtime token when it is unset.
@@ -78,6 +82,49 @@ pub struct Settings {
     pub node_timeout: Duration,
     pub trust_proxy: bool,
     pub metrics_token: Option<Secret<String>>,
+    /// Where the Agent Firewall API listens (`0.0.0.0:50052`); unset keeps it off.
+    pub grpc_addr: Option<SocketAddr>,
+    /// Ed25519 seed the firewall signs decisions with: `NEXC_FIREWALL_SIGNING_KEY`,
+    /// or derived from the master key when unset.
+    pub firewall_signing_key: Secret<[u8; 32]>,
+    /// OTLP/gRPC endpoint the trace is exported to (`http://host:4317`); unset keeps it off.
+    pub otlp_endpoint: Option<String>,
+    /// Gateway calls one agent may make per minute.
+    pub gateway_calls_per_minute: u32,
+    /// Longest one gateway call may take, the tool included.
+    pub gateway_timeout: Duration,
+    /// Largest response a gateway call brings back.
+    pub gateway_max_response_bytes: usize,
+}
+
+/// The wire between the backend and the agent runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeProtocol {
+    /// `AgentRuntime/Execute`, one bidirectional stream per node attempt.
+    Grpc,
+    /// `POST /v1/execute`, NDJSON; kept for one release.
+    Ndjson,
+}
+
+impl std::str::FromStr for RuntimeProtocol {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "grpc" => Ok(RuntimeProtocol::Grpc),
+            "ndjson" | "http" => Ok(RuntimeProtocol::Ndjson),
+            other => Err(format!("unknown runtime protocol `{other}`")),
+        }
+    }
+}
+
+impl std::fmt::Display for RuntimeProtocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            RuntimeProtocol::Grpc => "grpc",
+            RuntimeProtocol::Ndjson => "ndjson",
+        })
+    }
 }
 
 /// Every problem found while loading settings.
@@ -147,6 +194,8 @@ impl Settings {
             embed_dims: r.optional("NEXC_EMBED_DIMS").and_then(|d| d.parse().ok()),
             claude_bin: r.string("NEXC_CLAUDE_BIN", "claude"),
             runtime_url: r.string("NEXC_RUNTIME_URL", "http://localhost:8090"),
+            runtime_protocol: r.parse("NEXC_RUNTIME_PROTOCOL", RuntimeProtocol::Grpc),
+            runtime_grpc_url: r.string("NEXC_RUNTIME_GRPC_URL", "http://localhost:8095"),
             agent_token_key: Secret::new(r.agent_token_key(prod)),
             runtime_token: Secret::new(r.runtime_token(prod)),
             symphony_enabled: r.parse("NEXC_SYMPHONY_ENABLED", false),
@@ -163,6 +212,12 @@ impl Settings {
             node_timeout: Duration::from_secs(r.parse("NEXC_NODE_TIMEOUT_SECS", 600)),
             trust_proxy: r.parse("NEXC_TRUST_PROXY", false),
             metrics_token: r.optional("NEXC_METRICS_TOKEN").map(Secret::new),
+            grpc_addr: r.grpc_addr(),
+            firewall_signing_key: Secret::new(r.firewall_signing_key()),
+            otlp_endpoint: r.optional("NEXC_OTLP_ENDPOINT"),
+            gateway_calls_per_minute: r.parse("NEXC_GATEWAY_CALLS_PER_MINUTE", 120),
+            gateway_timeout: Duration::from_secs(r.parse("NEXC_GATEWAY_TIMEOUT_SECS", 30)),
+            gateway_max_response_bytes: r.parse("NEXC_GATEWAY_MAX_RESPONSE_BYTES", 1024 * 1024),
         };
         let mut errors = r.errors;
         settings.check_invariants(&mut errors);
@@ -205,6 +260,25 @@ impl Settings {
             && !(url.starts_with("http://") || url.starts_with("https://"))
         {
             errors.push("NEXC_ONTO_URL must start with http:// or https://".into());
+        }
+        if !(self.runtime_grpc_url.starts_with("http://")
+            || self.runtime_grpc_url.starts_with("https://"))
+        {
+            errors.push("NEXC_RUNTIME_GRPC_URL must start with http:// or https://".into());
+        }
+        if let Some(url) = &self.otlp_endpoint
+            && !(url.starts_with("http://") || url.starts_with("https://"))
+        {
+            errors.push("NEXC_OTLP_ENDPOINT must start with http:// or https://".into());
+        }
+        if !(1..=10_000).contains(&self.gateway_calls_per_minute) {
+            errors.push("NEXC_GATEWAY_CALLS_PER_MINUTE must be between 1 and 10000".into());
+        }
+        if self.gateway_timeout.is_zero() || self.gateway_timeout > Duration::from_secs(600) {
+            errors.push("NEXC_GATEWAY_TIMEOUT_SECS must be between 1 and 600".into());
+        }
+        if !(1024..=64 * 1024 * 1024).contains(&self.gateway_max_response_bytes) {
+            errors.push("NEXC_GATEWAY_MAX_RESPONSE_BYTES must be between 1 KiB and 64 MiB".into());
         }
         if self.onto_workspace_prefix.len() > 32
             || !self
@@ -376,6 +450,47 @@ impl Reader<'_> {
             None => {
                 let runtime_token = (self.lookup)("NEXC_RUNTIME_TOKEN").unwrap_or_default();
                 crate::security::agent_token::derive_key(&runtime_token).to_vec()
+            }
+        }
+    }
+
+    /// Where the Agent Firewall API listens, when it is on.
+    fn grpc_addr(&mut self) -> Option<SocketAddr> {
+        let raw = self.optional("NEXC_GRPC_ADDR")?;
+        match raw.parse() {
+            Ok(addr) => Some(addr),
+            Err(_) => {
+                self.errors.push(format!(
+                    "NEXC_GRPC_ADDR: `{raw}` is not a host:port address"
+                ));
+                None
+            }
+        }
+    }
+
+    /// The firewall's Ed25519 seed: `NEXC_FIREWALL_SIGNING_KEY` (base64 of 32
+    /// bytes) when set, else derived from the master key, which only the
+    /// backend holds. The master key itself never signs anything.
+    fn firewall_signing_key(&mut self) -> [u8; 32] {
+        match self.optional("NEXC_FIREWALL_SIGNING_KEY") {
+            Some(raw) => {
+                let decoded = base64::engine::general_purpose::STANDARD
+                    .decode(raw.as_bytes())
+                    .ok()
+                    .and_then(|bytes| <[u8; 32]>::try_from(bytes.as_slice()).ok());
+                match decoded {
+                    Some(seed) => seed,
+                    None => {
+                        self.errors.push(
+                            "NEXC_FIREWALL_SIGNING_KEY must be base64 of exactly 32 bytes".into(),
+                        );
+                        random_bytes::<32>()
+                    }
+                }
+            }
+            None => {
+                let master = (self.lookup)("NEXC_MASTER_KEY").unwrap_or_default();
+                crate::security::signing::derive_seed(master.as_bytes())
             }
         }
     }

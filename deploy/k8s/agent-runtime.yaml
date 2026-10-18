@@ -10,6 +10,10 @@ spec:
     - name: http
       port: 8090
       targetPort: http
+    # The gRPC stream the backend speaks (AgentRuntime/Execute); admitted from the backend only.
+    - name: grpc
+      port: 8095
+      targetPort: grpc
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -43,6 +47,8 @@ spec:
           ports:
             - name: http
               containerPort: 8090
+            - name: grpc
+              containerPort: 8095
           # Only what the runtime needs: no database, JWT or master-key secrets.
           env:
             - name: NEXC_RUNTIME_TOKEN
@@ -57,6 +63,8 @@ spec:
               valueFrom: { configMapKeyRef: { name: nexc-config, key: RUNTIME_HOST } }
             - name: RUNTIME_PORT
               valueFrom: { configMapKeyRef: { name: nexc-config, key: RUNTIME_PORT } }
+            - name: RUNTIME_GRPC_PORT
+              valueFrom: { configMapKeyRef: { name: nexc-config, key: RUNTIME_GRPC_PORT } }
             - name: RUNTIME_WORKSPACE
               valueFrom: { configMapKeyRef: { name: nexc-config, key: RUNTIME_WORKSPACE } }
             - name: RUNTIME_ALLOW_CODE_EXEC

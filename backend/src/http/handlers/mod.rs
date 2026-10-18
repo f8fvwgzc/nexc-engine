@@ -17,6 +17,7 @@ pub mod infrastructure;
 pub mod insight;
 pub mod issues;
 pub mod knowledge;
+pub mod mcp_servers;
 pub mod memories;
 pub mod nodes;
 pub mod orchestrator;
