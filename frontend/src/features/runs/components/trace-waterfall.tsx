@@ -1,4 +1,5 @@
 import { BotIcon, ChevronRightIcon, WaypointsIcon } from 'lucide-react';
+import { useEffect, useRef } from 'react';
 
 import { EmptyState } from '@/components/custom-ui/empty-state';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -21,15 +22,39 @@ import {
 const ROW =
   'grid grid-cols-[minmax(0,1fr)_4.5rem] items-center gap-3 px-3 py-1.5 sm:grid-cols-[minmax(0,20rem)_minmax(0,1fr)_4.5rem]';
 
-function SpanLine({ span, window, depth }: { span: Span; window: TraceWindow; depth: number }) {
+function SpanLine({
+  span,
+  window,
+  depth,
+  highlighted = false,
+}: {
+  span: Span;
+  window: TraceWindow;
+  depth: number;
+  /** The span the page was opened at: marked, and scrolled into view once. */
+  highlighted?: boolean;
+}) {
   const meta = SPAN_KIND_META[span.kind];
   const Icon = meta.icon;
   const bar = barOf(span, window);
   const duration = durationOf(span);
   const detail = describeSpan(span);
   const error = span.status === 'error';
+  const ref = useRef<HTMLLIElement>(null);
+  useEffect(() => {
+    if (highlighted) ref.current?.scrollIntoView({ block: 'center' });
+  }, [highlighted]);
   return (
-    <li className={ROW}>
+    <li
+      ref={ref}
+      id={`span-${span.id}`}
+      data-highlighted={highlighted || undefined}
+      tabIndex={highlighted ? -1 : undefined}
+      className={cn(
+        ROW,
+        highlighted && 'bg-brand/10 ring-1 ring-brand/40 ring-inset motion-safe:animate-fade-in',
+      )}
+    >
       <div
         className="flex min-w-0 items-center gap-2"
         style={{ paddingLeft: `${depth * 1.25}rem` }}
@@ -56,15 +81,29 @@ function SpanLine({ span, window, depth }: { span: Span; window: TraceWindow; de
   );
 }
 
-function Rows({ rows, window, depth }: { rows: TraceRow[]; window: TraceWindow; depth: number }) {
-  return rows.map((row) => <Branch key={row.span.id} row={row} window={window} depth={depth} />);
+interface RowsProps {
+  rows: TraceRow[];
+  window: TraceWindow;
+  depth: number;
+  highlight: string | null;
 }
 
-function Branch({ row, window, depth }: { row: TraceRow; window: TraceWindow; depth: number }) {
+function Rows({ rows, window, depth, highlight }: RowsProps) {
+  return rows.map((row) => (
+    <Branch key={row.span.id} row={row} window={window} depth={depth} highlight={highlight} />
+  ));
+}
+
+function Branch({ row, window, depth, highlight }: Omit<RowsProps, 'rows'> & { row: TraceRow }) {
   return (
     <>
-      <SpanLine span={row.span} window={window} depth={depth} />
-      <Rows rows={row.children} window={window} depth={depth + 1} />
+      <SpanLine
+        span={row.span}
+        window={window}
+        depth={depth}
+        highlighted={row.span.id === highlight}
+      />
+      <Rows rows={row.children} window={window} depth={depth + 1} highlight={highlight} />
     </>
   );
 }
@@ -74,10 +113,12 @@ interface TraceWaterfallProps {
   titles: Map<string, string>;
   /** The run is still going: spans keep arriving. */
   live: boolean;
+  /** A span to mark and scroll to (the console and the feed open a run at a span). */
+  highlight?: string | null;
 }
 
 /** The run's trace as a waterfall, grouped node → agent → turn → tool call. */
-export function TraceWaterfall({ spans, titles, live }: TraceWaterfallProps) {
+export function TraceWaterfall({ spans, titles, live, highlight = null }: TraceWaterfallProps) {
   if (spans.length === 0) {
     return (
       <EmptyState
@@ -116,7 +157,13 @@ export function TraceWaterfall({ spans, titles, live }: TraceWaterfallProps) {
           <CollapsibleContent>
             <ul className="py-1">
               {node.context.map((span) => (
-                <SpanLine key={span.id} span={span} window={window} depth={0} />
+                <SpanLine
+                  key={span.id}
+                  span={span}
+                  window={window}
+                  depth={0}
+                  highlighted={span.id === highlight}
+                />
               ))}
             </ul>
             {node.agents.map((agent) => (
@@ -126,7 +173,7 @@ export function TraceWaterfall({ spans, titles, live }: TraceWaterfallProps) {
                   <span title={agent.principal}>{displayPrincipal(agent.principal)}</span>
                 </p>
                 <ul className="pb-1">
-                  <Rows rows={agent.rows} window={window} depth={0} />
+                  <Rows rows={agent.rows} window={window} depth={0} highlight={highlight} />
                 </ul>
               </div>
             ))}

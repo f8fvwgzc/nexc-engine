@@ -33,13 +33,27 @@ import { diffLines } from '../diff';
 
 const pretty = (document: PolicyDocument) => JSON.stringify(document, null, 2);
 
-function DocumentDiff({ before, after }: { before: Policy | null; after: Policy }) {
+/** Two versions of a policy as a line diff: added lines marked, removed ones struck through. */
+export function DocumentDiff({
+  before,
+  after,
+  className,
+}: {
+  before: Policy | null;
+  after: Policy;
+  className?: string;
+}) {
   const lines = useMemo(
     () => diffLines(before ? pretty(before.document) : null, pretty(after.document)),
     [before, after],
   );
   return (
-    <pre className="max-h-[32rem] overflow-auto rounded-lg border bg-muted/30 p-3 text-xs leading-5">
+    <pre
+      className={cn(
+        'max-h-[32rem] overflow-auto rounded-lg border bg-muted/30 p-3 text-xs leading-5',
+        className,
+      )}
+    >
       {lines.map((line, index) => (
         <div
           // Lines repeat; the position is the identity.

@@ -103,4 +103,12 @@ export const qk = {
     topics: (workspaceId: string) => [...qk.memories.all, 'topics', workspaceId] as const,
   },
   orchestrator: ['orchestrator', 'status'] as const,
+  /** The AgentSecOps console: not copied to browser storage. */
+  secops: {
+    all: ['secops'] as const,
+    overview: (workspaceId: string) => ['secops', workspaceId, 'overview'] as const,
+    spans: (workspaceId: string, filter: object) =>
+      ['secops', workspaceId, 'spans', filter] as const,
+    templates: ['secops', 'templates'] as const,
+  },
 };

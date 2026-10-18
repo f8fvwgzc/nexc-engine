@@ -221,6 +221,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agent-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The built-in role templates. */
+        get: operations["list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agents": {
         parameters: {
             query?: never;
@@ -233,6 +250,31 @@ export interface paths {
         put?: never;
         /** Adds an agent to a workspace (members and above). */
         post: operations["create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/from-template/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Makes an agent from a role template (members and above): its
+         *     capabilities and purpose from the template, its model allow-list pinned
+         *     to the model it is given, its knowledge topics bound where the workspace
+         *     has them, the template's policy as the agent's version 1 (audited as
+         *     `policy_changed`), and, with a usable provider, its competency questions
+         *     asked once and scored on the card. 404 for an unknown template, 409 when
+         *     an agent of that name exists.
+         */
+        post: operations["instantiate"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2180,6 +2222,71 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{wid}/secops/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Server-sent events of the whole workspace for the console's live feed:
+         *     every `trace.span` and `alert` of every graph the member may open
+         *     (contract §6 frames), with a `heartbeat` every 15 seconds. Bearer
+         *     authenticated, so it is read with `fetch`, not `EventSource`.
+         */
+        get: operations["events"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/secops/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Everything the top of the console shows: agents by status, runs today
+         *     and this week, spans and denials today, open approvals and alerts,
+         *     quarantined artifacts, the riskiest agents, the policy versions in force
+         *     and the last sealed trace (members and above).
+         */
+        get: operations["overview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/secops/spans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The trace explorer: spans across every run the caller may open, newest
+         *     first, narrowed by agent, kind, tool, host, run, time and decision;
+         *     paged with `before` (members and above).
+         */
+        get: operations["spans"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{wid}/teams": {
         parameters: {
             query?: never;
@@ -2602,10 +2709,38 @@ export interface components {
              * @description Tokens left before the budget is reached; `null` without a budget.
              */
             budget_left: number | null;
+            evaluation: components["schemas"]["AgentEvaluation"] | null;
             owner: components["schemas"]["AgentOwner"] | null;
             /** @description The agent's last spans across the runs the caller may open, newest first. */
             recent_spans: components["schemas"]["Span"][];
             team: components["schemas"]["AgentTeam"] | null;
+        };
+        /** @description Agents in the workspace, by status. */
+        AgentCounts: {
+            /** Format: int64 */
+            active: number;
+            /** Format: int64 */
+            over_budget: number;
+            /** Format: int64 */
+            paused: number;
+            /** Format: int64 */
+            quarantined: number;
+            /** Format: int64 */
+            total: number;
+        };
+        /** @description The score an agent made from a template got on its competency questions. */
+        AgentEvaluation: {
+            /** Format: date-time */
+            evaluated_at: string;
+            /** @description The model that answered. */
+            model: string;
+            questions: components["schemas"]["EvaluatedQuestion"][];
+            /** Format: int32 */
+            score: number;
+            /** @description The template's id. */
+            template: string;
+            /** Format: int32 */
+            total: number;
         };
         /** @description Who is answerable for an agent, as shown on its card. */
         AgentOwner: {
@@ -2629,6 +2764,22 @@ export interface components {
             id: string;
             key: string;
             name: string;
+        };
+        /** @description A template as listed by `GET /agent-templates`. */
+        AgentTemplate: {
+            /** Format: int64 */
+            budget_tokens: number;
+            capabilities: components["schemas"]["Capabilities"];
+            description: string;
+            id: string;
+            knowledge: string[];
+            name: string;
+            policy: components["schemas"]["PolicyDocument"];
+            purpose: string;
+            questions: components["schemas"]["CompetencyQuestion"][];
+            role: string;
+            runtime: components["schemas"]["AgentRuntime"];
+            title: string;
         };
         /** @description One alert. */
         Alert: {
@@ -3028,6 +3179,12 @@ export interface components {
         CommentBody: {
             /** @description Markdown, 1 byte to 16 KiB. */
             body: string;
+        };
+        /** @description A competency question and what a competent answer mentions. */
+        CompetencyQuestion: {
+            /** @description Words or phrases of which at least one is expected in the answer (case-insensitive). */
+            expected: string[];
+            question: string;
         };
         /**
          * @description Whose LLM configuration is in effect.
@@ -3542,6 +3699,14 @@ export interface components {
             /** @description The account's e-mail address, exactly: erasing cannot be undone. */
             confirm: string;
         };
+        /** @description One question as it was answered. */
+        EvaluatedQuestion: {
+            /** @description The first characters of the answer. */
+            answer: string;
+            expected: string[];
+            passed: boolean;
+            question: string;
+        };
         /**
          * @description Which executor runs a node.
          * @enum {string}
@@ -3553,6 +3718,30 @@ export interface components {
             id: string;
             identifier: string;
             title: string;
+        };
+        /** @description `POST /agents/from-template/{name}` body (every field optional). */
+        FromAgentTemplate: {
+            /** @description Whether to ask the competency questions now (default true). */
+            evaluate?: boolean | null;
+            /** @description The model it runs on (default: the server's); the template pins its allow-list to it. */
+            model?: string | null;
+            /** @description The agent's name (default: the template's). */
+            name?: string | null;
+            /**
+             * Format: uuid
+             * @description The member answerable for the agent (default: the caller).
+             */
+            owner_user_id?: string | null;
+            /**
+             * Format: uuid
+             * @description A team of the workspace the agent belongs to.
+             */
+            team_id?: string | null;
+            /**
+             * Format: uuid
+             * @description Workspace to add the agent to (default: the caller's first workspace).
+             */
+            workspace_id?: string | null;
         };
         /** @description `POST /graphs/from-template` body. */
         FromTemplate: {
@@ -4587,6 +4776,16 @@ export interface components {
             time_windows: components["schemas"]["TimeWindow"][] | null;
             tools: components["schemas"]["ListRule"];
         };
+        /** @description A policy version in force at one level. */
+        PolicyInForce: {
+            /** Format: date-time */
+            created_at: string;
+            scope: components["schemas"]["PolicyScope"];
+            /** Format: uuid */
+            scope_id: string | null;
+            /** Format: int32 */
+            version: number;
+        };
         /**
          * @description The level a policy is set at.
          * @enum {string}
@@ -4730,6 +4929,28 @@ export interface components {
             };
             rules: components["schemas"]["Rules"];
         };
+        /** @description The highest risk score an agent was given on one day. */
+        RiskPoint: {
+            /** Format: uuid */
+            agent_id: string;
+            /** @description The day, `YYYY-MM-DD` (UTC). */
+            day: string;
+            /** Format: double */
+            score: number;
+        };
+        /** @description One of the agents whose latest run strayed furthest from its baseline. */
+        RiskyAgent: {
+            /** Format: uuid */
+            agent_id: string;
+            name: string;
+            principal_id: string;
+            risk_reasons: string[];
+            /** Format: double */
+            risk_score: number;
+            /** Format: date-time */
+            risk_updated_at: string | null;
+            status: components["schemas"]["AgentStatus"];
+        };
         /**
          * @description Authorization role of a user.
          * @enum {string}
@@ -4740,6 +4961,12 @@ export interface components {
          * @enum {string}
          */
         RuleAction: "alert" | "deny";
+        /** @description How often one rule decided. */
+        RuleCount: {
+            /** Format: int64 */
+            count: number;
+            rule: string;
+        };
         /**
          * @description Everything the resolved policy says beyond the capabilities: carried in
          *     the per-run token next to them and evaluated by the same functions on
@@ -4873,6 +5100,22 @@ export interface components {
              */
             trace_hash: string | null;
         };
+        /** @description Runs in a window, by outcome. */
+        RunCounts: {
+            /**
+             * Format: int64
+             * @description Queued or running.
+             */
+            active: number;
+            /** Format: int64 */
+            cancelled: number;
+            /** Format: int64 */
+            failed: number;
+            /** Format: int64 */
+            succeeded: number;
+            /** Format: int64 */
+            total: number;
+        };
         /**
          * @description Lifecycle of a run.
          * @enum {string}
@@ -4893,6 +5136,91 @@ export interface components {
          * @enum {string}
          */
         SearchKind: "issue" | "project" | "graph" | "document" | "team" | "member";
+        /**
+         * @description Everything the top of the console shows, in one call. Runs, spans and
+         *     denials count only what the caller may open.
+         */
+        SecopsOverview: {
+            agents: components["schemas"]["AgentCounts"];
+            /** @description Unacknowledged alerts by severity (severities with none are left out). */
+            alerts_open: components["schemas"]["SeverityCount"][];
+            /** Format: int64 */
+            approvals_open: number;
+            /**
+             * Format: int64
+             * @description Artifacts the DLP screen kept in and nobody released.
+             */
+            artifacts_quarantined: number;
+            /**
+             * Format: date-time
+             * @description When the overview was computed.
+             */
+            at: string;
+            /** @description Policy denials over the last fourteen days, by rule. */
+            denials_fortnight: components["schemas"]["RuleCount"][];
+            /** @description Policy denials since midnight UTC, by the rule that denied. */
+            denials_today: components["schemas"]["RuleCount"][];
+            last_seal: components["schemas"]["TraceSeal"] | null;
+            /** @description The latest version at every level that has one. */
+            policy_versions: components["schemas"]["PolicyInForce"][];
+            /** @description The highest score per agent per day over the last fourteen days, oldest first. */
+            risk_history: components["schemas"]["RiskPoint"][];
+            /** @description Runs created since midnight UTC. */
+            runs_today: components["schemas"]["RunCounts"];
+            /** @description Runs created in the last seven days. */
+            runs_week: components["schemas"]["RunCounts"];
+            /** Format: int64 */
+            spans_today: number;
+            /** @description The five agents scoring highest, highest first; only agents scored at least once. */
+            top_risk: components["schemas"]["RiskyAgent"][];
+        };
+        /**
+         * @description A span as the trace explorer lists it: the identifiers and the few
+         *     attributes the table shows, never the whole attribute document.
+         */
+        SecopsSpan: {
+            /** Format: uuid */
+            agent_id: string | null;
+            /** @description `attributes.decision` of a policy or approval span. */
+            decision: string | null;
+            /** Format: date-time */
+            ended_at: string | null;
+            /** Format: uuid */
+            graph_id: string;
+            /** @description `attributes.egress_host`: the host a tool called out to. */
+            host: string | null;
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["SpanKind"];
+            /** @description `attributes.model` of a model call. */
+            model: string | null;
+            name: string;
+            /** Format: uuid */
+            node_id: string;
+            principal: string;
+            /** @description `attributes.rule` of a policy span. */
+            rule: string | null;
+            /** Format: uuid */
+            run_id: string;
+            /** Format: date-time */
+            started_at: string;
+            status: components["schemas"]["SpanStatus"];
+            /** Format: int64 */
+            tokens_in: number | null;
+            /** Format: int64 */
+            tokens_out: number | null;
+            /** @description `attributes.tool` of a tool call or a policy decision about one. */
+            tool: string | null;
+        };
+        /** @description A page of the trace explorer, newest first. */
+        SecopsSpanPage: {
+            /**
+             * Format: uuid
+             * @description Pass as `before` for the next page; `null` on the last.
+             */
+            next: string | null;
+            spans: components["schemas"]["SecopsSpan"][];
+        };
         /** @description The caller's sessions. */
         Sessions: {
             /**
@@ -4927,6 +5255,12 @@ export interface components {
          * @enum {string}
          */
         Severity: "low" | "medium" | "high" | "critical";
+        /** @description Unacknowledged alerts of one severity. */
+        SeverityCount: {
+            /** Format: int64 */
+            count: number;
+            severity: components["schemas"]["Severity"];
+        };
         /** @description One span of a run's trace, as stored and as served. */
         Span: {
             /** Format: uuid */
@@ -5181,6 +5515,17 @@ export interface components {
             next: string | null;
             /** @description Spans in id order (UUID v7: the order they started). */
             spans: components["schemas"]["Span"][];
+        };
+        /** @description The run whose trace chain was sealed last. */
+        TraceSeal: {
+            /** Format: uuid */
+            graph_id: string;
+            /** Format: uuid */
+            run_id: string;
+            /** Format: date-time */
+            sealed_at: string | null;
+            /** @description Hex SHA-256 of the chain's last span. */
+            trace_hash: string;
         };
         /** @description Result of recomputing a run's chain. */
         TraceVerification: {
@@ -5490,7 +5835,7 @@ export interface components {
              * @description What an LLM call was for.
              * @enum {string}
              */
-            key: "plan" | "node" | "memory" | "assistant" | "embedding" | "summary";
+            key: "plan" | "node" | "memory" | "assistant" | "embedding" | "summary" | "evaluation";
         };
         /** @description Sums over a set of calls. */
         UsageTotals: {
@@ -6101,6 +6446,33 @@ export interface operations {
     };
     list: {
         parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTemplate"][];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list: {
+        parameters: {
             query?: {
                 /** @description The workspace whose agents to list (default: the caller's first workspace). */
                 workspace_id?: string | null;
@@ -6156,6 +6528,64 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Agent"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    instantiate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Template id: analyst, researcher or reviewer */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FromAgentTemplate"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentCard"];
                 };
             };
             403: {
@@ -11539,6 +11969,158 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    events: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description SSE stream */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    overview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecopsOverview"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    spans: {
+        parameters: {
+            query?: {
+                /** @description Only spans of this agent. */
+                agent?: string | null;
+                /** @description Only spans of this kind. */
+                kind?: components["schemas"]["SpanKind"] | null;
+                /** @description Only tool calls of this tool, and policy decisions about it. */
+                tool?: string | null;
+                /** @description Only tool calls that reached this host. */
+                host?: string | null;
+                /** @description Only spans of this run. */
+                run?: string | null;
+                /** @description Only spans started at or after this time. */
+                from?: string | null;
+                /** @description Only spans started before this time. */
+                to?: string | null;
+                /** @description Only policy and approval spans with this decision (`allow`, `deny`, `require_approval`, `alert`). */
+                decision?: string | null;
+                /** @description Spans per page, 1–500 (default 100). */
+                limit?: number | null;
+                /** @description Only spans older than this one (the `next` of the previous page). */
+                before?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecopsSpanPage"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

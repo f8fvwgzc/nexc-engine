@@ -8,7 +8,7 @@ import {
   UserCheckIcon,
 } from 'lucide-react';
 import { Suspense } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 
 import { AnimatedButton } from '@/components/custom-ui/animated-button';
 import { PageHeader } from '@/components/custom-ui/page-header';
@@ -39,6 +39,9 @@ import { isRunActive } from '@/schemas/run';
 import { isWorkspaceAdmin } from '@/schemas/workspace';
 
 function RunDetail({ runId }: { runId: string }) {
+  const [params] = useSearchParams();
+  // `?span=` opens the waterfall at one span: the console's feed and explorer link here.
+  const highlight = params.get('span');
   const { data: run } = useSuspenseQuery(runQuery(runId));
   const { data: graph } = useQuery(graphQuery(run.graph_id));
   const { current } = useCurrentWorkspace();
@@ -152,7 +155,7 @@ function RunDetail({ runId }: { runId: string }) {
           <TraceVerification runId={run.id} active={active} />
         </div>
         {trace.data ? (
-          <TraceWaterfall spans={trace.data} titles={titles} live={active} />
+          <TraceWaterfall spans={trace.data} titles={titles} live={active} highlight={highlight} />
         ) : (
           <Skeleton className="h-24 rounded-xl" />
         )}

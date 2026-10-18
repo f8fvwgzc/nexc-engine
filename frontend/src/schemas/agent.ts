@@ -75,6 +75,24 @@ export const agentSchema = z.object({
 });
 export type Agent = z.infer<typeof agentSchema>;
 
+/** The competency score an agent made from a role template got on its three questions. */
+export const agentEvaluationSchema = z.object({
+  template: z.string(),
+  score: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+  model: z.string(),
+  questions: z.array(
+    z.object({
+      question: z.string(),
+      expected: z.array(z.string()),
+      passed: z.boolean(),
+      answer: z.string(),
+    }),
+  ),
+  evaluated_at: timestampSchema,
+});
+export type AgentEvaluation = z.infer<typeof agentEvaluationSchema>;
+
 /** The agent's ID card: who answers for it, its team, what it has left and did last. */
 export const agentCardSchema = z.object({
   agent: agentSchema,
@@ -82,6 +100,8 @@ export const agentCardSchema = z.object({
   team: z.object({ id: idSchema, name: z.string(), key: z.string() }).nullable(),
   budget_left: z.number().int().nonnegative().nullable(),
   recent_spans: z.array(spanSchema),
+  /** The score of an agent made from a role template; `null` otherwise. */
+  evaluation: agentEvaluationSchema.nullable(),
 });
 export type AgentCard = z.infer<typeof agentCardSchema>;
 

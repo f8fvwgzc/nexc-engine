@@ -312,4 +312,5 @@ export const agentCard: AgentCard = {
   team: null,
   budget_left: 198460,
   recent_spans: [span],
+  evaluation: null,
 };

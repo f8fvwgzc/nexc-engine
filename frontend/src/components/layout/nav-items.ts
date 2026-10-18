@@ -14,6 +14,7 @@ import {
   PlayIcon,
   ScrollTextIcon,
   SettingsIcon,
+  ShieldCheckIcon,
   SirenIcon,
   UsersIcon,
   UsersRoundIcon,
@@ -46,6 +47,7 @@ export const BUILD_ITEMS: NavItem[] = [
   { title: 'Graphs', to: '/app', icon: NetworkIcon, end: true },
   { title: 'Runs', to: '/app/runs', icon: PlayIcon },
   { title: 'Agents', to: '/app/agents', icon: BotIcon },
+  { title: 'AgentSecOps', to: '/app/secops', icon: ShieldCheckIcon },
 ];
 
 /** Every page, for the command palette. */
@@ -58,6 +60,7 @@ export const NAV_ITEMS: NavItem[] = [
   { title: 'Graphs', to: '/app', icon: NetworkIcon, end: true },
   { title: 'Runs', to: '/app/runs', icon: PlayIcon },
   { title: 'Agents', to: '/app/agents', icon: BotIcon },
+  { title: 'AgentSecOps', to: '/app/secops', icon: ShieldCheckIcon },
   { title: 'Memory', to: '/app/settings/memory', icon: BrainIcon },
   { title: 'Teams', to: '/app/settings/teams', icon: UsersRoundIcon },
   { title: 'Members', to: '/app/settings/members', icon: UsersIcon },
