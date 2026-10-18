@@ -139,3 +139,20 @@ export const connectionCheckSchema = z.object({
   migrations_applied: z.number().int().nullable(),
 });
 export type ConnectionCheck = z.infer<typeof connectionCheckSchema>;
+
+/** One endpoint's latency over the last five minutes of one server instance. */
+export const latencyRowSchema = z.object({
+  method: z.string(),
+  route: z.string(),
+  count: z.number().int(),
+  p50_ms: z.number(),
+  p99_ms: z.number(),
+  max_ms: z.number(),
+});
+export type LatencyRow = z.infer<typeof latencyRowSchema>;
+
+export const latencyReportSchema = z.object({
+  window_secs: z.number().int(),
+  rows: z.array(latencyRowSchema),
+});
+export type LatencyReport = z.infer<typeof latencyReportSchema>;

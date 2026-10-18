@@ -114,7 +114,9 @@ pub async fn track_metrics(State(state): State<AppState>, req: Request, next: Ne
         ],
         1,
     );
-    state.metrics.http_latency.observe(started.elapsed());
+    let took = started.elapsed();
+    state.metrics.http_latency.observe(took);
+    state.metrics.latency_window.observe(&method, &route, took);
     resp
 }
 

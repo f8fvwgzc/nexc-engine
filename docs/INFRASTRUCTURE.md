@@ -124,6 +124,16 @@ known migrations, whether the agent runtime answers, the server's embedding mode
 queues and caches live. API: `GET /api/v1/admin/infrastructure`,
 `POST /api/v1/admin/infrastructure/check`.
 
+Below it, **Latency, last 5 minutes**: p50, p99 and max per endpoint from the instance's own
+in-process histograms, every HTTP route by its template and every gRPC call the backend made
+(`GET /api/v1/admin/latency`; behind a load balancer the answer is one replica's). The same
+figures over time, for every replica, come from Prometheus: `/metrics` (admin bearer or
+`NEXC_METRICS_TOKEN`) serves `nexc_http_request_duration_seconds`,
+`nexc_grpc_client_latency_seconds{service, method}`, `nexc_cache_lookups_total{cache, result}`,
+`nexc_llm_breaker_total{provider, event}` beside the run, token, span, firewall, gateway, alert
+and A2A counters, and `deploy/grafana/nexc-engine.json` is a dashboard over them (import it into
+Grafana with a Prometheus data source; the variable `datasource` picks it).
+
 ## gRPC channels, keepalive and the LLM circuit breaker
 
 The backend opens one channel to each gRPC service it talks to (the agent runtime, onto-intelli,

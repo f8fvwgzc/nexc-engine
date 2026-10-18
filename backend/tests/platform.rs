@@ -178,6 +178,7 @@ async fn the_platform_and_the_workspaces_are_separate_apis(pool: PgPool) {
         "/admin/users".to_owned(),
         "/admin/events".to_owned(),
         "/admin/infrastructure".to_owned(),
+        "/admin/latency".to_owned(),
     ];
     for path in &console {
         let (status, _) = call(&app, Method::GET, path, &owner, None).await;
@@ -185,6 +186,17 @@ async fn the_platform_and_the_workspaces_are_separate_apis(pool: PgPool) {
         let (status, _) = call(&app, Method::GET, path, &root, None).await;
         assert_eq!(status, StatusCode::OK, "{path}");
     }
+    // The latency panel has seen the console's own reads by now, by route template.
+    let (_, latency) = call(&app, Method::GET, "/admin/latency", &root, None).await;
+    assert_eq!(latency["window_secs"], 300);
+    let rows = latency["rows"].as_array().unwrap();
+    let users = rows
+        .iter()
+        .find(|r| r["route"] == "/api/v1/admin/users" && r["method"] == "GET")
+        .unwrap_or_else(|| panic!("{latency}"));
+    assert!(users["count"].as_u64().unwrap() >= 2, "{users}");
+    assert!(users["p99_ms"].as_f64().unwrap() >= users["p50_ms"].as_f64().unwrap());
+    assert!(users["max_ms"].as_f64().unwrap() > 0.0);
     let delete = format!("/admin/workspaces/{wid}/delete");
     let confirm = json!({"confirm": "x"});
     let (status, _) = call(&app, Method::POST, &delete, &owner, Some(confirm)).await;

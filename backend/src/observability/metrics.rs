@@ -7,6 +7,8 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use super::latency::Window;
+
 const LATENCY_BUCKETS: [f64; 10] = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 10.0];
 const RUN_BUCKETS: [f64; 9] = [1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 900.0, 3600.0];
 const SPAN_BUCKETS: [f64; 10] = [
@@ -182,6 +184,8 @@ pub struct Metrics {
     /// The LLM circuit breaker's events, by provider and event
     /// (`opened`, `half_open`, `closed`, `refused`).
     pub llm_breaker: LabeledCounter,
+    /// The last five minutes per endpoint, for `GET /admin/latency`.
+    pub latency_window: Window,
 }
 
 impl Default for Metrics {
@@ -209,6 +213,7 @@ impl Default for Metrics {
             cache_lookups: LabeledCounter::default(),
             grpc_client_latency: LabeledHistogram::default(),
             llm_breaker: LabeledCounter::default(),
+            latency_window: Window::default(),
         }
     }
 }
@@ -221,6 +226,8 @@ impl Metrics {
             took,
             &LATENCY_BUCKETS,
         );
+        self.latency_window
+            .observe("gRPC", &format!("{service}/{method}"), took);
     }
 
     /// Prometheus text exposition of every metric.

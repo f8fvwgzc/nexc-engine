@@ -76,6 +76,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   opens it again; `nexc_llm_breaker_total{provider, event}` counts the events and `0` failures
   turns it off. Tests: the breaker's states, one probe at a time, a dead endpoint opening its
   circuit through the router while another endpoint's stays closed.
+- The latency panel: `GET /admin/latency` (platform administrators) answers p50, p99 and max per
+  endpoint over the last five minutes from this instance's in-process histograms (every HTTP
+  route by its template, every gRPC call the backend made; a log-spaced histogram per route and
+  minute, percentiles read to within a 20 % bucket), slowest p99 first; the Infrastructure page
+  shows it as a small table under the server's status, refreshed every 30 seconds.
+  `deploy/grafana/nexc-engine.json` is a Grafana dashboard over the existing Prometheus metrics
+  (HTTP rate, status and latency, the share of reads answered 304, the gRPC client latencies,
+  runs, nodes, spans and the fan-out, firewall decisions, gateway calls, LLM tokens, the circuit
+  breaker, the cache hit ratios, alert deliveries, A2A tasks), with a README on importing it; CI
+  checks that it is valid JSON.
 - A2A adapter, the console: the agent card gets an **A2A** tab with the switch that publishes
   the agent (admins; disabled for an external agent, with the reason), the addresses of its card,
   its well-known card and its JSON-RPC endpoint under the console's origin with a copy each, and
