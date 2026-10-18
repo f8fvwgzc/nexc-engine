@@ -9,6 +9,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Operate, Single sign-on (`site/operate/sso.md`): how a sign-in goes (CONTRACT §5's single
+  sign-on region), every `NEXC_OIDC_*` setting, roles from groups, the break-glass
+  administrator, and configuration examples for Keycloak, Microsoft Entra ID (which sends no
+  `email_verified`), Okta and Google (no groups; keep the consent screen internal), clearly
+  marked as not yet tried against those providers, with what to look at when a sign-in fails.
+  The Helm chart gains an `oidc` block: the settings go into the ConfigMap and the client secret
+  is read from a Secret of your own (`oidc.existingSecret`, key `oidc.existingSecretKey`); the
+  chart refuses to render SSO without an issuer, a client id or that Secret, and CI renders it
+  with SSO on.
 - Single sign-on tests against an OpenID Connect provider in process (`backend/tests/common/oidc.rs`:
   axum serving discovery, a key set of two RSA keys and a P-256 key made at start, a token
   endpoint that checks the client's HTTP Basic credentials, the redirect URI and the PKCE

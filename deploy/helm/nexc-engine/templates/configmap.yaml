@@ -36,6 +36,36 @@ data:
   NEXC_ONTO_URL: {{ .Values.backend.ontoUrl | quote }}
   NEXC_ONTO_WORKSPACE_PREFIX: {{ .Values.backend.ontoWorkspacePrefix | quote }}
   {{- end }}
+  {{- with .Values.oidc }}
+  {{- if .enabled }}
+  {{- if not .issuer }}
+  {{- fail "oidc.enabled needs oidc.issuer" }}
+  {{- end }}
+  {{- if not .clientId }}
+  {{- fail "oidc.enabled needs oidc.clientId" }}
+  {{- end }}
+  {{- if not .existingSecret }}
+  {{- fail "oidc.enabled needs oidc.existingSecret: a Secret holding the client secret" }}
+  {{- end }}
+  NEXC_OIDC_ISSUER: {{ .issuer | quote }}
+  NEXC_OIDC_CLIENT_ID: {{ .clientId | quote }}
+  {{- if .redirectUrl }}
+  NEXC_OIDC_REDIRECT_URL: {{ .redirectUrl | quote }}
+  {{- end }}
+  NEXC_OIDC_SCOPES: {{ join " " .scopes | quote }}
+  NEXC_OIDC_DISPLAY_NAME: {{ .displayName | quote }}
+  NEXC_OIDC_GROUPS_CLAIM: {{ .groupsClaim | quote }}
+  NEXC_OIDC_ADMIN_GROUPS: {{ join "," .adminGroups | quote }}
+  {{- $roles := list }}
+  {{- range .workspaceRoles }}
+  {{- $roles = append $roles (printf "%s=%s:%s" .group .workspace .role) }}
+  {{- end }}
+  NEXC_OIDC_WORKSPACE_ROLES: {{ join "," $roles | quote }}
+  NEXC_OIDC_ALLOW_LOCAL_LOGIN: {{ .allowLocalLogin | quote }}
+  NEXC_OIDC_BREAK_GLASS_EMAIL: {{ .breakGlassEmail | quote }}
+  NEXC_OIDC_REQUIRE_VERIFIED_EMAIL: {{ .requireVerifiedEmail | quote }}
+  {{- end }}
+  {{- end }}
   RUNTIME_HOST: "0.0.0.0"
   RUNTIME_PORT: {{ .Values.runtime.httpPort | quote }}
   RUNTIME_GRPC_PORT: {{ .Values.runtime.grpcPort | quote }}

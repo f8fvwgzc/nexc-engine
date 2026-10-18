@@ -1,0 +1,150 @@
+# Single sign-on
+
+This page connects nexc-engine to an OpenID Connect identity provider, so that people sign in with the account their organisation already manages, get their platform and workspace roles from its groups, and, if you choose, no longer sign in with a password at all.
+
+::: warning Not yet tested against these providers
+Single sign-on is tested end to end against a provider in process (`backend/tests/oidc.rs`): discovery, a rotating key set, the token endpoint with PKCE, userinfo, and every way a token can fail to verify. The provider examples below follow each provider's documentation; they have **not yet been tried against Keycloak, Microsoft Entra ID, Okta or Google**. Try a sign-in on a staging installation before you turn password sign-in off.
+:::
+
+## How a sign-in goes
+
+<!--@include: ../../docs/CONTRACT.md#sso-->
+
+## Settings
+
+Single sign-on is off until `NEXC_OIDC_ISSUER` is set. The other variables are read only then.
+
+| Variable                           | Default                                         | What it does                                                                                                                                                                                                                                |
+| ---------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NEXC_OIDC_ISSUER`                 | — (off)                                         | The issuer identifier, exactly as the provider's tokens carry it in `iss` (a trailing slash matters). `https://` in production. Its `/.well-known/openid-configuration` is read.                                                              |
+| `NEXC_OIDC_CLIENT_ID`              | —                                               | The client registered at the provider: a confidential web client with the authorization code flow.                                                                                                                                          |
+| `NEXC_OIDC_CLIENT_SECRET`          | —                                               | Its secret. Keep it in the secret store (`.env`, the Kubernetes Secret), never in the ConfigMap.                                                                                                                                            |
+| `NEXC_OIDC_REDIRECT_URL`           | `NEXC_PUBLIC_URL` + `/api/v1/auth/oidc/callback` | Where the provider sends the browser back. Register exactly this at the provider.                                                                                                                                                           |
+| `NEXC_OIDC_SCOPES`                 | `openid email profile`                          | Scopes asked for, separated by spaces (quote the value in `.env`) or commas. `openid` is always asked for. Add `groups` where the provider wants a scope for groups.                                                                          |
+| `NEXC_OIDC_DISPLAY_NAME`           | `SSO`                                           | The login page's button reads "Continue with" this.                                                                                                                                                                                         |
+| `NEXC_OIDC_GROUPS_CLAIM`           | `groups`                                        | The claim listing the person's groups, in the ID token or the userinfo answer: an array of strings, or one string. A dotted path reads a nested claim (`realm_access.roles`).                                                                 |
+| `NEXC_OIDC_ADMIN_GROUPS`           | —                                               | Comma separated groups whose members administer the platform.                                                                                                                                                                              |
+| `NEXC_OIDC_WORKSPACE_ROLES`        | —                                               | Comma separated `group=workspace:role`: the workspace by its id or its slug, the role `owner`, `admin`, `member` or `guest`. A group name with a comma cannot be mapped.                                                                       |
+| `NEXC_OIDC_ALLOW_LOCAL_LOGIN`      | `true`                                          | `false` hides the password form and refuses password sign-in and registration, except for the break-glass administrator.                                                                                                                    |
+| `NEXC_OIDC_BREAK_GLASS_EMAIL`      | —                                               | The one platform administrator who still signs in with a password when local login is off, at `/login?break_glass=1`.                                                                                                                       |
+| `NEXC_OIDC_REQUIRE_VERIFIED_EMAIL` | `true`                                          | Refuse an identity whose provider does not say (`email_verified`) that its address is verified. Linking to an existing account always needs a verified address, whatever this says.                                                         |
+
+Check a configuration before the first start: `nexc doctor` (or `make doctor`) fetches the discovery document and the signing keys, checks that the document is the issuer's own and signs with RS256 or ES256, prints the redirect URL to register, warns when password sign-in is off without a break-glass administrator, and checks that every mapped workspace exists.
+
+### Roles from groups
+
+At every sign-in the person's groups are applied:
+
+- **Platform administrators.** A member of one of `NEXC_OIDC_ADMIN_GROUPS` becomes a platform administrator, and stops being one at the first sign-in without the group. A platform role given in the console is never taken back by a sign-in. An account that is the only owner of a workspace other people work in is not made an administrator (a platform administrator works in no workspace); the server logs it.
+- **Workspace roles.** Each workspace named in `NEXC_OIDC_WORKSPACE_ROLES` gets the highest role of the person's groups. The mapping raises a role and never lowers one it did not give. Once no group gives a role any more, the role the mapping gave is taken back: the account goes back to the role it had before, or leaves the workspace. A role someone changed by hand since is left alone, and a workspace never loses its last owner this way. Every change is in the workspace's audit log, by `system`, naming the group.
+
+### Password sign-in, and the break-glass administrator
+
+With `NEXC_OIDC_ALLOW_LOCAL_LOGIN=false` the login page shows only the single sign-on button, `POST /auth/login` answers 403 and registration is closed. One platform administrator, `NEXC_OIDC_BREAK_GLASS_EMAIL`, still signs in with a password: open `/login?break_glass=1`. Keep that account's password and second factor somewhere safe; it is how you get in while the provider is down or misconfigured. Bootstrap it with `NEXC_ADMIN_EMAIL` and `NEXC_ADMIN_PASSWORD`, or `nexc user create --admin`.
+
+### What else to know
+
+- **Second factor.** People who sign in through the provider are not asked for the local authenticator code: the provider authenticates them, so enforce a second factor there.
+- **Accounts the provider creates** have no password. Their holders see the linked identity on their profile; deleting such an account is done by a platform administrator (Accounts, Erase), since deleting one's own account asks for a password.
+- **Who may sign in** is the provider's decision: anyone it lets through gets an account at the first sign-in. Assign the application to the people or groups who should use it.
+- **Existing accounts** are linked at the first sign-in through the provider when the provider says the address is verified and the account has no other identity of the provider. Otherwise the sign-in is refused with a message, never merged.
+- **Deleting an account** erases its linked identities; the person's next sign-in through the provider creates a new account.
+
+## Provider examples
+
+Each example assumes the console is at `https://nexc.example.com`, so the redirect URL is `https://nexc.example.com/api/v1/auth/oidc/callback`.
+
+### Keycloak
+
+In the realm, create a client: type *OpenID Connect*, *Client authentication* on, *Standard flow* on, the redirect URL under *Valid redirect URIs*, and *Proof Key for Code Exchange Code Challenge Method* `S256` under *Advanced*. The secret is on the *Credentials* tab. For groups, add a *Group Membership* mapper to the client's dedicated scope: token claim name `groups`, *Full group path* off, *Add to ID token* on.
+
+```bash
+NEXC_OIDC_ISSUER=https://keycloak.example.com/realms/acme
+NEXC_OIDC_CLIENT_ID=nexc
+NEXC_OIDC_CLIENT_SECRET=<the client's secret>
+NEXC_OIDC_DISPLAY_NAME=Keycloak
+NEXC_OIDC_ADMIN_GROUPS=nexc-admins
+NEXC_OIDC_WORKSPACE_ROLES=engineering=acme:member,engineering-leads=acme:admin
+```
+
+Realm roles instead of groups: `NEXC_OIDC_GROUPS_CLAIM=realm_access.roles`.
+
+### Microsoft Entra ID
+
+Register an application (single tenant) with a *Web* redirect URI, and create a client secret under *Certificates & secrets*. Under *Token configuration*, add the optional claim `email` to the ID token, and a groups claim (*Security groups*, emitted in the ID token as group object IDs, so the mapping names object IDs). A person in more than 200 groups gets an overage claim instead, which is not read: limit the claim to *Groups assigned to the application*.
+
+```bash
+NEXC_OIDC_ISSUER=https://login.microsoftonline.com/<tenant id>/v2.0
+NEXC_OIDC_CLIENT_ID=<application (client) id>
+NEXC_OIDC_CLIENT_SECRET=<client secret value>
+NEXC_OIDC_DISPLAY_NAME=Microsoft
+NEXC_OIDC_ADMIN_GROUPS=<object id of the admins group>
+NEXC_OIDC_WORKSPACE_ROLES=<object id of a group>=acme:member
+# Entra ID does not send email_verified: without this, every new person is refused, and existing
+# accounts are never linked by address (they need a verified one).
+NEXC_OIDC_REQUIRE_VERIFIED_EMAIL=false
+```
+
+### Okta
+
+Create an app integration: *OIDC*, *Web Application*, grant type *Authorization Code*, the redirect URL as a *Sign-in redirect URI*; copy the client id and secret. For groups, on the *Sign On* tab set the *Groups claim* of the ID token: claim name `groups`, a filter such as *Starts with* `nexc-` (with a custom authorization server, add a `groups` claim to the server instead).
+
+```bash
+NEXC_OIDC_ISSUER=https://acme.okta.com/oauth2/default
+NEXC_OIDC_CLIENT_ID=<client id>
+NEXC_OIDC_CLIENT_SECRET=<client secret>
+NEXC_OIDC_DISPLAY_NAME=Okta
+NEXC_OIDC_ADMIN_GROUPS=nexc-admins
+NEXC_OIDC_WORKSPACE_ROLES=nexc-engineering=acme:member
+```
+
+With the org authorization server the issuer is `https://acme.okta.com`.
+
+### Google
+
+Create an OAuth client id of type *Web application* in the Google Cloud console, with the redirect URL as an *Authorized redirect URI*. Google's ID tokens carry no groups, so the admin groups and the workspace mapping do not apply: give roles in nexc. Google lets **any** Google account sign in unless the OAuth consent screen is *Internal* (Google Workspace): make it internal, or every Google account can create an account here.
+
+```bash
+NEXC_OIDC_ISSUER=https://accounts.google.com
+NEXC_OIDC_CLIENT_ID=<client id>.apps.googleusercontent.com
+NEXC_OIDC_CLIENT_SECRET=<client secret>
+NEXC_OIDC_DISPLAY_NAME=Google
+```
+
+## Helm chart
+
+The chart's `oidc` block writes the settings into the ConfigMap and reads the client secret from a Secret of your own:
+
+```bash
+kubectl -n nexc create secret generic nexc-oidc --from-literal=client-secret='<the client secret>'
+```
+
+```yaml
+oidc:
+  enabled: true
+  issuer: https://keycloak.example.com/realms/acme
+  clientId: nexc
+  existingSecret: nexc-oidc
+  existingSecretKey: client-secret
+  displayName: Keycloak
+  adminGroups: [nexc-admins]
+  workspaceRoles:
+    - { group: engineering, workspace: acme, role: member }
+  allowLocalLogin: true
+  breakGlassEmail: ""
+  requireVerifiedEmail: true
+```
+
+Every value is on [Helm chart](/operate/helm).
+
+## When it does not work
+
+The login page says what went wrong in words; the server's log says why, at `warn`, under `single sign-on`.
+
+| The login page says                        | Look at                                                                                                                                       |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| … could not be reached                     | `nexc doctor`: the issuer, the network path from the backend to the provider, the discovery document.                                          |
+| … took too long or was already used        | A sign-in older than ten minutes, a page reloaded at the callback, or cookies blocked for the console.                                         |
+| … sent back did not check out              | The log names the check: the redirect URL registered at the provider, the client id (`aud`), the clock (`iat`, `exp`), the signing algorithm. |
+| … has not verified your e-mail address     | The provider sends no `email_verified: true`; see Entra ID above.                                                                             |
+| … is linked to another … identity          | An account with that address was linked to someone else at the provider; a platform administrator sorts it out.                               |

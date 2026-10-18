@@ -121,6 +121,35 @@ postgres:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: "1", memory: 1Gi }
 
+# Single sign-on with an OpenID Connect provider (CONTRACT §5; the guide is Operate, Single
+# sign-on). Off unless enabled. Register `<public URL>/api/v1/auth/oidc/callback` at the provider
+# (or set redirectUrl). The client secret is never a value here: it is read from the Secret
+# `existingSecret`, key `existingSecretKey`.
+oidc:
+  enabled: false
+  # The issuer identifier, exactly as the provider's tokens carry it (https://...).
+  issuer: ""
+  clientId: ""
+  existingSecret: ""
+  existingSecretKey: client-secret
+  # Empty: NEXC_PUBLIC_URL + /api/v1/auth/oidc/callback (set config.NEXC_PUBLIC_URL to where the
+  # console is reached from outside, or this).
+  redirectUrl: ""
+  scopes: [openid, email, profile]
+  # The login page's button reads "Continue with <displayName>".
+  displayName: SSO
+  groupsClaim: groups
+  # Members of these groups administer the platform.
+  adminGroups: []
+  # Workspace roles by group, applied at every sign-in; the workspace by id or slug, the role
+  # owner, admin, member or guest. A role the mapping gave is taken back without the group.
+  # - { group: engineering, workspace: acme, role: member }
+  workspaceRoles: []
+  # false hides and refuses password sign-in, except for the break-glass platform administrator.
+  allowLocalLogin: true
+  breakGlassEmail: ""
+  requireVerifiedEmail: true
+
 secrets:
   # The name of a Secret holding the keys of deploy/k8s/secret.example.env. Empty: the chart
   # writes `nexc-secrets` from `values` below, and refuses to render while a required one is

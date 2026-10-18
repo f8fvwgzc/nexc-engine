@@ -26,6 +26,7 @@ export const ROUTES: Record<string, string> = {
   'docs/INFRASTRUCTURE.md': '/operate/infrastructure',
   'deploy/k8s/README.md': '/operate/kubernetes',
   'deploy/helm/nexc-engine/values.yaml': '/operate/helm#values',
+  'site/operate/sso.md': '/operate/sso',
   'CONTRIBUTING.md': '/reference/contributing',
   'SECURITY.md': '/operate/security#reporting-a-vulnerability',
   'CHANGELOG.md': '/changelog',

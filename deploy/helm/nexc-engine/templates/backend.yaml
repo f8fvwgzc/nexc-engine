@@ -82,6 +82,15 @@ spec:
           envFrom:
             - configMapRef: { name: nexc-config }
             - secretRef: { name: {{ include "nexc.secretName" . }} }
+          {{- if .Values.oidc.enabled }}
+          env:
+            # Single sign-on's client secret, from a Secret of its own.
+            - name: NEXC_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.oidc.existingSecret | quote }}
+                  key: {{ .Values.oidc.existingSecretKey | quote }}
+          {{- end }}
           startupProbe:
             httpGet: { path: /api/v1/healthz, port: http }
             periodSeconds: 5

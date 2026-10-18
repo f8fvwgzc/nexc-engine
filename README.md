@@ -376,6 +376,10 @@ the final message. Outside Docker run Symphony yourself with
   database are unreachable from outside, enforced by Compose networks or Kubernetes NetworkPolicies.
 - `/metrics` is never exposed through the public edge.
 - Two-factor sign-in with an authenticator app, per account, with one-time recovery codes.
+- Optional single sign-on with an OpenID Connect provider (authorization code with PKCE, ID
+  tokens verified against the provider's rotating keys, RS256 or ES256 only), platform and
+  workspace roles from its groups, and password sign-in switched off but for one break-glass
+  administrator ([Single sign-on](site/operate/sso.md)).
 - Platform administrators are walled off from workspace content on the server, not only in the
   interface; every action they take is in an activity log, and each person sees what happened to
   their own account.

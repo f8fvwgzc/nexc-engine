@@ -9,6 +9,7 @@ This section is for whoever runs nexc-engine: how to deploy it, keep its data sa
 | [Helm chart](/operate/helm)                            | The same deployment as a chart, with every value.                                     |
 | [Backups](/operate/backups)                            | Back up, check and restore the database and the files on disk.                        |
 | [Infrastructure](/operate/infrastructure)              | The one PostgreSQL database, secrets, queues and caches.                               |
+| [Single sign-on](/operate/sso)                         | Sign in through an OpenID Connect provider, with roles from its groups.               |
 | [Workspace transfers](/operate/transfers)              | Move one workspace to a database its owner controls.                                  |
 | [Alerts](/operate/alerts)                              | Route alerts and approvals to a webhook or Slack.                                     |
 | [SIEM export](/operate/siem)                           | Pull alerts and the audit log without webhooks.                                       |

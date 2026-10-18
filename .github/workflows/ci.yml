@@ -167,6 +167,12 @@ jobs:
             --set backend.grpcAddr=0.0.0.0:50052 --set 'networkPolicies.firewallFrom={agents}' \
             --set backend.otlpEndpoint=http://otel-collector:4317 --set backend.ontoUrl=http://onto-intelli:50051 \
             --set runtime.grpcPort=9095 > /dev/null
+          # Single sign-on on: the settings in the ConfigMap, the client secret from its own Secret.
+          helm template nexc deploy/helm/nexc-engine -n nexc --set secrets.existingSecret=nexc-secrets \
+            --set oidc.enabled=true --set oidc.issuer=https://idp.example.com/realms/acme \
+            --set oidc.clientId=nexc --set oidc.existingSecret=nexc-oidc \
+            --set 'oidc.adminGroups={nexc-admins}' --set oidc.allowLocalLogin=false > "$RUNNER_TEMP/sso.yaml"
+          grep -q 'NEXC_OIDC_CLIENT_SECRET' "$RUNNER_TEMP/sso.yaml"
       - name: shellcheck
         run: shellcheck -x scripts/*.sh
       - name: Grafana dashboard is valid JSON
