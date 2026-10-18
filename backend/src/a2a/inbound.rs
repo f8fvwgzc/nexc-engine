@@ -254,10 +254,15 @@ pub async fn send(
     )
     .await
     .map_err(internal)?;
-    let row = repo::runs::claim(&mut *tx, state.engine.instance(), run_id)
-        .await
-        .map_err(internal)?
-        .ok_or_else(|| internal("the inbound run could not be claimed"))?;
+    let row = repo::runs::claim(
+        &mut *tx,
+        state.engine.instance(),
+        run_id,
+        state.settings.run_lease.as_secs_f64(),
+    )
+    .await
+    .map_err(internal)?
+    .ok_or_else(|| internal("the inbound run could not be claimed"))?;
     repo::a2a::insert_task(
         &mut *tx,
         &NewTask {

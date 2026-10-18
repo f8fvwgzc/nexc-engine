@@ -149,6 +149,22 @@ pub async fn find_any(db: impl PgExecutor<'_>, id: Uuid) -> Result<Option<Span>,
     .await
 }
 
+/// The last span written of a run's chain: its position and its hash. A run
+/// that is taken over continues its chain from there.
+pub async fn tail(
+    db: impl PgExecutor<'_>,
+    run_id: Uuid,
+) -> Result<Option<(i32, [u8; 32])>, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT seq, hash FROM agent_spans WHERE run_id = $1 ORDER BY seq DESC LIMIT 1",
+    )
+    .bind(run_id)
+    .fetch_optional(db)
+    .await?;
+    row.map(|row| Ok((row.try_get("seq")?, digest(&row, "hash")?)))
+        .transpose()
+}
+
 /// Every span of a run in chain order.
 pub async fn chain(db: impl PgExecutor<'_>, run_id: Uuid) -> Result<Vec<Span>, sqlx::Error> {
     sqlx::query_as(concat!(

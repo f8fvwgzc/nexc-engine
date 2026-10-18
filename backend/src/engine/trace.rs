@@ -1,8 +1,11 @@
 //! The per-run trace writer. Executors emit span drafts; one task per run
 //! gives each its place in the run's hash chain in order of receipt and
 //! fans it out at once as a `trace.span` event; a second task writes the
-//! chained spans to the database in batches. Nothing here is on the hot
-//! path of the work being traced: emitting is a channel send.
+//! chained spans to the database in batches, fenced by the run's lease (a
+//! former holder's spans are refused). Nothing here is on the hot path of
+//! the work being traced: emitting is a channel send. A run taken over by
+//! another instance continues its chain from the last span written
+//! ([`Tail`]), so it verifies as one chain.
 
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -12,6 +15,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
+use super::lease::{self, Lease, WriteError};
 use crate::app::AppState;
 use crate::domain::trace::{self, GENESIS, Span, SpanDraft};
 use crate::realtime::events::SseEvent;
@@ -19,8 +23,40 @@ use crate::repo;
 
 /// Spans written in one statement at most.
 const BATCH_MAX: usize = 500;
-/// Attempts to write a batch before it is given up.
-const WRITE_ATTEMPTS: u32 = 3;
+/// How long a batch is retried while the database does not take it (a
+/// failover) before it is given up.
+const WRITE_PATIENCE: Duration = Duration::from_secs(120);
+/// The longest pause between two tries of a batch.
+const WRITE_BACKOFF_MAX: Duration = Duration::from_secs(2);
+
+/// Where a run's chain stands when its trace is opened: nothing yet, or the
+/// last span a former holder of the run wrote.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Tail {
+    /// The position the next span takes.
+    pub seq: i32,
+    /// The hash the next span links to.
+    pub prev: [u8; 32],
+}
+
+impl Tail {
+    /// A chain with no span yet.
+    pub const GENESIS: Tail = Tail {
+        seq: 0,
+        prev: GENESIS,
+    };
+
+    /// The chain of `run_id` as written so far.
+    pub async fn of_run(state: &AppState, run_id: Uuid) -> Result<Tail, sqlx::Error> {
+        Ok(match repo::spans::tail(&state.db, run_id).await? {
+            Some((seq, hash)) => Tail {
+                seq: seq + 1,
+                prev: hash,
+            },
+            None => Tail::GENESIS,
+        })
+    }
+}
 
 struct Pending {
     draft: SpanDraft,
@@ -75,12 +111,14 @@ pub struct TraceSink {
     chain: JoinHandle<Sealed>,
 }
 
-/// Opens the trace of `run_id`.
-pub fn start(state: AppState, run_id: Uuid, graph_id: Uuid) -> TraceSink {
+/// Opens the trace of `run_id` under `lease`, continuing the chain at `tail`.
+pub fn start(state: AppState, run_id: Uuid, graph_id: Uuid, lease: Lease, tail: Tail) -> TraceSink {
     let (tx, rx) = mpsc::unbounded_channel();
     let (persist_tx, persist_rx) = mpsc::unbounded_channel();
-    let persister = tokio::spawn(persist(state.clone(), run_id, persist_rx));
-    let chain = tokio::spawn(chain(state, run_id, graph_id, rx, persist_tx, persister));
+    let persister = tokio::spawn(persist(state.clone(), lease, persist_rx));
+    let chain = tokio::spawn(chain(
+        state, run_id, graph_id, tail, rx, persist_tx, persister,
+    ));
     TraceSink {
         handle: TraceHandle { tx },
         chain,
@@ -118,12 +156,13 @@ async fn chain(
     state: AppState,
     run_id: Uuid,
     graph_id: Uuid,
+    tail: Tail,
     mut rx: mpsc::UnboundedReceiver<Message>,
     persist_tx: mpsc::UnboundedSender<Span>,
     persister: JoinHandle<()>,
 ) -> Sealed {
-    let mut prev = GENESIS;
-    let mut seq: i32 = 0;
+    let mut prev = tail.prev;
+    let mut seq: i32 = tail.seq;
     let mut seen: HashSet<Uuid> = HashSet::new();
     while let Some(Message::Span(Pending { mut draft, emitted })) = rx.recv().await {
         if !seen.insert(draft.id) {
@@ -161,7 +200,7 @@ async fn chain(
 
 /// Writes chained spans in batches: whatever has arrived while the previous
 /// batch was being written goes into the next statement.
-async fn persist(state: AppState, run_id: Uuid, mut rx: mpsc::UnboundedReceiver<Span>) {
+async fn persist(state: AppState, lease: Lease, mut rx: mpsc::UnboundedReceiver<Span>) {
     let mut batch: Vec<Span> = Vec::with_capacity(BATCH_MAX);
     while let Some(span) = rx.recv().await {
         batch.push(span);
@@ -171,26 +210,44 @@ async fn persist(state: AppState, run_id: Uuid, mut rx: mpsc::UnboundedReceiver<
                 Err(_) => break,
             }
         }
-        write(&state, run_id, &mut batch).await;
+        write(&state, &lease, &mut batch).await;
     }
 }
 
-async fn write(state: &AppState, run_id: Uuid, batch: &mut Vec<Span>) {
-    for attempt in 1..=WRITE_ATTEMPTS {
-        match repo::spans::insert(&state.db, batch).await {
-            Ok(()) => {
-                batch.clear();
-                return;
+/// Writes one batch under the lease. A database that does not take it (a
+/// failover) is tried again with back-off for a while; a refused batch (the
+/// run changed hands) is dropped, and so is every later one.
+async fn write(state: &AppState, lease: &Lease, batch: &mut Vec<Span>) {
+    let run_id = lease.run_id();
+    let deadline = Instant::now() + WRITE_PATIENCE;
+    let mut pause = Duration::from_millis(50);
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        match insert(state, lease, batch).await {
+            Ok(()) => break,
+            Err(WriteError::Fenced) => {
+                tracing::debug!(%run_id, count = batch.len(), "span batch of a former lease holder dropped");
+                break;
             }
-            Err(err) if attempt < WRITE_ATTEMPTS => {
+            Err(WriteError::Db(err)) if Instant::now() < deadline => {
                 tracing::warn!(%run_id, error = %err, attempt, "span batch not written; retrying");
-                tokio::time::sleep(Duration::from_millis(50 * u64::from(attempt))).await;
+                tokio::time::sleep(pause).await;
+                pause = (pause * 2).min(WRITE_BACKOFF_MAX);
             }
-            Err(err) => {
+            Err(WriteError::Db(err)) => {
                 tracing::error!(%run_id, error = %err, count = batch.len(),
                     "span batch not written; the run's trace will not verify");
+                break;
             }
         }
     }
     batch.clear();
+}
+
+async fn insert(state: &AppState, lease: &Lease, batch: &[Span]) -> Result<(), WriteError> {
+    let mut tx = lease::begin(state, lease, "trace spans").await?;
+    repo::spans::insert(&mut *tx, batch).await?;
+    tx.commit().await?;
+    Ok(())
 }

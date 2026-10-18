@@ -731,7 +731,24 @@ pub(super) async fn handle_event(
                                 .to_owned(),
                         )
                     });
+                    let spawned = (span.kind == SpanKind::Spawn).then(|| {
+                        span.attributes
+                            .get("child")
+                            .and_then(Value::as_str)
+                            .unwrap_or(&span.name)
+                            .to_owned()
+                    });
                     ctx.record(span);
+                    if let Some(subject) = spawned {
+                        // A cancel carried over from an attempt a takeover interrupted.
+                        crate::engine::commands::spawned(
+                            &ctx.state,
+                            ctx.run_id,
+                            ctx.node.id,
+                            span_id,
+                            &subject,
+                        );
+                    }
                     if let Some((tool, reason)) = injection {
                         ctx.alert(&crate::engine::defend::Finding {
                             span_id: Some(span_id),

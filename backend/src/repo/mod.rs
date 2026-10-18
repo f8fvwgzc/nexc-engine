@@ -93,6 +93,7 @@ pub mod platform;
 pub mod policies;
 pub mod resets;
 pub mod run_commands;
+pub mod run_leases;
 pub mod runs;
 pub mod secops;
 pub mod sessions;

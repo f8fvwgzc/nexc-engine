@@ -21,6 +21,8 @@ pub struct RunCommand {
     pub reason: String,
     pub requested_by: Option<Uuid>,
     pub created_at: DateTime<Utc>,
+    /// The run's lease epoch when the command was recorded: whose attempt it is about.
+    pub lease_epoch: i64,
 }
 
 impl FromRow<'_, PgRow> for RunCommand {
@@ -35,6 +37,7 @@ impl FromRow<'_, PgRow> for RunCommand {
             reason: row.try_get("reason")?,
             requested_by: row.try_get("requested_by")?,
             created_at: row.try_get("created_at")?,
+            lease_epoch: row.try_get("lease_epoch")?,
         })
     }
 }
@@ -59,8 +62,10 @@ pub async fn insert(
     new: NewCommand<'_>,
 ) -> Result<RunCommand, sqlx::Error> {
     sqlx::query_as(
-        "INSERT INTO run_commands (id, run_id, node_id, command, span_id, subject, reason, requested_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *",
+        "INSERT INTO run_commands (id, run_id, node_id, command, span_id, subject, reason, requested_by,
+                                   lease_epoch)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, (SELECT lease_epoch FROM runs WHERE id = $2))
+         RETURNING *",
     )
     .bind(Uuid::now_v7())
     .bind(new.run_id)
@@ -74,19 +79,27 @@ pub async fn insert(
     .await
 }
 
-/// Takes every command of the run nobody took yet, marking them taken:
-/// two instances never deliver the same one.
+/// Takes every command of the run nobody took yet, marking them taken, for
+/// the instance holding the run's lease at `epoch`: a command is addressed
+/// to whoever holds the run, so one recorded before a takeover is taken by
+/// the new holder, and two instances never deliver the same one.
 pub async fn take_pending(
     db: impl PgExecutor<'_>,
     run_id: Uuid,
+    instance: Uuid,
+    epoch: i64,
 ) -> Result<Vec<RunCommand>, sqlx::Error> {
     sqlx::query_as(
         "UPDATE run_commands SET taken_at = now()
-         WHERE id IN (SELECT id FROM run_commands WHERE run_id = $1 AND taken_at IS NULL
-                      ORDER BY created_at FOR UPDATE SKIP LOCKED)
+         WHERE id IN (SELECT c.id FROM run_commands c JOIN runs r ON r.id = c.run_id
+                      WHERE c.run_id = $1 AND c.taken_at IS NULL
+                        AND r.claimed_by = $2 AND r.lease_epoch = $3
+                      ORDER BY c.created_at FOR UPDATE OF c SKIP LOCKED)
          RETURNING *",
     )
     .bind(run_id)
+    .bind(instance)
+    .bind(epoch)
     .fetch_all(db)
     .await
 }

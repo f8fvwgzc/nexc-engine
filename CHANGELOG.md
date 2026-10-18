@@ -15,6 +15,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   when the LLM provider has an outage, when PostgreSQL fails over and during a rolling update. The
   model it states (a lease per run with fencing, takeover by a peer, a release on shutdown) is what
   the backend implements.
+- Run takeover with fencing (`docs/HA.md`; `docs/CONTRACT.md` §2 and §5, run leases): an in-flight
+  run survives the loss of the replica executing it. The executing replica holds a lease on the
+  run (`runs.lease_epoch`, `runs.lease_expires_at`, migration `20261006000070_run_leases`) and
+  renews all its leases in one statement every third of `NEXC_RUN_LEASE_SECS` (default 30 s). A
+  run whose lease ran out is claimed by another replica's dispatcher with one atomic `UPDATE`
+  that raises the epoch, and every write the executor makes for the run (node status, outputs,
+  spans, usage, the run's status) first locks the run row at the epoch it holds, so a former
+  holder that comes back cannot write: its write is refused and recorded as a `fenced` event, and
+  it stops its copy of the run (also when its renewal or the run's watcher sees the epoch moved,
+  or when the database could not confirm its lease for a whole lease). The new holder resumes the
+  run from what was written: succeeded nodes keep their outputs; a running node is queued again
+  with `attempt + 1` and an `interrupted` policy span; a node waiting for an approval stays
+  waiting, is re-attached, and runs again once someone decides, its new request answered at once
+  with the decision already taken (`approval` spans with `reattached` and `carried_from`); the
+  trace chain continues from the last span written, so `GET /runs/{id}/trace/verify` stays `ok`;
+  commands the former holder never took (`run_commands`, now with the epoch they were addressed
+  to) are taken by the new one, a sub-agent's cancel carried to the attempt that replaces its own.
+  A failed write stops the run on that replica instead of letting it go on from a state the
+  database does not have, span batches are retried with back-off for two minutes (a database
+  failover), and runs are no longer failed as orphans after 60 s without a heartbeat. The
+  history of every lease is kept in `run_lease_events` and counted in
+  `nexc_run_lease_events_total{event}`.
 - Documentation site (`site/`, VitePress): the repository's Markdown rendered with a sidebar,
   full-text search, a dark theme, mermaid diagrams and the API reference (Scalar over
   `site/public/openapi.json`, a committed export of `nexc openapi`), in six sections: Start,

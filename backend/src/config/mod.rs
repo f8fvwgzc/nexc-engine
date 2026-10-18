@@ -80,6 +80,9 @@ pub struct Settings {
     pub max_concurrency: usize,
     pub max_attempts: u32,
     pub node_timeout: Duration,
+    /// The lease an instance holds on a run it executes (renewed every third of it); a run
+    /// whose lease ran out is taken over by another instance (docs/HA.md).
+    pub run_lease: Duration,
     pub trust_proxy: bool,
     pub metrics_token: Option<Secret<String>>,
     /// Where the Agent Firewall API listens (`0.0.0.0:50052`); unset keeps it off.
@@ -234,6 +237,7 @@ impl Settings {
             max_concurrency: r.parse("NEXC_MAX_CONCURRENCY", 4),
             max_attempts: r.parse("NEXC_MAX_ATTEMPTS", 3),
             node_timeout: Duration::from_secs(r.parse("NEXC_NODE_TIMEOUT_SECS", 600)),
+            run_lease: Duration::from_secs(r.parse("NEXC_RUN_LEASE_SECS", 30)),
             trust_proxy: r.parse("NEXC_TRUST_PROXY", false),
             metrics_token: r.optional("NEXC_METRICS_TOKEN").map(Secret::new),
             grpc_addr: r.grpc_addr(),
@@ -302,6 +306,9 @@ impl Settings {
         }
         if self.node_timeout.is_zero() {
             errors.push("NEXC_NODE_TIMEOUT_SECS must be positive".into());
+        }
+        if self.run_lease.is_zero() || self.run_lease > Duration::from_secs(3600) {
+            errors.push("NEXC_RUN_LEASE_SECS must be between 1 and 3600".into());
         }
         if !(1..=1000).contains(&self.db_max_connections) {
             errors.push("NEXC_DB_MAX_CONNECTIONS must be between 1 and 1000".into());

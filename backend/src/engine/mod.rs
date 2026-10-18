@@ -16,6 +16,7 @@ pub mod executor;
 pub mod guardrails;
 pub mod json_stream;
 pub mod knowledge;
+pub mod lease;
 pub mod planner;
 pub mod policy;
 pub mod recording;
@@ -30,6 +31,7 @@ pub mod usage;
 pub mod workspaces;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use dashmap::{DashMap, DashSet};
@@ -37,13 +39,26 @@ use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use crate::repo::run_commands::RunCommand;
 use commands::Attempt;
+use lease::Lease;
+
+/// A run executing on this instance: what cancels it and the lease it runs under.
+struct ActiveRun {
+    token: CancellationToken,
+    lease: Lease,
+}
 
 /// In-process engine bookkeeping shared by handlers and workers.
 pub struct Engine {
     instance: Uuid,
     wake: Notify,
-    active_runs: DashMap<Uuid, CancellationToken>,
+    active_runs: DashMap<Uuid, ActiveRun>,
+    /// Set when the instance shuts down: it claims nothing more and fails readiness.
+    draining: AtomicBool,
+    /// Operators' commands taken over with a run, by run and node, for the
+    /// attempt that replaces the interrupted one (see `commands::spawned`).
+    carried: DashMap<(Uuid, Uuid), Vec<RunCommand>>,
     /// The nodes each agent is working on here, with what stops each of them.
     busy_agents: DashMap<Uuid, Vec<(Uuid, CancellationToken)>>,
     /// The node attempts open here over the runtime's gRPC stream, by run and node:
@@ -83,6 +98,8 @@ impl Engine {
             instance,
             wake: Notify::new(),
             active_runs: DashMap::new(),
+            draining: AtomicBool::new(false),
+            carried: DashMap::new(),
             busy_agents: DashMap::new(),
             attempts: DashMap::new(),
             dispatches: DashMap::new(),
@@ -120,26 +137,101 @@ impl Engine {
         self.wake.notified().await;
     }
 
-    /// Registers a run executing on this instance.
-    pub fn register_run(&self, run_id: Uuid) -> CancellationToken {
+    /// Registers a run executing on this instance under `lease`; returns
+    /// the token that cancels it.
+    pub fn register_run(&self, lease: Lease) -> CancellationToken {
         let token = CancellationToken::new();
-        self.active_runs.insert(run_id, token.clone());
+        self.active_runs.insert(
+            lease.run_id(),
+            ActiveRun {
+                token: token.clone(),
+                lease,
+            },
+        );
         token
     }
 
-    /// Forgets a finished run.
-    pub fn unregister_run(&self, run_id: Uuid) {
-        self.active_runs.remove(&run_id);
+    /// Forgets a run that finished or stopped here under `lease`.
+    pub fn unregister_run(&self, lease: &Lease) {
+        let run_id = lease.run_id();
+        self.active_runs
+            .remove_if(&run_id, |_, active| active.lease.same(lease));
+        self.carried.retain(|(run, _), _| *run != run_id);
+    }
+
+    /// The lease of a run executing here.
+    pub fn lease(&self, run_id: Uuid) -> Option<Lease> {
+        self.active_runs.get(&run_id).map(|a| a.lease.clone())
+    }
+
+    /// The leases to renew: every run executing here that still runs.
+    pub fn held_leases(&self) -> Vec<Lease> {
+        self.active_runs
+            .iter()
+            .map(|a| a.lease.clone())
+            .filter(|l| l.epoch().is_some() && !l.is_stopped())
+            .collect()
+    }
+
+    /// The runs executing here.
+    pub fn local_runs(&self) -> Vec<Uuid> {
+        self.active_runs.iter().map(|a| *a.key()).collect()
+    }
+
+    /// How many runs execute here.
+    pub fn active_count(&self) -> usize {
+        self.active_runs.len()
     }
 
     /// Cancels a run if it executes on this instance; returns whether it did.
     pub fn cancel_local(&self, run_id: Uuid) -> bool {
-        self.active_runs.get(&run_id).map(|t| t.cancel()).is_some()
+        self.active_runs
+            .get(&run_id)
+            .map(|a| a.token.cancel())
+            .is_some()
     }
 
-    /// Cancels every local run (shutdown).
+    /// Cancels every local run.
     pub fn cancel_all(&self) {
-        self.active_runs.iter().for_each(|t| t.cancel());
+        self.active_runs.iter().for_each(|a| a.token.cancel());
+    }
+
+    /// Hands every run executing here to a peer (shutdown): each stops,
+    /// writes its trace and releases its lease. Returns how many.
+    pub fn hand_off_all(&self) -> usize {
+        self.active_runs.iter().map(|a| a.lease.hand_off()).count()
+    }
+
+    /// Stops every run executing here at once, without writing anything
+    /// more for them, as if the process had died: their leases run out and
+    /// peers take them over. Returns how many.
+    pub fn abandon_all(&self) -> usize {
+        self.active_runs.iter().map(|a| a.lease.lose()).count()
+    }
+
+    /// The instance shuts down: it claims nothing more and fails readiness.
+    pub fn start_draining(&self) {
+        self.draining.store(true, Ordering::SeqCst);
+    }
+
+    /// Whether the instance is shutting down.
+    pub fn is_draining(&self) -> bool {
+        self.draining.load(Ordering::SeqCst)
+    }
+
+    /// Keeps an operator's command for the next attempt of its node here.
+    pub fn carry_command(&self, command: RunCommand) {
+        self.carried
+            .entry((command.run_id, command.node_id))
+            .or_default()
+            .push(command);
+    }
+
+    /// Takes a carried command of a node about the sub-agent `subject`.
+    pub fn take_carried(&self, run_id: Uuid, node_id: Uuid, subject: &str) -> Option<RunCommand> {
+        let mut commands = self.carried.get_mut(&(run_id, node_id))?;
+        let at = commands.iter().position(|c| c.subject == subject)?;
+        Some(commands.remove(at))
     }
 
     /// Marks an agent as working on `node`; cancelling `stop` ends that work.
@@ -209,10 +301,21 @@ mod tests {
     fn tracks_runs_and_agents() {
         let e = Engine::new(Uuid::now_v7());
         let run = Uuid::now_v7();
-        let token = e.register_run(run);
+        let lease = Lease::held(run, 1, e.instance());
+        let token = e.register_run(lease.clone());
         assert!(e.cancel_local(run) && token.is_cancelled());
-        e.unregister_run(run);
-        assert!(!e.cancel_local(run));
+        assert_eq!(e.local_runs(), vec![run]);
+        assert_eq!(e.held_leases().len(), 1);
+        // A lease of another epoch does not unregister the run.
+        e.unregister_run(&Lease::held(run, 2, e.instance()));
+        assert_eq!(e.active_count(), 1);
+        assert_eq!(e.hand_off_all(), 1);
+        assert!(lease.is_handing_off() && e.held_leases().is_empty());
+        e.unregister_run(&lease);
+        assert!(!e.cancel_local(run) && e.lease(run).is_none());
+        assert!(!e.is_draining());
+        e.start_draining();
+        assert!(e.is_draining());
         let agent = Uuid::now_v7();
         let (first, second) = (Uuid::now_v7(), Uuid::now_v7());
         let (stop_first, stop_second) = (CancellationToken::new(), CancellationToken::new());

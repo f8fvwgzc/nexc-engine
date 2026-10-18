@@ -1046,7 +1046,14 @@ async fn prove_gateway(pool: PgPool) {
     .execute(&pool)
     .await
     .unwrap();
-    let sink = nexc::engine::trace::start(app.state.clone(), run_id, graph_id);
+    let lease = nexc::engine::lease::Lease::unfenced(run_id);
+    let sink = nexc::engine::trace::start(
+        app.state.clone(),
+        run_id,
+        graph_id,
+        lease.clone(),
+        nexc::engine::trace::Tail::GENESIS,
+    );
     let ctx = ExecContext {
         state: app.state.clone(),
         run_id,
@@ -1078,6 +1085,8 @@ async fn prove_gateway(pool: PgPool) {
         recording: Default::default(),
         scrub_secrets: true,
         redactions: Vec::new(),
+        lease,
+        carried: Default::default(),
     };
     let _ = Capabilities::default();
     let granted = Granted::default();

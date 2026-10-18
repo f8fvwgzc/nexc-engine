@@ -143,7 +143,14 @@ async fn open_run(
     .await?;
     repo::runs::set_policy_versions(&mut *tx, run_id, &caller.versions).await?;
     tx.commit().await?;
-    let sink = trace::start(state.clone(), run_id, graph_id);
+    // An external agent's session is no claimed run: nothing takes it over, nothing is fenced.
+    let sink = trace::start(
+        state.clone(),
+        run_id,
+        graph_id,
+        crate::engine::lease::Lease::unfenced(run_id),
+        trace::Tail::GENESIS,
+    );
     let handle = sink.handle();
     if let Ok(run) = scheduler::load_run(state, run_id).await {
         state.hub.publish(graph_id, SseEvent::RunStarted { run });

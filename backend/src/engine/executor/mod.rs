@@ -28,6 +28,8 @@ use crate::domain::recording::Redaction;
 use crate::domain::run::Artifact;
 use crate::domain::settings::LlmProviderKind;
 use crate::domain::trace::{SYSTEM_PRINCIPAL, SpanDraft, SpanKind, SpanStatus};
+use crate::engine::approvals::Carried;
+use crate::engine::lease::{self, Lease, WriteError};
 use crate::engine::trace::TraceHandle;
 use crate::llm::{LlmError, LlmTarget};
 use crate::realtime::events::{LogLevel, NodeStatusEvent, SseEvent};
@@ -81,6 +83,11 @@ pub struct ExecContext {
     pub scrub_secrets: bool,
     /// The passages and memories replaced by their citation in everything recorded.
     pub redactions: Vec<Redaction>,
+    /// The lease the run executes under: the node's writes are fenced on it.
+    pub lease: Lease,
+    /// Decisions taken on a request of an attempt that was interrupted by a
+    /// takeover, for the same request of this attempt (`approvals::open`).
+    pub carried: Carried,
 }
 
 impl ExecContext {
@@ -113,6 +120,8 @@ impl ExecContext {
             recording: self.recording.clone(),
             scrub_secrets: self.scrub_secrets,
             redactions: self.redactions.clone(),
+            lease: self.lease.clone(),
+            carried: self.carried.clone(),
         }
     }
 
@@ -199,7 +208,14 @@ impl ExecContext {
             }),
         );
         self.state.metrics.policy_mismatches.add(1);
-        if let Err(err) = repo::runs::add_policy_mismatch(&self.state.db, self.run_id).await {
+        let counted = async {
+            let mut tx = lease::begin(&self.state, &self.lease, "policy mismatch count").await?;
+            repo::runs::add_policy_mismatch(&mut *tx, self.run_id).await?;
+            tx.commit().await?;
+            Ok::<(), WriteError>(())
+        }
+        .await;
+        if let Err(err) = counted {
             tracing::error!(run_id = %self.run_id, error = %err, "policy mismatch not counted on the run");
         }
         if let Some(workspace) = self.workspace_id

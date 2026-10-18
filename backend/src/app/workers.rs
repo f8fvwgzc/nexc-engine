@@ -31,6 +31,7 @@ pub fn spawn(state: &AppState, shutdown: CancellationToken) {
         shutdown.clone(),
     );
     tokio::spawn(scheduler::dispatcher(state.clone(), shutdown.clone()));
+    tokio::spawn(scheduler::keep_leases(state.clone(), shutdown.clone()));
     if export::spawn(state, shutdown.clone()) {
         tracing::info!(
             every_secs = export::TICK.as_secs(),
@@ -50,10 +51,7 @@ pub fn spawn(state: &AppState, shutdown: CancellationToken) {
         HEARTBEAT_EVERY,
         shutdown.clone(),
         state.clone(),
-        |s| async move {
-            orchestrator::heartbeat(&s).await?;
-            scheduler::reap_orphans(&s).await
-        },
+        |s| async move { orchestrator::heartbeat(&s).await },
     ));
     tokio::spawn(every(
         SESSIONS_EVERY,

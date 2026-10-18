@@ -124,6 +124,46 @@ pub async fn decide(
     .await
 }
 
+/// The latest approval a node of a run asked for (the one a node waiting
+/// when its run was taken over waits for).
+pub async fn latest_of_node(
+    db: impl PgExecutor<'_>,
+    run_id: Uuid,
+    node_id: Uuid,
+) -> Result<Option<Approval>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT * FROM approvals WHERE run_id = $1 AND node_id = $2
+         ORDER BY requested_at DESC, id DESC LIMIT 1",
+    )
+    .bind(run_id)
+    .bind(node_id)
+    .fetch_optional(db)
+    .await
+}
+
+/// Decides a pending approval as `from` was decided: the request an
+/// attempt asks again after a takeover gets the decision already taken on
+/// the interrupted attempt's request, by the same person, for the same
+/// reason. `None` when it was not pending.
+pub async fn carry(
+    db: impl PgExecutor<'_>,
+    id: Uuid,
+    from: Uuid,
+) -> Result<Option<Approval>, sqlx::Error> {
+    sqlx::query_as(
+        "UPDATE approvals a SET status = o.status, decided_by = o.decided_by,
+                decided_by_name = o.decided_by_name, decision_reason = o.decision_reason,
+                decided_at = now()
+         FROM approvals o
+         WHERE a.id = $1 AND o.id = $2 AND a.status = 'pending' AND o.status IN ('approved', 'denied')
+         RETURNING a.*",
+    )
+    .bind(id)
+    .bind(from)
+    .fetch_optional(db)
+    .await
+}
+
 /// Marks a still-pending approval expired (the call stopped waiting); returns whether it did.
 pub async fn expire(db: impl PgExecutor<'_>, id: Uuid) -> Result<bool, sqlx::Error> {
     let done = sqlx::query(

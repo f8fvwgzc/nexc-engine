@@ -683,6 +683,7 @@ async fn prove_trace(pool: PgPool) {
     use std::time::{Duration, Instant};
 
     use nexc::domain::trace::{SpanDraft, SpanKind, SpanStatus};
+    use nexc::engine::lease::Lease;
     use nexc::engine::trace;
 
     const SPANS: usize = 10_000;
@@ -710,7 +711,13 @@ async fn prove_trace(pool: PgPool) {
     .unwrap();
 
     let mut rx = app.events(&gid);
-    let sink = trace::start(app.state.clone(), run_id, graph_id);
+    let sink = trace::start(
+        app.state.clone(),
+        run_id,
+        graph_id,
+        Lease::unfenced(run_id),
+        trace::Tail::GENESIS,
+    );
     let handle = sink.handle();
     let node_id: Uuid = node.parse().unwrap();
     let ids: Vec<Uuid> = (0..SPANS).map(|_| Uuid::now_v7()).collect();
@@ -854,6 +861,7 @@ async fn sealing_does_not_wait_for_handles_still_held(pool: PgPool) {
     use std::time::Duration;
 
     use nexc::domain::trace::{SpanDraft, SpanKind, SpanStatus};
+    use nexc::engine::lease::Lease;
     use nexc::engine::trace;
 
     let app = TestApp::new(pool.clone(), &[]).await;
@@ -888,7 +896,13 @@ async fn sealing_does_not_wait_for_handles_still_held(pool: PgPool) {
         status: SpanStatus::Ok,
         attributes: json!({}),
     };
-    let sink = trace::start(app.state.clone(), run_id, graph_id);
+    let sink = trace::start(
+        app.state.clone(),
+        run_id,
+        graph_id,
+        Lease::unfenced(run_id),
+        trace::Tail::GENESIS,
+    );
     let lingering = sink.handle();
     for _ in 0..3 {
         lingering.emit(draft());

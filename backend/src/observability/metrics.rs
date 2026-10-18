@@ -162,6 +162,8 @@ pub struct Metrics {
     pub artifacts_quarantined: Counter,
     pub runs: LabeledCounter,
     pub run_duration: Histogram,
+    /// Run lease events, by kind (`claimed`, `taken_over`, `released`, `lost`, `fenced`).
+    pub run_leases: LabeledCounter,
     /// Trace spans recorded, by kind.
     pub spans: LabeledCounter,
     /// From a span being emitted by an executor to its `trace.span` fan-out.
@@ -203,6 +205,7 @@ impl Default for Metrics {
             artifacts_quarantined: Counter::default(),
             runs: LabeledCounter::default(),
             run_duration: Histogram::new(&RUN_BUCKETS),
+            run_leases: LabeledCounter::default(),
             spans: LabeledCounter::default(),
             span_fanout: Histogram::new(&SPAN_BUCKETS),
             onto_asks: LabeledCounter::default(),
@@ -343,6 +346,14 @@ impl Metrics {
         );
         self.run_duration
             .render(&mut out, "nexc_run_duration_seconds");
+        header(
+            &mut out,
+            "nexc_run_lease_events_total",
+            "counter",
+            "Run lease events by kind (claimed, taken_over, released, lost, fenced).",
+        );
+        self.run_leases
+            .render(&mut out, "nexc_run_lease_events_total");
         header(
             &mut out,
             "nexc_trace_spans_total",

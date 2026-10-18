@@ -1,6 +1,9 @@
 //! Runs and per-node results. Runs are claimed by scheduler instances with
 //! `SELECT … FOR UPDATE SKIP LOCKED`, so several backend replicas can share
-//! one database without executing a run twice.
+//! one database without executing a run twice. The instance executing a run
+//! holds a lease on it (`claimed_by`, `lease_expires_at`, `lease_epoch`):
+//! renewed while it executes, taken over by another instance when it runs
+//! out, and checked by every write the executor makes (docs/HA.md).
 
 use chrono::{DateTime, Utc};
 use sqlx::postgres::PgRow;
@@ -39,6 +42,10 @@ pub struct RunRow {
     pub trace_hash: Option<Vec<u8>>,
     pub policy_mismatches: i32,
     pub policy_versions: PolicyVersions,
+    /// The instance holding the run's lease (the one executing it).
+    pub claimed_by: Option<Uuid>,
+    /// Raised every time the run changes hands; writes are fenced on it.
+    pub lease_epoch: i64,
 }
 
 impl RunRow {
@@ -80,6 +87,8 @@ impl FromRow<'_, PgRow> for RunRow {
             trace_hash: row.try_get("trace_hash")?,
             policy_mismatches: row.try_get("policy_mismatches")?,
             policy_versions: versions_col(row, "policy_versions")?,
+            claimed_by: row.try_get("claimed_by")?,
+            lease_epoch: row.try_get("lease_epoch")?,
         })
     }
 }
@@ -219,63 +228,241 @@ pub async fn list_for_graph(
     Ok(runs)
 }
 
-/// Claims the oldest queued run for `instance`, marking it running.
+/// Claims the oldest queued run for `instance`, marking it running under a
+/// lease of `lease_secs` at the next epoch.
 pub async fn claim_next(
     db: impl PgExecutor<'_>,
     instance: Uuid,
+    lease_secs: f64,
 ) -> Result<Option<RunRow>, sqlx::Error> {
     sqlx::query_as(
-        "UPDATE runs SET status = 'running', claimed_by = $1, started_at = now(), heartbeat_at = now()
+        "UPDATE runs SET status = 'running', claimed_by = $1, started_at = now(), heartbeat_at = now(),
+                lease_expires_at = now() + make_interval(secs => $2), lease_epoch = lease_epoch + 1
          WHERE id = (SELECT id FROM runs WHERE status = 'queued' ORDER BY created_at
                      FOR UPDATE SKIP LOCKED LIMIT 1)
          RETURNING *",
     )
     .bind(instance)
+    .bind(lease_secs)
     .fetch_optional(db)
     .await
 }
 
 /// Claims one queued run for `instance` by id (a run this instance will
-/// execute itself rather than leave to a dispatcher), marking it running.
+/// execute itself rather than leave to a dispatcher), marking it running
+/// under a lease of `lease_secs` at the next epoch.
 pub async fn claim(
     db: impl PgExecutor<'_>,
     instance: Uuid,
     run_id: Uuid,
+    lease_secs: f64,
 ) -> Result<Option<RunRow>, sqlx::Error> {
     sqlx::query_as(
-        "UPDATE runs SET status = 'running', claimed_by = $1, started_at = now(), heartbeat_at = now()
+        "UPDATE runs SET status = 'running', claimed_by = $1, started_at = now(), heartbeat_at = now(),
+                lease_expires_at = now() + make_interval(secs => $3), lease_epoch = lease_epoch + 1
          WHERE id = $2 AND status = 'queued' RETURNING *",
     )
     .bind(instance)
+    .bind(run_id)
+    .bind(lease_secs)
+    .fetch_optional(db)
+    .await
+}
+
+/// A run taken over from a holder whose lease ran out.
+#[derive(Debug, Clone)]
+pub struct Takeover {
+    /// The run as it is now: held by the instance that took it, at the next epoch.
+    pub row: RunRow,
+    /// The instance that held it before.
+    pub previous: Option<Uuid>,
+    /// Whether that instance released it (it shut down) rather than stopped renewing.
+    pub released: bool,
+}
+
+impl FromRow<'_, PgRow> for Takeover {
+    fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
+        Ok(Takeover {
+            row: RunRow::from_row(row)?,
+            previous: row.try_get("previous_owner")?,
+            released: row.try_get("released")?,
+        })
+    }
+}
+
+/// Takes over the running run whose lease ran out longest ago, for
+/// `instance`, in one statement that raises its epoch: from then on the
+/// former holder's writes are refused. Runs in `local` (executing here) are
+/// left alone. A holder that still sends heartbeats (an instance of an
+/// earlier version, which knows no leases) is never taken over.
+pub async fn take_over(
+    db: impl PgExecutor<'_>,
+    instance: Uuid,
+    lease_secs: f64,
+    local: &[Uuid],
+) -> Result<Option<Takeover>, sqlx::Error> {
+    sqlx::query_as(
+        "WITH expired AS (
+             SELECT id, claimed_by, heartbeat_at IS NULL AS released FROM runs
+             WHERE status = 'running' AND lease_expires_at < now()
+               AND (heartbeat_at IS NULL OR heartbeat_at < now() - make_interval(secs => $2))
+               AND NOT (id = ANY($3))
+             ORDER BY lease_expires_at FOR UPDATE SKIP LOCKED LIMIT 1)
+         UPDATE runs r SET claimed_by = $1, heartbeat_at = now(),
+                lease_expires_at = now() + make_interval(secs => $2), lease_epoch = r.lease_epoch + 1
+         FROM expired WHERE r.id = expired.id
+         RETURNING r.*, expired.claimed_by AS previous_owner, expired.released",
+    )
+    .bind(instance)
+    .bind(lease_secs)
+    .bind(local)
+    .fetch_optional(db)
+    .await
+}
+
+/// Renews the leases `instance` holds, each at its epoch (`(run, epoch)`);
+/// returns the runs renewed. A run left out finished, or changed hands.
+pub async fn renew(
+    db: impl PgExecutor<'_>,
+    instance: Uuid,
+    held: &[(Uuid, i64)],
+    lease_secs: f64,
+) -> Result<Vec<Uuid>, sqlx::Error> {
+    let ids: Vec<Uuid> = held.iter().map(|(id, _)| *id).collect();
+    let epochs: Vec<i64> = held.iter().map(|(_, epoch)| *epoch).collect();
+    sqlx::query_scalar(
+        "UPDATE runs r SET heartbeat_at = now(), lease_expires_at = now() + make_interval(secs => $4)
+         FROM unnest($1::uuid[], $2::bigint[]) AS l(id, epoch)
+         WHERE r.id = l.id AND r.lease_epoch = l.epoch AND r.claimed_by = $3 AND r.status = 'running'
+         RETURNING r.id",
+    )
+    .bind(&ids)
+    .bind(&epochs)
+    .bind(instance)
+    .bind(lease_secs)
+    .fetch_all(db)
+    .await
+}
+
+/// Releases the lease held at `epoch` (the holder shuts down): the lease runs
+/// out now and the epoch goes up, so a peer takes the run over at once and
+/// nothing the holder still sends is accepted. Returns the new epoch.
+pub async fn release(
+    db: impl PgExecutor<'_>,
+    run_id: Uuid,
+    epoch: i64,
+) -> Result<Option<i64>, sqlx::Error> {
+    sqlx::query_scalar(
+        "UPDATE runs SET lease_epoch = lease_epoch + 1, lease_expires_at = now(), heartbeat_at = NULL
+         WHERE id = $1 AND lease_epoch = $2 AND status = 'running' RETURNING lease_epoch",
+    )
+    .bind(run_id)
+    .bind(epoch)
+    .fetch_optional(db)
+    .await
+}
+
+/// Locks the row of a running run for a write of its executor and returns
+/// its epoch (`None` when the run is no longer running). The lock is held to
+/// the end of the transaction, so a takeover waits for the write, and a
+/// write after a takeover sees the new epoch.
+pub async fn lock_lease(db: impl PgExecutor<'_>, run_id: Uuid) -> Result<Option<i64>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT lease_epoch FROM runs WHERE id = $1 AND status = 'running' FOR NO KEY UPDATE",
+    )
     .bind(run_id)
     .fetch_optional(db)
     .await
 }
 
-/// Refreshes the heartbeat of every run executed by `instance`.
-pub async fn heartbeat(db: impl PgExecutor<'_>, instance: Uuid) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "UPDATE runs SET heartbeat_at = now() WHERE claimed_by = $1 AND status = 'running'",
-    )
-    .bind(instance)
-    .execute(db)
-    .await?;
-    Ok(())
+/// What the run's cancel watcher looks at every second: whether a cancel was
+/// asked for, and who holds the run at which epoch.
+#[derive(Debug, Clone, FromRow)]
+pub struct Watched {
+    pub cancel_requested: bool,
+    pub claimed_by: Option<Uuid>,
+    pub lease_epoch: i64,
 }
 
-/// Fails runs whose executing instance stopped sending heartbeats.
-pub async fn fail_orphans(
+/// The run as its cancel watcher sees it.
+pub async fn watched(db: impl PgExecutor<'_>, id: Uuid) -> Result<Option<Watched>, sqlx::Error> {
+    sqlx::query_as("SELECT cancel_requested, claimed_by, lease_epoch FROM runs WHERE id = $1")
+        .bind(id)
+        .fetch_optional(db)
+        .await
+}
+
+/// A node result as stored, for resuming a run that was taken over.
+#[derive(Debug, Clone)]
+pub struct StoredNode {
+    pub node_id: Uuid,
+    pub status: NodeStatus,
+    pub attempt: i32,
+    pub agent_id: Option<Uuid>,
+    pub output: Option<String>,
+}
+
+impl FromRow<'_, PgRow> for StoredNode {
+    fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
+        Ok(StoredNode {
+            node_id: row.try_get("node_id")?,
+            status: enum_col(row, "status")?,
+            attempt: row.try_get("attempt")?,
+            agent_id: row.try_get("agent_id")?,
+            output: row.try_get("output")?,
+        })
+    }
+}
+
+/// Every node result of a run, with its full output.
+pub async fn stored_nodes(
     db: impl PgExecutor<'_>,
-    stale_after_secs: i64,
-) -> Result<Vec<Uuid>, sqlx::Error> {
-    sqlx::query_scalar(
-        "UPDATE runs SET status = 'failed', error = 'interrupted: executing instance stopped', finished_at = now()
-         WHERE status = 'running' AND heartbeat_at < now() - make_interval(secs => $1)
-         RETURNING id",
+    run_id: Uuid,
+) -> Result<Vec<StoredNode>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT node_id, status, attempt, agent_id, output FROM node_runs
+         WHERE run_id = $1 ORDER BY position",
     )
-    .bind(stale_after_secs as f64)
+    .bind(run_id)
     .fetch_all(db)
     .await
+}
+
+/// Queues a node again whose attempt was interrupted (the node run and the
+/// node itself); its attempt counter is kept, the next attempt is one more.
+pub async fn requeue_node(
+    conn: &mut sqlx::PgConnection,
+    run_id: Uuid,
+    node_id: Uuid,
+) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query(
+        "UPDATE node_runs SET status = 'queued'
+         WHERE run_id = $1 AND node_id = $2 AND status IN ('running', 'waiting_approval')",
+    )
+    .bind(run_id)
+    .bind(node_id)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query("UPDATE nodes SET status = 'queued', updated_at = now() WHERE id = $1")
+        .bind(node_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(done.rows_affected() == 1)
+}
+
+/// The status of one node of a run.
+pub async fn node_status(
+    db: impl PgExecutor<'_>,
+    run_id: Uuid,
+    node_id: Uuid,
+) -> Result<Option<NodeStatus>, sqlx::Error> {
+    let status: Option<String> =
+        sqlx::query_scalar("SELECT status FROM node_runs WHERE run_id = $1 AND node_id = $2")
+            .bind(run_id)
+            .bind(node_id)
+            .fetch_optional(db)
+            .await?;
+    Ok(status.and_then(|s| s.parse().ok()))
 }
 
 /// Marks unfinished node results of a finished run with `status`.

@@ -4,6 +4,13 @@
 //! the run's cancel watcher delivers what was recorded elsewhere within a
 //! second. Delivering means sending the command down the node attempt's
 //! gRPC stream and putting a `policy` span on the trace.
+//!
+//! A command is addressed to whoever holds the run's lease: only that
+//! instance takes it. When the run changes instances, the new holder takes
+//! what the former one never took. A cancel whose sub-agent belonged to an
+//! attempt the takeover interrupted is carried to the attempt that replaces
+//! it, and delivered when that attempt spawns the sub-agent of the same
+//! name ([`spawned`]).
 
 use chrono::Utc;
 use serde_json::json;
@@ -36,8 +43,16 @@ pub struct Attempt {
 }
 
 impl Attempt {
-    /// Sends the cancel down the stream and records it; whether the stream took it.
-    fn cancel_agent(&self, state: &AppState, command: &RunCommand) -> bool {
+    /// Sends the cancel down the stream and records it; whether the stream
+    /// took it. `carried_from` is the spawn the command named when it was
+    /// carried over from an interrupted attempt to the sub-agent of the same
+    /// name in this one (whose spawn is `command.span_id`).
+    fn cancel_agent(
+        &self,
+        state: &AppState,
+        command: &RunCommand,
+        carried_from: Option<Uuid>,
+    ) -> bool {
         let sent = self
             .commands
             .send(BackendCommand {
@@ -55,6 +70,20 @@ impl Attempt {
         } else {
             format!("cancelled by an operator: {}", command.reason)
         };
+        let mut attributes = json!({
+            "decision": CANCEL_DECISION,
+            "rule": CANCEL_RULE,
+            "reason": reason,
+            "action": CANCEL_ACTION,
+            "subject": command.subject,
+            "spawn_span_id": command.span_id,
+            "requested_by": command.requested_by,
+            "delivered": sent,
+            "policy_version": self.policy_version,
+        });
+        if let Some(from) = carried_from {
+            attributes["carried_from_spawn_span_id"] = json!(from);
+        }
         self.trace.emit(SpanDraft {
             id: Uuid::now_v7(),
             node_id: self.node_id,
@@ -66,17 +95,7 @@ impl Attempt {
             started_at: command.created_at,
             ended_at: Some(now),
             status: SpanStatus::Error,
-            attributes: json!({
-                "decision": CANCEL_DECISION,
-                "rule": CANCEL_RULE,
-                "reason": reason,
-                "action": CANCEL_ACTION,
-                "subject": command.subject,
-                "spawn_span_id": command.span_id,
-                "requested_by": command.requested_by,
-                "delivered": sent,
-                "policy_version": self.policy_version,
-            }),
+            attributes,
         });
         state.hub.publish(
             self.graph_id,
@@ -102,32 +121,74 @@ impl Attempt {
     }
 }
 
-/// Takes the run's pending commands and delivers each to the attempt that
-/// holds its node here. A command whose attempt is not open on this
-/// instance is logged and dropped: the node ended, or it never ran over
-/// the stream. Returns how many were delivered.
+/// Takes the run's pending commands, when the run executes here, and
+/// delivers each to the attempt that holds its node. A command recorded
+/// while another instance held the run is about a sub-agent of an attempt
+/// that is gone: it is carried to the node's next attempt here. A command
+/// whose attempt is not open on this instance is logged and dropped: the
+/// node ended, or it never ran over the stream. Returns how many were
+/// delivered.
 pub async fn deliver(state: &AppState, run_id: Uuid) -> usize {
-    let pending = match repo::run_commands::take_pending(&state.db, run_id).await {
-        Ok(pending) => pending,
-        Err(err) => {
-            tracing::error!(%run_id, error = %err, "run commands not read");
-            return 0;
-        }
+    // Only the holder of the run's lease takes its commands; elsewhere they wait for it.
+    let Some(lease) = state.engine.lease(run_id) else {
+        return 0;
     };
+    let Some(epoch) = lease.epoch() else {
+        return 0;
+    };
+    let pending =
+        match repo::run_commands::take_pending(&state.db, run_id, lease.instance(), epoch).await {
+            Ok(pending) => pending,
+            Err(err) => {
+                tracing::error!(%run_id, error = %err, "run commands not read");
+                return 0;
+            }
+        };
     let mut delivered = 0;
     for command in pending {
+        if command.command != repo::run_commands::CANCEL_AGENT {
+            tracing::warn!(%run_id, command = %command.command, "unknown run command dropped");
+            continue;
+        }
+        if command.lease_epoch < epoch {
+            tracing::info!(%run_id, node_id = %command.node_id, subject = %command.subject,
+                "run command addressed to the run's former holder; carried to the node's next attempt");
+            state.engine.carry_command(command);
+            continue;
+        }
         match state.engine.attempt(run_id, command.node_id) {
-            Some(attempt) if command.command == repo::run_commands::CANCEL_AGENT => {
-                if attempt.cancel_agent(state, &command) {
+            Some(attempt) => {
+                if attempt.cancel_agent(state, &command, None) {
                     delivered += 1;
                 }
-            }
-            Some(_) => {
-                tracing::warn!(%run_id, command = %command.command, "unknown run command dropped")
             }
             None => tracing::info!(%run_id, node_id = %command.node_id,
                 "run command found no open attempt here: the node ended or runs without the stream"),
         }
     }
     delivered
+}
+
+/// A sub-agent named `subject` was spawned (span `spawn_span_id`) in an
+/// attempt of `node_id` here: a cancel carried over from the attempt a
+/// takeover interrupted, for the sub-agent of that name, is delivered to it
+/// now. Returns whether one was.
+pub fn spawned(
+    state: &AppState,
+    run_id: Uuid,
+    node_id: Uuid,
+    spawn_span_id: Uuid,
+    subject: &str,
+) -> bool {
+    let Some(mut command) = state.engine.take_carried(run_id, node_id, subject) else {
+        return false;
+    };
+    let Some(attempt) = state.engine.attempt(run_id, node_id) else {
+        // No stream to send it down (the NDJSON wire): it stays carried, and goes with the run.
+        state.engine.carry_command(command);
+        return false;
+    };
+    let from = command.span_id;
+    command.span_id = spawn_span_id;
+    attempt.cancel_agent(state, &command, Some(from))
 }

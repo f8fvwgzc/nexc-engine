@@ -6,28 +6,42 @@
 //! `max_concurrency` run at once (semaphore), each attempt has a timeout,
 //! retryable failures back off with full jitter, descendants of failed nodes
 //! are skipped, and unchanged nodes are served from the content-hash cache.
+//!
+//! The instance executing a run holds a lease on it (docs/HA.md), renewed
+//! every third of `NEXC_RUN_LEASE_SECS` ([`keep_leases`]). A run whose lease
+//! ran out is taken over by another instance's dispatcher and resumed from
+//! what was written: succeeded nodes keep their outputs, a node that was
+//! running is queued again with its next attempt and an `interrupted` span,
+//! a node that waited for an approval waits again here, and the trace
+//! continues its chain. Every write of the executor is fenced by the lease
+//! ([`lease::begin`]): once a run changed hands, its former holder writes
+//! nothing more for it.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use serde_json::{Value, json};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
+use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::analysis::dependency_graph;
+use super::approvals::{self, Reattached};
 use super::defend::{About, Finding};
 use super::executor::{self, ExecContext, ExecError, ExecOutput};
+use super::lease::{self, Lease, WriteError};
 use super::policy as policies;
-use super::trace::{self, Sealed, TraceHandle};
+use super::trace::{self, Sealed, Tail, TraceHandle, TraceSink};
 use super::{artifacts, credentials, editor, guardrails, knowledge, usage};
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::agent::{Agent, AgentStatus};
 use crate::domain::alert::AlertKind;
+use crate::domain::approval::Approval;
 use crate::domain::audit::AuditAction;
 use crate::domain::capabilities::{Capabilities, DataLabel};
 use crate::domain::context;
@@ -51,13 +65,20 @@ use crate::llm::pricing::{cost_usd, cost_usd_cached};
 use crate::llm::retry::full_jitter;
 use crate::realtime::events::{LogLevel, NodeStatusEvent, SseEvent};
 use crate::repo::audit::Subject;
-use crate::repo::runs::{NodeOutcome, RunRow};
+use crate::repo::run_leases;
+use crate::repo::runs::{NodeOutcome, RunRow, StoredNode};
 use crate::repo::{self, OrNotFound};
 use crate::{kernel, memory, orchestrator};
 
+/// How often the dispatcher looks for queued runs and for leases that ran out.
 const DISPATCH_POLL: Duration = Duration::from_secs(2);
 const CANCEL_POLL: Duration = Duration::from_secs(1);
-const ORPHAN_AFTER_SECS: i64 = 60;
+/// The decision of the `policy` span on a node whose attempt a takeover interrupted.
+pub const INTERRUPTED_DECISION: &str = "interrupted";
+/// The decision of the `policy` span on a node that waits for an approval again after a takeover.
+pub const REATTACHED_DECISION: &str = "reattached";
+/// The rule of both: the run's lease.
+pub const LEASE_RULE: &str = "lease";
 
 /// Options of `POST /graphs/{gid}/runs`.
 #[derive(Debug, Clone, Default)]
@@ -158,21 +179,12 @@ async fn wait_until_terminal(state: &AppState, run_id: Uuid, limit: Duration) {
     }
 }
 
-/// Claims and executes queued runs until `shutdown`.
+/// Claims and executes queued runs, and takes over runs whose lease ran out,
+/// until `shutdown`. A draining instance does neither.
 pub async fn dispatcher(state: AppState, shutdown: CancellationToken) {
     loop {
-        loop {
-            match repo::runs::claim_next(&state.db, state.engine.instance()).await {
-                Ok(Some(row)) => {
-                    tokio::spawn(execute_run(state.clone(), row));
-                }
-                Ok(None) => break,
-                Err(err) => {
-                    tracing::error!(error = %err, "cannot claim runs");
-                    break;
-                }
-            }
-        }
+        claim_queued(&state).await;
+        take_over_expired(&state).await;
         tokio::select! {
             _ = shutdown.cancelled() => return,
             _ = state.engine.woken() => {}
@@ -181,26 +193,179 @@ pub async fn dispatcher(state: AppState, shutdown: CancellationToken) {
     }
 }
 
-/// Fails runs whose executing instance died and publishes their final state.
-pub async fn reap_orphans(state: &AppState) -> anyhow::Result<()> {
-    repo::runs::heartbeat(&state.db, state.engine.instance()).await?;
-    for run_id in repo::runs::fail_orphans(&state.db, ORPHAN_AFTER_SECS).await? {
-        for node_id in
-            repo::runs::close_unfinished_nodes(&state.db, run_id, NodeStatus::Failed).await?
-        {
-            repo::nodes::set_status(&state.db, node_id, NodeStatus::Failed, None).await?;
-        }
-        let run = load_run(state, run_id).await?;
-        tracing::warn!(%run_id, "run orphaned by a stopped instance marked failed");
-        state
-            .hub
-            .publish(run.graph_id, SseEvent::RunFinished { run });
-    }
-    Ok(())
+/// The lease, in seconds, as the run rows take it.
+fn lease_secs(state: &AppState) -> f64 {
+    state.settings.run_lease.as_secs_f64()
 }
 
-async fn execute_run(state: AppState, row: RunRow) {
-    execute_claimed(state, row, Vec::new(), None).await;
+/// Claims every queued run and executes each here.
+async fn claim_queued(state: &AppState) {
+    while !state.engine.is_draining() {
+        match repo::runs::claim_next(&state.db, state.engine.instance(), lease_secs(state)).await {
+            Ok(Some(row)) => {
+                tokio::spawn(execute(
+                    state.clone(),
+                    row,
+                    Start::Fresh {
+                        opening: Vec::new(),
+                        refusal: None,
+                    },
+                ));
+            }
+            Ok(None) => return,
+            Err(err) => {
+                tracing::error!(error = %err, "cannot claim runs");
+                return;
+            }
+        }
+    }
+}
+
+/// Takes over every run whose lease ran out and resumes each here.
+async fn take_over_expired(state: &AppState) {
+    while !state.engine.is_draining() {
+        let local = state.engine.local_runs();
+        match repo::runs::take_over(
+            &state.db,
+            state.engine.instance(),
+            lease_secs(state),
+            &local,
+        )
+        .await
+        {
+            Ok(Some(taken)) => {
+                tracing::warn!(run_id = %taken.row.id, previous = ?taken.previous,
+                    epoch = taken.row.lease_epoch, released = taken.released,
+                    "run taken over from an instance that no longer holds it");
+                tokio::spawn(execute(
+                    state.clone(),
+                    taken.row,
+                    Start::Resume {
+                        previous: taken.previous,
+                        released: taken.released,
+                    },
+                ));
+            }
+            Ok(None) => return,
+            Err(err) => {
+                tracing::error!(error = %err, "cannot take over runs");
+                return;
+            }
+        }
+    }
+}
+
+/// Renews the leases of the runs executing here every third of the lease,
+/// until `shutdown`.
+pub async fn keep_leases(state: AppState, shutdown: CancellationToken) {
+    let every = (state.settings.run_lease / 3).max(Duration::from_millis(100));
+    let mut ticker = tokio::time::interval(every);
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => return,
+            _ = ticker.tick() => renew_leases(&state, every).await,
+        }
+    }
+}
+
+/// Renews every lease held here in one statement (given at most `limit`).
+/// A lease the database did not renew belongs to a run that changed hands:
+/// it is lost. So is one the database could not confirm for a whole lease
+/// (this instance is cut off from it): the run stops here rather than
+/// working on for nothing, and whoever takes it over resumes it.
+async fn renew_leases(state: &AppState, limit: Duration) {
+    let held = state.engine.held_leases();
+    if held.is_empty() {
+        return;
+    }
+    let pairs: Vec<(Uuid, i64)> = held
+        .iter()
+        .filter_map(|l| l.epoch().map(|epoch| (l.run_id(), epoch)))
+        .collect();
+    let renewed = tokio::time::timeout(
+        limit,
+        repo::runs::renew(
+            &state.db,
+            state.engine.instance(),
+            &pairs,
+            lease_secs(state),
+        ),
+    )
+    .await;
+    match renewed {
+        Ok(Ok(renewed)) => {
+            let renewed: HashSet<Uuid> = renewed.into_iter().collect();
+            for lease in &held {
+                if renewed.contains(&lease.run_id()) {
+                    lease.confirmed();
+                } else {
+                    not_renewed(state, lease).await;
+                }
+            }
+        }
+        failed => {
+            match failed {
+                Ok(Err(err)) => tracing::warn!(error = %err, "run leases not renewed"),
+                _ => tracing::warn!("run leases not renewed: the database did not answer in time"),
+            }
+            for lease in held
+                .iter()
+                .filter(|l| l.unconfirmed_for() >= state.settings.run_lease)
+            {
+                give_up(
+                    state,
+                    lease,
+                    "the database did not confirm the lease for a whole lease",
+                )
+                .await;
+            }
+        }
+    }
+}
+
+/// A lease the renewal left out: the run finished (nothing to do) or it
+/// went on elsewhere (the lease is lost).
+async fn not_renewed(state: &AppState, lease: &Lease) {
+    match repo::runs::find_row(&state.db, lease.run_id()).await {
+        Ok(Some(row)) if row.status == RunStatus::Running => {
+            let holder = row
+                .claimed_by
+                .map_or_else(|| "nobody".to_owned(), |id| id.to_string());
+            let why = format!("the run is held by {holder} at epoch {}", row.lease_epoch);
+            give_up(state, lease, &why).await;
+        }
+        Ok(_) => {}
+        Err(err) => {
+            tracing::warn!(run_id = %lease.run_id(), error = %err, "lease not renewed; trying again")
+        }
+    }
+}
+
+/// Gives a lease up: the run stops here and nothing more is written for it.
+async fn give_up(state: &AppState, lease: &Lease, why: &str) {
+    if lease.is_lost() {
+        return;
+    }
+    let epoch = lease.epoch().unwrap_or_default();
+    tracing::warn!(run_id = %lease.run_id(), epoch, why, "run lease lost; the run stops here");
+    lease.lose();
+    lease::record(state, lease, run_leases::LOST, epoch, None, why).await;
+}
+
+/// How a run comes to execute here.
+enum Start {
+    /// Claimed queued: `opening` spans are chained before anything else and
+    /// `refusal`, when set, fails every node at once.
+    Fresh {
+        opening: Vec<SpanDraft>,
+        refusal: Option<String>,
+    },
+    /// Taken over from `previous`, whose lease ran out (or who `released` it).
+    Resume {
+        previous: Option<Uuid>,
+        released: bool,
+    },
 }
 
 /// Executes a run this instance claimed (`repo::runs::claim`): the A2A
@@ -214,30 +379,74 @@ pub async fn execute_claimed(
     opening: Vec<SpanDraft>,
     refusal: Option<String>,
 ) {
-    let token = state.engine.register_run(row.id);
+    execute(state, row, Start::Fresh { opening, refusal }).await;
+}
+
+/// Executes a run under the lease its row carries until it finishes, or
+/// until the lease says to stop (it was lost, or this instance hands it to
+/// a peer).
+async fn execute(state: AppState, row: RunRow, start: Start) {
+    let lease = Lease::held(row.id, row.lease_epoch, state.engine.instance());
+    let token = state.engine.register_run(lease.clone());
     let started = Instant::now();
-    if let Ok(run) = load_run(&state, row.id).await {
-        state
-            .hub
-            .publish(row.graph_id, SseEvent::RunStarted { run });
-    }
-    // Every span of the run goes through one chain, in order of receipt.
-    let sink = trace::start(state.clone(), row.id, row.graph_id);
-    for span in opening {
-        sink.handle().emit(span);
-    }
-    let statuses = match refusal {
-        Some(reason) => {
-            fail_all_nodes(&state, &row, &reason).await;
-            vec![NodeStatus::Failed]
-        }
-        None => match Execution::prepare(&state, &row, token.clone(), sink.handle()).await {
-            Ok(execution) => execution.drive().await,
-            Err(err) => {
-                tracing::error!(run_id = %row.id, error = %err, "run preparation failed");
-                Vec::new()
+    let tail = match &start {
+        Start::Fresh { .. } => {
+            lease::record(
+                &state,
+                &lease,
+                run_leases::CLAIMED,
+                row.lease_epoch,
+                None,
+                "",
+            )
+            .await;
+            if let Ok(run) = load_run(&state, row.id).await {
+                state
+                    .hub
+                    .publish(row.graph_id, SseEvent::RunStarted { run });
             }
-        },
+            Tail::GENESIS
+        }
+        Start::Resume { previous, released } => {
+            let how = if *released {
+                "released by its holder, which shut down"
+            } else {
+                "its holder stopped renewing the lease"
+            };
+            lease::record(
+                &state,
+                &lease,
+                run_leases::TAKEN_OVER,
+                row.lease_epoch,
+                *previous,
+                how,
+            )
+            .await;
+            match Tail::of_run(&state, row.id).await {
+                Ok(tail) => tail,
+                Err(err) => {
+                    // Without the end of the chain nothing can be added to it: the lease runs
+                    // out again and the next takeover tries again.
+                    tracing::error!(run_id = %row.id, error = %err, "the run's trace could not be read; not resumed");
+                    lease.lose();
+                    state.engine.unregister_run(&lease);
+                    return;
+                }
+            }
+        }
+    };
+    // Every span of the run goes through one chain, in order of receipt.
+    let sink = trace::start(state.clone(), row.id, row.graph_id, lease.clone(), tail);
+    let driving = work(&state, &row, &lease, token.clone(), sink.handle(), start);
+    let statuses = tokio::select! {
+        biased;
+        _ = lease.stopped() => None,
+        statuses = driving => Some(statuses),
+    };
+    let Some(statuses) = statuses.filter(|_| !lease.is_stopped()) else {
+        stop_here(&state, &row, &lease, sink).await;
+        state.engine.unregister_run(&lease);
+        return;
     };
     let cancelled = token.is_cancelled();
     let status = if statuses.is_empty() {
@@ -246,34 +455,123 @@ pub async fn execute_claimed(
         final_status(&statuses, cancelled)
     };
     let sealed = sink.seal().await;
-    if let Err(err) = finish_run(&state, row.id, status, cancelled, sealed).await {
-        tracing::error!(run_id = %row.id, error = %err, "cannot finish run");
+    match finish_run(&state, &lease, row.id, status, cancelled, sealed).await {
+        Ok(()) => {
+            state.metrics.runs.add(&[("status", status.as_str())], 1);
+            state.metrics.run_duration.observe(started.elapsed());
+        }
+        // Another instance holds the run now; it finishes it.
+        Err(WriteError::Fenced) => {}
+        // The lease runs out, and whoever takes the run over finishes it from what was written.
+        Err(err) => tracing::error!(run_id = %row.id, error = %err, "cannot finish run"),
     }
-    state.metrics.runs.add(&[("status", status.as_str())], 1);
-    state.metrics.run_duration.observe(started.elapsed());
-    state.engine.unregister_run(row.id);
+    state.engine.unregister_run(&lease);
+}
+
+/// Prepares and drives the run: from the start, or from what was written
+/// when it was taken over. Returns the final status of every node.
+async fn work(
+    state: &AppState,
+    row: &RunRow,
+    lease: &Lease,
+    token: CancellationToken,
+    trace: TraceHandle,
+    start: Start,
+) -> Vec<NodeStatus> {
+    let resume = match start {
+        Start::Fresh { opening, refusal } => {
+            for span in opening {
+                trace.emit(span);
+            }
+            if let Some(reason) = refusal {
+                fail_all_nodes(state, lease, row, &reason).await;
+                return vec![NodeStatus::Failed];
+            }
+            None
+        }
+        Start::Resume { previous, released } => {
+            // Commands the former holder never took are this instance's now, before any node
+            // starts again: a cancel of a sub-agent waits for the attempt that replaces its own.
+            super::commands::deliver(state, row.id).await;
+            match repo::runs::stored_nodes(&state.db, row.id).await {
+                Ok(stored) => Some(Resume {
+                    stored: stored.into_iter().map(|n| (n.node_id, n)).collect(),
+                    previous,
+                    released,
+                }),
+                Err(err) => {
+                    tracing::error!(run_id = %row.id, error = %err, "the run's nodes could not be read; not resumed");
+                    lease.lose();
+                    return Vec::new();
+                }
+            }
+        }
+    };
+    let resumed = resume.is_some();
+    match Execution::prepare(state, row, lease.clone(), token, trace, resumed).await {
+        Ok(execution) => execution.drive(resume).await,
+        Err(err) => {
+            tracing::error!(run_id = %row.id, error = %err, "run preparation failed");
+            Vec::new()
+        }
+    }
+}
+
+/// The run stops here without finishing. When this instance hands it to a
+/// peer (it shuts down), every span chained so far is written under the
+/// lease still held and the lease is released, so the peer continues the
+/// chain at once. When the lease was lost, nothing more is written.
+async fn stop_here(state: &AppState, row: &RunRow, lease: &Lease, sink: TraceSink) {
+    let epoch = lease.epoch().unwrap_or_default();
+    if !lease.is_handing_off() || lease.is_lost() {
+        drop(sink);
+        tracing::warn!(run_id = %row.id, epoch, "run stopped here: this instance no longer holds its lease");
+        return;
+    }
+    let sealed = sink.seal().await;
+    match repo::runs::release(&state.db, row.id, epoch).await {
+        Ok(Some(next)) => {
+            let detail = format!(
+                "handed off on shutdown with {} span(s) written; the next holder takes epoch {}",
+                sealed.spans,
+                next + 1
+            );
+            lease::record(state, lease, run_leases::RELEASED, epoch, None, &detail).await;
+            tracing::info!(run_id = %row.id, epoch, "run handed off to a peer");
+        }
+        Ok(None) => {
+            tracing::info!(run_id = %row.id, epoch, "run not released: its lease had moved on")
+        }
+        Err(err) => {
+            tracing::error!(run_id = %row.id, error = %err, "lease not released; a peer takes the run over when it runs out")
+        }
+    }
+    lease.lose();
 }
 
 /// Fails every node of a run before any is started, with `reason` (a task
 /// the firewall refused).
-async fn fail_all_nodes(state: &AppState, row: &RunRow, reason: &str) {
-    let nodes =
-        match repo::runs::close_unfinished_nodes(&state.db, row.id, NodeStatus::Failed).await {
-            Ok(nodes) => nodes,
-            Err(err) => {
-                tracing::error!(run_id = %row.id, error = %err, "refused run's nodes not closed");
-                return;
-            }
-        };
+async fn fail_all_nodes(state: &AppState, lease: &Lease, row: &RunRow, reason: &str) {
+    let closed = async {
+        let mut tx = lease::begin(state, lease, "refused run's nodes").await?;
+        let nodes =
+            repo::runs::close_unfinished_nodes(&mut *tx, row.id, NodeStatus::Failed).await?;
+        for &node_id in &nodes {
+            repo::runs::set_node_error(&mut *tx, row.id, node_id, reason).await?;
+            repo::nodes::set_status(&mut *tx, node_id, NodeStatus::Failed, None).await?;
+        }
+        tx.commit().await?;
+        Ok::<Vec<Uuid>, WriteError>(nodes)
+    }
+    .await;
+    let nodes = match closed {
+        Ok(nodes) => nodes,
+        Err(err) => {
+            tracing::error!(run_id = %row.id, error = %err, "refused run's nodes not closed");
+            return;
+        }
+    };
     for node_id in nodes {
-        if let Err(err) = repo::runs::set_node_error(&state.db, row.id, node_id, reason).await {
-            tracing::error!(run_id = %row.id, error = %err, "refused run's node reason not recorded");
-        }
-        if let Err(err) =
-            repo::nodes::set_status(&state.db, node_id, NodeStatus::Failed, None).await
-        {
-            tracing::error!(run_id = %row.id, error = %err, "refused run's node status not recorded");
-        }
         state.hub.publish(
             row.graph_id,
             SseEvent::NodeStatus(NodeStatusEvent {
@@ -288,31 +586,34 @@ async fn fail_all_nodes(state: &AppState, row: &RunRow, reason: &str) {
     }
 }
 
-/// Closes the run: leftover nodes, the final status, the seal of its trace
-/// (on the run and in the audit log), and `run.finished`.
+/// Closes the run under its lease: leftover nodes, the final status, the
+/// seal of its trace (on the run and in the audit log), and `run.finished`.
 async fn finish_run(
     state: &AppState,
+    lease: &Lease,
     run_id: Uuid,
     status: RunStatus,
     cancelled: bool,
     sealed: Sealed,
-) -> anyhow::Result<()> {
+) -> Result<(), WriteError> {
     let leftover = if cancelled {
         NodeStatus::Cancelled
     } else {
         NodeStatus::Skipped
     };
-    for node_id in repo::runs::close_unfinished_nodes(&state.db, run_id, leftover).await? {
-        repo::nodes::set_status(&state.db, node_id, leftover, None).await?;
-    }
     let hash = sealed.hash;
+    let mut tx = lease::begin(state, lease, "run status").await?;
+    for node_id in repo::runs::close_unfinished_nodes(&mut *tx, run_id, leftover).await? {
+        repo::nodes::set_status(&mut *tx, node_id, leftover, None).await?;
+    }
     let row = repo::runs::finish(
-        &state.db,
+        &mut *tx,
         run_id,
         status,
         hash.as_ref().map(|h| h.as_slice()),
     )
     .await?;
+    tx.commit().await?;
     if let Some(hash) = hash {
         seal_audit(state, &row, hash, sealed.spans).await;
     }
@@ -379,6 +680,8 @@ struct RunData {
     /// The agent every node runs as, when the graph is an exposed agent's
     /// A2A graph (its tasks are its own, whatever role the node names).
     pinned_agent: Option<Uuid>,
+    /// The lease the run executes under: every write is fenced on it.
+    lease: Lease,
 }
 
 impl RunData {
@@ -428,12 +731,35 @@ struct NodeResult {
     output: Option<String>,
 }
 
+/// What a run that was taken over had written when its former holder stopped.
+struct Resume {
+    /// Every node result as stored, by node.
+    stored: HashMap<Uuid, StoredNode>,
+    /// The instance that held the run before.
+    previous: Option<Uuid>,
+    /// Whether it released the run (it shut down) rather than stopped renewing.
+    released: bool,
+}
+
+/// How a node of a resumed run is picked up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pickup {
+    /// From its first attempt (a fresh run, or a node that had not started).
+    Fresh,
+    /// It was running: the attempt after `attempt` runs.
+    Interrupted { attempt: i32 },
+    /// It waited for an approval during `attempt`: it waits here for the decision.
+    Waiting { attempt: i32 },
+}
+
 impl Execution {
     async fn prepare(
         state: &AppState,
         row: &RunRow,
+        lease: Lease,
         token: CancellationToken,
         trace: TraceHandle,
+        resumed: bool,
     ) -> anyhow::Result<Self> {
         let graph = repo::graphs::find(&state.db, row.owner_id, row.graph_id)
             .await?
@@ -455,9 +781,14 @@ impl Execution {
             Some(workspace) => state.caches.policies(&state.db, workspace).await?,
             None => Arc::new(Vec::new()),
         };
-        // The workspace level governs the whole run; each node records every level.
-        let versions = policies::versions_of(&policies::levels_for(&policies, None, None));
-        repo::runs::set_policy_versions(&state.db, row.id, &versions).await?;
+        // The workspace level governs the whole run; each node records every level. A resumed
+        // run keeps the versions it started under; its nodes record the ones they run under.
+        if !resumed {
+            let versions = policies::versions_of(&policies::levels_for(&policies, None, None));
+            let mut tx = lease::begin(state, &lease, "run policy versions").await?;
+            repo::runs::set_policy_versions(&mut *tx, row.id, &versions).await?;
+            tx.commit().await?;
+        }
         let pinned_agent = repo::a2a::pinned_agent_of_graph(&state.db, row.graph_id).await?;
         let data = RunData {
             run_id: row.id,
@@ -474,6 +805,7 @@ impl Execution {
             edges,
             trace,
             pinned_agent,
+            lease,
         };
         Ok(Execution {
             state: state.clone(),
@@ -484,37 +816,125 @@ impl Execution {
         })
     }
 
-    /// Executes the DAG; returns the final status of every node.
-    async fn drive(self) -> Vec<NodeStatus> {
+    /// Executes the DAG, from the start or from what a former holder of the
+    /// run wrote (`resume`); returns the final status of every node.
+    async fn drive(self, resume: Option<Resume>) -> Vec<NodeStatus> {
         let (_, dag) = dependency_graph(&self.nodes, &self.data.edges);
         let priority = dag.remaining_depth();
-        let mut indegree: Vec<usize> = (0..dag.len()).map(|v| dag.predecessors(v).len()).collect();
         let mut statuses = vec![NodeStatus::Queued; dag.len()];
+        let mut pickups = vec![Pickup::Fresh; dag.len()];
         let mut outputs = self.initial_outputs().await;
-        let mut ready = ReadyQueue::default();
-        for v in (0..dag.len()).filter(|&v| indegree[v] == 0) {
-            ready.push(priority[v], v);
-        }
-        for node in &self.nodes {
-            publish_status(
-                &self.state,
-                &self.data,
-                node.id,
-                NodeStatus::Queued,
-                0,
-                None,
-                false,
-            );
-        }
-        let watcher =
-            spawn_cancel_watcher(self.state.clone(), self.data.run_id, self.token.clone());
+        let max_attempts = self.state.settings.max_attempts as i32;
+        // Stopped with the run, however it ends (the future may be dropped mid-way).
+        let _watcher = spawn_cancel_watcher(
+            self.state.clone(),
+            self.data.lease.clone(),
+            self.token.clone(),
+        )
+        .drop_guard();
         let semaphore = Arc::new(Semaphore::new(self.max_concurrency));
         let mut tasks = JoinSet::new();
+        match &resume {
+            None => {
+                for node in &self.nodes {
+                    publish_status(
+                        &self.state,
+                        &self.data,
+                        node.id,
+                        NodeStatus::Queued,
+                        0,
+                        None,
+                        false,
+                    );
+                }
+            }
+            Some(resume) => {
+                for (v, node) in self.nodes.iter().enumerate() {
+                    let Some(stored) = resume.stored.get(&node.id) else {
+                        continue;
+                    };
+                    match stored.status {
+                        NodeStatus::Succeeded => {
+                            statuses[v] = NodeStatus::Succeeded;
+                            if let Some(output) = &stored.output {
+                                outputs.insert(node.id, output.clone());
+                            }
+                        }
+                        NodeStatus::Failed | NodeStatus::Skipped | NodeStatus::Cancelled => {
+                            statuses[v] = stored.status;
+                        }
+                        NodeStatus::Running => {
+                            pickups[v] = Pickup::Interrupted {
+                                attempt: stored.attempt,
+                            };
+                            statuses[v] = self.interrupted(resume, stored, max_attempts).await;
+                        }
+                        NodeStatus::WaitingApproval => {
+                            pickups[v] = Pickup::Waiting {
+                                attempt: stored.attempt,
+                            };
+                            statuses[v] = NodeStatus::WaitingApproval;
+                            self.reattached(resume, stored);
+                        }
+                        NodeStatus::Queued | NodeStatus::Idle => {}
+                    }
+                }
+                // Descendants of what ended without success are skipped, as they would have been.
+                for v in 0..dag.len() {
+                    if matches!(
+                        statuses[v],
+                        NodeStatus::Failed | NodeStatus::Skipped | NodeStatus::Cancelled
+                    ) {
+                        for w in dag.descendants(v) {
+                            if statuses[w] == NodeStatus::Queued {
+                                statuses[w] = NodeStatus::Skipped;
+                                skip_node(&self.state, &self.data, self.nodes[w].id).await;
+                            }
+                        }
+                    }
+                }
+                // A node that waited for an approval waits here, for the decision on it.
+                for v in 0..dag.len() {
+                    if let (NodeStatus::WaitingApproval, Pickup::Waiting { attempt }) =
+                        (statuses[v], pickups[v])
+                    {
+                        tasks.spawn(resume_waiting(
+                            self.state.clone(),
+                            self.data.clone(),
+                            self.token.clone(),
+                            semaphore.clone(),
+                            v,
+                            self.nodes[v].clone(),
+                            upstream_of(&self.nodes[v], &self.data.edges, &outputs),
+                            attempt,
+                            max_attempts,
+                        ));
+                    }
+                }
+            }
+        }
+        // What a node still waits for: its upstream nodes that have not succeeded.
+        let mut indegree: Vec<usize> = (0..dag.len())
+            .map(|v| {
+                dag.predecessors(v)
+                    .iter()
+                    .filter(|&&u| statuses[u] != NodeStatus::Succeeded)
+                    .count()
+            })
+            .collect();
+        let mut ready = ReadyQueue::default();
+        for v in (0..dag.len()).filter(|&v| indegree[v] == 0 && statuses[v] == NodeStatus::Queued) {
+            ready.push(priority[v], v);
+        }
         loop {
             while !self.token.is_cancelled()
                 && let Some(v) = ready.pop()
             {
                 statuses[v] = NodeStatus::Running;
+                let first_attempt = match pickups[v] {
+                    Pickup::Interrupted { attempt } => attempt + 1,
+                    _ => 1,
+                };
                 tasks.spawn(run_node(
                     self.state.clone(),
                     self.data.clone(),
@@ -523,6 +943,8 @@ impl Execution {
                     v,
                     self.nodes[v].clone(),
                     upstream_of(&self.nodes[v], &self.data.edges, &outputs),
+                    first_attempt,
+                    None,
                 ));
             }
             let Some(joined) = tasks.join_next().await else {
@@ -553,7 +975,6 @@ impl Execution {
                 }
             }
         }
-        watcher.cancel();
         statuses
             .iter()
             .map(|s| {
@@ -564,6 +985,117 @@ impl Execution {
                 }
             })
             .collect()
+    }
+
+    /// A node whose attempt the takeover interrupted: queued again for its
+    /// next attempt, with an `interrupted` span on the trace, or failed when
+    /// that was its last attempt. Returns its status now.
+    async fn interrupted(
+        &self,
+        resume: &Resume,
+        stored: &StoredNode,
+        max_attempts: i32,
+    ) -> NodeStatus {
+        let attempt = stored.attempt;
+        let last = attempt >= max_attempts;
+        let reason = if last {
+            format!(
+                "attempt {attempt} was interrupted when the instance executing it stopped; it was the last of {max_attempts}"
+            )
+        } else {
+            format!(
+                "attempt {attempt} was interrupted when the instance executing it stopped; attempt {} follows",
+                attempt + 1
+            )
+        };
+        self.takeover_span(
+            resume,
+            stored,
+            INTERRUPTED_DECISION,
+            "interrupted",
+            &reason,
+            json!({"attempt": attempt, "next_attempt": (!last).then_some(attempt + 1)}),
+        );
+        if last {
+            fail_node(&self.state, &self.data, stored.node_id, attempt, reason).await;
+            return NodeStatus::Failed;
+        }
+        let requeued = async {
+            let mut tx = lease::begin(&self.state, &self.data.lease, "node requeue").await?;
+            repo::runs::requeue_node(&mut tx, self.data.run_id, stored.node_id).await?;
+            tx.commit().await?;
+            Ok::<(), WriteError>(())
+        }
+        .await;
+        match requeued {
+            Ok(()) => publish_status(
+                &self.state,
+                &self.data,
+                stored.node_id,
+                NodeStatus::Queued,
+                attempt,
+                None,
+                false,
+            ),
+            Err(err) => write_failed(&self.data, stored.node_id, "requeue", &err),
+        }
+        NodeStatus::Queued
+    }
+
+    /// A node that waited for an approval when the run was taken over: it
+    /// waits here, with a `reattached` span on the trace.
+    fn reattached(&self, resume: &Resume, stored: &StoredNode) {
+        self.takeover_span(
+            resume,
+            stored,
+            REATTACHED_DECISION,
+            "reattached",
+            "the node waited for an approval when the instance executing it stopped; it waits here for the decision",
+            json!({"attempt": stored.attempt, "next_attempt": stored.attempt + 1}),
+        );
+    }
+
+    /// The `policy` span a takeover puts on a node it picks up.
+    fn takeover_span(
+        &self,
+        resume: &Resume,
+        stored: &StoredNode,
+        decision: &str,
+        name: &str,
+        reason: &str,
+        extra: Value,
+    ) {
+        let now = Utc::now();
+        let mut attributes = json!({
+            "decision": decision,
+            "rule": LEASE_RULE,
+            "reason": reason,
+            "action": "takeover",
+            "previous_instance": resume.previous,
+            "instance": self.data.lease.instance(),
+            "lease_epoch": self.data.lease.epoch(),
+            "released": resume.released,
+        });
+        if let (Value::Object(into), Value::Object(from)) = (&mut attributes, extra) {
+            into.extend(from);
+        }
+        self.data.trace.emit(SpanDraft {
+            id: Uuid::now_v7(),
+            node_id: stored.node_id,
+            agent_id: stored.agent_id,
+            principal: SYSTEM_PRINCIPAL.to_owned(),
+            parent_id: None,
+            kind: SpanKind::Policy,
+            name: name.to_owned(),
+            started_at: now,
+            ended_at: Some(now),
+            status: if decision == INTERRUPTED_DECISION {
+                SpanStatus::Error
+            } else {
+                SpanStatus::Ok
+            },
+            attributes,
+        });
     }
 
     /// Outputs of upstream nodes outside the selection, from earlier runs.
@@ -602,23 +1134,53 @@ fn upstream_of(
     up
 }
 
+/// Watches the run every second: a cancel asked for on any instance, the run
+/// changing hands (the lease is lost at once rather than at the next write
+/// or renewal), agents quarantined elsewhere, operators' commands.
 fn spawn_cancel_watcher(
     state: AppState,
-    run_id: Uuid,
+    lease: Lease,
     token: CancellationToken,
 ) -> CancellationToken {
     let done = CancellationToken::new();
     let stop = done.clone();
+    let run_id = lease.run_id();
     tokio::spawn(async move {
         loop {
             tokio::select! {
                 _ = stop.cancelled() => return,
                 _ = token.cancelled() => return,
+                _ = lease.stopped() => return,
                 _ = tokio::time::sleep(CANCEL_POLL) => {}
             }
-            if let Ok(true) = repo::runs::cancel_requested(&state.db, run_id).await {
-                token.cancel();
-                return;
+            match repo::runs::watched(&state.db, run_id).await {
+                Ok(Some(watched)) => {
+                    if let Some(epoch) = lease.epoch()
+                        && (watched.lease_epoch != epoch
+                            || watched.claimed_by != Some(lease.instance()))
+                    {
+                        give_up(
+                            &state,
+                            &lease,
+                            &format!(
+                                "the run is held at epoch {} by another instance",
+                                watched.lease_epoch
+                            ),
+                        )
+                        .await;
+                        return;
+                    }
+                    if watched.cancel_requested {
+                        token.cancel();
+                        return;
+                    }
+                }
+                Ok(None) => {
+                    // The run is gone (its graph was deleted): nothing to write any more.
+                    lease.lose();
+                    return;
+                }
+                Err(err) => tracing::debug!(%run_id, error = %err, "run not watched this time"),
             }
             // An agent quarantined on another instance: its nodes here stop too.
             if let Ok(agents) = repo::runs::quarantined_agents_running(&state.db, run_id).await {
@@ -669,21 +1231,70 @@ async fn skip_node(state: &AppState, data: &RunData, node_id: Uuid) {
         content_hash: None,
         evidence: None,
     };
-    if let Err(err) = record(state, data, node_id, &outcome, None, 0, None).await {
-        tracing::error!(%node_id, error = %err, "cannot record skipped node");
+    match record(state, data, node_id, &outcome, None, 0, None).await {
+        Ok(()) => publish_status(
+            state,
+            data,
+            node_id,
+            NodeStatus::Skipped,
+            0,
+            Some(error.into()),
+            false,
+        ),
+        Err(err) => write_failed(data, node_id, "skipped node", &err),
     }
-    publish_status(
-        state,
-        data,
-        node_id,
-        NodeStatus::Skipped,
-        0,
-        Some(error.into()),
-        false,
-    );
 }
 
-/// Persists a node outcome (node run, run totals, agent spend, node status).
+/// Fails a node without running it (it was interrupted on its last attempt,
+/// or the approval it waited for expired), with `reason`.
+async fn fail_node(state: &AppState, data: &RunData, node_id: Uuid, attempt: i32, reason: String) {
+    let outcome = NodeOutcome {
+        status: NodeStatus::Failed,
+        attempt,
+        tokens_in: 0,
+        tokens_out: 0,
+        cost_usd: 0.0,
+        cached: false,
+        error: Some(&reason),
+        output: None,
+        content_hash: None,
+        evidence: None,
+    };
+    match record(state, data, node_id, &outcome, None, 0, None).await {
+        Ok(()) => publish_status(
+            state,
+            data,
+            node_id,
+            NodeStatus::Failed,
+            attempt,
+            Some(reason.clone()),
+            false,
+        ),
+        Err(err) => write_failed(data, node_id, "failed node", &err),
+    }
+}
+
+/// A write of the executor did not happen. Refused: another instance holds
+/// the run now, and this one stops (the lease says so already). Failed: the
+/// run stops here too rather than going on from a state the database does
+/// not have; its lease runs out and whoever takes it over resumes it from
+/// what was written.
+fn write_failed(data: &RunData, node_id: Uuid, what: &str, err: &WriteError) {
+    match err {
+        WriteError::Fenced => {
+            tracing::debug!(run_id = %data.run_id, %node_id, what, "write refused: the run changed hands")
+        }
+        WriteError::Db(err) => {
+            tracing::error!(run_id = %data.run_id, %node_id, what, error = %err,
+                "write failed; the run stops here and resumes where it was written");
+            data.lease.lose();
+        }
+    }
+}
+
+/// Persists a node outcome in one transaction under the run's lease: the
+/// node run, the run totals, the agent's spend, the node's status and the
+/// usage ledger entry. Nothing of it is written when the lease moved on.
 async fn record(
     state: &AppState,
     data: &RunData,
@@ -692,8 +1303,8 @@ async fn record(
     agent: Option<&Agent>,
     context_chars_saved: i64,
     span_id: Option<Uuid>,
-) -> anyhow::Result<()> {
-    let mut tx = state.db.begin().await?;
+) -> Result<(), WriteError> {
+    let mut tx = lease::begin(state, &data.lease, "node outcome").await?;
     repo::runs::finish_node(&mut tx, data.run_id, node_id, outcome).await?;
     if let Some(agent) = agent
         && !outcome.cached
@@ -701,16 +1312,7 @@ async fn record(
         repo::agents::add_spent(&mut *tx, agent.id, outcome.tokens_in + outcome.tokens_out).await?;
     }
     repo::nodes::set_status(&mut *tx, node_id, outcome.status, outcome.output).await?;
-    tx.commit().await?;
-    if let Some(agent) = agent
-        && !outcome.cached
-    {
-        // The card shows what the agent spent.
-        state
-            .caches
-            .invalidate(crate::app::caches::Key::Agent(agent.id));
-    }
-    if !outcome.cached {
+    if !outcome.cached && (outcome.tokens_in > 0 || outcome.tokens_out > 0) {
         // Same rule as `ExecContext::agent_target`: an agent's own model applies on Anthropic.
         let model = agent
             .filter(|a| {
@@ -728,7 +1330,16 @@ async fn record(
         event.agent_id = agent.map(|a| a.id);
         event.node_id = Some(node_id);
         event.span_id = span_id;
-        usage::record(state, event).await;
+        repo::usage::insert(&mut *tx, &event).await?;
+    }
+    tx.commit().await?;
+    if let Some(agent) = agent
+        && !outcome.cached
+    {
+        // The card shows what the agent spent.
+        state
+            .caches
+            .invalidate(crate::app::caches::Key::Agent(agent.id));
     }
     state
         .metrics
@@ -759,6 +1370,9 @@ fn content_hash(data: &RunData, node: &GraphNode, upstream: &[(Uuid, String)]) -
     kernel::sha256_hex(material.to_string().as_bytes())
 }
 
+/// Runs one node from `first_attempt` on; `carried` is the decision taken
+/// on an approval the node waited for when its run was taken over.
+#[allow(clippy::too_many_arguments)]
 async fn run_node(
     state: AppState,
     data: Arc<RunData>,
@@ -767,6 +1381,8 @@ async fn run_node(
     index: usize,
     node: GraphNode,
     upstream: Vec<(Uuid, String)>,
+    first_attempt: i32,
+    carried: Option<Approval>,
 ) -> NodeResult {
     let permit = tokio::select! {
         _ = token.cancelled() => None,
@@ -780,13 +1396,14 @@ async fn run_node(
         };
     };
     let node_id = node.id;
-    match NodeTask::new(state.clone(), data.clone(), token, node, upstream).await {
-        Ok(task) => task.run(index).await,
+    match NodeTask::new(state.clone(), data.clone(), token, node, upstream, carried).await {
+        Ok(task) => task.run(index, first_attempt).await,
         Err(err) => {
             let message = err.to_string();
+            let attempt = first_attempt - 1;
             let outcome = NodeOutcome {
                 status: NodeStatus::Failed,
-                attempt: 0,
+                attempt,
                 tokens_in: 0,
                 tokens_out: 0,
                 cost_usd: 0.0,
@@ -796,18 +1413,18 @@ async fn run_node(
                 content_hash: None,
                 evidence: None,
             };
-            if let Err(e) = record(&state, &data, node_id, &outcome, None, 0, None).await {
-                tracing::error!(%node_id, error = %e, "cannot record node failure");
+            match record(&state, &data, node_id, &outcome, None, 0, None).await {
+                Ok(()) => publish_status(
+                    &state,
+                    &data,
+                    node_id,
+                    NodeStatus::Failed,
+                    attempt,
+                    Some(message),
+                    false,
+                ),
+                Err(err) => write_failed(&data, node_id, "node failure", &err),
             }
-            publish_status(
-                &state,
-                &data,
-                node_id,
-                NodeStatus::Failed,
-                0,
-                Some(message),
-                false,
-            );
             NodeResult {
                 index,
                 status: NodeStatus::Failed,
@@ -815,6 +1432,112 @@ async fn run_node(
             }
         }
     }
+}
+
+/// A node that waited for an approval during `attempt` when its run was
+/// taken over: it waits here for the decision, then runs its next attempt
+/// with the decision carried (the runtime asks again and is answered at
+/// once). An expired request fails it; a cancel of the run cancels it.
+#[allow(clippy::too_many_arguments)]
+async fn resume_waiting(
+    state: AppState,
+    data: Arc<RunData>,
+    token: CancellationToken,
+    semaphore: Arc<Semaphore>,
+    index: usize,
+    node: GraphNode,
+    upstream: Vec<(Uuid, String)>,
+    attempt: i32,
+    max_attempts: i32,
+) -> NodeResult {
+    let node_id = node.id;
+    let reattached = approvals::reattach(
+        &state,
+        &data.trace,
+        &data.lease,
+        &token,
+        data.run_id,
+        node_id,
+    )
+    .await;
+    let carried = match reattached {
+        Reattached::Decided(approval) => Some(approval),
+        Reattached::Missing => None,
+        // The run stops here: the node is left waiting for whoever holds the run next.
+        Reattached::Stopped => {
+            return NodeResult {
+                index,
+                status: NodeStatus::WaitingApproval,
+                output: None,
+            };
+        }
+        Reattached::Expired(approval) => {
+            let reason = format!(
+                "the approval of {} expired while the node waited",
+                approval.tool
+            );
+            fail_node(&state, &data, node_id, attempt, reason).await;
+            return NodeResult {
+                index,
+                status: NodeStatus::Failed,
+                output: None,
+            };
+        }
+        Reattached::Cancelled => {
+            let outcome = NodeOutcome {
+                status: NodeStatus::Cancelled,
+                attempt,
+                tokens_in: 0,
+                tokens_out: 0,
+                cost_usd: 0.0,
+                cached: false,
+                error: None,
+                output: None,
+                content_hash: None,
+                evidence: None,
+            };
+            match record(&state, &data, node_id, &outcome, None, 0, None).await {
+                Ok(()) => publish_status(
+                    &state,
+                    &data,
+                    node_id,
+                    NodeStatus::Cancelled,
+                    attempt,
+                    None,
+                    false,
+                ),
+                Err(err) => write_failed(&data, node_id, "cancelled node", &err),
+            }
+            return NodeResult {
+                index,
+                status: NodeStatus::Cancelled,
+                output: None,
+            };
+        }
+    };
+    if attempt >= max_attempts {
+        let reason = format!(
+            "attempt {attempt} was interrupted while it waited for an approval; it was the last of {max_attempts}"
+        );
+        fail_node(&state, &data, node_id, attempt, reason).await;
+        return NodeResult {
+            index,
+            status: NodeStatus::Failed,
+            output: None,
+        };
+    }
+    run_node(
+        state,
+        data,
+        token,
+        semaphore,
+        index,
+        node,
+        upstream,
+        attempt + 1,
+        carried,
+    )
+    .await
 }
 
 /// What the context builder kept from an agent, and why.
@@ -895,6 +1618,7 @@ impl NodeTask {
         token: CancellationToken,
         node: GraphNode,
         upstream: Vec<(Uuid, String)>,
+        carried: Option<Approval>,
     ) -> anyhow::Result<Self> {
         let began = Utc::now();
         let hash = content_hash(&data, &node, &upstream);
@@ -1250,6 +1974,8 @@ impl NodeTask {
             recording: data.policy.recording.clone(),
             scrub_secrets: data.policy.redact_secrets,
             redactions,
+            lease: data.lease.clone(),
+            carried: Arc::new(Mutex::new(carried.into_iter().collect())),
         };
         Ok(NodeTask {
             ctx,
@@ -1260,10 +1986,12 @@ impl NodeTask {
         })
     }
 
-    async fn run(self, index: usize) -> NodeResult {
+    /// Runs the node from `first_attempt` on (later than 1 when an earlier
+    /// attempt was interrupted by a takeover).
+    async fn run(self, index: usize, first_attempt: i32) -> NodeResult {
         let status_and_output = match self.serve_cached().await {
             Some(output) => (NodeStatus::Succeeded, Some(output)),
-            None => self.attempts().await,
+            None => self.attempts(first_attempt).await,
         };
         NodeResult {
             index,
@@ -1293,9 +2021,10 @@ impl NodeTask {
             content_hash: Some(&self.hash),
             evidence: hit.evidence.clone(),
         };
-        record(state, &self.data, node_id, &outcome, None, 0, None)
-            .await
-            .ok()?;
+        if let Err(err) = record(state, &self.data, node_id, &outcome, None, 0, None).await {
+            write_failed(&self.data, node_id, "cached result", &err);
+            return None;
+        }
         if let Err(err) = artifacts::copy_from_run(
             state,
             self.data.graph_id,
@@ -1339,9 +2068,17 @@ impl NodeTask {
         }
     }
 
-    async fn attempts(&self) -> (NodeStatus, Option<String>) {
+    async fn attempts(&self, first_attempt: i32) -> (NodeStatus, Option<String>) {
+        let state = &self.ctx.state;
+        let settings = state.settings.clone();
+        let max_attempts = settings.max_attempts as i32;
+        let first_attempt = first_attempt.clamp(1, max_attempts);
+        // What failed before an attempt started counts the attempts already made.
+        let before = first_attempt - 1;
         if let Some(reason) = self.budget_error() {
-            return self.finish(NodeStatus::Failed, 0, None, Some(reason)).await;
+            return self
+                .finish(NodeStatus::Failed, before, None, Some(reason))
+                .await;
         }
         // The model allow-list is enforced here, before anything is dispatched.
         let model = self.ctx.agent_target().model;
@@ -1350,26 +2087,27 @@ impl NodeTask {
             self.ctx
                 .policy_span(&model, &decision, json!({"action": "model"}));
             let reason = format!("policy: {}", decision.reason);
-            return self.finish(NodeStatus::Failed, 0, None, Some(reason)).await;
+            return self
+                .finish(NodeStatus::Failed, before, None, Some(reason))
+                .await;
         }
         // So are the rules only the backend can see: working hours, the day's spend, the pace.
         if let Some(decision) = self.gate().await {
             self.ctx
                 .policy_span(decision.rule, &decision, json!({"action": "node"}));
             let reason = format!("policy: {}", decision.reason);
-            return self.finish(NodeStatus::Failed, 0, None, Some(reason)).await;
+            return self
+                .finish(NodeStatus::Failed, before, None, Some(reason))
+                .await;
         }
-        let state = &self.ctx.state;
-        let settings = state.settings.clone();
         let executor = executor::for_kind(self.ctx.node.executor);
         let agent_id = self.ctx.agent.as_ref().map(|a| a.id);
         let node_id = self.ctx.node.id;
-        let max_attempts = settings.max_attempts as i32;
-        for attempt in 1..=max_attempts {
+        for attempt in first_attempt..=max_attempts {
             if let Err(err) = self.mark_running(attempt, agent_id).await {
-                return self
-                    .finish(NodeStatus::Failed, attempt, None, Some(err.to_string()))
-                    .await;
+                // The run stops here (the lease moved on, or the database failed it).
+                write_failed(&self.data, node_id, "node start", &err);
+                return (NodeStatus::Cancelled, None);
             }
             // Quarantining the agent ends the attempt without ending the run.
             let stop = CancellationToken::new();
@@ -1487,14 +2225,15 @@ impl NodeTask {
         None
     }
 
-    async fn mark_running(&self, attempt: i32, agent_id: Option<Uuid>) -> anyhow::Result<()> {
+    async fn mark_running(&self, attempt: i32, agent_id: Option<Uuid>) -> Result<(), WriteError> {
         let state = &self.ctx.state;
         let node_id = self.ctx.node.id;
         self.ctx
             .attempt
             .store(attempt, std::sync::atomic::Ordering::Relaxed);
+        let mut tx = lease::begin(state, &self.data.lease, "node start").await?;
         repo::runs::start_node(
-            &state.db,
+            &mut *tx,
             self.data.run_id,
             node_id,
             attempt,
@@ -1503,7 +2242,8 @@ impl NodeTask {
             &self.ctx.labels_given,
         )
         .await?;
-        repo::nodes::set_status(&state.db, node_id, NodeStatus::Running, None).await?;
+        repo::nodes::set_status(&mut *tx, node_id, NodeStatus::Running, None).await?;
+        tx.commit().await?;
         publish_status(
             state,
             &self.data,
@@ -1619,7 +2359,9 @@ impl NodeTask {
         )
         .await
         {
-            tracing::error!(%node_id, error = %err, "cannot record node outcome");
+            // Not recorded, so not announced and not built on: whoever holds the run resumes it.
+            write_failed(&self.data, node_id, "node outcome", &err);
+            return (NodeStatus::Cancelled, None);
         }
         publish_status(state, &self.data, node_id, status, attempt, error, false);
         let output = out.filter(|_| delivered).map(|o| o.output);

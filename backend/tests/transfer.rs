@@ -302,6 +302,10 @@ const NOT_COPIED: &[(&str, &str)] = &[
         "span_payloads",
         "what spans said, sealed with this server's key and bound to its retention; the spans travel, their payloads do not",
     ),
+    (
+        "run_lease_events",
+        "which instances of this server held its runs and when; the target's instances are others",
+    ),
 ];
 
 /// A transfer is how a workspace takes all of its data with it. Whatever

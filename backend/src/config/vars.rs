@@ -314,6 +314,12 @@ pub const ENV_VARS: &[EnvVar] = &[
         "per-attempt node timeout",
     ),
     var(
+        "NEXC_RUN_LEASE_SECS",
+        "30",
+        false,
+        "lease an instance holds on a run it executes, renewed every third of it; a run whose lease ran out is taken over by another instance (docs/HA.md)",
+    ),
+    var(
         "NEXC_TRUST_PROXY",
         "false",
         false,

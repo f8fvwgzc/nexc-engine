@@ -202,6 +202,8 @@ pub struct TestApp {
     pub router: Router,
     pub fake: Arc<FakeLlm>,
     shutdown: CancellationToken,
+    /// The run dispatcher and the lease keeper, for [`TestApp::crash`].
+    workers: Vec<tokio::task::JoinHandle<()>>,
 }
 
 impl Drop for TestApp {
@@ -258,17 +260,41 @@ impl TestApp {
 
     fn start(state: AppState, fake: Arc<FakeLlm>) -> Self {
         let shutdown = CancellationToken::new();
-        tokio::spawn(nexc::engine::scheduler::dispatcher(
-            state.clone(),
-            shutdown.clone(),
-        ));
+        let workers = vec![
+            tokio::spawn(nexc::engine::scheduler::dispatcher(
+                state.clone(),
+                shutdown.clone(),
+            )),
+            tokio::spawn(nexc::engine::scheduler::keep_leases(
+                state.clone(),
+                shutdown.clone(),
+            )),
+        ];
         let router = router::build(state.clone());
         TestApp {
             state,
             router,
             fake,
             shutdown,
+            workers,
         }
+    }
+
+    /// The instance dies, as far as runs go: its dispatcher and lease keeper
+    /// are aborted and every run it executes stops at once without writing
+    /// anything more, with no graceful shutdown. Its leases run out and a
+    /// peer takes the runs over. Its HTTP router still answers.
+    pub fn crash(&self) {
+        for worker in &self.workers {
+            worker.abort();
+        }
+        self.state.engine.abandon_all();
+    }
+
+    /// The instance stops renewing its leases (as if cut off from the
+    /// database) but goes on executing what it executes.
+    pub fn stop_renewing(&self) {
+        self.workers[1].abort();
     }
 
     /// Sends a request; `body` is JSON when given.
