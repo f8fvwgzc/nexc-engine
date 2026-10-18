@@ -62,7 +62,13 @@ export default function LoginPage() {
               />
             ) : null}
             {sso ? (
-              <Button asChild variant="outline" size="lg" className="w-full">
+              // The one way in is the primary action; next to the form it is the outlined one.
+              <Button
+                asChild
+                variant={password ? 'outline' : 'default'}
+                size="lg"
+                className="w-full"
+              >
                 <a href={ssoLoginUrl(safeNextPath(next))}>
                   <KeyRoundIcon aria-hidden />
                   Continue with {sso.display_name}

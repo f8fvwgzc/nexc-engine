@@ -54,6 +54,7 @@ describe('LoginPage', () => {
     const button = await screen.findByRole('link', { name: 'Continue with Acme SSO' });
     expect(button).toHaveAttribute('href', '/api/v1/auth/oidc/login?return_to=%2Fapp%2Fruns');
     expect(button.querySelector('svg')).not.toBeNull();
+    expect(button).toHaveAttribute('data-variant', 'outline');
     expect(screen.getByLabelText('Email')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Create an account' })).not.toBeInTheDocument();
@@ -63,6 +64,7 @@ describe('LoginPage', () => {
     renderAt('/login?next=//evil.example', { password: false, signup: false, sso: [acme] });
     const button = await screen.findByRole('link', { name: 'Continue with Acme SSO' });
     expect(button).toHaveAttribute('href', '/api/v1/auth/oidc/login?return_to=%2Fapp');
+    expect(button).toHaveAttribute('data-variant', 'default');
     expect(screen.queryByLabelText('Email')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Password')).not.toBeInTheDocument();
     expect(screen.queryByText(/forgot your password/i)).not.toBeInTheDocument();
