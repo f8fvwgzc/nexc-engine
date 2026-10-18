@@ -3837,6 +3837,15 @@ export interface components {
             identifier: string;
             title: string;
         };
+        /** @description The status of the firewall, for the operator. */
+        FirewallStatus: {
+            addr: string | null;
+            enabled: boolean;
+            /** @description Decisions sessions open on this instance. */
+            open_sessions: number;
+            /** @description Hex of the Ed25519 public key decisions are signed with. */
+            public_key: string;
+        };
         /** @description `POST /agents/from-template/{name}` body (every field optional). */
         FromAgentTemplate: {
             /** @description Whether to ask the competency questions now (default true). */
