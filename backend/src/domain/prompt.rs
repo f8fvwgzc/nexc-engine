@@ -11,8 +11,12 @@ use super::ontology::NodeType;
 
 /// First line of every node prompt, followed by the node title.
 pub const TASK_HEADING: &str = "# Task: ";
-/// Heading of the upstream results section; each result is a `### title` block.
+/// Heading of the upstream results section; each result is a `### title [node:<id>]` block.
 pub const UPSTREAM_HEADING: &str = "## Upstream results";
+/// Heading of the memories section; each memory is a `- [mem:<id>] text` line.
+pub const MEMORIES_HEADING: &str = "## Relevant memories";
+/// Heading of the passages section; each passage starts with `[doc:<chunk id>] <source>`.
+pub const DOCUMENTS_HEADING: &str = "## Relevant passages from the workspace's documents";
 /// Precedes the node output in memory-extraction prompts.
 pub const OUTPUT_MARKER: &str = "NODE_OUTPUT:";
 /// Characters of each upstream output included in the prompt of a single LLM call.
@@ -101,17 +105,17 @@ pub fn node_prompt(p: NodePrompt<'_>) -> String {
         }
     }
     if !p.memories.is_empty() {
-        out.push_str("\n## Relevant memories\n");
+        out.push_str(&format!("\n{MEMORIES_HEADING}\n"));
         for m in p.memories {
             out.push_str(&format!("- {m}\n"));
         }
     }
     if !p.documents.is_empty() {
-        out.push_str(
-            "\n## Relevant passages from the workspace's documents\n\
+        out.push_str(&format!(
+            "\n{DOCUMENTS_HEADING}\n\
              Each passage starts with its id and its source; use them where they bear on the \
-             task and cite the id when you do.\n",
-        );
+             task and cite the id when you do.\n"
+        ));
         for d in p.documents {
             out.push_str(&format!("\n{d}\n"));
         }

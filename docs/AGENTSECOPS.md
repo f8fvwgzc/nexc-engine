@@ -349,9 +349,14 @@ makes it a platform other agents can sit behind, which is what SoftBank's Agent 
    allow-list), budget. The card shows its evaluation score.
 2. **Run a graph** with it. The trace waterfall fills in live: turns, tool calls, a sub-agent with
    narrowed scopes, tokens and cost per span.
-3. **Policy in action.** Edit the policy to require approval for `make_docx`; re-run; the node
+3. **Evidence.** Attach a document the Analyst may read; the research node's output cites
+   its passages by id (chips on the run page open them) and is verified. Relabel the document
+   `restricted` and run the same node again: it is withheld, the coverage drops to zero and
+   the template's policy marks the output (a `policy` span named `evidence`); set the policy's
+   `evidence.action` to `reject` and the node fails with the verdict as its reason.
+4. **Policy in action.** Edit the policy to require approval for `make_docx`; re-run; the node
    waits, the approval lands in the inbox, approve it, the run continues; the approval is a span.
-4. **Defend.** Attach a `restricted` document to the goal; the agent's context never contains it
+5. **Defend.** Attach a `restricted` document to the goal; the agent's context never contains it
    and the span records the drop. Then make the agent call a disallowed host: the demo script
    starts an HTTP stub on the machine and tells the research node to read the figures from it;
    the agent's `fetch_url` goes up the gRPC stream to the backend's tools gateway, which
@@ -361,10 +366,10 @@ makes it a platform other agents can sit behind, which is what SoftBank's Agent 
    alert, the risk score rises, quarantine with one click, running node cancelled. On the
    NDJSON wire the runtime is offered no gateway tool, so the script falls back to a tool the
    policy does not allow and says so.
-5. **Ask the audit.** "Which agents read restricted data this week?" "Why was run 0199… denied?"
+6. **Ask the audit.** "Which agents read restricted data this week?" "Why was run 0199… denied?"
    Both answered from onto-intelli in a millisecond with ids, then "explain" with the model, every
    sentence cited.
-6. **Prove it.** `make prove-agentsecops` prints the latency table; `GET /runs/{id}/trace/verify`
+7. **Prove it.** `make prove-agentsecops` prints the latency table; `GET /runs/{id}/trace/verify`
    shows the chain intact, then flags the row we tampered with.
 
 ---

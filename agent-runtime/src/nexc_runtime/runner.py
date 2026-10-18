@@ -16,8 +16,9 @@ from .api.schemas import ExecuteRequest
 from .approvals import ApprovalRegistry
 from .config import Settings
 from .control import RunControl
-from .evidence import Sources
+from .evidence import Sources, split_head
 from .llm import DemoBrief, LLMError, LLMProvider, build_provider, redact
+from .llm.demo import first_sentence
 from .policy import AgentToken, TokenError, decide_model_with, decide_tool_with, verify_token
 from .prompts import Upstream, build_task_prompt
 from .streaming import EventStream, collect_artifacts
@@ -35,14 +36,29 @@ def default_provider_factory(request: ExecuteRequest, settings: Settings) -> LLM
     Model precedence: `llm.model` (the backend's resolved choice) > `agent.model` > default.
     """
     llm = request.llm
+    documents: list[tuple[str, str, str]] = []
+    for passage in request.context.documents:
+        head, _, body = passage.strip().partition("\n")
+        cid, source = split_head(head)
+        if cid:
+            documents.append((cid, source.strip(), first_sentence(body)))
+    memories: list[tuple[str, str]] = []
+    for memory in request.context.memories:
+        cid, text = split_head(memory)
+        if cid:
+            memories.append((cid, first_sentence(text)))
+    upstream = [u for u in request.context.upstream if u.title]
     brief = DemoBrief(
         title=request.task.title,
         kind=request.task.kind,
         content=request.task.content,
         goal=request.context.goal,
         role=request.agent.role,
-        upstream_titles=tuple(u.title for u in request.context.upstream if u.title),
-        upstream_outputs=tuple(u.output for u in request.context.upstream if u.title),
+        upstream_titles=tuple(u.title for u in upstream),
+        upstream_outputs=tuple(u.output for u in upstream),
+        upstream_ids=tuple(u.node_id for u in upstream),
+        documents=tuple(documents),
+        memories=tuple(memories),
     )
     return build_provider(
         provider=llm.provider,

@@ -22,6 +22,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   memory and node ids it already listed. Tests: the ids are rendered in both prompts and never
   leak into the upstream titles the demo provider reads back (`backend/src/domain/prompt.rs`,
   `agent-runtime/tests/test_prompts.py`).
+- The demo providers cite what they were given, so the feature shows without an API key:
+  the built-in demo provider reads the passages, memories and upstream results back out of
+  the prompt by their ids and answers with an **Evidence** section quoting each with its id,
+  marks the rest of what it says as assumptions and puts its label and summary in quotes
+  rather than claims; the runtime's demo provider does the same in its final answer, its
+  research notes and its documents (an Evidence section in the `.docx`, each section of the
+  compiled final report citing the upstream node it rests on), and the Sources section
+  follows. A node given something is `verified` with full coverage; one given nothing is
+  `unverified` with nothing forged. `make demo-secops` gains step 3, **Evidence**: the
+  board-compensation document is attached as `internal`, the research node cites its passages
+  and is verified (the run page shows the chips, the node's last model call carries the
+  verdict); relabelled `restricted`, the same node runs without it, the coverage drops to 0 %
+  and the Analyst template's policy marks the output (the `policy` span named `evidence`);
+  the later steps moved down one. Tests: the built-in provider's output verifies against what
+  the prompt gave it and declares everything when given nothing (`backend/src/llm/demo.rs`); a
+  demo run's downstream node is verified and its first node unverified, with the verdicts on
+  the spans and the policy's `allow` on the record (`backend/tests/evidence.rs`); the
+  runtime's demo cites the ids, keeps the Sources section and cites the upstream node in the
+  compiled report (`agent-runtime/tests/test_demo.py`).
 - Evidence on every surface: the run page's node table shows each output's verdict as a badge
   with its coverage (hover for the counts), and an **Evidence** section lists per node what the
   output cites as chips, each opening what it points at (a document passage in a dialog on the

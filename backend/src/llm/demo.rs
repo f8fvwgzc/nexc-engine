@@ -1,7 +1,10 @@
 //! Deterministic, offline "demo" provider. It lets anyone try planning and
 //! execution without an API key: plans are a rule-based refinement of the
 //! user's real nodes and node outputs are clearly labelled templates,
-//! streamed with realistic pacing and token counts.
+//! streamed with realistic pacing and token counts. A node output cites
+//! every passage, memory and upstream result the prompt gave it by its id,
+//! and marks the rest of what it says as assumptions, so the evidence
+//! verifier (`domain::evidence`) has something to verify offline.
 
 use std::time::Duration;
 
@@ -10,6 +13,7 @@ use serde_json::json;
 
 use super::{LlmEvent, LlmProvider, LlmRequest, LlmStream, StopReason, Usage, estimate_tokens};
 use crate::domain::assistant::{ASSISTANT_SCHEMA_NAME, TEAMS_MARKER, USER_MESSAGE_MARKER};
+use crate::domain::evidence::{self, CitationKind};
 use crate::domain::graph::Executor;
 use crate::domain::insight::DAY_SUMMARY_SCHEMA_NAME;
 use crate::domain::memory::MEMORY_SCHEMA_NAME;
@@ -17,7 +21,9 @@ use crate::domain::ontology::Ontology;
 use crate::domain::plan::{
     PLAN_SCHEMA_NAME, PlanContext, PlanProposal, ProposedEdge, ProposedNode,
 };
-use crate::domain::prompt::{OUTPUT_MARKER, parse_node_prompt};
+use crate::domain::prompt::{
+    DOCUMENTS_HEADING, MEMORIES_HEADING, OUTPUT_MARKER, UPSTREAM_HEADING, parse_node_prompt,
+};
 use crate::kernel;
 
 /// Label that starts every demo text output.
@@ -84,26 +90,135 @@ fn chunks(text: &str, size: usize) -> Vec<String> {
         .collect()
 }
 
-fn text_output(prompt: &str) -> String {
-    let (title, upstream) =
-        parse_node_prompt(prompt).unwrap_or_else(|| ("Untitled task".into(), Vec::new()));
-    let mut out = format!(
-        "{DEMO_LABEL} This text was generated offline by the demo provider; configure an API key \
-         in Settings for real results.\n\n# {title}\n\n## Summary\n\nA concise, structured result for \
-         **{title}**. In a real run the model would complete this step using the graph goal, the \
-         node instructions and the results of its dependencies.\n"
-    );
-    if upstream.is_empty() {
-        out.push_str("\n## Approach\n\n1. Clarify the scope and success criteria.\n2. Gather the key facts.\n3. Produce the deliverable and check it against the goal.\n");
+/// Longest excerpt of a passage or a memory the demo quotes.
+const EXCERPT_CHARS: usize = 200;
+
+/// What a node prompt gave the model, read back by citation id.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Context {
+    /// Upstream results: the title and the node's citation key (`node:<id>`), when the heading carries one.
+    upstream: Vec<(String, Option<String>)>,
+    /// Memories: the citation key and the text.
+    memories: Vec<(String, String)>,
+    /// Passages: the citation key, the source and the first sentence.
+    documents: Vec<(String, String, String)>,
+}
+
+/// The first sentence of `text`, at most [`EXCERPT_CHARS`] characters.
+fn first_sentence(text: &str) -> String {
+    let joined: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let end = joined
+        .char_indices()
+        .find(|(i, c)| {
+            matches!(c, '.' | '!' | '?')
+                && joined[i + c.len_utf8()..]
+                    .chars()
+                    .next()
+                    .is_none_or(char::is_whitespace)
+        })
+        .map(|(i, c)| i + c.len_utf8())
+        .unwrap_or(joined.len());
+    let sentence = joined[..end].trim();
+    if sentence.chars().count() > EXCERPT_CHARS {
+        let cut: String = sentence.chars().take(EXCERPT_CHARS - 1).collect();
+        format!("{}…", cut.trim_end())
     } else {
+        sentence.to_owned()
+    }
+}
+
+/// Reads the upstream results, memories and passages out of a node prompt
+/// (`domain::prompt::node_prompt`), with the ids they are to be cited by.
+fn context_of(prompt: &str) -> Context {
+    let mut out = Context::default();
+    let mut section = "";
+    let mut lines = prompt.lines().peekable();
+    while let Some(line) = lines.next() {
+        if line.starts_with("## ") {
+            section = line.trim();
+            continue;
+        }
+        if section == UPSTREAM_HEADING {
+            if let Some(heading) = line.strip_prefix("### ") {
+                let (title, key) = match heading.trim().rsplit_once(" [node:") {
+                    Some((title, rest)) if rest.ends_with(']') => (
+                        title.trim_end().to_owned(),
+                        Some(format!("node:{}", &rest[..rest.len() - 1])),
+                    ),
+                    _ => (heading.trim().to_owned(), None),
+                };
+                out.upstream.push((title, key));
+            }
+        } else if section == MEMORIES_HEADING {
+            if let Some((citation, text)) = line.strip_prefix("- ").and_then(evidence::split_head)
+                && citation.kind == CitationKind::Mem
+            {
+                out.memories.push((citation.key(), first_sentence(text)));
+            }
+        } else if section == DOCUMENTS_HEADING
+            && let Some((citation, source)) = evidence::split_head(line)
+            && citation.kind == CitationKind::Doc
+        {
+            let mut content = String::new();
+            while let Some(next) = lines.peek() {
+                if next.trim().is_empty() || next.starts_with("[doc:") || next.starts_with("## ") {
+                    break;
+                }
+                content.push_str(next);
+                content.push(' ');
+                lines.next();
+            }
+            out.documents
+                .push((citation.key(), source.to_owned(), first_sentence(&content)));
+        }
+    }
+    out
+}
+
+fn text_output(prompt: &str) -> String {
+    let (title, _) =
+        parse_node_prompt(prompt).unwrap_or_else(|| ("Untitled task".into(), Vec::new()));
+    let context = context_of(prompt);
+    // The label and the summary are quotes, not claims: nothing of them rests on evidence.
+    let mut out = format!(
+        "{DEMO_LABEL}\n> This text was generated offline by the demo provider; configure an API \
+         key in Settings for real results.\n\n# {title}\n\n## Summary\n\n> A concise, structured \
+         result for **{title}**: in a real run the model would complete this step from the goal, \
+         the instructions and the results of its dependencies.\n"
+    );
+    if !context.upstream.is_empty() {
         out.push_str("\n## Built on\n\n");
-        for u in &upstream {
+        for (upstream, key) in &context.upstream {
+            let cite = key
+                .as_deref()
+                .map_or_else(|| "[assumption]".to_owned(), |key| format!("[{key}]"));
             out.push_str(&format!(
-                "- **{u}** — its findings feed directly into this step.\n"
+                "- **{upstream}** — its findings feed directly into this step {cite}.\n"
             ));
         }
     }
-    out.push_str("\n## Key points\n\n- Every claim is tied to an upstream result or marked as an assumption.\n- Open questions are listed explicitly so a reviewer can resolve them.\n- The output is ready to be consumed by downstream nodes.\n");
+    if !context.documents.is_empty() || !context.memories.is_empty() {
+        out.push_str("\n## Evidence\n\n");
+        for (key, source, sentence) in &context.documents {
+            out.push_str(&format!("- {sentence} [{key}] ({source})\n"));
+        }
+        for (key, text) in &context.memories {
+            out.push_str(&format!("- Recalled: {text} [{key}]\n"));
+        }
+    }
+    if context == Context::default() {
+        out.push_str(
+            "\n## Approach\n\n1. Clarify the scope and success criteria [assumption].\n\
+             2. Gather the key facts [assumption].\n\
+             3. Produce the deliverable and check it against the goal [assumption].\n",
+        );
+    }
+    out.push_str(
+        "\n## Key points\n\n- Every claim above cites the passage, memory or upstream result it \
+         rests on, or is marked as an assumption [assumption].\n- Open questions are listed \
+         explicitly so a reviewer can resolve them [assumption].\n- The output is ready to be \
+         consumed by downstream nodes [assumption].\n",
+    );
     out
 }
 
@@ -632,6 +747,89 @@ mod tests {
         let plan = refine(&ctx(vec![], vec![]));
         assert_eq!(plan.nodes.len(), 4);
         assert_eq!(plan.edges.len(), 3);
+    }
+
+    #[test]
+    fn the_demo_cites_what_it_was_given_and_declares_the_rest() {
+        use crate::domain::evidence::{EvidenceVerdict, Given, assess};
+        use crate::domain::prompt::{NodePrompt, UpstreamOutput, node_prompt};
+        let (node, chunk, memory) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
+        let upstream = vec![UpstreamOutput {
+            node_id: node,
+            title: "Findings".into(),
+            output: "Revenue grew.".into(),
+            relation: String::new(),
+            reason: String::new(),
+        }];
+        let memory_line = format!("[mem:{memory}] The team writes in British English. Always.");
+        let passage = format!(
+            "[doc:{chunk}] customs.pdf, p. 17\nGoods under 150 EUR are exempt from duty.\nInvoices name the reference."
+        );
+        let prompt = node_prompt(NodePrompt {
+            goal: "Ship",
+            title: "Draft",
+            kind: "document",
+            node_type: None,
+            content: "Write it.",
+            upstream: &upstream,
+            memories: std::slice::from_ref(&memory_line),
+            documents: std::slice::from_ref(&passage),
+        });
+        let context = context_of(&prompt);
+        assert_eq!(
+            context.upstream,
+            vec![("Findings".to_owned(), Some(format!("node:{node}")))]
+        );
+        assert_eq!(
+            context.memories,
+            vec![(
+                format!("mem:{memory}"),
+                "The team writes in British English.".to_owned()
+            )]
+        );
+        assert_eq!(
+            context.documents,
+            vec![(
+                format!("doc:{chunk}"),
+                "customs.pdf, p. 17".to_owned(),
+                "Goods under 150 EUR are exempt from duty.".to_owned()
+            )]
+        );
+        let out = text_output(&prompt);
+        assert!(out.starts_with(DEMO_LABEL));
+        assert!(out.contains(&format!("[node:{node}]")));
+        assert!(out.contains(&format!(
+            "exempt from duty. [doc:{chunk}] (customs.pdf, p. 17)"
+        )));
+        assert!(out.contains(&format!("British English. [mem:{memory}]")));
+        let given = Given {
+            documents: vec![chunk],
+            memories: vec![memory],
+            nodes: vec![node],
+            facts: Vec::new(),
+        };
+        let evidence = assess(&[&out], &given, 0.8);
+        assert_eq!(
+            evidence.verdict,
+            EvidenceVerdict::Verified,
+            "{out}\n{evidence:?}"
+        );
+        assert_eq!(evidence.coverage, 1.0);
+        assert_eq!(evidence.cited.len(), 3);
+        assert!(evidence.unknown.is_empty());
+        assert!(evidence.declared_claims >= 3, "{evidence:?}");
+        // Given nothing, every claim is an assumption: nothing is verified, nothing forged.
+        let bare = text_output("# Task: Bare\nKind: task\n");
+        let evidence = assess(&[&bare], &Given::default(), 0.8);
+        assert_eq!(evidence.verdict, EvidenceVerdict::Unverified);
+        assert_eq!((evidence.coverage, evidence.cited_claims), (0.0, 0));
+        assert_eq!(evidence.claims, evidence.declared_claims, "{bare}");
+        assert!(bare.contains("## Approach"));
+        assert_eq!(first_sentence("One two. Three"), "One two.");
+        assert_eq!(
+            first_sentence(&"x".repeat(400)).chars().count(),
+            EXCERPT_CHARS
+        );
     }
 
     #[tokio::test]

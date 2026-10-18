@@ -7,6 +7,10 @@ and reports plausible token counts. Every output is clearly labelled as demo con
 When the gateway offers `fetch_url`, the provider reads every http(s) URL the node's brief
 names (up to three) through it before drafting, so the call goes up to the backend and is
 decided under the policy like any other egress; the provider itself never touches the network.
+
+Every answer cites the passages, memories and upstream results the node was given by their
+citation ids and marks the rest of what it says as assumptions, so the backend's evidence
+verifier has something to verify offline (`nexc_runtime.evidence`).
 """
 
 from __future__ import annotations
@@ -37,6 +41,23 @@ class DemoBrief:
     role: str = "agent"
     upstream_titles: tuple[str, ...] = field(default_factory=tuple)
     upstream_outputs: tuple[str, ...] = field(default_factory=tuple)
+    # The upstream nodes' ids, parallel to the titles ("" when the backend named none).
+    upstream_ids: tuple[str, ...] = field(default_factory=tuple)
+    # The passages given: `(citation id, source, first sentence)` each.
+    documents: tuple[tuple[str, str, str], ...] = field(default_factory=tuple)
+    # The memories given: `(citation id, first sentence)` each.
+    memories: tuple[tuple[str, str], ...] = field(default_factory=tuple)
+
+    def evidence_lines(self) -> list[str]:
+        """What the answer cites, one claim per thing given, each ending with its id."""
+        lines = [f"{sentence} [{cid}] ({source})" for cid, source, sentence in self.documents]
+        lines += [f"Recalled: {text} [{cid}]" for cid, text in self.memories]
+        for title, node_id in zip(self.upstream_titles, self.upstream_ids, strict=False):
+            if node_id:
+                lines.append(
+                    f"Built on “{title}”: its findings feed into this step [node:{node_id}]"
+                )
+        return lines
 
 
 class DemoProvider:
@@ -154,6 +175,18 @@ class DemoProvider:
 
     def _docx_input(self, slug: str) -> dict[str, Any]:
         b = self._brief
+        evidence: list[dict[str, Any]] = (
+            [
+                {
+                    "heading": "Evidence",
+                    "paragraphs": ["What this document rests on, each with its citation id."],
+                    "bullets": b.evidence_lines(),
+                    "table_rows": [],
+                }
+            ]
+            if b.evidence_lines()
+            else []
+        )
         sections: list[dict[str, Any]] = [
             {
                 "heading": "Executive summary",
@@ -172,6 +205,7 @@ class DemoProvider:
                 "bullets": list(b.upstream_titles) or ["No upstream nodes."],
                 "table_rows": [],
             },
+            *evidence,
             {
                 "heading": "Plan",
                 "paragraphs": ["The work is broken down into the following steps."],
@@ -210,11 +244,16 @@ class DemoProvider:
                 "table_rows": [],
             }
         ]
-        for title, output in zip(b.upstream_titles, b.upstream_outputs, strict=False):
+        ids = list(b.upstream_ids) + [""] * len(b.upstream_titles)
+        for title, output, node_id in zip(b.upstream_titles, b.upstream_outputs, ids, strict=False):
+            paragraphs = _summary_lines(output) or ["(no output)"]
+            # Each section rests on its upstream node: its last paragraph cites it.
+            if node_id:
+                paragraphs.append(f"Rests on the upstream result “{title}” [node:{node_id}].")
             sections.append(
                 {
                     "heading": title,
-                    "paragraphs": _summary_lines(output) or ["(no output)"],
+                    "paragraphs": paragraphs,
                     "bullets": [],
                     "table_rows": [],
                 }
@@ -269,35 +308,39 @@ class DemoProvider:
             "- Recent peer-reviewed or industry reports",
             "- Comparable open-source projects",
             "",
+        ]
+        if b.evidence_lines():
+            lines += ["## Evidence", *[f"- {line}" for line in b.evidence_lines()], ""]
+        lines += [
             "## Findings",
-            "- (demo) Findings appear here once a real LLM provider is configured.",
+            "- (demo) Findings appear here once a real LLM provider is configured [assumption].",
         ]
         return "\n".join(lines) + "\n"
 
     def _final_answer(self) -> str:
+        """The answer: what it rests on, cited by id, and what it did, marked as its own."""
         b = self._brief
-        parts = [
-            DEMO_BANNER,
-            "",
-            f"## {b.title}",
-            "",
-            f"**Role:** {b.role} · **Kind:** {b.kind}",
-        ]
+        about = f"> Role: {b.role} · kind: {b.kind}"
         if b.goal:
-            parts += ["", f"**Goal:** {b.goal}"]
+            about += f" · goal: {b.goal}"
         if b.upstream_titles:
-            parts += ["", "**Built on:** " + ", ".join(b.upstream_titles)]
+            about += " · built on: " + ", ".join(b.upstream_titles)
+        parts = [DEMO_BANNER, "", f"## {b.title}", "", about]
+        if b.evidence_lines():
+            parts += ["", "### Evidence", *[f"- {line}" for line in b.evidence_lines()]]
         parts += [
             "",
             "### Outcome",
-            f"- Analysed the brief: {_first_sentence(b.content) or 'no extra brief given'}",
+            f"- Analysed the brief: {_first_sentence(b.content) or 'no extra brief given'} "
+            "[assumption]",
             "- Produced the deliverable"
             + (
-                " attached as an artifact."
+                " attached as an artifact"
                 if b.kind in ("document", "code", "research", "output")
-                else "."
-            ),
-            "- Ready for downstream nodes.",
+                else ""
+            )
+            + " [assumption]",
+            "- Ready for downstream nodes [assumption]",
         ]
         return "\n".join(parts) + "\n"
 
@@ -330,6 +373,12 @@ def _first_sentence(text: str) -> str:
     text = " ".join(text.split())
     match = re.match(r"(.{1,240}?[.!?])(\s|$)", text)
     return match.group(1) if match else text[:240]
+
+
+def first_sentence(text: str) -> str:
+    """The first sentence of `text` (at most 240 characters): what the demo quotes of a
+    passage or a memory."""
+    return _first_sentence(text)
 
 
 def _escape(text: str) -> str:

@@ -7,7 +7,7 @@
 mod common;
 
 use axum::http::{Method, StatusCode};
-use common::{TestApp, collect_until};
+use common::{TestApp, collect_until, fake_runtime};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 
@@ -480,4 +480,103 @@ async fn the_console_the_card_and_the_chips_show_the_verdicts(pool: PgPool) {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn the_demo_provider_cites_what_it_was_given(pool: PgPool) {
+    let runtime = fake_runtime().await;
+    let app = TestApp::with_real_providers(
+        pool,
+        &[
+            ("NEXC_LLM_PROVIDER", "demo"),
+            ("ANTHROPIC_API_KEY", ""),
+            ("NEXC_RUNTIME_URL", &runtime),
+        ],
+    )
+    .await;
+    let (token, _) = app.register("demo@example.com").await;
+    let wid = workspace(&app, &token).await;
+    let agent_id = analyst(&app, &token).await;
+    evidence_policy(
+        &app,
+        &token,
+        &wid,
+        &agent_id,
+        json!({"required": true, "action": "reject"}),
+    )
+    .await;
+    let (gid, research, draft) = graph(&app, &token).await;
+    // Under `reject`, the first node (given nothing) fails and the second never runs.
+    let finished = run(&app, &token, &gid).await;
+    assert_eq!(finished["status"], "failed", "{finished}");
+    assert_eq!(
+        node_run(&finished, &research)["evidence"]["verdict"],
+        "unverified"
+    );
+    assert_eq!(node_run(&finished, &draft)["status"], "skipped");
+    // Under `mark`, the second node cites its upstream result and is verified.
+    evidence_policy(
+        &app,
+        &token,
+        &wid,
+        &agent_id,
+        json!({"required": true, "action": "mark"}),
+    )
+    .await;
+    let finished = run(&app, &token, &gid).await;
+    assert_eq!(finished["status"], "succeeded", "{finished}");
+    let first = node_run(&finished, &research);
+    assert_eq!(first["evidence"]["verdict"], "unverified");
+    assert_eq!(first["evidence"]["coverage"], 0.0);
+    assert!(
+        first["evidence"]["declared_claims"].as_i64().unwrap() >= 3,
+        "{first}"
+    );
+    let second = node_run(&finished, &draft);
+    assert_eq!(second["evidence"]["verdict"], "verified", "{second}");
+    assert_eq!(second["evidence"]["coverage"], 1.0);
+    assert_eq!(
+        second["evidence"]["cited"],
+        json!([format!("node:{research}")])
+    );
+    assert_eq!(second["evidence"]["unknown"], json!([]));
+    let preview = second["output_preview"].as_str().unwrap();
+    assert!(preview.starts_with("[demo output]"), "{preview}");
+    let rid = finished["id"].as_str().unwrap();
+    let spans = spans_of(&app, &token, rid).await;
+    let turn = spans
+        .iter()
+        .find(|s| s["kind"] == "llm_call" && s["node_id"] == draft)
+        .unwrap();
+    assert_eq!(turn["attributes"]["evidence"], "verified");
+    assert_eq!(turn["attributes"]["evidence_coverage"], 100);
+    assert_eq!(
+        turn["attributes"]["evidence_cited_ids"],
+        json!([format!("node:{research}")])
+    );
+    let decisions: Vec<&Value> = spans
+        .iter()
+        .filter(|s| s["kind"] == "policy" && s["name"] == "evidence")
+        .collect();
+    assert_eq!(decisions.len(), 2, "{spans:?}");
+    let verdict_of = |node: &str| {
+        decisions
+            .iter()
+            .find(|s| s["node_id"] == node)
+            .map(|s| s["attributes"]["decision"].clone())
+            .unwrap()
+    };
+    assert_eq!(verdict_of(&research), "alert", "marked");
+    assert_eq!(verdict_of(&draft), "allow", "verified under the rule");
+    // The run page's node table and the agent card see the same verdicts.
+    let (_, card) = call(
+        &app,
+        Method::GET,
+        &format!("/agents/{agent_id}"),
+        &token,
+        None,
+    )
+    .await;
+    assert_eq!(card["evidence"]["verified"], 1);
+    assert_eq!(card["evidence"]["unverified"], 2);
 }
