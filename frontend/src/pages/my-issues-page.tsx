@@ -1,3 +1,5 @@
+import { useQuery } from '@tanstack/react-query';
+import { PlusIcon } from 'lucide-react';
 import { useState } from 'react';
 
 import { PageContainer } from '@/components/custom-ui/page-container';
@@ -5,6 +7,7 @@ import { PageHeader } from '@/components/custom-ui/page-header';
 import { ContentSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Button } from '@/components/ui/button';
+import { teamsQuery } from '@/features/workspaces/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { useAuthStore } from '@/stores/auth-store';
 
@@ -24,6 +27,11 @@ export default function MyIssuesPage() {
   const { current } = useCurrentWorkspace();
   const me = useAuthStore((s) => s.user?.id);
   const [tab, setTab] = useState<Tab>('assigned');
+  const [creating, setCreating] = useState(false);
+  const { data: teams = [] } = useQuery({
+    ...teamsQuery(current?.id ?? ''),
+    enabled: current !== undefined,
+  });
   return (
     <PageContainer>
       <Seo title="My issues" noIndex />
@@ -33,6 +41,12 @@ export default function MyIssuesPage() {
           current
             ? `What is yours to do in ${current.name}, and what you filed, across its teams.`
             : 'What is yours to do, and what you filed.'
+        }
+        actions={
+          <Button onClick={() => setCreating(true)} disabled={teams.length === 0}>
+            <PlusIcon />
+            New issue
+          </Button>
         }
       />
       <div role="tablist" aria-label="Which of your issues" className="flex gap-1">
@@ -54,6 +68,8 @@ export default function MyIssuesPage() {
           key={`${current.id}:${tab}`}
           workspace={current}
           person={tab === 'assigned' ? { assignee_id: me } : { creator_id: me }}
+          creating={creating}
+          onCreatingChange={setCreating}
         />
       ) : (
         <ContentSkeleton />

@@ -719,10 +719,15 @@ export function IssueExplorer({
   workspace,
   project,
   person,
+  creating: creatingFromPage,
+  onCreatingChange,
 }: {
   workspace: Workspace;
   project?: Project;
   person?: { assignee_id?: string; creator_id?: string };
+  /** The new-issue dialog, opened from the page's header instead of the explorer's toolbar. */
+  creating?: boolean;
+  onCreatingChange?: (creating: boolean) => void;
 }) {
   // The team is part of the address, so the sidebar's team links and reloads land on it.
   const [params, setParams] = useSearchParams();
@@ -732,7 +737,9 @@ export function IssueExplorer({
   const [labelId, setLabelId] = useState(ALL);
   const [cycleId, setCycleId] = useState(ALL);
   const [q, setQ] = useState('');
-  const [creating, setCreating] = useState(false);
+  const [ownCreating, setOwnCreating] = useState(false);
+  const creating = creatingFromPage ?? ownCreating;
+  const setCreating = onCreatingChange ?? setOwnCreating;
   // An issue can be opened by address (`?issue=<id>`), as the inbox does.
   const [openId, setOpenId] = useState<string | null>(() => params.get('issue'));
   const [view, setView] = useState<View>(rememberedView);
@@ -800,7 +807,7 @@ export function IssueExplorer({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [setCreating]);
   // A board shows one team's workflow, so it needs a team.
   const boardTeam = teamId === ALL ? teams[0]?.id : teamId;
   const chooseView = (next: View) => {
@@ -913,7 +920,7 @@ export function IssueExplorer({
           <Switch checked={openOnly} onCheckedChange={setOpenOnly} />
           Open only
         </label>
-        {(project || person) && newIssueButton}
+        {(project || person) && !onCreatingChange && newIssueButton}
         <div role="group" aria-label="View" className="flex rounded-md border p-0.5">
           <IconButton
             variant={view === 'list' ? 'secondary' : 'ghost'}
