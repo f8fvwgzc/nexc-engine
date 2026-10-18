@@ -1,6 +1,7 @@
 //! HTTP middleware: security headers, problem+json for framework errors,
-//! request metrics and rate limiting.
+//! conditional reads (`ETag`), request metrics and rate limiting.
 
+pub mod etag;
 pub mod rate_limit;
 
 use std::time::Instant;
@@ -30,7 +31,7 @@ fn set(headers: &mut HeaderMap, name: HeaderName, value: &'static str) {
 }
 
 /// Adds security headers to every response and `Cache-Control: no-store`
-/// to API responses.
+/// to API responses that a conditional read did not tag (see [`etag`]).
 pub async fn security_headers(State(state): State<AppState>, req: Request, next: Next) -> Response {
     let is_docs = req.uri().path().starts_with("/api/docs");
     let mut resp = next.run(req).await;

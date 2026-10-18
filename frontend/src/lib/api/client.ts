@@ -4,6 +4,7 @@ import { env } from '@/lib/env';
 import { useAuthStore } from '@/stores/auth-store';
 
 import { ApiError, ContractError, networkError } from './errors';
+import { cachedBody, conditionalHeaders, forget, remember } from './etag-cache';
 import { refreshSession } from './session';
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -71,15 +72,39 @@ function parseBody<S extends z.ZodType>(schema: S, data: unknown, path: string):
   return result.data;
 }
 
-/** JSON request whose response is validated against `schema` (the runtime contract guard). */
+/**
+ * JSON request whose response is validated against `schema` (the runtime contract guard). A GET
+ * is conditional: it sends the `If-None-Match` of the body kept for its URL and, on a 304, is
+ * answered from that body (see etag-cache).
+ */
 export async function apiRequest<S extends z.ZodType>(
   path: string,
   schema: S,
   opts: RequestOptions = {},
 ): Promise<z.output<S>> {
-  const res = await fetchWithAuth(path, opts);
+  const conditional = (opts.method ?? 'GET') === 'GET' && (opts.auth ?? true);
+  const url = buildUrl(path, opts.query);
+  const res = await fetchWithAuth(
+    path,
+    conditional ? { ...opts, headers: { ...conditionalHeaders(url), ...opts.headers } } : opts,
+  );
+  if (conditional && res.status === 304) {
+    const kept = cachedBody(url);
+    if (kept !== undefined) return parseBody(schema, kept, path);
+    // The entry went between the request and the answer: ask again, plainly.
+    forget(url);
+    const again = await fetchWithAuth(path, opts);
+    if (!again.ok) throw await ApiError.fromResponse(again);
+    return parseBody(schema, await again.json(), path);
+  }
   if (!res.ok) throw await ApiError.fromResponse(res);
-  return parseBody(schema, await res.json(), path);
+  const data: unknown = await res.json();
+  if (conditional) {
+    const etag = res.headers.get('ETag');
+    if (etag) remember(url, etag, data);
+    else forget(url);
+  }
+  return parseBody(schema, data, path);
 }
 
 /** An authenticated request whose body the caller reads itself (a stream of events). */

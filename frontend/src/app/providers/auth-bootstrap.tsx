@@ -1,6 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, type ReactNode } from 'react';
 
+import { startEtagPersistence } from '@/lib/api/etag-cache';
 import { refreshSession } from '@/lib/api/session';
 import { useAuthStore } from '@/stores/auth-store';
 import { startQueryPersistence } from '@/lib/query-persist';
@@ -37,8 +38,10 @@ export function AuthBootstrap({ children }: { children: ReactNode }) {
     [queryClient],
   );
 
-  // Lists are kept in this browser between visits, per account (see query-persist).
+  // Lists are kept in this browser between visits, per account (see query-persist), with the
+  // ETags that let their refetch be a 304 (see etag-cache).
   useEffect(() => startQueryPersistence(queryClient), [queryClient]);
+  useEffect(() => startEtagPersistence(), []);
 
   return children;
 }

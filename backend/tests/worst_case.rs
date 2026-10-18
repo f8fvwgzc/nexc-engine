@@ -234,6 +234,217 @@ async fn nobody_gets_in_without_a_valid_token(pool: PgPool) {
     );
 }
 
+/// Sends a GET with headers and returns the status, the headers and the raw body.
+async fn get_raw(
+    app: &TestApp,
+    url: &str,
+    token: &str,
+    headers: &[(&str, &str)],
+) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
+    let mut request = Request::builder()
+        .method(Method::GET)
+        .uri(url)
+        .header(header::AUTHORIZATION, format!("Bearer {token}"));
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    let response =
+        tower::ServiceExt::oneshot(app.router.clone(), request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+    let status = response.status();
+    let headers = response.headers().clone();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    (status, headers, bytes.to_vec())
+}
+
+/// Every read that answers JSON carries a strong `ETag` and
+/// `Cache-Control: private, no-cache`; asked again with `If-None-Match`, it
+/// answers 304 with no body; a changed resource gets a new tag; streams,
+/// downloads and `/metrics` carry none (CONTRACT §3).
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn reads_are_tagged_and_answer_304_to_a_matching_etag(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), &[("NEXC_API_CALLS_PER_MINUTE", "100000")]).await;
+    let w = world(&app).await;
+    let root = nexc::http::handlers::auth::create_user(
+        &app.state,
+        "root@example.com",
+        "Root",
+        Role::Admin,
+        "!",
+    )
+    .await
+    .unwrap();
+    let admin = app.state.jwt.issue(root.id, Role::Admin, 0).unwrap();
+    let mut tagged = 0;
+    let mut answered_304 = 0;
+    let mut volatile = Vec::new();
+    let mut checked = 0;
+    for op in operations() {
+        if op.method != Method::GET {
+            continue;
+        }
+        let admin_route = op.path.starts_with("/api/v1/admin/");
+        let token = if admin_route { &admin } else { &w.owner };
+        let mut url = fill(&op.path, &w.ids, &w.wid);
+        if op.query.iter().any(|q| q == "workspace_id") {
+            url.push_str(&format!("?workspace_id={}", w.wid));
+        } else if op.query.iter().any(|q| q == "q") {
+            url.push_str("?q=secret");
+        }
+        let (status, headers, body) = get_raw(&app, &url, token, &[]).await;
+        if status != StatusCode::OK {
+            continue;
+        }
+        checked += 1;
+        let json = headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|ct| ct.starts_with("application/json"));
+        let Some(etag) = headers.get(header::ETAG).and_then(|v| v.to_str().ok()) else {
+            let probe = url.ends_with("/healthz") || url.ends_with("/readyz");
+            assert!(!json || probe, "GET {url} answered JSON without an ETag");
+            assert_eq!(
+                headers
+                    .get(header::CACHE_CONTROL)
+                    .and_then(|v| v.to_str().ok()),
+                Some("no-store"),
+                "GET {url}: an untagged answer is not kept"
+            );
+            continue;
+        };
+        tagged += 1;
+        assert!(json, "GET {url}: only JSON reads are tagged");
+        assert!(
+            etag.starts_with('"') && etag.ends_with('"') && !etag.starts_with("W/"),
+            "GET {url}: a strong, quoted tag ({etag})"
+        );
+        assert_eq!(
+            headers
+                .get(header::CACHE_CONTROL)
+                .and_then(|v| v.to_str().ok()),
+            Some("private, no-cache"),
+            "GET {url}"
+        );
+        let etag = etag.to_owned();
+        let (status, again, body_again) =
+            get_raw(&app, &url, token, &[("if-none-match", &etag)]).await;
+        match status {
+            StatusCode::NOT_MODIFIED => {
+                answered_304 += 1;
+                assert!(body_again.is_empty(), "GET {url}: a 304 carries no body");
+                assert_eq!(
+                    again.get(header::ETAG).and_then(|v| v.to_str().ok()),
+                    Some(etag.as_str())
+                );
+                assert_eq!(
+                    again
+                        .get(header::CACHE_CONTROL)
+                        .and_then(|v| v.to_str().ok()),
+                    Some("private, no-cache")
+                );
+                assert!(again.get(header::CONTENT_TYPE).is_none(), "GET {url}");
+            }
+            StatusCode::OK => {
+                // An answer that changes between two reads (a clock, a size) gets a new tag.
+                assert_ne!(
+                    body, body_again,
+                    "GET {url}: the same body answered 200 twice"
+                );
+                assert_ne!(
+                    again.get(header::ETAG).and_then(|v| v.to_str().ok()),
+                    Some(etag.as_str())
+                );
+                volatile.push(url.clone());
+            }
+            other => panic!("GET {url} with If-None-Match answered {other}"),
+        }
+        // A tag that is not the current one gets the body.
+        let (status, _, body_other) =
+            get_raw(&app, &url, token, &[("if-none-match", "\"stale\"")]).await;
+        assert_eq!(status, StatusCode::OK, "GET {url}");
+        assert!(!body_other.is_empty());
+    }
+    eprintln!(
+        "conditional reads: {checked} reads answered 200, {tagged} tagged, {answered_304} answered 304, volatile: {volatile:?}"
+    );
+    assert!(tagged > 50, "most reads are tagged ({tagged} of {checked})");
+    assert!(
+        answered_304 * 10 >= tagged * 9,
+        "nearly every tagged read answers 304 ({answered_304} of {tagged}; volatile: {volatile:?})"
+    );
+
+    // A changed resource gets a new tag, in its own answer and in the list it is part of.
+    let issue = format!("/api/v1/issues/{}", w.ids["iid"]);
+    let list = format!("/api/v1/workspaces/{}/issues", w.wid);
+    let (_, before, _) = get_raw(&app, &issue, &w.owner, &[]).await;
+    let (_, list_before, _) = get_raw(&app, &list, &w.owner, &[]).await;
+    let before = before[header::ETAG].to_str().unwrap().to_owned();
+    let list_before = list_before[header::ETAG].to_str().unwrap().to_owned();
+    let (status, _) = call(
+        &app,
+        Method::PATCH,
+        &format!("/issues/{}", w.ids["iid"]),
+        &w.owner,
+        Some(json!({"title": "Secret plan, revised"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, after, body) =
+        get_raw(&app, &issue, &w.owner, &[("if-none-match", &before)]).await;
+    assert_eq!(status, StatusCode::OK, "the change is answered in full");
+    assert_ne!(after[header::ETAG].to_str().unwrap(), before);
+    assert!(String::from_utf8_lossy(&body).contains("revised"));
+    let (status, list_after, _) =
+        get_raw(&app, &list, &w.owner, &[("if-none-match", &list_before)]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ne!(list_after[header::ETAG].to_str().unwrap(), list_before);
+
+    // Streams and the metrics endpoint carry no tag.
+    let ticket = app
+        .request(
+            Method::POST,
+            "/api/v1/realtime/tickets",
+            Some(&w.owner),
+            Some(json!({"graph_id": w.ids["gid"]})),
+        )
+        .await;
+    if ticket.status == StatusCode::OK {
+        let events = format!(
+            "/api/v1/graphs/{}/events?ticket={}",
+            w.ids["gid"],
+            ticket.body["ticket"].as_str().unwrap_or_default()
+        );
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri(&events)
+            .header("if-none-match", "*")
+            .body(Body::empty())
+            .unwrap();
+        let response = tower::ServiceExt::oneshot(app.router.clone(), request)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "the stream opens");
+        assert!(
+            response.headers().get(header::ETAG).is_none(),
+            "a stream is not tagged"
+        );
+        // The stream says `no-cache` of its own (SSE); it is never `private, no-cache` with a tag.
+        let cache_control = response
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        assert!(
+            cache_control == "no-cache" || cache_control == "no-store",
+            "a stream is not kept: {cache_control}"
+        );
+    }
+    let (status, headers, _) = get_raw(&app, "/metrics", &admin, &[("if-none-match", "*")]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(headers.get(header::ETAG).is_none());
+}
+
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
 async fn an_outsider_reads_nothing_of_another_workspace(pool: PgPool) {
     let app = TestApp::new(pool, &[]).await;

@@ -30,6 +30,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   size it for a smaller machine. The table, the machine and the build it was taken on are in
   `docs/PERFORMANCE.md`; the API's per-account rate limit became a setting on the way
   (`NEXC_API_CALLS_PER_MINUTE`, 600 as before) so a load test can lift it on its own server.
+- Conditional reads (`docs/CONTRACT.md` §3): every `GET` that answers JSON carries a strong
+  `ETag` (the first 128 bits of the body's SHA-256; `GET /graphs/{gid}` keeps its own tag over
+  the graph and its version) and `Cache-Control: private, no-cache`; a `GET` with `If-None-Match`
+  naming the current tag is answered `304 Not Modified` with no body; a changed resource gets a
+  new tag; streams, downloads, the probes and `/metrics` carry none and keep `no-store`. One
+  middleware does it inside the metrics (a 304 is counted as one) and inside compression (the tag
+  is the body's, whatever encoding it travels in). The console's fetch layer keeps the tag and
+  the body of every GET by URL for the page, sends `If-None-Match` on the next request and reuses
+  the kept body on a 304; the lists query-persist keeps between visits are kept with their tags
+  too, per account and build, so the first refetch of a visit is a 304 as well; nothing else
+  reaches storage (`frontend/src/lib/api/etag-cache.ts`). The worst-case suite sweeps every
+  documented read: tagged, answered 304 with no body and the same tag, a changed issue and its
+  list retagged, the SSE stream and `/metrics` untagged.
 - A2A adapter, the console: the agent card gets an **A2A** tab with the switch that publishes
   the agent (admins; disabled for an external agent, with the reason), the addresses of its card,
   its well-known card and its JSON-RPC endpoint under the console's origin with a copy each, and
@@ -846,6 +859,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The per-account API rate limit is a setting, `NEXC_API_CALLS_PER_MINUTE` (600, the burst a
   fifth of it, as before), so a load test or an automation account can be given more on its own
   server.
+- A tagged read answers `Cache-Control: private, no-cache` instead of `no-store`; untagged
+  answers, streams, downloads, the probes and errors keep `no-store`.
 - The project is licensed under the MIT License instead of Apache-2.0. No dependency requires a
   stricter licence: every one is MIT, BSD, ISC, Apache-2.0 or similar, with two npm packages
   under MPL-2.0, which only covers changes to those packages' own files.

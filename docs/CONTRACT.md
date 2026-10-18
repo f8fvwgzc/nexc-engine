@@ -91,7 +91,15 @@ In Docker/K8s the frontend is served by unprivileged nginx on 8080 which proxies
   `{ "type": "about:blank", "title": "Validation failed", "status": 422, "detail": "...", "errors": { "email": ["invalid email"] } }`.
   Codes: 400 bad input, 401 unauthenticated, 403 forbidden, 404, 409 conflict (e.g. edge would create a cycle),
   413 too large, 422 validation, 429 rate limited (with `Retry-After`), 500.
-- `GET /graphs/{id}` returns `ETag`; supports `If-None-Match` → 304.
+- Conditional reads. Every `GET` that answers `200` with JSON (a single resource or a list)
+  carries a strong `ETag` (a hash of the body; `GET /graphs/{gid}` hashes the graph with its
+  version) and `Cache-Control: private, no-cache`: a client may keep the body but must ask
+  before reusing it. A `GET` with `If-None-Match` naming the current tag (or `*`) is answered
+  `304 Not Modified` with the `ETag`, the same `Cache-Control` and no body; a resource that
+  changed gets a new tag. Streams (SSE, WebSocket), downloads, `/metrics` and errors carry no
+  tag and keep `Cache-Control: no-store`. The console's fetch layer sends `If-None-Match` from
+  the bodies it keeps (per URL for the page; the persisted lists between visits) and reuses
+  the kept body on a 304.
 - Limits: request body 1 MiB (node content max 64 KiB, title max 200 chars, ≤ 500 nodes per graph).
 
 ## 4. Types (TypeScript notation)
