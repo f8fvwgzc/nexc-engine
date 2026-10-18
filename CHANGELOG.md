@@ -35,7 +35,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ten seconds). Every risk score an agent is given is kept in `agent_risk_history` by a trigger
   on `agents.risk_updated_at`, so the chart has fourteen days without the engine knowing.
 - The agent card (from the registry and `/app/agents?agent=`) has tabs: **Overview** (purpose,
-  owner, team, scopes, model, budget, risk, policy version, evaluation score), **Activity** (its
+  owner, team, scopes, model, budget, risk, policy version, evaluation score; for an agent of
+  runtime `external`, its **API tokens**: each with its name, prefix, when it was issued, last
+  used and revoked, an Issue form whose token is shown once with a copy and a Revoke behind a
+  confirmation, workspace admins only, and the list is never copied to browser storage),
+  **Activity** (its
   last spans, each opening its run at the span), **Policy** (the resolved policy with the level
   that set each rule), **Approvals** and **Alerts** about that agent, decided and acknowledged
   there, and **Ask** with the agent filled in.

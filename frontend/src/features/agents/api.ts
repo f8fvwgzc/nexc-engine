@@ -3,7 +3,13 @@ import { z } from 'zod';
 
 import { apiRequest, apiSend } from '@/lib/api/client';
 import { qk } from '@/lib/query-keys';
-import { agentCardSchema, agentSchema, type AgentInput } from '@/schemas/agent';
+import {
+  agentApiTokenSchema,
+  agentCardSchema,
+  agentSchema,
+  issuedAgentApiTokenSchema,
+  type AgentInput,
+} from '@/schemas/agent';
 import { spanSchema } from '@/schemas/trace';
 
 /** The agents of a workspace (the caller's first workspace when none is given). */
@@ -58,4 +64,26 @@ export function updateAgent(agentId: string, body: AgentInput) {
 
 export function deleteAgent(agentId: string) {
   return apiSend(`/agents/${agentId}`, { method: 'DELETE' });
+}
+
+/** The API tokens of an external agent, newest first: prefixes and dates, never the tokens (admins). */
+export const agentTokensQuery = (agentId: string) =>
+  queryOptions({
+    queryKey: qk.agents.tokens(agentId),
+    queryFn: ({ signal }) =>
+      apiRequest(`/agents/${agentId}/tokens`, z.array(agentApiTokenSchema), { signal }),
+    staleTime: 10_000,
+  });
+
+/** Issues an API token to an external agent (admins); the secret is in the answer this once. */
+export function issueAgentToken(agentId: string, name: string) {
+  return apiRequest(`/agents/${agentId}/tokens`, issuedAgentApiTokenSchema, {
+    method: 'POST',
+    body: { name },
+  });
+}
+
+/** Revokes an API token (admins); the agent's calls with it are refused at once. */
+export function revokeAgentToken(agentId: string, tokenId: string) {
+  return apiSend(`/agents/${agentId}/tokens/${tokenId}`, { method: 'DELETE' });
 }

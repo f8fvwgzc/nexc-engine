@@ -25,12 +25,14 @@ describe('query persistence', () => {
     first.setQueryData(['issues', 'w', 'list', {}], [{ id: 1 }]);
     first.setQueryData(['graphs', 'detail', 'g'], { big: true });
     first.setQueryData(['settings', 'llm'], { key_hint: '…a1b2' });
+    first.setQueryData(['agents', 'tokens', 'a'], [{ prefix: 'nexc_agt_a1b2' }]);
     vi.advanceTimersByTime(1_500);
     stop();
     const saved = localStorage.getItem(KEY) ?? '';
     expect(saved).toContain('"issues"');
     expect(saved).not.toContain('key_hint');
     expect(saved).not.toContain('"big"');
+    expect(saved).not.toContain('nexc_agt_');
 
     const second = new QueryClient();
     const stopSecond = startQueryPersistence(second);

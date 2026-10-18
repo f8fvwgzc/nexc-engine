@@ -14,7 +14,8 @@ const SAVE_DELAY_MS = 1_000;
 
 /**
  * Lists worth painting instantly on the next visit. Settings (credential hints), memories, run
- * outputs and whole graphs stay out: they are sensitive, large, or both.
+ * outputs, whole graphs and the API tokens of agents stay out: they are sensitive, large, or
+ * both.
  */
 const PERSISTED_ROOTS = new Set(['workspaces', 'graphs', 'issues', 'agents', 'templates']);
 
@@ -22,7 +23,8 @@ function persistable(queryKey: QueryKey): boolean {
   return (
     typeof queryKey[0] === 'string' &&
     PERSISTED_ROOTS.has(queryKey[0]) &&
-    !queryKey.includes('detail')
+    !queryKey.includes('detail') &&
+    !queryKey.includes('tokens')
   );
 }
 

@@ -35,6 +35,7 @@ import { agentCardQuery } from '../api';
 import { summarizeCapabilities } from '../capabilities';
 import { useQuarantineAgent } from '../hooks/use-agent-mutations';
 import { AgentStatusBadge } from './agent-status-badge';
+import { AgentTokens } from './agent-tokens';
 import { BudgetProgress } from './budget-progress';
 
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
@@ -153,10 +154,12 @@ function Overview({
   shown,
   card,
   isPending,
+  admin,
 }: {
   shown: Agent;
   card: AgentCard | undefined;
   isPending: boolean;
+  admin: boolean;
 }) {
   return (
     <div className="space-y-5">
@@ -239,6 +242,7 @@ function Overview({
           ))}
         </ul>
       </section>
+      {shown.runtime === 'external' && <AgentTokens agentId={shown.id} admin={admin} />}
       {card && <Evaluation card={card} />}
     </div>
   );
@@ -328,10 +332,11 @@ interface AgentCardSheetProps {
 }
 
 /**
- * The agent's ID card, in tabs: who it is and what it may do (Overview), its last twenty
- * actions (Activity), the policy that governs it rule by rule (Policy), its held calls and
- * alerts, and the audit's questions with the agent filled in (Ask). Admins quarantine and
- * release from the footer.
+ * The agent's ID card, in tabs: who it is and what it may do (Overview; for an external agent
+ * also its API tokens, issued and revoked there by admins), its last twenty actions
+ * (Activity), the policy that governs it rule by rule (Policy), its held calls and alerts, and
+ * the audit's questions with the agent filled in (Ask). Admins quarantine and release from the
+ * footer.
  */
 export function AgentCardSheet({ agent, admin, onOpenChange, onEdit }: AgentCardSheetProps) {
   const {
@@ -412,7 +417,7 @@ export function AgentCardSheet({ agent, admin, onOpenChange, onEdit }: AgentCard
                   <TabsTrigger value="ask">Ask</TabsTrigger>
                 </TabsList>
                 <TabsContent value="overview">
-                  <Overview shown={shown} card={card} isPending={isPending} />
+                  <Overview shown={shown} card={card} isPending={isPending} admin={admin} />
                 </TabsContent>
                 <TabsContent value="activity">
                   {card ? <RecentSpans card={card} /> : <Skeleton className="h-16 rounded-lg" />}

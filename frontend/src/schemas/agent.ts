@@ -75,6 +75,30 @@ export const agentSchema = z.object({
 });
 export type Agent = z.infer<typeof agentSchema>;
 
+/** An API token of an external agent (CONTRACT §8): what is kept of it, never its value. */
+export const agentApiTokenSchema = z.object({
+  id: idSchema,
+  agent_id: idSchema,
+  /** The token's first characters, to tell tokens apart. */
+  prefix: z.string(),
+  name: z.string(),
+  created_by: idSchema.nullable(),
+  created_at: timestampSchema,
+  last_used_at: nullableTimestampSchema,
+  revoked_at: nullableTimestampSchema,
+});
+export type AgentApiToken = z.infer<typeof agentApiTokenSchema>;
+
+/** A token just issued: `secret` (`nexc_agt_…`) is given out this once. */
+export const issuedAgentApiTokenSchema = z.object({
+  token: agentApiTokenSchema,
+  secret: z.string(),
+});
+export type IssuedAgentApiToken = z.infer<typeof issuedAgentApiTokenSchema>;
+
+/** What a token may be called (`TOKEN_NAME_MAX` in the backend). */
+export const TOKEN_NAME_MAX = 100;
+
 /** The competency score an agent made from a role template got on its three questions. */
 export const agentEvaluationSchema = z.object({
   template: z.string(),

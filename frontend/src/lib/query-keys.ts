@@ -99,6 +99,8 @@ export const qk = {
     list: (workspaceId?: string) => ['agents', workspaceId ?? 'default'] as const,
     activity: (agentId: string) => ['agents', 'activity', agentId] as const,
     card: (agentId: string) => ['agents', 'card', agentId] as const,
+    /** The API tokens of an external agent: never copied to browser storage. */
+    tokens: (agentId: string) => ['agents', 'tokens', agentId] as const,
   },
   memories: {
     all: ['memories'] as const,
