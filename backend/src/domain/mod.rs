@@ -17,6 +17,7 @@ pub mod dlp;
 pub mod error;
 pub mod graph;
 pub mod guardrails;
+pub mod injection;
 pub mod insight;
 pub mod issue;
 pub mod knowledge;

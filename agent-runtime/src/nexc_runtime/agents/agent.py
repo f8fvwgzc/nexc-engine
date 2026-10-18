@@ -11,6 +11,7 @@ from typing import Any
 
 from ..approvals import ApprovalRegistry, ApprovalTimeout
 from ..config import Settings
+from ..injection import confirm_with_model, screen, withheld_notice
 from ..llm import LLMProvider, ToolCall, ToolResult, Turn
 from ..policy import AgentToken, decide_spawn
 from ..prompts import build_subagent_prompt, build_system_prompt
@@ -259,7 +260,51 @@ class Agent:
         except OSError as exc:
             log.warning("tool %s raised %s", call.name, type(exc).__name__)
             return ToolResult(call.id, f"{call.name} failed: {exc.strerror or exc}", is_error=True)
-        return ToolResult(call.id, output)
+        return ToolResult(call.id, await self._screen_result(call.name, output))
+
+    async def _screen_result(self, tool: str, output: str) -> str:
+        """The prompt-injection screen on a tool result about to go to the model: a finding is
+        a `policy` span; under `injection.action: block` the result is withheld."""
+        finding = screen(output)
+        if finding is None:
+            return output
+        rules = self.token.rules
+        if rules.injection_model_check and self.scope.settings.runtime_injection_model_check:
+            confirmed, tokens_in, tokens_out = await confirm_with_model(self.scope.provider, output)
+            if tokens_in or tokens_out:
+                self._account(tokens_in, tokens_out)
+            if not confirmed:
+                return output
+        block = rules.injection_action == "block"
+        reason = f"instructions aimed at the model in the result of {tool}: {finding.describe()}"
+        now = rfc3339_ns(now_ns())
+        self.scope.events.span(
+            span_id=new_span_id(),
+            parent_id=self._turn_span_id,
+            kind="policy",
+            name="injection",
+            agent=self.record.principal,
+            started_at=now,
+            ended_at=now,
+            status="error" if block else "ok",
+            attributes={
+                "decision": "deny" if block else "alert",
+                "rule": "injection",
+                "reason": reason,
+                "action": "tool_result",
+                "subject": tool,
+                "severity": finding.severity,
+                "patterns": list(finding.patterns),
+                "hidden_chars": finding.hidden_chars,
+                "result_bytes": len(output.encode("utf-8")),
+                "policy_version": self.token.policy_version,
+            },
+        )
+        self.scope.events.log(
+            "warning",
+            f"{self.record.name}: {reason}" + ("; withheld" if block else "; let through, flagged"),
+        )
+        return withheld_notice(tool, finding) if block else output
 
     async def _spawn(self, role: str, task: str) -> str:
         scope = self.scope

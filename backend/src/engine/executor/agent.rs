@@ -509,7 +509,32 @@ async fn handle_line(
                         .then(|| span.attributes.get("egress_host").and_then(Value::as_str))
                         .flatten()
                         .map(str::to_owned);
+                    let injection = (span.kind == SpanKind::Policy
+                        && span.attributes.get("rule").and_then(Value::as_str)
+                            == Some("injection")
+                        && span.attributes.get("severity").and_then(Value::as_str) == Some("high"))
+                    .then(|| {
+                        (
+                            span.name.clone(),
+                            span.attributes
+                                .get("reason")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_owned(),
+                        )
+                    });
                     ctx.record(span);
+                    if let Some((tool, reason)) = injection {
+                        ctx.alert(&crate::engine::defend::Finding {
+                            span_id: Some(span_id),
+                            kind: crate::domain::alert::AlertKind::Injection,
+                            severity: crate::domain::policy_document::Severity::High,
+                            rule: "injection",
+                            title: &format!("instructions found in the result of {tool}"),
+                            detail: &reason,
+                        })
+                        .await;
+                    }
                     if let Some(host) = egress {
                         // The call already happened; what left is on the record either way.
                         ctx.screen_egress(&host, span_id).await;

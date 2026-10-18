@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     runtime_timeout_cap_s: int = Field(default=1800, ge=10)
     runtime_python_timeout_s: int = Field(default=60, ge=1, le=600)
     runtime_python_memory_mb: int = Field(default=512, ge=64)
+    # Lets a policy's `injection.model_check` ask the run's model to confirm a finding.
+    runtime_injection_model_check: bool = False
 
     # --- workspace / artifact limits ---------------------------------------------------------
     runtime_max_file_bytes: int = Field(default=20 * 1024 * 1024, ge=1024)

@@ -19,6 +19,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::analysis::dependency_graph;
+use super::defend::{About, Finding};
 use super::executor::{self, ExecContext, ExecError, ExecOutput};
 use super::policy as policies;
 use super::trace::{self, Sealed, TraceHandle};
@@ -26,14 +27,17 @@ use super::{artifacts, credentials, editor, guardrails, knowledge, usage};
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::agent::{Agent, AgentStatus};
+use crate::domain::alert::AlertKind;
 use crate::domain::audit::AuditAction;
 use crate::domain::capabilities::{Capabilities, DataLabel};
 use crate::domain::context;
 use crate::domain::graph::{Executor, GraphEdge, GraphNode, NodeStatus};
 use crate::domain::guardrails::Guardrails;
+use crate::domain::injection::{self, InjectionFinding};
 use crate::domain::ontology::Ontology;
 use crate::domain::policy::{self, Action, Decision};
 use crate::domain::policy_document::Policy;
+use crate::domain::policy_document::{InjectionAction, Severity};
 use crate::domain::prompt::{AGENT_UPSTREAM_CHARS, UPSTREAM_CHARS, UpstreamOutput};
 use crate::domain::run::{Run, RunStatus, final_status};
 use crate::domain::settings::{ConfigScope, LlmProviderKind};
@@ -968,6 +972,112 @@ impl NodeTask {
                     .unwrap_or_default(),
                 reason: edge.map(|e| e.reason.clone()).unwrap_or_default(),
             });
+        }
+        // Data about to go to the model is screened for instructions aimed at it: a finding
+        // is a `policy` span, and under `injection.action: block` the piece is withheld.
+        let block = rules.injection.action == InjectionAction::Block;
+        let mut findings: Vec<(&str, String, InjectionFinding)> = Vec::new();
+        for output in &mut upstream_outputs {
+            if let Some(finding) = injection::screen(&output.output) {
+                if block {
+                    output.output = injection::withheld_notice("upstream output", &finding);
+                }
+                findings.push(("upstream", output.node_id.to_string(), finding));
+            }
+        }
+        let screened =
+            |items: Vec<String>,
+             ids: &[Uuid],
+             source: &'static str,
+             findings: &mut Vec<(&str, String, InjectionFinding)>| {
+                items
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(i, text)| match injection::screen(&text) {
+                        Some(finding) => {
+                            let subject = ids.get(i).map(ToString::to_string).unwrap_or_default();
+                            findings.push((source, subject, finding));
+                            (!block).then_some(text)
+                        }
+                        None => Some(text),
+                    })
+                    .collect::<Vec<String>>()
+            };
+        let memories = screened(memories, &memory_ids, "memory", &mut findings);
+        let documents = screened(documents, &chunk_ids, "document", &mut findings);
+        for (source, subject, finding) in &findings {
+            let reason = format!(
+                "instructions aimed at the model in {source} {subject}: {}",
+                finding.describe()
+            );
+            let decision = if block {
+                Decision::deny("injection", reason.clone())
+            } else {
+                Decision::alert("injection", finding.severity, reason.clone())
+            };
+            let span_id = Uuid::now_v7();
+            data.trace.emit(SpanDraft {
+                id: span_id,
+                node_id: node.id,
+                agent_id: agent.as_ref().map(|a| a.id),
+                principal: principal.clone(),
+                parent_id: None,
+                kind: SpanKind::Policy,
+                name: "injection".into(),
+                started_at: began,
+                ended_at: Some(Utc::now()),
+                status: if block {
+                    SpanStatus::Error
+                } else {
+                    SpanStatus::Ok
+                },
+                attributes: json!({
+                    "decision": decision.verdict(),
+                    "rule": "injection",
+                    "reason": reason,
+                    "action": "context",
+                    "source": source,
+                    "subject": subject,
+                    "severity": finding.severity,
+                    "patterns": finding.patterns,
+                    "hidden_chars": finding.hidden_chars,
+                    "policy_version": policy_version,
+                    "policy_versions": rules.versions,
+                }),
+            });
+            if finding.severity == Severity::High
+                && let Some(workspace_id) = data.workspace_id
+            {
+                super::defend::raise(
+                    &state,
+                    &About {
+                        workspace_id,
+                        agent_id: agent.as_ref().map(|a| a.id),
+                        principal: &principal,
+                        run_id: Some(data.run_id),
+                        node_id: Some(node.id),
+                        graph_id: Some(data.graph_id),
+                        actor: data.owner,
+                    },
+                    &Finding {
+                        span_id: Some(span_id),
+                        kind: AlertKind::Injection,
+                        severity: finding.severity,
+                        rule: "injection",
+                        title: &format!("instructions found in a {source} given to {}", node.title),
+                        detail: &format!(
+                            "{}{}",
+                            finding.describe(),
+                            if block {
+                                "; withheld"
+                            } else {
+                                "; let through, flagged"
+                            }
+                        ),
+                    },
+                )
+                .await;
+            }
         }
         // What the node was given to read is on the record before it runs.
         data.trace.emit(SpanDraft {

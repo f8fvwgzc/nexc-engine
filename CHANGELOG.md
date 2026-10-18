@@ -75,6 +75,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   called"). The policy's `alerts` thresholds raise alerts of kind `risk` and, at
   `quarantine_risk_score`, quarantine the agent automatically (its running nodes are cancelled,
   new ones refused, audited as `agent_quarantined` with the score and the reasons).
+- Prompt-injection screen: the backend screens every upstream output, memory and document passage
+  as it builds a node's context and the runtime screens every tool result before it goes to the
+  model, with the same cheap pattern set (ignored instructions, role overrides, prompt-leak and
+  exfiltration requests, tool hijacking, chat-template markup, hidden zero-width text) and an
+  optional confirmation by the run's model (`injection.model_check` in the policy, behind
+  `RUNTIME_INJECTION_MODEL_CHECK`). A finding is a `policy` span named `injection` with its
+  severity and patterns; by default the text goes through (`flag`), under `injection.action:
+  block` it is withheld and the model told why; a high finding is an alert of kind `injection`.
 - Agent identity and scopes (AgentSecOps phase 1, `docs/AGENTSECOPS.md` §4.1): every agent is a
   principal, `agent://{workspace}/{name}` (`principal_id`, unique, following the name), with an
   owner (`owner_user_id`), a team, a `purpose` and a `capabilities` document: the tools it may

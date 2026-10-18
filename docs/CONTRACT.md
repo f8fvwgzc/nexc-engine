@@ -999,6 +999,24 @@ at `alerts.quarantine_risk_score`, into a quarantine (as `POST /agents/{id}/quar
 audited as `agent_quarantined` with `automatic: risk score …`, a `critical` alert). The run's
 trace is sealed by then, so these alerts name no span.
 
+**The prompt-injection screen.** Data about to go to the model is looked at for instructions
+aimed at it, cheaply and without a model: a fixed set of patterns (ignoring earlier instructions,
+new or real instructions, role overrides, prompt-leak requests, exfiltration of keys and secrets,
+tool hijacking, chat-template markup, directives to the assistant, urgency overrides) and
+zero-width or tag characters that hide text from a reader; two patterns together, markup, hidden
+text or exfiltration rate `high`. The backend screens every upstream output, memory and document
+passage as it builds a node's context; the runtime screens every tool result (a sub-agent's answer
+included) before it goes to the model. A finding is a `policy` span named `injection` (`rule:
+"injection"`, `action: "context"` with `source` `upstream` | `memory` | `document` and `subject`
+the node, memory or chunk id, or `action: "tool_result"` with `subject` the tool; `severity`,
+`patterns`, `hidden_chars`), decision `alert` by default: the text goes through. Under
+`rules.injection.action: "block"` the decision is `deny`, an upstream output or a tool result is
+replaced by a notice (`[… withheld by policy: it contained instructions aimed at the model (…)]`)
+and a memory or passage is dropped. A `high` finding is also an alert of kind `injection`. With
+`rules.injection.model_check` and the runtime setting `RUNTIME_INJECTION_MODEL_CHECK=true`, the
+run's model is asked to confirm a tool-result finding first (one short turn, accounted to the
+run); a `NO` clears it.
+
 **Approvals.** A tool the rules hold (`require_approval.tools`, or `write_file` / `make_docx`
 after data of a label in `require_approval.labels`) does not run at once. The runtime reports a
 `policy` span with `decision: "require_approval"`, `rule`, `reason`, `action: "tool_call"`,
