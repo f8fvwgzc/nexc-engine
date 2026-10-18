@@ -1475,9 +1475,15 @@ async fn prove_audit(pool: PgPool) {
     use std::time::Instant;
 
     const ASKS: usize = 2_000;
+    /// Askers to spread the questions over: one account is rate limited at 120 in a burst.
+    const ASKERS: usize = 256;
     let w = world(pool.clone()).await;
     export::pass(&w.app.state).await.unwrap();
     let path = format!("/api/v1/workspaces/{}/audit/ask", w.wid);
+    let mut askers = Vec::with_capacity(ASKERS);
+    for _ in 0..ASKERS {
+        askers.push(member(&w.app, &pool, w.wid, "admin").await);
+    }
     let questions = [
         "Which agents read restricted data this week?",
         &format!("Why was run {} denied?", w.run_id),
@@ -1488,12 +1494,13 @@ async fn prove_audit(pool: PgPool) {
     async fn measure(
         app: &TestApp,
         path: &str,
-        token: &str,
+        tokens: &[String],
         question: &str,
         label: &str,
     ) -> String {
         let mut samples = Vec::with_capacity(ASKS);
-        for _ in 0..ASKS {
+        for i in 0..ASKS {
+            let token = &tokens[i % tokens.len()];
             let started = Instant::now();
             let r = app
                 .request(
@@ -1518,29 +1525,18 @@ async fn prove_audit(pool: PgPool) {
         )
     }
     for question in questions {
-        report.push(measure(&w.app, &path, &w.owner, question, "in process, stub").await);
+        report.push(measure(&w.app, &path, &askers, question, "in process, stub").await);
     }
 
     let running = server::serve(w.stub.clone(), Some("t")).await.unwrap();
     let client = nexc::ontology::grpc::GrpcOntology::new(&running.url(), Some("t")).unwrap();
     let wired = TestApp::with_ontology(pool.clone(), &[], Arc::new(client)).await;
-    let (owner, _) = wired.register("prover@example.com").await;
-    // The facts are in the stub already: point the wired app's user at the same workspace.
-    let (_, me) = call(&wired, Method::GET, "/auth/me", &owner, None).await;
-    let user_id: Uuid = me["id"].as_str().unwrap().parse().unwrap();
-    sqlx::query(
-        "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'admin')",
-    )
-    .bind(w.wid)
-    .bind(user_id)
-    .execute(&pool)
-    .await
-    .unwrap();
+    // The facts are in the stub already; the askers are members of the same workspace.
     report.push(
         measure(
             &wired,
             &path,
-            &owner,
+            &askers,
             questions[0],
             "over gRPC, in-process server",
         )

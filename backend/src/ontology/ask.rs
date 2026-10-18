@@ -324,6 +324,10 @@ pub fn classify(question: &str) -> Option<Matched> {
     if has_any(&words, &["why"]) && denied && (has_any(&words, &["run"]) || uuid.is_some()) {
         return Some(matched("run_denied", 0));
     }
+    // Any other "why" asks for an explanation: that is the model's, with the facts it is given.
+    if has_any(&words, &["why", "explain"]) {
+        return None;
+    }
     let data = has_prefix(
         &words,
         &["restricted", "confidential", "classified", "sensitive"],
@@ -1329,6 +1333,8 @@ mod tests {
         assert_eq!(classify(CANNED[5].label).unwrap().days, 30);
         for free in [
             "Why is project alpha blocked?",
+            "Why did the writer read the restricted document?",
+            "Explain which agents read restricted data this week",
             "How many runs failed?",
             "Summarise what happened",
             "",
