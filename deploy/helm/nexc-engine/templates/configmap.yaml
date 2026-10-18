@@ -47,6 +47,9 @@ data:
   {{- if not .existingSecret }}
   {{- fail "oidc.enabled needs oidc.existingSecret: a Secret holding the client secret" }}
   {{- end }}
+  {{- if and (not .redirectUrl) (not $.Values.config.NEXC_PUBLIC_URL) }}
+  {{- fail "oidc.enabled needs config.NEXC_PUBLIC_URL (the console's public address, which the redirect URL is derived from) or oidc.redirectUrl" }}
+  {{- end }}
   NEXC_OIDC_ISSUER: {{ .issuer | quote }}
   NEXC_OIDC_CLIENT_ID: {{ .clientId | quote }}
   {{- if .redirectUrl }}

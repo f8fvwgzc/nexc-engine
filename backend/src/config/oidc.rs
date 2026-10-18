@@ -165,29 +165,105 @@ pub fn parse_workspace_roles(raw: &str) -> Result<Vec<GroupRole>, String> {
     Ok(out)
 }
 
-/// An `http(s)` URL without credentials or a fragment; `https` when `secure`.
-fn check_url(name: &str, raw: &str, secure: bool, errors: &mut Vec<String>) {
-    match reqwest::Url::parse(raw) {
-        Ok(url) => {
-            let scheme_ok = url.scheme() == "https" || (!secure && url.scheme() == "http");
-            if !scheme_ok {
-                errors.push(if secure {
-                    format!("{name} must be an https:// URL in production")
-                } else {
-                    format!("{name} must be an http:// or https:// URL")
-                });
-            } else if url.host_str().is_none_or(str::is_empty)
-                || !url.username().is_empty()
-                || url.password().is_some()
-                || url.fragment().is_some()
-            {
-                errors.push(format!(
-                    "{name} must name a host, and carry no credentials and no fragment"
-                ));
-            }
-        }
-        Err(_) => errors.push(format!("{name}: `{raw}` is not a URL")),
+/// What is wrong with `raw` as an `http(s)` URL without credentials or a
+/// fragment (`https` when `secure`), said after the setting's name.
+fn url_problem(raw: &str, secure: bool) -> Option<String> {
+    let Ok(url) = reqwest::Url::parse(raw) else {
+        return Some(format!("is not a URL: `{raw}`"));
+    };
+    let scheme_ok = url.scheme() == "https" || (!secure && url.scheme() == "http");
+    if !scheme_ok {
+        Some(if secure {
+            "must be an https:// URL in production".to_owned()
+        } else {
+            "must be an http:// or https:// URL".to_owned()
+        })
+    } else if url.host_str().is_none_or(str::is_empty)
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+    {
+        Some("must name a host, and carry no credentials and no fragment".to_owned())
+    } else {
+        None
     }
+}
+
+fn check_url(name: &str, raw: &str, secure: bool, errors: &mut Vec<String>) {
+    if let Some(problem) = url_problem(raw, secure) {
+        errors.push(format!("{name} {problem}"));
+    }
+}
+
+/// The redirect URL: `NEXC_OIDC_REDIRECT_URL`, else derived from the public
+/// address. Either way its path must be [`CALLBACK_PATH`], where the
+/// browser's binding cookie (`Path=/api/v1/auth/oidc`) is sent; a problem of
+/// a derived one is said of `NEXC_PUBLIC_URL`, the setting to change.
+fn redirect_url(
+    explicit: Option<String>,
+    public_url: &str,
+    production: bool,
+    errors: &mut Vec<String>,
+) -> String {
+    let derived = explicit.is_none();
+    let url =
+        explicit.unwrap_or_else(|| format!("{}{CALLBACK_PATH}", public_url.trim_end_matches('/')));
+    let on_the_callback = || {
+        reqwest::Url::parse(&url).is_ok_and(|u| u.path() == CALLBACK_PATH && u.query().is_none())
+    };
+    let because = format!(
+        "the single sign-on redirect URL is derived from it (`{url}`): set it to the console's \
+         public address, or set NEXC_OIDC_REDIRECT_URL"
+    );
+    if let Some(problem) = url_problem(&url, production) {
+        errors.push(if derived {
+            format!("NEXC_PUBLIC_URL {problem}; {because}")
+        } else {
+            format!("NEXC_OIDC_REDIRECT_URL {problem}")
+        });
+    } else if !on_the_callback() {
+        errors.push(if derived {
+            format!("NEXC_PUBLIC_URL must be the console's address without a path; {because}")
+        } else {
+            format!(
+                "NEXC_OIDC_REDIRECT_URL must be the console's address followed by {CALLBACK_PATH}, \
+                 with no query: the cookie that binds a sign-in to its browser is only sent there"
+            )
+        });
+    }
+    url
+}
+
+/// What may keep a redirect URL from ever signing anyone in, for `nexc
+/// doctor`: another host than the console's (`NEXC_PUBLIC_URL`), whose
+/// browsers would not carry the binding cookie there, and, outside
+/// development, a host that is this machine.
+pub fn redirect_concerns(redirect_url: &str, public_url: &str, development: bool) -> Vec<String> {
+    let host = |raw: &str| {
+        reqwest::Url::parse(raw)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
+    };
+    let mut out = Vec::new();
+    let (Some(redirect), public) = (host(redirect_url), host(public_url)) else {
+        return out;
+    };
+    if public.as_deref().is_some_and(|public| public != redirect) {
+        out.push(format!(
+            "the redirect URL's host `{redirect}` is not NEXC_PUBLIC_URL's `{}`: the sign-in only \
+             completes when the console is opened at `{redirect}`, the host its cookie is set on",
+            public.unwrap_or_default()
+        ));
+    }
+    let local = matches!(redirect.as_str(), "localhost" | "127.0.0.1" | "[::1]")
+        || redirect.ends_with(".localhost");
+    if local && !development {
+        out.push(format!(
+            "the redirect URL's host is `{redirect}`, this machine: set NEXC_PUBLIC_URL to the \
+             console's public address"
+        ));
+    }
+    out
 }
 
 /// Reads the `NEXC_OIDC_*` variables through `lookup`. `None` when
@@ -216,9 +292,12 @@ pub fn read(
         errors.push("NEXC_OIDC_CLIENT_SECRET is required with NEXC_OIDC_ISSUER".into());
         String::new()
     });
-    let redirect_url = get("NEXC_OIDC_REDIRECT_URL")
-        .unwrap_or_else(|| format!("{}{CALLBACK_PATH}", public_url.trim_end_matches('/')));
-    check_url("NEXC_OIDC_REDIRECT_URL", &redirect_url, production, errors);
+    let redirect_url = redirect_url(
+        get("NEXC_OIDC_REDIRECT_URL"),
+        public_url,
+        production,
+        errors,
+    );
     let scopes = parse_scopes(&get("NEXC_OIDC_SCOPES").unwrap_or_else(|| DEFAULT_SCOPES.into()))
         .unwrap_or_else(|err| {
             errors.push(format!("NEXC_OIDC_SCOPES: {err}"));
@@ -292,18 +371,21 @@ mod tests {
     use super::*;
 
     fn load(vars: &[(&str, &str)], production: bool) -> (Option<OidcSettings>, Vec<String>) {
+        load_at(vars, production, "https://nexc.example.com/")
+    }
+
+    fn load_at(
+        vars: &[(&str, &str)],
+        production: bool,
+        public_url: &str,
+    ) -> (Option<OidcSettings>, Vec<String>) {
         let map: HashMap<String, String> = vars
             .iter()
             .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
             .collect();
         let mut errors = Vec::new();
         let lookup = |k: &str| map.get(k).cloned();
-        let settings = read(
-            &lookup,
-            production,
-            "https://nexc.example.com/",
-            &mut errors,
-        );
+        let settings = read(&lookup, production, public_url, &mut errors);
         (settings, errors)
     }
 
@@ -356,7 +438,10 @@ mod tests {
             ("NEXC_OIDC_ALLOW_LOCAL_LOGIN", "false"),
             ("NEXC_OIDC_BREAK_GLASS_EMAIL", " Root@Example.com "),
             ("NEXC_OIDC_REQUIRE_VERIFIED_EMAIL", "false"),
-            ("NEXC_OIDC_REDIRECT_URL", "https://sso.example.com/cb"),
+            (
+                "NEXC_OIDC_REDIRECT_URL",
+                "https://console.example.com/api/v1/auth/oidc/callback",
+            ),
         ]);
         let (settings, errors) = load(&vars, true);
         assert!(errors.is_empty(), "{errors:?}");
@@ -385,7 +470,70 @@ mod tests {
         assert!(!s.allow_local_login && !s.require_verified_email);
         assert!(s.is_break_glass("root@example.com"));
         assert!(!s.is_break_glass("other@example.com"));
-        assert_eq!(s.redirect_url, "https://sso.example.com/cb");
+        assert_eq!(
+            s.redirect_url,
+            "https://console.example.com/api/v1/auth/oidc/callback"
+        );
+    }
+
+    #[test]
+    fn the_redirect_url_is_the_callback_path() {
+        let with = |redirect: &str| {
+            let mut vars = BASE.to_vec();
+            vars.push(("NEXC_OIDC_REDIRECT_URL", redirect));
+            load(&vars, true).1
+        };
+        // The binding cookie never reaches another path, whatever a proxy would route.
+        for elsewhere in [
+            "https://nexc.example.com/sso/callback",
+            "https://nexc.example.com/api/v1/auth/oidc/callback/",
+            "https://nexc.example.com/api/v1/auth/oidc/callback?x=1",
+            "https://nexc.example.com/",
+        ] {
+            let errors = with(elsewhere);
+            assert_eq!(errors.len(), 1, "{elsewhere}: {errors:?}");
+            assert!(errors[0].starts_with("NEXC_OIDC_REDIRECT_URL must be"));
+        }
+        assert!(with("http://nexc.example.com/api/v1/auth/oidc/callback")[0].contains("https"));
+        // A derived one is NEXC_PUBLIC_URL's to fix, and says so.
+        let (_, errors) = load_at(BASE, true, "http://localhost:8080");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].starts_with("NEXC_PUBLIC_URL must be an https:// URL in production")
+                && errors[0].contains("http://localhost:8080/api/v1/auth/oidc/callback"),
+            "{errors:?}"
+        );
+        let (_, errors) = load_at(BASE, true, "https://example.com/nexc");
+        assert!(
+            errors.len() == 1
+                && errors[0]
+                    .starts_with("NEXC_PUBLIC_URL must be the console's address without a path"),
+            "{errors:?}"
+        );
+        let (settings, errors) = load_at(BASE, false, "http://localhost:5173");
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(
+            settings.unwrap().redirect_url,
+            "http://localhost:5173/api/v1/auth/oidc/callback"
+        );
+    }
+
+    #[test]
+    fn doctor_names_a_redirect_url_that_cannot_complete() {
+        let callback = |origin: &str| format!("{origin}{CALLBACK_PATH}");
+        let console = "https://nexc.example.com";
+        assert!(redirect_concerns(&callback(console), console, false).is_empty());
+        let other = redirect_concerns(&callback("https://sso.example.com"), console, false);
+        assert_eq!(other.len(), 1, "{other:?}");
+        assert!(other[0].contains("`sso.example.com`") && other[0].contains("`nexc.example.com`"));
+        // Ports do not keep cookies apart: the dev server's proxy on :5173 is the same host.
+        let dev = "http://localhost:5173";
+        assert!(redirect_concerns(&callback(dev), "http://localhost:8080", true).is_empty());
+        let local = redirect_concerns(&callback(dev), dev, false);
+        assert!(
+            local.len() == 1 && local[0].contains("this machine"),
+            "{local:?}"
+        );
     }
 
     #[test]

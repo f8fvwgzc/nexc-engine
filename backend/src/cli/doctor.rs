@@ -296,7 +296,7 @@ async fn check_ontology(r: &mut Report, settings: &Settings) {
 /// discovery document and signing keys fetched and checked, with what the
 /// settings around it mean.
 async fn check_sso(r: &mut Report, settings: &Settings) {
-    use crate::config::oidc::CALLBACK_PATH;
+    use crate::config::oidc::redirect_concerns;
     use crate::security::oidc::OidcClient;
 
     let Some(oidc) = &settings.oidc else {
@@ -371,19 +371,23 @@ async fn check_sso(r: &mut Report, settings: &Settings) {
             format!("{}: {err}", client.discovery_url()),
         ),
     }
-    let callback = format!("redirect URL {}", oidc.redirect_url);
-    if reqwest::Url::parse(&oidc.redirect_url).is_ok_and(|u| u.path() == CALLBACK_PATH) {
-        r.line(
-            Level::Ok,
-            "sso",
-            format!("{callback} (register it at the provider)"),
-        );
-    } else {
-        r.line(
-            Level::Warn,
-            "sso",
-            format!("{callback}: its path is not {CALLBACK_PATH}; the proxy must route it there"),
-        );
+    let derived = !std::env::var("NEXC_OIDC_REDIRECT_URL").is_ok_and(|v| !v.trim().is_empty());
+    r.line(
+        Level::Ok,
+        "sso",
+        format!(
+            "redirect URL {}{} (register it at the provider)",
+            oidc.redirect_url,
+            if derived {
+                ", from NEXC_PUBLIC_URL"
+            } else {
+                ""
+            }
+        ),
+    );
+    let development = !settings.is_production();
+    for concern in redirect_concerns(&oidc.redirect_url, &settings.public_url, development) {
+        r.line(Level::Warn, "sso", concern);
     }
     match (oidc.allow_local_login, &oidc.break_glass_email) {
         (true, _) => r.line(Level::Ok, "sso", "passwords sign in too"),

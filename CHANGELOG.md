@@ -16,8 +16,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   marked as not yet tried against those providers, with what to look at when a sign-in fails.
   The Helm chart gains an `oidc` block: the settings go into the ConfigMap and the client secret
   is read from a Secret of your own (`oidc.existingSecret`, key `oidc.existingSecretKey`); the
-  chart refuses to render SSO without an issuer, a client id or that Secret, and CI renders it
-  with SSO on.
+  chart refuses to render SSO without an issuer, a client id, that Secret, or the console's
+  address (`config.NEXC_PUBLIC_URL` or `oidc.redirectUrl`), and CI renders it with SSO on.
 - Single sign-on tests against an OpenID Connect provider in process (`backend/tests/common/oidc.rs`:
   axum serving discovery, a key set of two RSA keys and a P-256 key made at start, a token
   endpoint that checks the client's HTTP Basic credentials, the redirect URI and the PKCE
@@ -79,7 +79,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Single sign-on settings (OpenID Connect): `NEXC_OIDC_ISSUER` turns it on (unset keeps it off
   and every other `NEXC_OIDC_*` variable is ignored), with `NEXC_OIDC_CLIENT_ID`,
   `NEXC_OIDC_CLIENT_SECRET` (redacted), `NEXC_OIDC_REDIRECT_URL` (default `NEXC_PUBLIC_URL` +
-  `/api/v1/auth/oidc/callback`), `NEXC_OIDC_SCOPES` (`openid email profile`; `openid` is always
+  `/api/v1/auth/oidc/callback`; any other path is refused, since the cookie that binds a sign-in to
+  its browser is only sent there, and the problem of a derived one is said of `NEXC_PUBLIC_URL`),
+  `NEXC_OIDC_SCOPES` (`openid email profile`; `openid` is always
   asked for), `NEXC_OIDC_DISPLAY_NAME` (`SSO`), `NEXC_OIDC_GROUPS_CLAIM` (`groups`),
   `NEXC_OIDC_ADMIN_GROUPS`, `NEXC_OIDC_WORKSPACE_ROLES` (`group=workspace:role`, the workspace
   by id or slug), `NEXC_OIDC_ALLOW_LOCAL_LOGIN` (`true`), `NEXC_OIDC_BREAK_GLASS_EMAIL` and
@@ -87,7 +89,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `http://` issuer or redirect URL in production, a missing client, a scope that is not one, an
   unknown role). `nexc doctor` fetches the issuer's discovery document and its signing keys,
   checks that the document is the issuer's own, uses usable endpoints and signs with RS256 or
-  ES256, names the redirect URL to register, warns when password sign-in is off without a
+  ES256, names the redirect URL to register (warning when its host is not `NEXC_PUBLIC_URL`'s, or
+  is this machine outside development), warns when password sign-in is off without a
   break-glass administrator, and checks that each mapped workspace exists. `nexc init` quotes
   a default with a space, which `.env` needs (`backend/src/config/oidc.rs`,
   `backend/src/security/oidc.rs`, `backend/src/cli/doctor.rs`).

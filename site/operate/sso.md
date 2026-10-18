@@ -19,7 +19,7 @@ Single sign-on is off until `NEXC_OIDC_ISSUER` is set. The other variables are r
 | `NEXC_OIDC_ISSUER`                 | — (off)                                         | The issuer identifier, exactly as the provider's tokens carry it in `iss` (a trailing slash matters). `https://` in production. Its `/.well-known/openid-configuration` is read.                                                              |
 | `NEXC_OIDC_CLIENT_ID`              | —                                               | The client registered at the provider: a confidential web client with the authorization code flow.                                                                                                                                          |
 | `NEXC_OIDC_CLIENT_SECRET`          | —                                               | Its secret. Keep it in the secret store (`.env`, the Kubernetes Secret), never in the ConfigMap.                                                                                                                                            |
-| `NEXC_OIDC_REDIRECT_URL`           | `NEXC_PUBLIC_URL` + `/api/v1/auth/oidc/callback` | Where the provider sends the browser back. Register exactly this at the provider.                                                                                                                                                           |
+| `NEXC_OIDC_REDIRECT_URL`           | `NEXC_PUBLIC_URL` + `/api/v1/auth/oidc/callback` | Where the provider sends the browser back. Register exactly this at the provider. It must be the console's own address followed by `/api/v1/auth/oidc/callback`: the cookie that binds a sign-in to its browser is only sent there, so another path is refused at start-up and another host never completes a sign-in. Leave it unset and set `NEXC_PUBLIC_URL` to the console's public address. |
 | `NEXC_OIDC_SCOPES`                 | `openid email profile`                          | Scopes asked for, separated by spaces (quote the value in `.env`) or commas. `openid` is always asked for. Add `groups` where the provider wants a scope for groups.                                                                          |
 | `NEXC_OIDC_DISPLAY_NAME`           | `SSO`                                           | The login page's button reads "Continue with" this.                                                                                                                                                                                         |
 | `NEXC_OIDC_GROUPS_CLAIM`           | `groups`                                        | The claim listing the person's groups, in the ID token or the userinfo answer: an array of strings, or one string. A dotted path reads a nested claim (`realm_access.roles`).                                                                 |
@@ -29,7 +29,9 @@ Single sign-on is off until `NEXC_OIDC_ISSUER` is set. The other variables are r
 | `NEXC_OIDC_BREAK_GLASS_EMAIL`      | —                                               | The one platform administrator who still signs in with a password when local login is off, at `/login?break_glass=1`.                                                                                                                       |
 | `NEXC_OIDC_REQUIRE_VERIFIED_EMAIL` | `true`                                          | Refuse an identity whose provider does not say (`email_verified`) that its address is verified. Linking to an existing account always needs a verified address, whatever this says.                                                         |
 
-Check a configuration before the first start: `nexc doctor` (or `make doctor`) fetches the discovery document and the signing keys, checks that the document is the issuer's own and signs with RS256 or ES256, prints the redirect URL to register, warns when password sign-in is off without a break-glass administrator, and checks that every mapped workspace exists.
+Check a configuration before the first start: `nexc doctor` (or `make doctor`) fetches the discovery document and the signing keys, checks that the document is the issuer's own and signs with RS256 or ES256, prints the redirect URL to register (and warns when its host is not `NEXC_PUBLIC_URL`'s, or is this machine outside development), warns when password sign-in is off without a break-glass administrator, and checks that every mapped workspace exists.
+
+**Trying it locally.** Under `make dev` the console is the Vite dev server on port 5173, which hands `/api` to the backend: set `NEXC_PUBLIC_URL=http://localhost:5173` and register `http://localhost:5173/api/v1/auth/oidc/callback`, so that the provider sends the browser back through the dev server and the sign-in ends on the console.
 
 ### Roles from groups
 
@@ -121,6 +123,8 @@ kubectl -n nexc create secret generic nexc-oidc --from-literal=client-secret='<t
 ```
 
 ```yaml
+config:
+  NEXC_PUBLIC_URL: https://nexc.example.com # the redirect URL is derived from it
 oidc:
   enabled: true
   issuer: https://keycloak.example.com/realms/acme
