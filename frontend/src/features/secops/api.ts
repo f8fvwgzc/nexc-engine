@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { apiFetch, apiRequest } from '@/lib/api/client';
 import { ContractError } from '@/lib/api/errors';
+import { FRESH } from '@/lib/freshness';
 import { qk } from '@/lib/query-keys';
 import { agentCardSchema } from '@/schemas/agent';
 import {
@@ -21,6 +22,7 @@ import { parseFeedFrame, type FeedEvent } from './feed';
 export const secopsOverviewQuery = (workspaceId: string) =>
   queryOptions({
     queryKey: qk.secops.overview(workspaceId),
+    staleTime: FRESH.live,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/secops/overview`, secopsOverviewSchema, { signal }),
     refetchInterval: 15_000,
@@ -66,7 +68,7 @@ export const agentTemplatesQuery = () =>
     queryKey: qk.secops.templates,
     queryFn: ({ signal }) =>
       apiRequest('/agent-templates', z.array(agentTemplateSchema), { signal }),
-    staleTime: 600_000,
+    staleTime: FRESH.catalogue,
   });
 
 /** Makes an agent from a role template; its card comes back with its score. */

@@ -2,6 +2,7 @@ import { keepPreviousData, queryOptions } from '@tanstack/react-query';
 import { z } from 'zod';
 
 import { apiRequest, apiSend } from '@/lib/api/client';
+import { FRESH } from '@/lib/freshness';
 import { idSchema, timestampSchema } from '@/schemas/common';
 import { workspaceRoleSchema } from '@/schemas/workspace';
 
@@ -92,6 +93,7 @@ export interface PlatformPage {
 export const platformWorkspacesQuery = (page: PlatformPage) =>
   queryOptions({
     queryKey: ['platform', 'workspaces', page] as const,
+    staleTime: FRESH.list,
     queryFn: ({ signal }) =>
       apiRequest('/admin/workspaces', z.array(platformWorkspaceSchema), {
         query: { ...page },
@@ -103,6 +105,7 @@ export const platformWorkspacesQuery = (page: PlatformPage) =>
 export const platformUsersQuery = (page: PlatformPage) =>
   queryOptions({
     queryKey: ['platform', 'users', page] as const,
+    staleTime: FRESH.list,
     queryFn: ({ signal }) =>
       apiRequest('/admin/users', z.array(platformUserSchema), { query: { ...page }, signal }),
     placeholderData: keepPreviousData,
@@ -111,6 +114,7 @@ export const platformUsersQuery = (page: PlatformPage) =>
 export const platformWorkspaceQuery = (id: string) =>
   queryOptions({
     queryKey: ['platform', 'workspaces', 'one', id] as const,
+    staleTime: FRESH.list,
     queryFn: ({ signal }) =>
       apiRequest(`/admin/workspaces/${id}`, platformWorkspaceDetailSchema, { signal }),
   });
@@ -118,6 +122,7 @@ export const platformWorkspaceQuery = (id: string) =>
 export const platformEventsQuery = (page: PlatformPage) =>
   queryOptions({
     queryKey: ['platform', 'events', page] as const,
+    staleTime: FRESH.list,
     queryFn: ({ signal }) =>
       apiRequest('/admin/events', z.array(platformEventSchema), { query: { ...page }, signal }),
     placeholderData: keepPreviousData,

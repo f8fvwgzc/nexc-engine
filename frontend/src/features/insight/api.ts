@@ -2,6 +2,7 @@ import { keepPreviousData, queryOptions } from '@tanstack/react-query';
 import { z } from 'zod';
 
 import { apiRequest } from '@/lib/api/client';
+import { FRESH } from '@/lib/freshness';
 import {
   connectionCheckSchema,
   daySummarySchema,
@@ -21,6 +22,7 @@ import {
 export const timelineQuery = (workspaceId: string, day: string) =>
   queryOptions({
     queryKey: ['insight', workspaceId, 'timeline', day] as const,
+    staleTime: FRESH.list,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/timeline`, z.array(timelineEntrySchema), {
         query: { day },
@@ -32,6 +34,7 @@ export const timelineQuery = (workspaceId: string, day: string) =>
 export const timelineDaysQuery = (workspaceId: string, days: number) =>
   queryOptions({
     queryKey: ['insight', workspaceId, 'days', days] as const,
+    staleTime: FRESH.list,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/timeline/days`, z.array(timelineDaySchema), {
         query: { days },
@@ -43,6 +46,7 @@ export const timelineDaysQuery = (workspaceId: string, days: number) =>
 export const daySummaryQuery = (workspaceId: string, day: string) =>
   queryOptions({
     queryKey: ['insight', workspaceId, 'summary', day] as const,
+    staleTime: FRESH.list,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/timeline/summary`, daySummarySchema.nullable(), {
         query: { day },
@@ -61,6 +65,7 @@ export function writeDaySummary(workspaceId: string, day: string) {
 export const workspaceMapQuery = (workspaceId: string) =>
   queryOptions({
     queryKey: ['insight', workspaceId, 'map'] as const,
+    staleTime: FRESH.setup,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/map`, workspaceMapSchema, { signal }),
   });
@@ -69,6 +74,7 @@ export const workspaceMapQuery = (workspaceId: string) =>
 export const mapItemsQuery = (workspaceId: string, kind: MapKind, q: string) =>
   queryOptions({
     queryKey: ['insight', workspaceId, 'map', kind, 'list', q] as const,
+    staleTime: FRESH.setup,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/map/${kind}`, z.array(mapItemSchema), {
         query: { q: q || undefined, limit: 20 },
@@ -81,6 +87,7 @@ export const mapItemsQuery = (workspaceId: string, kind: MapKind, q: string) =>
 export const mapNeighbourhoodQuery = (workspaceId: string, kind: MapKind, id: string) =>
   queryOptions({
     queryKey: ['insight', workspaceId, 'map', kind, id] as const,
+    staleTime: FRESH.setup,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/map/${kind}/${id}`, mapNeighbourhoodSchema, {
         signal,
@@ -90,6 +97,7 @@ export const mapNeighbourhoodQuery = (workspaceId: string, kind: MapKind, id: st
 export const infrastructureQuery = () =>
   queryOptions({
     queryKey: ['insight', 'infrastructure'] as const,
+    staleTime: FRESH.setup,
     queryFn: ({ signal }) => apiRequest('/admin/infrastructure', infrastructureSchema, { signal }),
   });
 
@@ -97,6 +105,7 @@ export const infrastructureQuery = () =>
 export const latencyQuery = () =>
   queryOptions({
     queryKey: ['insight', 'latency'] as const,
+    staleTime: FRESH.live,
     queryFn: ({ signal }) => apiRequest('/admin/latency', latencyReportSchema, { signal }),
     refetchInterval: 30_000,
   });

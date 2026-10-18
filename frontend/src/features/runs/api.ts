@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { apiRequest } from '@/lib/api/client';
 import { saveDownload } from '@/lib/api/download';
+import { FRESH } from '@/lib/freshness';
 import { qk } from '@/lib/query-keys';
 import { artifactSchema, isRunActive, runSchema, type Artifact } from '@/schemas/run';
 import { tracePageSchema, traceVerificationSchema, type Span } from '@/schemas/trace';
@@ -30,6 +31,7 @@ async function fetchTrace(runId: string, signal: AbortSignal): Promise<Span[]> {
 export const runTraceQuery = (runId: string) =>
   queryOptions({
     queryKey: qk.runs.trace(runId),
+    staleTime: FRESH.list,
     queryFn: ({ signal }) => fetchTrace(runId, signal),
   });
 
@@ -37,6 +39,7 @@ export const runTraceQuery = (runId: string) =>
 export const traceVerifyQuery = (runId: string) =>
   queryOptions({
     queryKey: qk.runs.verify(runId),
+    staleTime: FRESH.list,
     queryFn: ({ signal }) =>
       apiRequest(`/runs/${runId}/trace/verify`, traceVerificationSchema, { signal }),
   });
@@ -52,12 +55,16 @@ export function mergeSpan(spans: Span[] | undefined, span: Span): Span[] | undef
 export const graphRunsQuery = (graphId: string) =>
   queryOptions({
     queryKey: qk.graphs.runs(graphId),
+    staleTime: FRESH.list,
+    // One per graph on the Runs page: a focus must not refetch them all at once.
+    refetchOnWindowFocus: false,
     queryFn: ({ signal }) => apiRequest(`/graphs/${graphId}/runs`, z.array(runSchema), { signal }),
   });
 
 export const runQuery = (runId: string) =>
   queryOptions({
     queryKey: qk.runs.detail(runId),
+    staleTime: FRESH.live,
     queryFn: ({ signal }) => apiRequest(`/runs/${runId}`, runSchema, { signal }),
     // Poll while the run is live (the SSE stream is graph-scoped; this page may not hold it).
     refetchInterval: (query) =>
@@ -67,6 +74,7 @@ export const runQuery = (runId: string) =>
 export const artifactsQuery = (runId: string) =>
   queryOptions({
     queryKey: qk.runs.artifacts(runId),
+    staleTime: FRESH.list,
     queryFn: ({ signal }) =>
       apiRequest(`/runs/${runId}/artifacts`, z.array(artifactSchema), { signal }),
   });

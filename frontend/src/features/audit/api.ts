@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { apiFetch, apiRequest } from '@/lib/api/client';
 import { ContractError } from '@/lib/api/errors';
+import { FRESH } from '@/lib/freshness';
 import { qk } from '@/lib/query-keys';
 import {
   AUDIT_QUESTIONS,
@@ -22,7 +23,7 @@ export const auditQuestionsQuery = (workspaceId: string) =>
         signal,
       }),
     placeholderData: AUDIT_QUESTIONS,
-    staleTime: 600_000,
+    staleTime: FRESH.catalogue,
   });
 
 /** Asks the audit and waits for the whole answer. */

@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { apiRequest, apiSend } from '@/lib/api/client';
 import { saveDownload } from '@/lib/api/download';
+import { FRESH } from '@/lib/freshness';
 import { authResponseSchema, userSchema } from '@/schemas/auth';
 import { idSchema, timestampSchema } from '@/schemas/common';
 
@@ -23,6 +24,7 @@ export function changePassword(body: { current_password: string; new_password: s
 export const sessionsQuery = () =>
   queryOptions({
     queryKey: ['account', 'sessions'] as const,
+    staleTime: FRESH.setup,
     queryFn: ({ signal }) =>
       apiRequest('/auth/sessions', z.object({ active: z.number().int() }), { signal }),
   });
@@ -53,6 +55,7 @@ export type AccountEvent = z.infer<typeof accountEventSchema>;
 export const activityQuery = () =>
   queryOptions({
     queryKey: ['account', 'activity'] as const,
+    staleTime: FRESH.list,
     queryFn: ({ signal }) =>
       apiRequest('/auth/activity', z.array(accountEventSchema), { query: { limit: 30 }, signal }),
   });
@@ -60,6 +63,7 @@ export const activityQuery = () =>
 export const twoFactorQuery = () =>
   queryOptions({
     queryKey: ['account', 'two-factor'] as const,
+    staleTime: FRESH.setup,
     queryFn: ({ signal }) =>
       apiRequest(
         '/auth/2fa',

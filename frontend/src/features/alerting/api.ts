@@ -2,6 +2,7 @@ import { queryOptions } from '@tanstack/react-query';
 import { z } from 'zod';
 
 import { apiRequest, apiSend } from '@/lib/api/client';
+import { FRESH } from '@/lib/freshness';
 import { qk } from '@/lib/query-keys';
 import {
   alertDeliverySchema,
@@ -16,6 +17,7 @@ import {
 export const alertDestinationsQuery = (workspaceId: string) =>
   queryOptions({
     queryKey: qk.alertDestinations.list(workspaceId),
+    staleTime: FRESH.setup,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/alert-destinations`, z.array(alertDestinationSchema), {
         signal,
@@ -26,6 +28,7 @@ export const alertDestinationsQuery = (workspaceId: string) =>
 export const alertDeliveriesQuery = (workspaceId: string, destinationId: string, limit = 50) =>
   queryOptions({
     queryKey: qk.alertDestinations.deliveries(workspaceId, destinationId),
+    staleTime: FRESH.live,
     queryFn: ({ signal }) =>
       apiRequest(
         `/workspaces/${workspaceId}/alert-destinations/${destinationId}/deliveries`,

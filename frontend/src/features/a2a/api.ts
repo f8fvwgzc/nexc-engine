@@ -2,6 +2,7 @@ import { queryOptions } from '@tanstack/react-query';
 import { z } from 'zod';
 
 import { apiRequest, apiSend } from '@/lib/api/client';
+import { FRESH } from '@/lib/freshness';
 import { qk } from '@/lib/query-keys';
 import {
   a2aCheckSchema,
@@ -15,6 +16,7 @@ import {
 export const a2aCounterpartsQuery = (workspaceId: string) =>
   queryOptions({
     queryKey: qk.a2a.list(workspaceId),
+    staleTime: FRESH.setup,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/a2a-counterparts`, z.array(a2aCounterpartSchema), {
         signal,

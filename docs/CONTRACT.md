@@ -113,7 +113,13 @@ In Docker/K8s the frontend is served by unprivileged nginx on 8080 which proxies
   changed gets a new tag. Streams (SSE, WebSocket), downloads, `/metrics` and errors carry no
   tag and keep `Cache-Control: no-store`. The console's fetch layer sends `If-None-Match` from
   the bodies it keeps (per URL for the page; the persisted lists between visits) and reuses
-  the kept body on a 304.
+  the kept body on a 304. It asks again only once a body is stale, by the kind of resource
+  (`frontend/src/lib/freshness.ts`): catalogues (templates, the audit's questions) after 30
+  minutes, a workspace's setup (members, teams, workflows, labels, settings, policies,
+  servers, destinations) after 5, the lists people work through after 1, live state (inbox,
+  approvals, alerts, an active run) after 10 seconds besides its own poll. A change the
+  console makes itself refreshes what it touched at once; per-item queries fanned out over a
+  page (a graph's runs, an agent's activity) are not refetched when the tab regains focus.
 - Limits: request body 1 MiB (node content max 64 KiB, title max 200 chars, ≤ 500 nodes per graph).
 
 <!-- #endregion conventions -->

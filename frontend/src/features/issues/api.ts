@@ -2,6 +2,7 @@ import { queryOptions } from '@tanstack/react-query';
 import { z } from 'zod';
 
 import { apiRequest, apiSend } from '@/lib/api/client';
+import { FRESH } from '@/lib/freshness';
 import { qk } from '@/lib/query-keys';
 import { cycleSchema } from '@/schemas/cycle';
 import {
@@ -34,6 +35,7 @@ export interface IssueFilter {
 export const issuesQuery = (workspaceId: string, filter: IssueFilter = {}) =>
   queryOptions({
     queryKey: qk.issues.list(workspaceId, filter),
+    staleTime: FRESH.list,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/issues`, z.array(issueSchema), {
         query: {
@@ -58,7 +60,7 @@ export const statesQuery = (workspaceId: string, teamId: string) =>
       apiRequest(`/workspaces/${workspaceId}/teams/${teamId}/states`, z.array(issueStateSchema), {
         signal,
       }),
-    staleTime: 5 * 60_000,
+    staleTime: FRESH.setup,
   });
 
 export interface StateInput {
@@ -118,6 +120,7 @@ export function createIssueGraph(issueId: string) {
 export const issueQuery = (issueId: string) =>
   queryOptions({
     queryKey: qk.issues.one(issueId),
+    staleTime: FRESH.list,
     queryFn: ({ signal }) => apiRequest(`/issues/${issueId}`, issueSchema, { signal }),
   });
 
@@ -125,6 +128,7 @@ export const issueQuery = (issueId: string) =>
 export const inboxQuery = (workspaceId: string) =>
   queryOptions({
     queryKey: qk.issues.inbox(workspaceId),
+    staleTime: FRESH.live,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/inbox`, z.array(notificationSchema), { signal }),
     refetchInterval: 60_000,
@@ -146,7 +150,7 @@ export const cyclesQuery = (workspaceId: string, teamId: string) =>
       apiRequest(`/workspaces/${workspaceId}/teams/${teamId}/cycles`, z.array(cycleSchema), {
         signal,
       }),
-    staleTime: 60_000,
+    staleTime: FRESH.setup,
   });
 
 export function createCycle(
@@ -172,7 +176,7 @@ export const labelsQuery = (workspaceId: string) =>
     queryKey: qk.issues.labels(workspaceId),
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/labels`, z.array(labelSchema), { signal }),
-    staleTime: 5 * 60_000,
+    staleTime: FRESH.setup,
   });
 
 export function createLabel(workspaceId: string, body: { name: string; color: string }) {
@@ -187,6 +191,7 @@ export function deleteLabel(workspaceId: string, labelId: string) {
 export const issueEventsQuery = (issueId: string) =>
   queryOptions({
     queryKey: qk.issues.events(issueId),
+    staleTime: FRESH.list,
     queryFn: ({ signal }) =>
       apiRequest(`/issues/${issueId}/events`, z.array(issueEventSchema), { signal }),
   });
@@ -212,6 +217,7 @@ export function deleteComment(issueId: string, commentId: string) {
 export const projectsQuery = (workspaceId: string) =>
   queryOptions({
     queryKey: qk.issues.projects(workspaceId),
+    staleTime: FRESH.list,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/projects`, z.array(projectSchema), { signal }),
   });

@@ -1,14 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
 import { ActivityIcon, BotIcon, NetworkIcon, WorkflowIcon } from 'lucide-react';
 
-import { StatTile } from '@/components/custom-ui/stat-tile';
 import { Stagger } from '@/components/custom-ui/motion';
+import { StatTile } from '@/components/custom-ui/stat-tile';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import type { BackendHealth } from '@/schemas/orchestrator';
 import type { GraphSummary } from '@/schemas/graph';
 
-import { orchestratorQuery } from '../api';
+import { ORCHESTRATOR_POLL_MS, orchestratorQuery } from '../api';
 
 function HealthChip({ label, health }: { label: string; health: BackendHealth }) {
   const state = !health.enabled ? 'disabled' : health.ok ? 'ok' : 'down';
@@ -36,7 +36,11 @@ function HealthChip({ label, health }: { label: string; health: BackendHealth })
 }
 
 export function DashboardStats({ graphs }: { graphs: GraphSummary[] }) {
-  const { data: status } = useQuery(orchestratorQuery());
+  // Only the dashboard polls: elsewhere (the demo banner) the status is read once.
+  const { data: status } = useQuery({
+    ...orchestratorQuery(),
+    refetchInterval: ORCHESTRATOR_POLL_MS,
+  });
   const nodes = graphs.reduce((sum, g) => sum + g.node_count, 0);
   const placeholder = '—';
 

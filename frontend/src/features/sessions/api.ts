@@ -1,6 +1,7 @@
 import { queryOptions } from '@tanstack/react-query';
 
 import { apiRequest } from '@/lib/api/client';
+import { FRESH } from '@/lib/freshness';
 import { qk } from '@/lib/query-keys';
 import { isRunActive } from '@/schemas/run';
 import {
@@ -46,6 +47,7 @@ export function sessionsPage(
 export const sessionQuery = (runId: string) =>
   queryOptions({
     queryKey: qk.sessions.detail(runId),
+    staleTime: FRESH.live,
     queryFn: ({ signal }) => apiRequest(`/runs/${runId}/sessions`, sessionSchema, { signal }),
     refetchInterval: (query) =>
       query.state.data && isRunActive(query.state.data.status) ? 5_000 : false,

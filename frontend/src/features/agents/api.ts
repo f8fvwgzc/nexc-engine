@@ -2,6 +2,7 @@ import { queryOptions } from '@tanstack/react-query';
 import { z } from 'zod';
 
 import { apiRequest, apiSend } from '@/lib/api/client';
+import { FRESH } from '@/lib/freshness';
 import { qk } from '@/lib/query-keys';
 import {
   a2aTaskSchema,
@@ -17,6 +18,7 @@ import { spanSchema } from '@/schemas/trace';
 export const agentsQuery = (workspaceId?: string) =>
   queryOptions({
     queryKey: qk.agents.list(workspaceId),
+    staleTime: FRESH.list,
     queryFn: ({ signal }) =>
       apiRequest(
         workspaceId ? `/agents?workspace_id=${workspaceId}` : '/agents',
@@ -34,7 +36,9 @@ export const agentActivityQuery = (agentId: string, limit = 5) =>
         signal,
         query: { limit },
       }),
-    staleTime: 15_000,
+    staleTime: FRESH.list,
+    // One per agent card: a focus must not refetch them all at once.
+    refetchOnWindowFocus: false,
   });
 
 /** The agent's ID card: identity, owner, team, scopes, budget left and its last twenty spans. */
@@ -93,6 +97,7 @@ export function revokeAgentToken(agentId: string, tokenId: string) {
 export const agentA2aTasksQuery = (agentId: string, limit = 50) =>
   queryOptions({
     queryKey: qk.agents.a2aTasks(agentId),
+    staleTime: FRESH.live,
     queryFn: ({ signal }) =>
       apiRequest(`/agents/${agentId}/a2a/tasks`, z.array(a2aTaskSchema), {
         signal,

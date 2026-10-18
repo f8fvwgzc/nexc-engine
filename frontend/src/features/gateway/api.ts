@@ -2,6 +2,7 @@ import { queryOptions } from '@tanstack/react-query';
 import { z } from 'zod';
 
 import { apiRequest, apiSend } from '@/lib/api/client';
+import { FRESH } from '@/lib/freshness';
 import { qk } from '@/lib/query-keys';
 import {
   mcpCheckSchema,
@@ -14,6 +15,7 @@ import {
 export const mcpServersQuery = (workspaceId: string) =>
   queryOptions({
     queryKey: qk.mcp.list(workspaceId),
+    staleTime: FRESH.setup,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/mcp-servers`, z.array(mcpServerSchema), {
         signal,

@@ -2,6 +2,7 @@ import { queryOptions } from '@tanstack/react-query';
 import { z } from 'zod';
 
 import { apiRequest } from '@/lib/api/client';
+import { FRESH } from '@/lib/freshness';
 import { qk } from '@/lib/query-keys';
 import {
   alertSchema,
@@ -18,6 +19,7 @@ import { artifactSchema } from '@/schemas/run';
 export const policiesQuery = (workspaceId: string, scope?: PolicyScope, scopeId?: string) =>
   queryOptions({
     queryKey: qk.policies.list(workspaceId, scope, scopeId),
+    staleTime: FRESH.setup,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/policies`, z.array(policySchema), {
         signal,
@@ -29,6 +31,7 @@ export const policiesQuery = (workspaceId: string, scope?: PolicyScope, scopeId?
 export const resolvedPolicyQuery = (workspaceId: string, agentId: string) =>
   queryOptions({
     queryKey: qk.policies.resolved(workspaceId, agentId),
+    staleTime: FRESH.setup,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/policies/resolve`, resolvedPolicySchema, {
         signal,
@@ -51,6 +54,7 @@ export function createPolicy(
 export const approvalsQuery = (workspaceId: string, status?: ApprovalStatus) =>
   queryOptions({
     queryKey: qk.approvals.list(workspaceId, status),
+    staleTime: FRESH.live,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/approvals`, z.array(approvalSchema), {
         signal,
@@ -77,6 +81,7 @@ export function denyApproval(approvalId: string, reason: string) {
 export const alertsQuery = (workspaceId: string) =>
   queryOptions({
     queryKey: qk.alerts.list(workspaceId),
+    staleTime: FRESH.live,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/alerts`, z.array(alertSchema), {
         signal,
