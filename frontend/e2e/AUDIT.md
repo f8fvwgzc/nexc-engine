@@ -196,3 +196,15 @@ Sessions, Knowledge, Memory, the project page and Policies do the same.
   destination's deliveries, which still printed a failed load in red with no way to retry.
 - The baselines are rendered in the Playwright image for `linux/amd64` that CI runs; on an arm64
   machine `make e2e-ui` emulates it, which is slower but compares pixel for pixel.
+- **Single sign-on, audited after the merge.** Single sign-on landed after this audit and added a
+  Single sign-on card to Profile (`settings-profile`, and `platform-account`, the same page for
+  an administrator): the linked identities and, while the account has a password and no
+  identity of the provider, a form to link one. The fixtures answer `GET /auth/identities` (one
+  linked identity with full data, none with empty data, so the link form shows) and
+  `GET /auth/providers` (one provider). Both routes were audited again at 375, 768 and 1280 px,
+  light and dark, full and empty, and while loading and failing, and the screenshots read: no axe
+  violation of any impact, no sideways scroll, no overlapping controls, no cut text, and the
+  card's key icon is decorative beside the provider's name. The identities were refetched on
+  coming back to the tab (F32); they now stay fresh as long as the rest of the account's setup.
+  The note an account without a password shows in place of the password forms is in neither
+  data set, and neither page has a screenshot baseline.
