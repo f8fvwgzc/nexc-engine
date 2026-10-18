@@ -7,15 +7,17 @@
 # Only the web UI is published. The backend, the agent runtime and PostgreSQL live on internal
 # networks. Optional texc-symphony executor: `docker compose --profile symphony up -d`.
 #
-# Two backend replicas (docs/HA.md), so a run survives the loss of the one executing it:
+# Two backend replicas (docs/HA.md), so a run survives the loss of the one executing it: set
+# NEXC_BACKEND_REPLICAS=2 in .env, so every later `docker compose up -d` keeps both, then
 #
-#   docker compose up -d --scale backend=2
+#   docker compose up -d
 #   docker compose restart frontend     # its nginx resolves every backend replica when it starts
 #
 # The replicas share PostgreSQL and the nexc-data volume. A run executes on one of them; when
-# that one stops (a crash, `docker compose stop`, an upgrade), the other takes the run over:
-# at once after a clean stop, which hands runs over, or once the lease ran out after a crash
-# (NEXC_RUN_LEASE_SECS, 30 s by default, plus a few seconds).
+# that one stops (a crash, `docker stop nexc-backend-1`, an upgrade), the other takes the run
+# over: at once after a clean stop, which hands runs over, or once the lease ran out after a crash
+# (NEXC_RUN_LEASE_SECS, 30 s by default, plus a few seconds). `docker compose stop backend` stops
+# every replica. Restart frontend again whenever the number of replicas changes.
 
 name: nexc
 
@@ -56,6 +58,8 @@ services:
 
   backend:
     <<: *hardening
+    # How many backend replicas run (docs/HA.md); 2 or more keep runs going when one stops.
+    scale: ${NEXC_BACKEND_REPLICAS:-1}
     image: ghcr.io/f8fvwgzc/nexc-engine-backend:${NEXC_IMAGE_TAG:-latest}
     pull_policy: missing # local image, else pull the release, else build from source
     build:

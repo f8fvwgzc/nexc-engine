@@ -144,7 +144,7 @@ still takes a dead peer's runs over in time, and logs a warning when it does.
 | `autoscaling.backend`, `autoscaling.runtime` | Helm values                          | Optional HorizontalPodAutoscalers on CPU (off by default). When one is on, `replicas` no longer sets that Deployment's size; keep `minReplicas` at 2 or more, and give the backend a `ReadWriteMany` data volume. |
 | `podDisruptionBudgets.maxUnavailable`    | Helm values                              | How many pods of each tier a node drain may evict at once (default 1).                                                             |
 | `backend.terminationGracePeriodSeconds`  | Helm values                              | Time a backend pod gets to drain on `SIGTERM` (default 60 s; the hand-off itself takes at most 15 s).                              |
-| `docker compose up -d --scale backend=2` | Docker Compose                           | Two backend replicas on one host; restart `frontend` afterwards so its nginx resolves both. Each gets 30 s to drain (`stop_grace_period`). |
+| `NEXC_BACKEND_REPLICAS=2`                | `.env`, Docker Compose                   | Two backend replicas on one host, kept by every later `docker compose up -d`; restart `frontend` after changing it so its nginx resolves every replica. Each gets 30 s to drain (`stop_grace_period`). |
 
 Every write the executor makes for a run is one short transaction that sets
 `idle_in_transaction_session_timeout` to `L` for itself (`SET LOCAL`), so nothing needs
