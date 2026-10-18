@@ -50,11 +50,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `make demo-secops` runs `scripts/demo-secops.py`, the five-minute script of
   `docs/AGENTSECOPS.md` §9, on the demo provider: an Analyst from the template with its score,
   a traced run, the policy changed to require an approval for `make_docx` and the approval
-  decided from the inbox, a restricted document withheld, a call outside the allow-list denied
-  with its alert, the agent quarantined with one call while a run is going, the six audit
-  questions, the prove targets (`make prove-agentsecops`: identity, policy, audit and trace in
-  one) and the run's chain verified; every step prints the URLs to open; re-runnable, and it
-  removes what it made unless `--keep` (`DEMO_ARGS="--keep --skip-prove"`).
+  decided from the inbox, a restricted document withheld, a call to a host outside the
+  allow-list through the gateway, the agent quarantined with one call while a run is going,
+  the six audit questions, the prove targets (`make prove-agentsecops`: identity, policy,
+  audit and trace in one) and the run's chain verified; every step prints the URLs to open;
+  re-runnable, and it removes what it made unless `--keep` (`DEMO_ARGS="--keep --skip-prove"`).
+  The disallowed host is real: the script starts an HTTP stub on the machine
+  (`NEXC_DEMO_STUB_HOST`, `127.0.0.1` for a local backend, `host.docker.internal` for the
+  compose stack, which `make demo-secops` sets and `docker-compose.demo.yml` resolves;
+  `NEXC_DEMO_STUB_PORT` fixes the port), tells the research node to read the figures from it,
+  and the agent's `fetch_url` goes through the tools gateway: once with the host named (the
+  `egress` span with the host, the status and the bytes; the stub records the gateway's own
+  user agent) and once with the host off the list (refused before any connection, the `policy`
+  span with the rule, the alert). On the NDJSON wire no gateway tool is offered, so the script
+  falls back to a tool the policy does not allow and prints which variant ran. The demo
+  provider reads the http(s) URLs a node's brief names (up to three) through `fetch_url` when
+  the gateway offers it, and lists them under the research notes' sources; it still never
+  touches the network itself.
 - Tests (`backend/tests/secops.rs`, `frontend/src/features/secops/`): the overview counts the
   workspace's agents, runs, spans, denials, approvals, alerts, risk and seal and nothing a
   guest or an outsider may see; the explorer narrows by every filter, pages without repeats,

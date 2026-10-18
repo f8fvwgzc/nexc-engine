@@ -10,3 +10,7 @@ services:
   backend:
     environment:
       NEXC_LLM_PROVIDER: demo
+    # `make demo-secops` starts an HTTP stub on this machine that the backend's tools gateway
+    # fetches from under the policy (docs/AGENTSECOPS.md §9, step 4); this is its name here.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

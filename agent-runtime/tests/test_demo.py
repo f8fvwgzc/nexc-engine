@@ -13,7 +13,8 @@ from fastapi.testclient import TestClient
 
 from nexc_runtime.api.app import create_app
 from nexc_runtime.config import Settings
-from nexc_runtime.llm.demo import DEMO_BANNER
+from nexc_runtime.llm.base import ToolResult, ToolSpec
+from nexc_runtime.llm.demo import DEMO_BANNER, DemoBrief, DemoProvider
 
 from .conftest import AUTH, execute_body, parse_ndjson
 
@@ -72,6 +73,48 @@ def test_demo_other_kinds(
     events = _run(make_settings, task={"kind": kind})
     assert events[-1]["type"] == "result"
     assert [e["path"] for e in events if e["type"] == "artifact"] == expected
+
+
+FETCH = ToolSpec("fetch_url", "Fetch a URL through the gateway.", {"type": "object"})
+WRITE = ToolSpec("write_file", "Write a file.", {"type": "object"})
+FIGURES = "http://127.0.0.1:8099/quarterly-figures.json"
+
+
+async def test_demo_reads_the_briefs_urls_through_the_gateway_when_offered() -> None:
+    brief = DemoBrief(
+        title="Quarterly numbers",
+        kind="research",
+        content=f"Read the figures from {FIGURES}, then {FIGURES} again (see {FIGURES}).",
+        role="analyst",
+    )
+    provider = DemoProvider(brief)
+    conversation = provider.new_conversation("system", "go")
+    first = await provider.next_turn(conversation, [FETCH, WRITE], max_tokens=100)
+    assert first.stop == "tool_use"
+    assert [(c.name, c.input) for c in first.tool_calls] == [("fetch_url", {"url": FIGURES})]
+    assert FIGURES in first.text
+    # The gateway refused it; the demo goes on to its deliverable all the same.
+    provider.add_tool_results(
+        conversation, [ToolResult(first.tool_calls[0].id, "not allowed", is_error=True)]
+    )
+    second = await provider.next_turn(conversation, [FETCH, WRITE], max_tokens=100)
+    assert [c.name for c in second.tool_calls] == ["write_file"]
+    assert FIGURES in second.tool_calls[0].input["content"]
+    provider.add_tool_results(conversation, [ToolResult(second.tool_calls[0].id, "written")])
+    third = await provider.next_turn(conversation, [FETCH, WRITE], max_tokens=100)
+    assert third.stop == "end_turn" and third.tool_calls == []
+    # Without the gateway tool (the NDJSON wire), nothing is fetched and the run is as before.
+    offline = DemoProvider(brief)
+    conversation = offline.new_conversation("system", "go")
+    turn = await offline.next_turn(conversation, [WRITE], max_tokens=100)
+    assert [c.name for c in turn.tool_calls] == ["write_file"]
+
+
+def test_demo_names_at_most_three_urls_once_each() -> None:
+    urls = [f"https://example.com/{n}." for n in range(5)]
+    brief = DemoBrief(title="t", kind="research", content=" ".join(urls + urls))
+    assert DemoProvider(brief).urls() == [u.rstrip(".") for u in urls[:3]]
+    assert DemoProvider(DemoBrief(title="t", kind="research", content="no links")).urls() == []
 
 
 def _comparable(events: list[dict[str, Any]]) -> list[dict[str, Any]]:

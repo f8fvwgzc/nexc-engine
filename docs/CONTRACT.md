@@ -1260,8 +1260,10 @@ retryable error; an attempt is never resumed. The NDJSON endpoint stays for one 
 workspace (`/workspaces/{wid}/mcp-servers`, §5) and the built-in `fetch_url` are offered to a
 node as `gateway_tools` as far as the policy lets it: a server's tools as `mcp:<name>/<tool>`,
 when the node's capabilities name the tool or `mcp:<name>/*` and the context's labels do not
-exceed the server's `max_label`; `fetch_url` when the capabilities name it. The runtime calls such
-a tool by sending `tool_request` `{request_id, tool, arguments, agent, turn_span_id}` up the
+exceed the server's `max_label`; `fetch_url` when the capabilities name it (the `demo` provider
+reads the http(s) URLs a node's content names, three at most, through `fetch_url` when it is
+offered, so a demo run exercises the gateway without touching the network itself). The runtime
+calls such a tool by sending `tool_request` `{request_id, tool, arguments, agent, turn_span_id}` up the
 stream and waiting for the `tool_result` command; the backend performs the call in this order:
 the rate limit (`NEXC_GATEWAY_CALLS_PER_MINUTE` per agent, a token bucket with a burst of a
 quarter; rule `limits.gateway_calls_per_minute`), the policy decision on the tool (the deny-list,

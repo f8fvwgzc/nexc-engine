@@ -352,8 +352,15 @@ makes it a platform other agents can sit behind, which is what SoftBank's Agent 
 3. **Policy in action.** Edit the policy to require approval for `make_docx`; re-run; the node
    waits, the approval lands in the inbox, approve it, the run continues; the approval is a span.
 4. **Defend.** Attach a `restricted` document to the goal; the agent's context never contains it
-   and the span records the drop. Then make the agent call a disallowed host: denied, logged,
-   risk score rises, quarantine with one click, running node cancelled.
+   and the span records the drop. Then make the agent call a disallowed host: the demo script
+   starts an HTTP stub on the machine and tells the research node to read the figures from it;
+   the agent's `fetch_url` goes up the gRPC stream to the backend's tools gateway, which
+   performs it while the allow-list names the host (an `egress` span with the host, the HTTP
+   status and the bytes; the stub sees `nexc-engine-gateway/…`, not the runtime) and refuses it
+   once the host is off the list, before any connection: a `policy` span with the rule, an
+   alert, the risk score rises, quarantine with one click, running node cancelled. On the
+   NDJSON wire the runtime is offered no gateway tool, so the script falls back to a tool the
+   policy does not allow and says so.
 5. **Ask the audit.** "Which agents read restricted data this week?" "Why was run 0199… denied?"
    Both answered from onto-intelli in a millisecond with ids, then "explain" with the model, every
    sentence cited.

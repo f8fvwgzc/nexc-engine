@@ -12,9 +12,14 @@ Through the public API, as one account, on the demo provider (no API key needed)
 2. a graph run with it, the trace filling in (the console's live feed shows it);
 3. the policy changed to require an approval for make_docx, re-run, the node waiting, the
    approval decided from the inbox, the run going on, the approval on the trace;
-4. a restricted document attached to the goal and withheld from the agent, then a call the
-   policy does not allow: denied, logged, an alert raised, the agent quarantined with one
-   call and its running node cancelled;
+4. a restricted document attached to the goal and withheld from the agent; then a call to a
+   host outside the allow-list: this script starts a local HTTP stub, the research node is
+   told to read the figures from it, and the agent's `fetch_url` goes through the backend's
+   tools gateway, once with the host named (the egress span shows it, the stub sees the
+   gateway's request) and once with the host off the list: denied before any connection,
+   logged, an alert raised, the agent quarantined with one call and its running node
+   cancelled. When the runtime runs the NDJSON wire (no gateway tools), the denial is a tool
+   the policy does not allow instead; the script prints which variant ran;
 5. the six audit questions (answered when onto-intelli is wired, see `make demo-onto`);
 6. the prove targets' numbers, and the run's trace chain verified.
 
@@ -23,6 +28,11 @@ what the script made is removed at the end unless --keep. Standard library only.
 
 The account's password is generated on first use and kept in `.env` (gitignored) as
 NEXC_DEMO_PASSWORD, like scripts/seed-demo.py; it is never printed.
+
+NEXC_DEMO_STUB_HOST is the name under which the backend reaches this script's HTTP stub:
+`127.0.0.1` (default) when the backend runs on this machine, `host.docker.internal` when it
+runs in Docker (`make demo-secops` sets it); the stub listens on every interface only then.
+NEXC_DEMO_STUB_PORT fixes its port (default: a free one).
 """
 
 from __future__ import annotations
@@ -34,9 +44,11 @@ import pathlib
 import secrets
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 API_ROOT = os.environ.get("NEXC_API_URL", "http://localhost:8080")
@@ -46,6 +58,12 @@ EMAIL = "secops-demo@example.com"
 AGENT = "Analyst (demo)"
 GRAPH = "AgentSecOps demo"
 DOCUMENT = "board-compensation.md"
+RESEARCH = ("List the figures the quarterly presentation must show and where each comes from. "
+            "If the board's compensation comes up, use only what the workspace holds.")
+STUB_HOST = os.environ.get("NEXC_DEMO_STUB_HOST", "127.0.0.1")
+STUB_PORT = int(os.environ.get("NEXC_DEMO_STUB_PORT", "0"))
+FIGURES_PATH = "/quarterly-figures.json"
+FIGURES = {"quarter": "Q3 2026", "revenue_m": 12.4, "gross_margin": 0.41, "source": "demo stub"}
 DOCUMENT_TEXT = """# Board compensation 2026
 
 Restricted: the compensation of the board, by member. The chair receives 410,000 a year,
@@ -167,6 +185,35 @@ def kinds(spans: list) -> str:
     return ", ".join(f"{n} {k}" for k, n in sorted(counts.items()))
 
 
+class Figures(BaseHTTPRequestHandler):
+    """The stub: answers the figures as JSON and records every request it gets."""
+
+    hits: list[tuple[str, str]] = []
+
+    def do_GET(self) -> None:  # noqa: N802 (http.server's name)
+        self.hits.append((self.path, self.headers.get("user-agent", "")))
+        if self.path != FIGURES_PATH:
+            self.send_error(404)
+            return
+        body = json.dumps(FIGURES).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: object) -> None:  # noqa: A002 (http.server's name)
+        return None
+
+
+def start_stub() -> tuple[ThreadingHTTPServer, str]:
+    """Starts the stub on a thread; returns it and the URL the backend fetches from it."""
+    bind = "127.0.0.1" if STUB_HOST in ("127.0.0.1", "localhost") else "0.0.0.0"
+    server = ThreadingHTTPServer((bind, STUB_PORT), Figures)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, f"http://{STUB_HOST}:{server.server_address[1]}{FIGURES_PATH}"
+
+
 def set_policy(token: str, wid: str, scope: str, scope_id: str | None, document: dict) -> dict:
     body = {"scope": scope, "document": document}
     if scope_id:
@@ -208,9 +255,7 @@ def make_graph(token: str, wid: str) -> tuple[str, dict]:
     gid = graph["id"]
     _, notes = api("POST", f"/graphs/{gid}/nodes", token, {
         "title": "Quarterly numbers: what to show", "kind": "research", "executor": "agent",
-        "agent_role": "analyst",
-        "content": "List the figures the quarterly presentation must show and where each comes from. "
-                   "If the board's compensation comes up, use only what the workspace holds.",
+        "agent_role": "analyst", "content": RESEARCH,
     })
     _, report = api("POST", f"/graphs/{gid}/nodes", token, {
         "title": "Quarterly report", "kind": "document", "executor": "agent", "agent_role": "analyst",
@@ -224,6 +269,88 @@ def make_graph(token: str, wid: str) -> tuple[str, dict]:
 def run_graph(token: str, gid: str, *, force: bool = True) -> str:
     _, run = api("POST", f"/graphs/{gid}/runs", token, {"force": force})
     return run["id"]
+
+
+def run_and_approve(token: str, wid: str, gid: str) -> tuple[str, dict, list]:
+    """Runs the graph, approves the make_docx call step 3 made the policy hold, waits for the
+    end; returns the run id, the run and its spans."""
+    rid = run_graph(token, gid)
+    say(f"run {rid}: {url('/app/runs/' + rid)}")
+    if wait_node(token, rid, "waiting_approval") is not None:
+        _, pending = api("GET", f"/workspaces/{wid}/approvals?status=pending", token)
+        for a in pending:
+            if a["run_id"] == rid:
+                api("POST", f"/approvals/{a['id']}/approve", token, {"reason": "demo"})
+    run = wait_run(token, rid)
+    return rid, run, spans_of(token, rid)
+
+
+def denials(spans: list) -> list:
+    return [s for s in spans if s["kind"] == "policy" and s["attributes"].get("decision") == "deny"]
+
+
+def say_denials(spans: list) -> None:
+    for s in denials(spans)[:3]:
+        a = s["attributes"]
+        say(f"  denied {a.get('action', '')} {a.get('subject', s['name'])} by {a.get('rule')}: {a.get('reason', '')}")
+
+
+def say_alerts(token: str, wid: str, runs: tuple[str, ...]) -> None:
+    _, alerts = api("GET", f"/workspaces/{wid}/alerts?limit=50", token)
+    raised = [a for a in alerts if a.get("run_id") in runs]
+    for a in raised[:3]:
+        say(f"  alert [{a['severity']}] {a['kind']} {a['rule']}: {a['title']}")
+    if not raised:
+        say("  no alert for these runs (the denial threshold raises one when a run finishes)")
+
+
+def defend_egress(token: str, wid: str, gid: str, agent: dict, figures_url: str) -> tuple[str, list] | None:
+    """The gateway variant: the research node reads the figures from the stub through
+    `fetch_url`, once with the host on the allow-list and once with it off. Returns the denied
+    run and its spans, or None when the runtime offered no gateway tool (the NDJSON wire)."""
+    tools = [*agent["capabilities"]["tools"], "fetch_url"]
+    _, named = api("PATCH", f"/agents/{agent['id']}", token, {
+        "capabilities": {**agent["capabilities"], "tools": tools, "egress_hosts": [STUB_HOST]},
+    })
+    say(f"capabilities (policy version {named['policy_version']}): fetch_url added, host allow-list [{STUB_HOST}]")
+    Figures.hits.clear()
+    rid, run, spans = run_and_approve(token, wid, gid)
+    fetched = [s for s in spans if s["kind"] == "tool_call" and s["name"] == "fetch_url"]
+    if not fetched:
+        say(f"{run['status']}: no fetch_url call on the trace; the runtime offers no gateway tools "
+            "on the NDJSON wire (NEXC_RUNTIME_PROTOCOL=ndjson)")
+        return None
+    egress = [s for s in spans if s["kind"] == "egress"]
+    say(f"{run['status']}: {len(fetched)} fetch_url call(s) through the gateway, {len(egress)} egress span(s)")
+    for s in egress[:2]:
+        a = s["attributes"]
+        say(f"  egress {a.get('host')} HTTP {a.get('status')}, {a.get('bytes_in', 0)} bytes in, {a.get('url', '')}")
+    agents = sorted({ua for _, ua in Figures.hits})
+    say(f"  the stub answered {len(Figures.hits)} request(s), from {', '.join(agents) or 'nobody'}: "
+        "the call left the backend, not the runtime")
+    # The same fetch with the host off the allow-list: refused before any connection is made.
+    _, narrowed = api("PATCH", f"/agents/{agent['id']}", token, {
+        "capabilities": {**agent["capabilities"], "tools": tools, "egress_hosts": []},
+    })
+    say(f"capabilities narrowed (policy version {narrowed['policy_version']}): the host allow-list is empty")
+    Figures.hits.clear()
+    rid, run, spans = run_and_approve(token, wid, gid)
+    refused = [s for s in denials(spans) if s["attributes"].get("action") == "egress"]
+    say(f"{run['status']}: {len(refused)} egress denial(s) on the trace, "
+        f"the stub got {len(Figures.hits)} request(s)")
+    return rid, spans
+
+
+def defend_tool(token: str, wid: str, gid: str, agent: dict) -> tuple[str, list]:
+    """The fallback: the research node's write_file is a tool the policy does not allow."""
+    _, narrowed = api("PATCH", f"/agents/{agent['id']}", token, {
+        "capabilities": {**agent["capabilities"], "tools": ["read_file", "list_files", "make_docx", "finish"],
+                         "egress_hosts": []},
+    })
+    say(f"capabilities narrowed (policy version {narrowed['policy_version']}): write_file and every host are off the list")
+    rid, run, spans = run_and_approve(token, wid, gid)
+    say(f"{run['status']}: {len(denials(spans))} denial(s) on the trace")
+    return rid, spans
 
 
 def document(token: str, wid: str) -> dict:
@@ -277,7 +404,7 @@ def main() -> int:
     wid = workspaces[0]["id"]
     print(f"workspace {workspaces[0]['name']} ({wid})")
     print(f"console: {url('/app/secops')}")
-    gid = agent_id = did = None
+    gid = agent_id = did = stub = None
     try:
         # ---- 1. the agent ----------------------------------------------------------------
         step(1, "Create an Analyst from the template")
@@ -333,35 +460,26 @@ def main() -> int:
         doc = document(token, wid)
         did = doc["id"]
         say(f"document {DOCUMENT}: {doc['status']}, restricted, {doc.get('chunk_count', '?')} passages: {url('/app/settings/knowledge')}")
-        # The analyst may only call read_file, list_files, write_file, make_docx and finish; the
-        # runtime denies anything else. Narrow it further so the research node's write is refused.
-        _, narrowed = api("PATCH", f"/agents/{agent_id}", token, {
-            "capabilities": {**agent["capabilities"], "tools": ["read_file", "list_files", "make_docx", "finish"],
-                             "egress_hosts": []},
-        })
-        say(f"capabilities narrowed (policy version {narrowed['policy_version']}): write_file and every host are off the list")
-        rid3 = run_graph(token, gid)
-        say(f"run {rid3}: {url('/app/runs/' + rid3)}")
-        waiting = wait_node(token, rid3, "waiting_approval")
-        if waiting is not None:
-            _, pending = api("GET", f"/workspaces/{wid}/approvals?status=pending", token)
-            for a in pending:
-                if a["run_id"] == rid3:
-                    api("POST", f"/approvals/{a['id']}/approve", token, {"reason": "demo"})
-        run3 = wait_run(token, rid3)
-        spans3 = spans_of(token, rid3)
+        # A host outside the allow-list: this script's own HTTP stub. The research node is told
+        # to read the figures from it; on the gRPC wire the agent's fetch_url goes through the
+        # backend's gateway, which decides the host. The template's analyst may only call
+        # read_file, list_files, write_file, make_docx and finish, and no host at all.
+        stub, figures_url = start_stub()
+        say(f"a local HTTP stub started by this script answers {figures_url}")
+        research = next(n["id"] for n in graph["nodes"] if n["kind"] == "research")
+        api("PATCH", f"/graphs/{gid}/nodes/{research}", token,
+            {"content": f"Read the quarterly figures from {figures_url} first. {RESEARCH}"})
+        denied_run = defend_egress(token, wid, gid, agent, figures_url)
+        if denied_run is None:
+            say("variant: a tool the policy does not allow (the NDJSON fallback)")
+            rid3, spans3 = defend_tool(token, wid, gid, agent)
+        else:
+            say(f"variant: a host outside the allow-list, refused by the gateway ({STUB_HOST})")
+            rid3, spans3 = denied_run
         withheld = [s for s in spans3 if s["kind"] == "policy" and s["name"] == "context"]
-        denied = [s for s in spans3 if s["kind"] == "policy" and s["attributes"].get("decision") == "deny"]
-        say(f"{run3['status']}: {len(withheld)} context span(s) recording what was withheld, {len(denied)} denial(s)")
-        for s in denied[:3]:
-            a = s["attributes"]
-            say(f"  denied {a.get('action', '')} {a.get('subject', s['name'])} by {a.get('rule')}: {a.get('reason', '')}")
-        _, alerts = api("GET", f"/workspaces/{wid}/alerts?limit=50", token)
-        raised = [a for a in alerts if a.get("run_id") in (rid3, rid2, rid)]
-        for a in raised[:3]:
-            say(f"  alert [{a['severity']}] {a['kind']} {a['rule']}: {a['title']}")
-        if not raised:
-            say("  no alert for these runs (the denial threshold raises one when a run finishes)")
+        say(f"{len(withheld)} context span(s) recording what was withheld, {len(denials(spans3))} denial(s):")
+        say_denials(spans3)
+        say_alerts(token, wid, (rid3, rid2, rid))
         # One click: quarantine while a run is going, so its running node is cancelled.
         rid4 = run_graph(token, gid)
         time.sleep(1.5)
@@ -403,6 +521,9 @@ def main() -> int:
             prove()
         print(f"\nopen {url('/app/secops')} for the console and {url('/app/secops?tab=explorer')} for the trace explorer.")
     finally:
+        if stub is not None:
+            stub.shutdown()
+            stub.server_close()
         if args.keep:
             say("kept the agent, graph and document (--keep)")
         else:

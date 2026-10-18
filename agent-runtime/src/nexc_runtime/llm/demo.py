@@ -3,6 +3,10 @@
 It lets anyone try nexc-engine end to end with no API key: it drives the real tool loop
 (so documents become genuine .docx files and code nodes become real files), streams deltas
 and reports plausible token counts. Every output is clearly labelled as demo content.
+
+When the gateway offers `fetch_url`, the provider reads every http(s) URL the node's brief
+names (up to three) through it before drafting, so the call goes up to the backend and is
+decided under the policy like any other egress; the provider itself never touches the network.
 """
 
 from __future__ import annotations
@@ -15,6 +19,11 @@ from .base import Conversation, StopKind, TextSink, ToolCall, ToolResult, ToolSp
 
 DEMO_BANNER = "> **Demo mode** - generated offline by the nexc demo provider; no LLM was called."
 _CHUNK = 24
+# The gateway's own tool; the demo reads the brief's URLs through it when it is offered.
+FETCH_URL = "fetch_url"
+# URLs read per node at most.
+FETCH_MAX = 3
+_URL = re.compile(r"https?://[^\s<>\"'()\[\]]+")
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,11 +76,15 @@ class DemoProvider:
     ) -> Turn:
         available = {t.name for t in tools}
         assistant_turns = sum(1 for m in conversation.messages if m["role"] == "assistant")
-        call = self._deliverable_call() if assistant_turns == 0 else None
+        planned = self._planned_calls(available)
+        call = planned[assistant_turns] if assistant_turns < len(planned) else None
 
         stop: StopKind
-        if call is not None and call.name in available:
-            text = f"Working as {self._brief.role}: drafting the deliverable for "
+        if call is not None:
+            if call.name == FETCH_URL:
+                text = f"Working as {self._brief.role}: reading {call.input['url']} for "
+            else:
+                text = f"Working as {self._brief.role}: drafting the deliverable for "
             text += f"“{self._brief.title}”.\n\n"
             calls = [call]
             stop = "tool_use"
@@ -95,6 +108,29 @@ class DemoProvider:
         )
 
     # --- deliverables -----------------------------------------------------------------------
+    def _planned_calls(self, available: set[str]) -> list[ToolCall]:
+        """The calls of the run in order: the brief's URLs through the gateway when it offers
+        `fetch_url`, then the deliverable when its tool is offered."""
+        calls: list[ToolCall] = []
+        if FETCH_URL in available:
+            calls.extend(
+                ToolCall(id=f"demo_fetch_{n}", name=FETCH_URL, input={"url": url})
+                for n, url in enumerate(self.urls(), start=1)
+            )
+        deliverable = self._deliverable_call()
+        if deliverable is not None and deliverable.name in available:
+            calls.append(deliverable)
+        return calls
+
+    def urls(self) -> list[str]:
+        """The http(s) URLs the brief names, in order, once each, at most `FETCH_MAX`."""
+        found: list[str] = []
+        for match in _URL.finditer(self._brief.content):
+            url = match.group(0).rstrip(".,;:!?")
+            if url not in found:
+                found.append(url)
+        return found[:FETCH_MAX]
+
     def _deliverable_call(self) -> ToolCall | None:
         b = self._brief
         slug = slugify(b.title)
@@ -228,6 +264,7 @@ class DemoProvider:
             _first_sentence(b.content) or b.title,
             "",
             "## Sources to consult",
+            *[f"- {url} (read through the platform's gateway)" for url in self.urls()],
             "- Primary documentation and specifications",
             "- Recent peer-reviewed or industry reports",
             "- Comparable open-source projects",

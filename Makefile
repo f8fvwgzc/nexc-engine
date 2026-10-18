@@ -164,7 +164,7 @@ demo-secops: ## Demo mode, then the five-minute AgentSecOps script (docs/AGENTSE
 	@[ -f .env ] || scripts/init-env.sh
 	$(COMPOSE) -f docker-compose.yml -f docker-compose.demo.yml up -d --build
 	@echo "demo running on http://localhost:$${NEXC_HTTP_PORT:-8080}; running the AgentSecOps demo (DEMO_ARGS=\"--keep --skip-prove\" to keep what it makes or skip the prove targets)"
-	@python3 scripts/demo-secops.py $(DEMO_ARGS)
+	@NEXC_DEMO_STUB_HOST=$${NEXC_DEMO_STUB_HOST:-host.docker.internal} python3 scripts/demo-secops.py $(DEMO_ARGS)
 
 docker-down: ## Stop the stack (volumes are kept; add -v manually to wipe data)
 	$(COMPOSE) -f docker-compose.yml -f docker-compose.onto.yml --profile symphony --profile onto down
