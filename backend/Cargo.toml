@@ -30,6 +30,7 @@ aes-gcm = "0.11"
 anyhow = "1.0.104"
 argon2 = "0.6"
 async-stream = "0.3.6"
+async-trait = "0.1"
 axum = { version = "0.8.9", features = ["ws", "macros"] }
 base64 = "0.23.1"
 bytes = "1.12.1"
@@ -42,6 +43,8 @@ hex = "0.4.3"
 http-body-util = "0.1.5"
 jsonwebtoken = { version = "11.1", default-features = false, features = ["aws_lc_rs"] }
 mime_guess = "2.0.5"
+prost = "0.14"
+prost-types = "0.14"
 rand = "0.10.3"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "json", "http2", "query"] }
 rpassword = "7.5.4"
@@ -55,6 +58,8 @@ thiserror = "2"
 tokio = { version = "1.53", features = ["full"] }
 tokio-stream = { version = "0.1.19", features = ["sync"] }
 tokio-util = { version = "0.7.19", features = ["io"] }
+tonic = { version = "0.14", features = ["transport", "codegen", "router", "server", "channel"] }
+tonic-prost = "0.14"
 tower = { version = "0.5", features = ["util", "limit"] }
 tower-http = { version = "0.7", features = ["cors", "trace", "limit", "set-header", "request-id", "compression-gzip", "timeout", "util"] }
 tracing = "0.1.44"
@@ -67,6 +72,8 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [build-dependencies]
 cc = "1.6"
+protox = "0.9"
+tonic-prost-build = "0.14"
 
 [dev-dependencies]
 tokio-tungstenite = "0.30.0"

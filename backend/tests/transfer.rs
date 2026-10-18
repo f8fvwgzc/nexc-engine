@@ -282,6 +282,10 @@ const NOT_COPIED: &[(&str, &str)] = &[
         "workspace_files",
         "filled only on the target, by the transfer itself, with this server's files; a server never carries another's",
     ),
+    (
+        "onto_export_cursors",
+        "how far this server's export to its onto-intelli got; the target backfills the workspace into its own",
+    ),
 ];
 
 /// A transfer is how a workspace takes all of its data with it. Whatever

@@ -14,6 +14,7 @@ pub mod kernel;
 pub mod llm;
 pub mod memory;
 pub mod observability;
+pub mod ontology;
 pub mod orchestrator;
 pub mod realtime;
 pub mod repo;

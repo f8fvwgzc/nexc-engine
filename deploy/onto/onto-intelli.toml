@@ -1,0 +1,46 @@
+# onto-intelli as the audit's query engine for nexc-engine ("ask the audit").
+# Mounted at /data/onto-intelli.toml by docker-compose.onto.yml; relative paths
+# resolve against this file's folder (the `onto-data` volume).
+
+[engine]
+storage = "sqlite"
+data_dir = "."
+# One onto-intelli workspace per nexc workspace: `{NEXC_ONTO_WORKSPACE_PREFIX}{workspace id}`.
+# This is only the default for requests that name none.
+default_workspace = "nexc"
+ingest_queue = 4096
+
+[ontology]
+schema = "builtin:enterprise"
+# The audit's kinds and relations (runs, nodes, tools, hosts, policies, actions).
+extend = ["nexc-audit.toml"]
+strict = false
+
+[llm]
+# mock answers offline and deterministically; set anthropic (ANTHROPIC_API_KEY) or an
+# OpenAI-compatible endpoint for real explanations. The deterministic answers never use it.
+provider = "mock"
+
+[context]
+token_budget = 1800
+
+[cache]
+enabled = true
+
+[memory]
+enabled = false
+
+[grpc]
+listen = "0.0.0.0:50051"
+builtin_api = true
+reflection = true
+health = true
+http = true
+proto_files = []
+
+[auth]
+mode = "token"
+# The backend presents NEXC_ONTO_TOKEN; it writes every workspace's facts, so it is an admin.
+[[auth.tokens]]
+token_env = "NEXC_ONTO_TOKEN"
+principal = { id = "nexc-backend", roles = ["admin"], workspaces = ["*"] }

@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::AppState;
 use crate::engine::{knowledge, scheduler};
+use crate::ontology::export;
 use crate::{orchestrator, realtime, repo};
 
 const HEARTBEAT_EVERY: Duration = Duration::from_secs(10);
@@ -25,6 +26,12 @@ const FORGET_EVERY: Duration = Duration::from_secs(3600);
 pub fn spawn(state: &AppState, shutdown: CancellationToken) {
     realtime::fanout::spawn(state.hub.clone(), state.db.clone(), shutdown.clone());
     tokio::spawn(scheduler::dispatcher(state.clone(), shutdown.clone()));
+    if export::spawn(state, shutdown.clone()) {
+        tracing::info!(
+            every_secs = export::TICK.as_secs(),
+            "the audit's facts are exported to onto-intelli"
+        );
+    }
     tokio::spawn(every(
         HEARTBEAT_EVERY,
         shutdown.clone(),
@@ -101,6 +108,7 @@ async fn housekeeping(state: &AppState) -> anyhow::Result<()> {
     repo::account_events::purge(&state.db).await?;
     repo::outbox::purge(&state.db).await?;
     repo::plans::fail_stale(&state.db).await?;
+    export::purge_when_off(state).await?;
     state.hub.prune();
     state.limiters.prune();
     Ok(())

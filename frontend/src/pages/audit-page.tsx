@@ -8,6 +8,7 @@ import { PageSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { AskAuditPanel } from '@/features/audit/components/ask-audit-panel';
 import { AUDIT_PAGE_SIZE, auditPage } from '@/features/workspaces/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { errorMessage } from '@/lib/api/errors';
@@ -150,8 +151,9 @@ function Audit() {
     <div className="mx-auto w-full max-w-4xl space-y-6 p-4 sm:p-6">
       <PageHeader
         title="Audit log"
-        description={`Who changed the members, teams, credential and rules of ${current.name}, newest first.`}
+        description={`What the agents of ${current.name} did, asked of the record, and who changed its members, teams, credential and rules, newest first.`}
       />
+      {current.role !== 'guest' && <AskAuditPanel key={current.id} workspaceId={current.id} />}
       {allowed ? (
         <Log key={current.id} workspace={current} />
       ) : (

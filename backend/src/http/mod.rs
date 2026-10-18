@@ -50,6 +50,7 @@ pub const UPLOAD_SLACK: usize = 64 * 1024;
         (name = "runs", description = "Execution"),
         (name = "artifacts"), (name = "templates"), (name = "agents"), (name = "memories"),
         (name = "orchestrator"), (name = "realtime"), (name = "health"),
+        (name = "audit", description = "Ask the audit: questions about what agents did, answered from onto-intelli's facts"),
         (name = "admin", description = "The platform console: every workspace and account, for platform administrators only"),
     )
 )]
@@ -121,6 +122,9 @@ fn v1_routes() -> OpenApiRouter<AppState> {
             workspaces::delete_assistant_conversation
         ))
         .routes(routes!(workspaces::audit_log))
+        .routes(routes!(audit::ask))
+        .routes(routes!(audit::ask_stream))
+        .routes(routes!(audit::questions))
         .routes(routes!(search::search))
         .routes(routes!(platform::workspaces))
         .routes(routes!(platform::workspace))
@@ -251,6 +255,9 @@ mod tests {
             "/api/v1/agents/{id}/activity",
             "/api/v1/agents/{id}/quarantine",
             "/api/v1/agents/{id}/release",
+            "/api/v1/workspaces/{wid}/audit/ask",
+            "/api/v1/workspaces/{wid}/audit/ask/stream",
+            "/api/v1/workspaces/{wid}/audit/questions",
             "/metrics",
         ] {
             assert!(paths.contains_key(p), "missing {p}");
@@ -353,10 +360,11 @@ mod tests {
                 "SpanKind" => check::<trace::SpanKind>(values),
                 "SpanStatus" => check::<trace::SpanStatus>(values),
                 "DataLabel" => check::<capabilities::DataLabel>(values),
+                "AnswerMode" => check::<crate::ontology::ask::AnswerMode>(values),
                 _ => continue,
             }
             checked += 1;
         }
-        assert_eq!(checked, 32, "every string enum schema is covered");
+        assert_eq!(checked, 33, "every string enum schema is covered");
     }
 }

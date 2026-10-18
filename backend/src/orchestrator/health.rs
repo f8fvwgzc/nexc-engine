@@ -30,11 +30,12 @@ impl Slot {
     }
 }
 
-/// Cached probes of the agent runtime and texc-symphony.
+/// Cached probes of the agent runtime, texc-symphony and onto-intelli.
 #[derive(Debug, Default)]
 pub struct HealthCache {
     runtime: Slot,
     symphony: Slot,
+    ontology: Slot,
 }
 
 impl HealthCache {
@@ -74,6 +75,49 @@ impl HealthCache {
                 true,
                 url.clone(),
             ))
+            .await
+    }
+}
+
+impl HealthCache {
+    /// onto-intelli health (`AdminService/Health`), or disabled.
+    pub async fn ontology(&self, state: &AppState) -> BackendHealth {
+        let Some(backend) = &state.ontology else {
+            return BackendHealth {
+                enabled: false,
+                ok: false,
+                url: None,
+                detail: Some("disabled".into()),
+            };
+        };
+        let url = backend.location();
+        self.ontology
+            .get_or(async {
+                let probe = tokio::time::timeout(PROBE_TIMEOUT, backend.health());
+                let (ok, detail) = match probe.await {
+                    Ok(Ok(health)) => (
+                        health.status == "ok",
+                        format!(
+                            "onto-intelli {}, explains with {} ({})",
+                            health.version,
+                            health.llm,
+                            if health.llm_available {
+                                "available"
+                            } else {
+                                "unavailable"
+                            }
+                        ),
+                    ),
+                    Ok(Err(err)) => (false, err.to_string()),
+                    Err(_) => (false, "no answer within 3 seconds".into()),
+                };
+                BackendHealth {
+                    enabled: true,
+                    ok,
+                    url: Some(url.clone()),
+                    detail: Some(detail),
+                }
+            })
             .await
     }
 }

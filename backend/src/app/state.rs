@@ -15,6 +15,8 @@ use crate::llm::router::ProviderRouter;
 use crate::llm::service::LlmService;
 use crate::memory::index::MemoryIndex;
 use crate::observability::metrics::Metrics;
+use crate::ontology::OntologyBackend;
+use crate::ontology::grpc::GrpcOntology;
 use crate::orchestrator::health::HealthCache;
 use crate::realtime::hub::Hub;
 use crate::security::agent_token::AgentTokenKeys;
@@ -45,6 +47,9 @@ pub struct AppState {
     pub memories: Arc<MemoryIndex>,
     /// Whether the database can search document passages by vector.
     pub passage_vectors: Arc<crate::repo::knowledge_vectors::Support>,
+    /// The onto-intelli the audit's facts go to and questions come from;
+    /// `None` turns "ask the audit" off (`NEXC_ONTO_URL` unset).
+    pub ontology: Option<Arc<dyn OntologyBackend>>,
 }
 
 impl AppState {
@@ -60,7 +65,24 @@ impl AppState {
             settings.llm_fallbacks,
             claude_code,
         ));
-        Self::with_provider(settings, db, http, router)
+        let ontology: Option<Arc<dyn OntologyBackend>> = match &settings.onto_url {
+            Some(url) => {
+                let token = settings.onto_token.as_ref().map(|t| t.expose().as_str());
+                Some(Arc::new(GrpcOntology::new(url, token)?))
+            }
+            None => None,
+        };
+        let state = Self::with_provider(settings, db, http, router)?;
+        Ok(match ontology {
+            Some(backend) => state.with_ontology(backend),
+            None => state,
+        })
+    }
+
+    /// The state with `backend` as its onto-intelli (tests inject the stub here).
+    pub fn with_ontology(mut self, backend: Arc<dyn OntologyBackend>) -> Self {
+        self.ontology = Some(backend);
+        self
     }
 
     /// Builds the state with a custom LLM provider (tests inject fakes here).
@@ -87,6 +109,7 @@ impl AppState {
             health: Arc::new(HealthCache::default()),
             memories: Arc::new(MemoryIndex::default()),
             passage_vectors: Arc::default(),
+            ontology: None,
             hub,
             metrics,
             http,

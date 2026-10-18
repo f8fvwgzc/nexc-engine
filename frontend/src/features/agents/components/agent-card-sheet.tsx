@@ -15,7 +15,9 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
+import { AskAuditPanel } from '@/features/audit/components/ask-audit-panel';
 import { SPAN_KIND_META } from '@/features/runs/span-kinds';
+import { useWorkspaceId } from '@/features/workspaces/use-current-workspace';
 import { errorMessage } from '@/lib/api/errors';
 import { formatDateTime, formatRelative, formatTokens } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -111,6 +113,7 @@ export function AgentCardSheet({ agent, admin, onOpenChange, onEdit }: AgentCard
     enabled: agent !== null,
   });
   const quarantine = useQuarantineAgent();
+  const workspaceId = useWorkspaceId();
   const shown = card?.agent ?? agent;
   const quarantined = shown?.status === 'quarantined';
 
@@ -217,6 +220,17 @@ export function AgentCardSheet({ agent, admin, onOpenChange, onEdit }: AgentCard
                   <Skeleton className="h-16 rounded-lg" />
                 )}
               </section>
+              {workspaceId && (
+                <section className="space-y-1.5">
+                  <h3 className="text-xs font-medium text-muted-foreground">Ask the audit</h3>
+                  <AskAuditPanel
+                    key={shown.id}
+                    workspaceId={workspaceId}
+                    agentName={shown.name}
+                    compact
+                  />
+                </section>
+              )}
             </div>
             <SheetFooter className="flex-row justify-between gap-2 border-t">
               <Button variant="outline" onClick={() => onEdit(shown)}>

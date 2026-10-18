@@ -67,6 +67,12 @@ pub struct Settings {
     pub symphony_workflow: PathBuf,
     /// Agent command for texc-symphony; Symphony's default (Codex) when unset.
     pub symphony_agent_command: Option<String>,
+    /// gRPC endpoint of onto-intelli (`http://host:50051`); unset turns "ask the audit" off.
+    pub onto_url: Option<String>,
+    /// Bearer token onto-intelli knows the backend by; unset when its auth is off.
+    pub onto_token: Option<Secret<String>>,
+    /// Prefix of the onto-intelli workspace that holds each nexc workspace's facts.
+    pub onto_workspace_prefix: String,
     pub max_concurrency: usize,
     pub max_attempts: u32,
     pub node_timeout: Duration,
@@ -149,6 +155,9 @@ impl Settings {
                 r.string("NEXC_SYMPHONY_WORKFLOW", "./data/symphony/WORKFLOW.md"),
             ),
             symphony_agent_command: r.optional("NEXC_SYMPHONY_AGENT_COMMAND"),
+            onto_url: r.optional("NEXC_ONTO_URL"),
+            onto_token: r.optional("NEXC_ONTO_TOKEN").map(Secret::new),
+            onto_workspace_prefix: r.string("NEXC_ONTO_WORKSPACE_PREFIX", "nexc-"),
             max_concurrency: r.parse("NEXC_MAX_CONCURRENCY", 4),
             max_attempts: r.parse("NEXC_MAX_ATTEMPTS", 3),
             node_timeout: Duration::from_secs(r.parse("NEXC_NODE_TIMEOUT_SECS", 600)),
@@ -191,6 +200,22 @@ impl Settings {
         }
         if !(1..=1000).contains(&self.db_max_connections) {
             errors.push("NEXC_DB_MAX_CONNECTIONS must be between 1 and 1000".into());
+        }
+        if let Some(url) = &self.onto_url
+            && !(url.starts_with("http://") || url.starts_with("https://"))
+        {
+            errors.push("NEXC_ONTO_URL must start with http:// or https://".into());
+        }
+        if self.onto_workspace_prefix.len() > 32
+            || !self
+                .onto_workspace_prefix
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        {
+            errors.push(
+                "NEXC_ONTO_WORKSPACE_PREFIX must be at most 32 letters, digits, '-', '_' or '.'"
+                    .into(),
+            );
         }
         if self.access_ttl.as_secs() < 60 || self.refresh_ttl <= self.access_ttl {
             errors.push("token lifetimes: access ≥ 60 s and refresh > access required".into());

@@ -17,6 +17,7 @@ use utoipa::ToSchema;
 
 use crate::app::AppState;
 use crate::domain::AppError;
+use crate::domain::status::BackendHealth;
 use crate::domain::validation::{FieldErrors, Validate};
 use crate::engine::knowledge;
 use crate::http::extract::{PlatformAdmin, ValidatedJson};
@@ -57,6 +58,8 @@ pub struct Infrastructure {
     pub runtime_reachable: bool,
     /// The server's embedding model (`builtin-hash-256` when none is configured).
     pub embedding_model: String,
+    /// The onto-intelli the audit's facts go to ("ask the audit"); disabled when none is configured.
+    pub ontology: BackendHealth,
     /// Where background work is queued and what caches there are: all in
     /// PostgreSQL and in process, with no other service to run.
     pub queue: String,
@@ -83,6 +86,7 @@ pub async fn status(
             .fetch_one(&state.db)
             .await?;
     let runtime = state.health.agent_runtime(&state).await;
+    let ontology = state.health.ontology(&state).await;
     // Any workspace resolves to the server's embedding when it set none of its own.
     let embedding_model = knowledge::server_embedding_model(&state);
     Ok(Json(Infrastructure {
@@ -97,6 +101,7 @@ pub async fn status(
         runtime_url: state.settings.runtime_url.clone(),
         runtime_reachable: runtime.ok,
         embedding_model,
+        ontology,
         queue: "PostgreSQL (rows claimed with SKIP LOCKED)".into(),
         cache: "in process, per server instance".into(),
     }))

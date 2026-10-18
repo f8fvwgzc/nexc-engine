@@ -65,6 +65,7 @@ impl AppError {
                 StatusCode::UNPROCESSABLE_ENTITY
             }
             AppError::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
+            AppError::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }

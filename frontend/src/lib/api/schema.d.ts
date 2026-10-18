@@ -1471,6 +1471,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{wid}/audit/ask": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Asks the audit. Members and above; guests are refused. The answer names
+         *     the facts it rests on as things in nexc; one that cites none is
+         *     `unverified`. Members do not see confidential or restricted data ids.
+         *     503 when no onto-intelli is configured or it does not answer.
+         */
+        post: operations["ask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/audit/ask/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Asks the audit and streams the answer as server-sent events: `stage`
+         *     (`{text}`) and `delta` (`{text}`) as onto-intelli explains, then `done`
+         *     (`AuditAnswer`), or `error` (`{detail}`). A canned question, and any
+         *     question from a member, arrives as one `done` event.
+         */
+        post: operations["ask_stream"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/audit/questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The canned questions, in the order the console offers them. `{run}` and
+         *     `{agent}` in a label are slots the asker fills.
+         */
+        get: operations["questions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{wid}/documents": {
         parameters: {
             query?: never;
@@ -2389,6 +2453,11 @@ export interface components {
             key: string;
             name: string;
         };
+        /**
+         * @description How an answer was produced.
+         * @enum {string}
+         */
+        AnswerMode: "deterministic" | "llm";
         /** @description A file produced by a node during a run. */
         Artifact: {
             /** Format: date-time */
@@ -2404,6 +2473,14 @@ export interface components {
             run_id: string;
             /** Format: int64 */
             size: number;
+        };
+        /** @description `POST /workspaces/{wid}/audit/ask` body. */
+        AskAudit: {
+            /**
+             * @description The question, at most 1,000 characters. The canned questions are answered
+             *     from the graph alone; anything else goes to onto-intelli's `Ask`.
+             */
+            question: string;
         };
         /** @description `POST /admin/workspaces/{wid}/owners` body. */
         AssignOwner: {
@@ -2447,6 +2524,29 @@ export interface components {
          * @enum {string}
          */
         AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned" | "trace_sealed" | "policy_changed" | "policy_mismatch" | "agent_quarantined" | "agent_released" | "classification_changed";
+        /** @description An answer from the audit. */
+        AuditAnswer: {
+            answer: string;
+            facts: components["schemas"]["AuditFact"][];
+            /**
+             * Format: double
+             * @description From the question arriving to the answer leaving, in milliseconds.
+             */
+            latency_ms: number;
+            mode: components["schemas"]["AnswerMode"];
+            /** @description The canned question this was recognised as, when it was one. */
+            question: string | null;
+            /**
+             * Format: int64
+             * @description Model tokens the answer cost (0 when deterministic).
+             */
+            tokens: number;
+            /**
+             * @description True when the answer makes claims but cites no fact: read it as a
+             *     model's words, not the record.
+             */
+            unverified: boolean;
+        };
         /** @description One entry of a workspace's audit log. */
         AuditEntry: {
             action: components["schemas"]["AuditAction"];
@@ -2464,6 +2564,19 @@ export interface components {
             id: string;
             /** @description What the action was about: a person, a team, a label. */
             subject: string;
+        };
+        /** @description A fact an answer rests on, as a thing in nexc. */
+        AuditFact: {
+            /**
+             * @description The entity in onto-intelli (`agent:…`, `run:…`, `document:…`, `policy:…`) or
+             *     `withheld:…` for data the asker is not cleared for.
+             */
+            id: string;
+            /** @description `agent`, `run`, `node`, `document`, `memory`, `policy`, `action`, `tool`, `host`, `model`, `withheld`. */
+            kind: string;
+            label: string;
+            /** @description Where to open it in the console; `null` for things without a page. */
+            link: string | null;
         };
         /**
          * @description Returned by register / login / refresh. The refresh token travels only in
@@ -2501,6 +2614,12 @@ export interface components {
              * @description The first span that does not fit the chain.
              */
             span_id: string;
+        };
+        /** @description One of the questions offered as a chip. */
+        CannedQuestion: {
+            id: string;
+            /** @description The question as offered; `{run}` and `{agent}` are the slots the UI fills. */
+            label: string;
         };
         /**
          * @description An agent's capabilities. `{}` is the default: every tool, every topic,
@@ -3184,6 +3303,8 @@ export interface components {
             database: components["schemas"]["DatabaseStatus"];
             /** @description The server's embedding model (`builtin-hash-256` when none is configured). */
             embedding_model: string;
+            /** @description The onto-intelli the audit's facts go to ("ask the audit"); disabled when none is configured. */
+            ontology: components["schemas"]["BackendHealth"];
             /**
              * @description Where background work is queued and what caches there are: all in
              *     PostgreSQL and in process, with no other service to run.
@@ -8390,6 +8511,155 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    ask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskAudit"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditAnswer"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Ask the audit is off, or onto-intelli does not answer */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    ask_stream: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskAudit"];
+            };
+        };
+        responses: {
+            /** @description SSE stream */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Ask the audit is off, or onto-intelli does not answer */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    questions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CannedQuestion"][];
                 };
             };
             404: {

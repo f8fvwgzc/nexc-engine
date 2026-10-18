@@ -57,6 +57,21 @@ function Status() {
         </Badge>
       </Row>
       <Row name="Embedding model">{data.embedding_model}</Row>
+      <Row name="Audit graph">
+        {data.ontology.enabled ? (
+          <>
+            <span className="font-mono text-xs">{data.ontology.url}</span>{' '}
+            <Badge variant={data.ontology.ok ? 'outline' : 'destructive'}>
+              {data.ontology.ok ? 'answers' : 'not reachable'}
+            </Badge>
+            {data.ontology.detail && (
+              <span className="text-muted-foreground"> · {data.ontology.detail}</span>
+            )}
+          </>
+        ) : (
+          'Off: set NEXC_ONTO_URL to an onto-intelli server to ask the audit'
+        )}
+      </Row>
       <Row name="Background queue">{data.queue}</Row>
       <Row name="Cache">{data.cache}</Row>
     </dl>
