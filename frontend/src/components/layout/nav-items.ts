@@ -8,6 +8,7 @@ import {
   FolderKanbanIcon,
   GavelIcon,
   InboxIcon,
+  ListTreeIcon,
   type LucideIcon,
   MessagesSquareIcon,
   NetworkIcon,
@@ -46,6 +47,7 @@ export const WORK_ITEMS: NavItem[] = [
 export const BUILD_ITEMS: NavItem[] = [
   { title: 'Graphs', to: '/app', icon: NetworkIcon, end: true },
   { title: 'Runs', to: '/app/runs', icon: PlayIcon },
+  { title: 'Sessions', to: '/app/sessions', icon: ListTreeIcon },
   { title: 'Agents', to: '/app/agents', icon: BotIcon },
   { title: 'AgentSecOps', to: '/app/secops', icon: ShieldCheckIcon },
 ];

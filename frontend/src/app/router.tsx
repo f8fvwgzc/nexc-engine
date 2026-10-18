@@ -79,6 +79,14 @@ export const routes: RouteObject[] = [
               },
               { path: 'agents', ...page(routeModules.agents, crumbs({ label: 'Agents' })) },
               { path: 'secops', ...page(routeModules.secops, crumbs({ label: 'AgentSecOps' })) },
+              { path: 'sessions', ...page(routeModules.sessions, crumbs({ label: 'Sessions' })) },
+              {
+                path: 'sessions/:runId',
+                ...page(
+                  routeModules.session,
+                  crumbs({ label: 'Sessions', to: '/app/sessions' }, { dynamic: 'run' }),
+                ),
+              },
               { path: 'memory', element: <Navigate to="/app/settings/memory" replace /> },
               { path: 'inbox', ...page(routeModules.inbox, crumbs({ label: 'Inbox' })) },
               { path: 'issues', ...page(routeModules.issues, crumbs({ label: 'Issues' })) },

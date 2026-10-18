@@ -9,6 +9,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- The Sessions page (`/app/sessions`, in the sidebar under Build): the workspace's runs as a
+  table with status, the agents that worked, nodes, model turns and tool calls, tokens, cost,
+  duration and start, narrowed by agent, status and time, paged. Opening one shows the run as an
+  outline that follows its graph's `trace.span`, `node.status` and `run.finished` events: the
+  run, its nodes, the agent each ran as and the sub-agents it spawned, each row with its kind,
+  status, duration, tokens in, out and cached, cost, turns, calls and denials (the rollup of its
+  subtree; an agent's own share shown apart), a Stop behind a confirmation on every sub-agent
+  still running (the run goes on) and on the run, and filters by agent, span kind and status that
+  keep the ancestors so the outline stays a tree. Above it, the run's totals and a breakdown by
+  model. Selecting a row shows its spans on the right as a timeline; a span opens on its digests
+  and, when the run was recorded, on the prompt, completion, tool input and output as they were
+  kept (monospace, folded past 4 KiB, copied with a click, every redaction and cut marked), else
+  a hint to enable recording in the guardrails. `?span=` opens the outline at the row holding
+  that span. Arrow keys travel the rows, Right and Left open and fold, Enter selects, Home and
+  End jump; at phone width a row opens its spans in place of the outline, with a way back. Tests
+  (`frontend/src/features/sessions`): the outline flattens and filters as the tree says, the tree
+  shows every row with its figures, stops behind a confirmation and only for those who may, and
+  travels with the keyboard; the viewer marks the redactions, copies, folds and opens long
+  payloads folded.
 - Opt-in recording of prompts, completions and tool calls (`docs/CONTRACT.md` §4, §5, §8). The
   guardrails gain `recording` `{prompts, completions, tool_io, retention_days, redact_labels}`,
   off by default (Settings → Guardrails has the switches, the retention and the labels; every

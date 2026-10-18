@@ -121,6 +121,14 @@ export const qk = {
     topics: (workspaceId: string) => [...qk.memories.all, 'topics', workspaceId] as const,
   },
   orchestrator: ['orchestrator', 'status'] as const,
+  /** Sessions: runs as trees, and what their spans said (never copied to browser storage). */
+  sessions: {
+    all: ['sessions'] as const,
+    list: (workspaceId: string, filter: object) =>
+      ['sessions', workspaceId, 'list', filter] as const,
+    detail: (runId: string) => ['sessions', 'detail', runId] as const,
+    payload: (spanId: string) => ['sessions', 'payload', spanId] as const,
+  },
   /** The AgentSecOps console: not copied to browser storage. */
   secops: {
     all: ['secops'] as const,
