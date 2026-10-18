@@ -28,7 +28,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   does not hold the run's takeover off until TCP notices), so a former
   holder that comes back cannot write: its write is refused and recorded as a `fenced` event, and
   it stops its copy of the run (also when its renewal or the run's watcher sees the epoch moved,
-  or when the database could not confirm its lease for a whole lease). The new holder resumes the
+  or when the database has not confirmed its lease for two thirds of a lease, counted from when
+  the last renewal that went through was sent, so a replica cut off from the database stops its
+  copy a third of a lease before a peer can take the run over). The new holder resumes the
   run from what was written: succeeded nodes keep their outputs; a running node is queued again
   with `attempt + 1` and an `interrupted` policy span; a node waiting for an approval stays
   waiting, is re-attached, and runs again once someone decides, its new request answered at once

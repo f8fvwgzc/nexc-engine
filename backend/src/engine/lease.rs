@@ -39,22 +39,30 @@ struct Inner {
     handing_off: AtomicBool,
     /// Whether a refused write was recorded already (once per lease).
     refusal_recorded: AtomicBool,
-    /// When the database last confirmed the lease (the claim or a renewal).
+    /// When the request the database last confirmed the lease for was sent
+    /// (the claim or a renewal): the lease runs at least a lease from then.
     confirmed: Mutex<Instant>,
 }
 
 impl Lease {
-    /// A lease held at `epoch` by `instance`.
+    /// A lease held at `epoch` by `instance`, claimed just now.
     pub fn held(run_id: Uuid, epoch: i64, instance: Uuid) -> Self {
-        Self::new(run_id, Some(epoch), instance)
+        Self::held_since(run_id, epoch, instance, Instant::now())
+    }
+
+    /// A lease held at `epoch` by `instance`, claimed by a statement sent at
+    /// `asked`: the database set it to run out a lease after it received that
+    /// statement, so it is counted from no later than then.
+    pub fn held_since(run_id: Uuid, epoch: i64, instance: Uuid, asked: Instant) -> Self {
+        Self::new(run_id, Some(epoch), instance, asked)
     }
 
     /// A lease that fences nothing (runs that are not claimed by a dispatcher).
     pub fn unfenced(run_id: Uuid) -> Self {
-        Self::new(run_id, None, Uuid::nil())
+        Self::new(run_id, None, Uuid::nil(), Instant::now())
     }
 
-    fn new(run_id: Uuid, epoch: Option<i64>, instance: Uuid) -> Self {
+    fn new(run_id: Uuid, epoch: Option<i64>, instance: Uuid, asked: Instant) -> Self {
         Lease {
             inner: Arc::new(Inner {
                 run_id,
@@ -64,17 +72,24 @@ impl Lease {
                 lost: AtomicBool::new(false),
                 handing_off: AtomicBool::new(false),
                 refusal_recorded: AtomicBool::new(false),
-                confirmed: Mutex::new(Instant::now()),
+                confirmed: Mutex::new(asked),
             }),
         }
     }
 
-    /// The database renewed the lease just now.
-    pub fn confirmed(&self) {
-        *self.inner.confirmed.lock().expect("lease clock") = Instant::now();
+    /// The database renewed the lease in answer to a renewal sent at `sent`.
+    /// The lease is counted from when the renewal was sent, not from when the
+    /// answer came: the database set it to run out a lease after it received
+    /// the renewal, which is later.
+    pub fn confirmed(&self, sent: Instant) {
+        let mut at = self.inner.confirmed.lock().expect("lease clock");
+        if sent > *at {
+            *at = sent;
+        }
     }
 
-    /// How long since the database last confirmed the lease.
+    /// How long since the request the database last confirmed the lease for
+    /// was sent.
     pub fn unconfirmed_for(&self) -> Duration {
         self.inner.confirmed.lock().expect("lease clock").elapsed()
     }
@@ -299,5 +314,20 @@ mod tests {
         assert!(other.is_stopped() && other.is_lost() && !other.is_handing_off());
         assert_eq!(Lease::unfenced(run).epoch(), None);
         assert!(WriteError::Fenced.is_fenced());
+    }
+
+    #[test]
+    fn a_lease_is_counted_from_when_its_confirmation_was_asked_for() {
+        let run = Uuid::now_v7();
+        let asked = Instant::now() - Duration::from_secs(5);
+        let lease = Lease::held_since(run, 1, Uuid::now_v7(), asked);
+        assert!(lease.unconfirmed_for() >= Duration::from_secs(5));
+        let sent = Instant::now() - Duration::from_secs(2);
+        lease.confirmed(sent);
+        let since = lease.unconfirmed_for();
+        assert!(since >= Duration::from_secs(2) && since < Duration::from_secs(5));
+        // An answer to an older renewal arriving late does not move the clock back.
+        lease.confirmed(asked);
+        assert!(lease.unconfirmed_for() < Duration::from_secs(5));
     }
 }

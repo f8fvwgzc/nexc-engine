@@ -239,6 +239,8 @@ pub async fn send(
         origin: NodeOrigin::User,
     };
 
+    // The run's lease is counted from before its claim was sent (`Lease::held_since`).
+    let asked = std::time::Instant::now();
     let mut tx = state.db.begin().await.map_err(internal)?;
     let node_id = Uuid::now_v7();
     repo::nodes::create(&mut *tx, node_id, graph_id, &node_draft)
@@ -375,6 +377,7 @@ pub async fn send(
         row,
         vec![call, admission],
         refusal,
+        asked,
     ));
     let stored = repo::a2a::find_task(&state.db, inbound.task_id)
         .await

@@ -847,6 +847,51 @@ async fn a_holder_cut_off_from_its_lease_stops_by_itself(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_holder_the_database_stops_answering_gives_its_run_up_before_its_lease_runs_out(
+    pool: PgPool,
+) {
+    // Long enough that the third of a lease A keeps in hand is not eaten by a busy machine.
+    const LEASE: u64 = 6;
+    let (url, _seen) = fake_grpc_runtime().await;
+    let a = instance_with_lease(&pool, &url, LEASE).await;
+    let (token, _) = a.register("owner@example.com").await;
+    scribe(&a, &token).await;
+    let (gid, nodes) = chain_of(&a, &token, &["NAP 20000 Draft"]).await;
+    let mut on_a = a.events(&gid);
+    let rid = start_run(&a, &token, &gid).await;
+    until_status(&mut on_a, &nodes[0], "running").await;
+    collect_until(&mut on_a, "node.output").await;
+    let run_id: Uuid = rid.parse().unwrap();
+    let held = a.state.engine.lease(run_id).expect("A executes the run");
+    // The database stops answering A about the run: its renewals wait on the row until they
+    // time out. The lease runs out a lease after the last renewal that went through.
+    let mut clock = pool.acquire().await.unwrap();
+    let mut cut = pool.begin().await.unwrap();
+    let expires: chrono::DateTime<chrono::Utc> =
+        sqlx::query_scalar("SELECT lease_expires_at FROM runs WHERE id = $1 FOR UPDATE")
+            .bind(run_id)
+            .fetch_one(&mut *cut)
+            .await
+            .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2 * LEASE);
+    while !held.is_lost() {
+        assert!(Instant::now() < deadline, "A never gave the run up");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    // A stopped its copy before a peer could have taken the run over.
+    let now: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&mut *clock)
+        .await
+        .unwrap();
+    assert!(
+        now < expires,
+        "given up at {now}, after the lease ran out at {expires}"
+    );
+    assert!(held.is_stopped());
+    cut.rollback().await.unwrap();
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
 async fn a_replica_that_shuts_down_hands_its_runs_to_a_peer_at_once(pool: PgPool) {
     // A long lease: the peer takes the run over because it was released, not because it ran out.
     let (url, seen) = fake_grpc_runtime().await;

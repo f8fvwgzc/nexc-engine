@@ -72,6 +72,15 @@ use crate::{kernel, memory, orchestrator};
 
 /// How often the dispatcher looks for queued runs and for leases that ran out.
 const DISPATCH_POLL: Duration = Duration::from_secs(2);
+
+/// How long a lease is trusted here without the database confirming it:
+/// two thirds of it, counted from when the last confirmed request was sent.
+/// The database lets it run out a whole lease after that, so a holder cut
+/// off from the database stops its runs a third of a lease before any peer
+/// can take them over, and two holders never execute a run at once.
+pub fn trusted_for(lease: Duration) -> Duration {
+    lease * 2 / 3
+}
 const CANCEL_POLL: Duration = Duration::from_secs(1);
 /// The decision of the `policy` span on a node whose attempt a takeover interrupted.
 pub const INTERRUPTED_DECISION: &str = "interrupted";
@@ -201,6 +210,7 @@ fn lease_secs(state: &AppState) -> f64 {
 /// Claims every queued run and executes each here.
 async fn claim_queued(state: &AppState) {
     while !state.engine.is_draining() {
+        let asked = Instant::now();
         match repo::runs::claim_next(&state.db, state.engine.instance(), lease_secs(state)).await {
             Ok(Some(row)) => {
                 tokio::spawn(execute(
@@ -210,6 +220,7 @@ async fn claim_queued(state: &AppState) {
                         opening: Vec::new(),
                         refusal: None,
                     },
+                    asked,
                 ));
             }
             Ok(None) => return,
@@ -225,6 +236,7 @@ async fn claim_queued(state: &AppState) {
 async fn take_over_expired(state: &AppState) {
     while !state.engine.is_draining() {
         let local = state.engine.local_runs();
+        let asked = Instant::now();
         match repo::runs::take_over(
             &state.db,
             state.engine.instance(),
@@ -244,6 +256,7 @@ async fn take_over_expired(state: &AppState) {
                         previous: taken.previous,
                         released: taken.released,
                     },
+                    asked,
                 ));
             }
             Ok(None) => return,
@@ -295,11 +308,12 @@ pub async fn keep_leases(state: AppState, shutdown: CancellationToken) {
     }
 }
 
-/// Renews every lease held here in one statement (given at most `limit`).
-/// A lease the database did not renew belongs to a run that changed hands:
-/// it is lost. So is one the database could not confirm for a whole lease
-/// (this instance is cut off from it): the run stops here rather than
-/// working on for nothing, and whoever takes it over resumes it.
+/// Renews every lease held here in one statement (given at most `limit`, a
+/// third of the lease). A lease the database did not renew belongs to a run
+/// that changed hands: it is lost. So is one the database has not confirmed
+/// for two thirds of a lease ([`trusted_for`]; this instance is cut off from
+/// it): the run stops here, before a peer can take it over, and whoever
+/// takes it over resumes it.
 async fn renew_leases(state: &AppState, limit: Duration) {
     let held = state.engine.held_leases();
     if held.is_empty() {
@@ -309,6 +323,7 @@ async fn renew_leases(state: &AppState, limit: Duration) {
         .iter()
         .filter_map(|l| l.epoch().map(|epoch| (l.run_id(), epoch)))
         .collect();
+    let sent = Instant::now();
     let renewed = tokio::time::timeout(
         limit,
         repo::runs::renew(
@@ -324,7 +339,7 @@ async fn renew_leases(state: &AppState, limit: Duration) {
             let renewed: HashSet<Uuid> = renewed.into_iter().collect();
             for lease in &held {
                 if renewed.contains(&lease.run_id()) {
-                    lease.confirmed();
+                    lease.confirmed(sent);
                 } else {
                     not_renewed(state, lease).await;
                 }
@@ -335,14 +350,12 @@ async fn renew_leases(state: &AppState, limit: Duration) {
                 Ok(Err(err)) => tracing::warn!(error = %err, "run leases not renewed"),
                 _ => tracing::warn!("run leases not renewed: the database did not answer in time"),
             }
-            for lease in held
-                .iter()
-                .filter(|l| l.unconfirmed_for() >= state.settings.run_lease)
-            {
+            let trusted = trusted_for(state.settings.run_lease);
+            for lease in held.iter().filter(|l| l.unconfirmed_for() >= trusted) {
                 give_up(
                     state,
                     lease,
-                    "the database did not confirm the lease for a whole lease",
+                    "the database did not confirm the lease for two thirds of a lease",
                 )
                 .await;
             }
@@ -404,8 +417,9 @@ pub async fn execute_claimed(
     row: RunRow,
     opening: Vec<SpanDraft>,
     refusal: Option<String>,
+    asked: Instant,
 ) {
-    execute(state, row, Start::Fresh { opening, refusal }).await;
+    execute(state, row, Start::Fresh { opening, refusal }, asked).await;
 }
 
 /// Keeps a run registered here while its execution lives. Dropping it (the
@@ -422,11 +436,11 @@ impl Drop for Registered {
     }
 }
 
-/// Executes a run under the lease its row carries until it finishes, or
-/// until the lease says to stop (it was lost, or this instance hands it to
-/// a peer).
-async fn execute(state: AppState, row: RunRow, start: Start) {
-    let lease = Lease::held(row.id, row.lease_epoch, state.engine.instance());
+/// Executes a run under the lease its row carries (claimed by a statement
+/// sent at `asked`) until it finishes, or until the lease says to stop (it
+/// was lost, or this instance hands it to a peer).
+async fn execute(state: AppState, row: RunRow, start: Start, asked: Instant) {
+    let lease = Lease::held_since(row.id, row.lease_epoch, state.engine.instance(), asked);
     let token = state.engine.register_run(lease.clone());
     let _registered = Registered {
         engine: state.engine.clone(),

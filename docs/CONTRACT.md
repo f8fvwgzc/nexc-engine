@@ -1305,47 +1305,48 @@ from the result cache (`cached: true`) unless `force: true`.
 
 Run leases (`docs/HA.md`). The replica executing a run holds a lease on it: `runs.claimed_by`,
 `runs.lease_expires_at` and `runs.lease_epoch`, raised every time the run changes hands. A claim
-takes the next epoch; the holder renews every lease it holds every third of `NEXC_RUN_LEASE_SECS`
-in one statement, and a renewal that finds the epoch moved (or a database that did not confirm a
-lease for a whole lease) stops the run on that replica. Every replica's dispatcher looks every 2 s
-for a running run whose lease ran out (or, claimed by a replica of a version before leases, has
-no lease and a heartbeat older than a lease) and takes it over with one `UPDATE` that sets
-`claimed_by`, a fresh `lease_expires_at` and `lease_epoch + 1`. Every write the executor makes for the run (node
-results and statuses, outputs, spans, usage, the run's counters and status) runs in a transaction
-that first locks the run row at the epoch it holds (`FOR SHARE`, or `FOR NO KEY UPDATE` when the
-write changes the run row itself; span batches do it in their one statement) and sets
-`idle_in_transaction_session_timeout` to the lease for itself, so the transaction of a replica that
-vanished mid-write does not keep the row locked past a lease: a former holder's write
-is refused, recorded once per lease as a `fenced` event, and the former holder stops its copy of
-the run. A write that fails for another reason stops the run on that replica too; its lease runs
-out and the next holder resumes it. The new holder resumes from what was written: a `succeeded`
-node keeps its output and is not run again; a `failed`, `skipped` or `cancelled` node stays so and
-its descendants are skipped; a `running` node gets a `policy` span named `interrupted`
+takes the next epoch; the holder renews every lease it holds every third of `NEXC_RUN_LEASE_SECS` in
+one statement, and a renewal that finds the epoch moved (or a database that did not confirm a lease
+for two thirds of a lease, counted from when the last renewal that went through was sent, so a third
+of a lease before any peer can take the run over) stops the run on that replica. Every replica's
+dispatcher looks every 2 s for a running run whose lease ran out (or, claimed by a replica of a
+version before leases, has no lease and a heartbeat older than a lease) and takes it over with one
+`UPDATE` that sets `claimed_by`, a fresh `lease_expires_at` and `lease_epoch + 1`. Every write the
+executor makes for the run (node results and statuses, outputs, spans, usage, the run's counters and
+status) runs in a transaction that first locks the run row at the epoch it holds (`FOR SHARE`, or
+`FOR NO KEY UPDATE` when the write changes the run row itself; span batches do it in their one
+statement) and sets `idle_in_transaction_session_timeout` to the lease for itself, so the
+transaction of a replica that vanished mid-write does not keep the row locked past a lease: a former
+holder's write is refused, recorded once per lease as a `fenced` event, and the former holder stops
+its copy of the run. A write that fails for another reason stops the run on that replica too; its
+lease runs out and the next holder resumes it. The new holder resumes from what was written: a
+`succeeded` node keeps its output and is not run again; a `failed`, `skipped` or `cancelled` node
+stays so and its descendants are skipped; a `running` node gets a `policy` span named `interrupted`
 (`decision: interrupted`, `rule: lease`, `action: takeover`, `previous_instance`, `instance`,
 `lease_epoch`, `released`, `attempt`, `next_attempt`), goes back to `queued` (`node.status`) and
 runs again with `attempt + 1`, or fails when the interrupted attempt was its last; a
 `waiting_approval` node gets a `policy` span named `reattached` (`decision: reattached`) and stays
 waiting: its pending approval is decided on any replica as usual (or expires at its `expires_at`,
-which fails the node), the decision's `approval` span carries `reattached: true`, and the node
-then runs its next attempt, in which the runtime's request for the same tool (and argument digest)
-is recorded as a new approval decided at once like the first (same decider and reason; its
-`approval` span carries `carried_from`, the first approval's id). The trace continues from the
-last span written (`seq` and `prev_hash`), so `GET /runs/{rid}/trace/verify` holds across a
-takeover; the run's `policy_versions` stay those it started under. A run whose cancel was asked
-for while nobody held it (`cancel_requested`) is cancelled by the new holder before any node is
-queued again (the `interrupted` span then has no `next_attempt`). A `run_commands` row records
-the run's `lease_epoch`; only the holder takes commands, and a cancel recorded under an earlier
-epoch is carried to the node's next attempt and delivered when that attempt spawns the sub-agent
-of the same principal (its `policy` span carries `carried_from_spawn_span_id`). The lease's
-history is in `run_lease_events` (`claimed`, `taken_over`, `released`, `lost`, `fenced`, with
-the instance, the epoch and the former holder) and counted in
-`nexc_run_lease_events_total{event}`. Node execution is at least once (an attempt cut short is run
-again); its success, output and usage are recorded once. On SIGTERM (or Ctrl-C) a replica drains:
-`GET /readyz` answers 503 (`detail` starts with `draining`), its dispatcher claims and takes over
-nothing more, every run it executes stops at once, its chained spans are written and its lease is
-released (`lease_expires_at` now, `heartbeat_at` cleared, `lease_epoch + 1`, a `released` event),
-so a peer takes it over at its next look (within 2 s) instead of when the lease would have run
-out; after at most 15 s the HTTP server stops accepting and finishes the requests in flight.
+which fails the node), the decision's `approval` span carries `reattached: true`, and the node then
+runs its next attempt, in which the runtime's request for the same tool (and argument digest) is
+recorded as a new approval decided at once like the first (same decider and reason; its `approval`
+span carries `carried_from`, the first approval's id). The trace continues from the last span
+written (`seq` and `prev_hash`), so `GET /runs/{rid}/trace/verify` holds across a takeover; the
+run's `policy_versions` stay those it started under. A run whose cancel was asked for while nobody
+held it (`cancel_requested`) is cancelled by the new holder before any node is queued again (the
+`interrupted` span then has no `next_attempt`). A `run_commands` row records the run's
+`lease_epoch`; only the holder takes commands, and a cancel recorded under an earlier epoch is
+carried to the node's next attempt and delivered when that attempt spawns the sub-agent of the same
+principal (its `policy` span carries `carried_from_spawn_span_id`). The lease's history is in
+`run_lease_events` (`claimed`, `taken_over`, `released`, `lost`, `fenced`, with the instance, the
+epoch and the former holder) and counted in `nexc_run_lease_events_total{event}`. Node execution is
+at least once (an attempt cut short is run again); its success, output and usage are recorded once.
+On SIGTERM (or Ctrl-C) a replica drains: `GET /readyz` answers 503 (`detail` starts with
+`draining`), its dispatcher claims and takes over nothing more, every run it executes stops at once,
+its chained spans are written and its lease is released (`lease_expires_at` now, `heartbeat_at`
+cleared, `lease_epoch + 1`, a `released` event), so a peer takes it over at its next look (within 2
+s) instead of when the lease would have run out; after at most 15 s the HTTP server stops accepting
+and finishes the requests in flight.
 
 <!-- #endregion endpoints -->
 <!-- #region events -->
