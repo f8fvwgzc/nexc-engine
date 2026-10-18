@@ -385,8 +385,8 @@ mod tests {
     #[test]
     fn spec_enum_values_match_the_wire_format() {
         use crate::domain::{
-            account, agent, alert, alert_routing, approval, audit, capabilities, cycle, graph,
-            insight, issue, knowledge, memory, plan, platform, policy_document, run, search,
+            account, agent, alert, alert_routing, approval, audit, capabilities, cycle, evidence,
+            graph, insight, issue, knowledge, memory, plan, platform, policy_document, run, search,
             settings, trace, usage, user, workspace,
         };
         use serde_json::Value;
@@ -446,6 +446,8 @@ mod tests {
                 "Severity" => check::<policy_document::Severity>(values),
                 "PiiKind" => check::<policy_document::PiiKind>(values),
                 "InjectionAction" => check::<policy_document::InjectionAction>(values),
+                "EvidenceAction" => check::<policy_document::EvidenceAction>(values),
+                "EvidenceVerdict" => check::<evidence::EvidenceVerdict>(values),
                 "ApprovalStatus" => check::<approval::ApprovalStatus>(values),
                 "AlertKind" => check::<alert::AlertKind>(values),
                 "McpTransport" => check::<crate::domain::mcp::McpTransport>(values),
@@ -457,6 +459,6 @@ mod tests {
             }
             checked += 1;
         }
-        assert_eq!(checked, 45, "every string enum schema is covered");
+        assert_eq!(checked, 47, "every string enum schema is covered");
     }
 }

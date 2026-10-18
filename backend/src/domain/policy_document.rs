@@ -95,6 +95,27 @@ string_enum!(
     }
 );
 
+string_enum!(
+    /// What the evidence verifier does with an output that is not verified.
+    EvidenceAction {
+        /// Record the verdict on the node run and the trace; the node succeeds.
+        Mark => "mark",
+        /// Fail the node, with the verdict as the reason.
+        Reject => "reject",
+    }
+);
+
+impl EvidenceAction {
+    /// The stricter of two actions.
+    pub fn stricter(self, other: EvidenceAction) -> EvidenceAction {
+        if self == EvidenceAction::Reject || other == EvidenceAction::Reject {
+            EvidenceAction::Reject
+        } else {
+            EvidenceAction::Mark
+        }
+    }
+}
+
 /// An allow-list and a deny-list of names (tools, hosts, models). `allow:
 /// null` inherits the level above; `deny` is always added to it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -284,6 +305,28 @@ pub struct InjectionRule {
     pub model_check: Option<bool>,
 }
 
+/// Evidence-bound outputs (`docs/AGENTSECOPS.md` §2): whether a node's
+/// output must cite what the node was given, how much of it, and what
+/// happens when it does not.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceRule {
+    /// Whether the verifier acts on the verdict; `null` inherits (default: off,
+    /// the verdict is only recorded).
+    #[serde(default)]
+    #[schema(required = true)]
+    pub required: Option<bool>,
+    /// The share of claims that must cite what was given for an output to be
+    /// verified, 0 to 1; `null` inherits (default 0.8).
+    #[serde(default)]
+    #[schema(required = true)]
+    pub min_coverage: Option<f64>,
+    /// `mark` records the verdict, `reject` fails the node; `null` inherits (default mark).
+    #[serde(default)]
+    #[schema(required = true)]
+    pub action: Option<EvidenceAction>,
+}
+
 /// One version of a policy. `{}` sets nothing and inherits everything.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -320,6 +363,9 @@ pub struct PolicyDocument {
     #[serde(default)]
     #[schema(required = true)]
     pub injection: InjectionRule,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub evidence: EvidenceRule,
 }
 
 fn is_tool(name: &str) -> bool {
@@ -521,6 +567,16 @@ impl PolicyDocument {
                 );
             }
         }
+        if self
+            .evidence
+            .min_coverage
+            .is_some_and(|m| !m.is_finite() || !(0.0..=1.0).contains(&m))
+        {
+            errors.add(
+                "document.evidence.min_coverage",
+                "is a fraction between 0 and 1",
+            );
+        }
     }
 }
 
@@ -707,5 +763,45 @@ mod tests {
         assert_eq!(diff_summary(&after, &after), "no change");
         assert!(RuleAction::Alert.stricter(RuleAction::Deny) == RuleAction::Deny);
         assert!(is_host("*.example.com:8443") && !is_host("Example.com"));
+    }
+
+    #[test]
+    fn the_evidence_rule_is_a_fraction_and_reject_is_the_stricter_action() {
+        let doc: PolicyDocument = serde_json::from_value(json!({
+            "evidence": {"required": true, "min_coverage": 0.9, "action": "reject"},
+        }))
+        .unwrap();
+        assert_eq!(doc.evidence.required, Some(true));
+        assert_eq!(doc.evidence.action, Some(EvidenceAction::Reject));
+        let mut errors = FieldErrors::default();
+        doc.check(&mut errors);
+        assert!(errors.is_empty());
+        for bad in [1.5, -0.1, f64::NAN] {
+            let doc = PolicyDocument {
+                evidence: EvidenceRule {
+                    min_coverage: Some(bad),
+                    ..EvidenceRule::default()
+                },
+                ..PolicyDocument::default()
+            };
+            let mut errors = FieldErrors::default();
+            doc.check(&mut errors);
+            assert!(
+                errors
+                    .as_map()
+                    .contains_key("document.evidence.min_coverage")
+            );
+        }
+        assert_eq!(
+            EvidenceAction::Mark.stricter(EvidenceAction::Reject),
+            EvidenceAction::Reject
+        );
+        assert_eq!(
+            EvidenceAction::Mark.stricter(EvidenceAction::Mark),
+            EvidenceAction::Mark
+        );
+        assert!(
+            serde_json::from_value::<PolicyDocument>(json!({"evidence": {"typo": 1}})).is_err()
+        );
     }
 }

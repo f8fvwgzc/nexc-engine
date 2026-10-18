@@ -18,7 +18,7 @@ use crate::app::AppState;
 use crate::domain::agent::{Agent, FALLBACK_SYSTEM_PROMPT};
 use crate::domain::audit::AuditAction;
 use crate::domain::capabilities::{Capabilities, DataLabel};
-use crate::domain::evidence::Given;
+use crate::domain::evidence::{Evidence, Given};
 use crate::domain::graph::{Executor, GraphNode, NodeStatus};
 use crate::domain::ontology::NodeType;
 use crate::domain::policy::{self, Action, Decision, Rules};
@@ -331,6 +331,18 @@ pub struct ExecOutput {
     /// The `llm_call` span of the node, when it made exactly one call (the
     /// built-in executor); usage is booked to it.
     pub span_id: Option<Uuid>,
+    /// What the verifier found about the output, when the executor assessed
+    /// it (the scheduler assesses the output alone otherwise).
+    pub evidence: Option<Evidence>,
+}
+
+/// Adds the verdict's attributes to a span's (`evidence`, `evidence_coverage`, …).
+pub fn with_evidence(attributes: &mut Value, evidence: &Evidence) {
+    if let Value::Object(map) = attributes {
+        for (key, value) in evidence.span_attributes() {
+            map.insert(key.to_owned(), value);
+        }
+    }
 }
 
 /// A failed node attempt.

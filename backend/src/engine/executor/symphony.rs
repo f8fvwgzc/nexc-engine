@@ -551,6 +551,7 @@ async fn run(ctx: &ExecContext) -> Result<ExecOutput, ExecError> {
         tokens_out: record.tokens.output,
         tokens_cached: 0,
         span_id: None,
+        evidence: None,
     })
 }
 

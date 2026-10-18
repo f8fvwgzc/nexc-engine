@@ -22,6 +22,38 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   memory and node ids it already listed. Tests: the ids are rendered in both prompts and never
   leak into the upstream titles the demo provider reads back (`backend/src/domain/prompt.rs`,
   `agent-runtime/tests/test_prompts.py`).
+- The evidence verifier (`docs/AGENTSECOPS.md` §2; `docs/CONTRACT.md` §4): once a node
+  answered, the backend finds the citations in its output and its Markdown artifacts (an id
+  inside a code block or a code span is not a citation; a bracket holding anything but ids,
+  such as a source name or a link, is not one either), checks each against what the node was
+  given (an id it was never given is forged), approximates the claims as the sentences,
+  bullets and table rows of the prose (headings, block quotes, code and a `Sources`-like
+  section aside; a claim ending with `[assumption]` is the model's own and counted apart),
+  and reads off the coverage (claims citing what was given over the claims not declared the
+  model's own) and a verdict: `verified` when the coverage reaches the policy's
+  `min_coverage` (0.8 unless set) and nothing was forged, `unverified` when no claim rests on
+  what was given, `partial` otherwise. The result is stored on the node run
+  (`NodeRun.evidence`: the verdict, the coverage, the counts, the ids cited and the ids never
+  given) and rides as `evidence_*` attributes on the node's last `llm_call` span (the built-in
+  executor's one call; for the agent runtime the spans of a turn are held together, in order
+  of receipt, until the next turn starts or the result arrives, so the last turn can carry
+  the verdict without the chain changing its order). A cached result keeps the verdict it
+  got. The policy document gains `evidence: {required, min_coverage, action: mark | reject}`,
+  resolved like the other rules (required once any level requires it, the highest coverage,
+  reject once any level says so; a version that would weaken the level above is refused):
+  with `required` on, the verdict is a `policy` span named `evidence` (allow when verified;
+  `mark` records an unverified or partial output as decision `alert` and the node succeeds;
+  `reject` fails the node with `policy: evidence <verdict>: <why>` as the reason the run page
+  shows, its output kept off the node and nothing built on it downstream). The default is
+  off, so nothing changes for existing workspaces beyond the verdict being recorded; the
+  Analyst, Researcher and Reviewer templates require evidence and mark what falls short.
+  Tests: the parser and the coverage heuristic (`backend/src/domain/evidence.rs`: ids inside
+  code are ignored, duplicates count once, forged ids are violations that keep an output from
+  `verified`, declared claims are counted apart, the sources section is not a claim); the
+  rule resolves and narrows like the others; a scheduler run under `reject` fails the node
+  with the reason, skips what depended on it and leaves the verdict on the record, under
+  `mark` succeeds with the verdict as an alert span, and under the default only records it
+  (`backend/tests/evidence.rs`).
 - A2A adapter, the console: the agent card gets an **A2A** tab with the switch that publishes
   the agent (admins; disabled for an external agent, with the reason), the addresses of its card,
   its well-known card and its JSON-RPC endpoint under the console's origin with a copy each, and

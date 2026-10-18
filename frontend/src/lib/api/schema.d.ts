@@ -4368,6 +4368,83 @@ export interface components {
             question: string;
         };
         /**
+         * @description What the verifier found about an output: stored on the node run
+         *     (`NodeRun.evidence`) and summarised on its last `llm_call` span.
+         */
+        Evidence: {
+            /** @description Distinct ids cited that the node was given (`doc:…`), first cited first. */
+            cited: string[];
+            /** @description Claims that cite at least one thing the node was given. */
+            cited_claims: number;
+            /**
+             * @description The sentences, bullets and table rows of the prose (headings, quotes,
+             *     code and the sources section aside).
+             */
+            claims: number;
+            /**
+             * Format: double
+             * @description Claims citing what the node was given, over the claims not declared the
+             *     model's own; 0 to 1.
+             */
+            coverage: number;
+            /** @description Claims the model declared its own (`[assumption]`) and cited nothing for. */
+            declared_claims: number;
+            /** @description How many things the node was given. */
+            given: number;
+            /**
+             * Format: double
+             * @description The coverage a verified output needed under the policy in force.
+             */
+            min_coverage: number;
+            /** @description Distinct ids cited that the node was never given: forged, or another run's. */
+            unknown: string[];
+            verdict: components["schemas"]["EvidenceVerdict"];
+        };
+        /**
+         * @description What the evidence verifier does with an output that is not verified.
+         * @enum {string}
+         */
+        EvidenceAction: "mark" | "reject";
+        /**
+         * @description Evidence-bound outputs (`docs/AGENTSECOPS.md` §2): whether a node's
+         *     output must cite what the node was given, how much of it, and what
+         *     happens when it does not.
+         */
+        EvidenceRule: {
+            action: components["schemas"]["EvidenceAction"] | null;
+            /**
+             * Format: double
+             * @description The share of claims that must cite what was given for an output to be
+             *     verified, 0 to 1; `null` inherits (default 0.8).
+             */
+            min_coverage: number | null;
+            /**
+             * @description Whether the verifier acts on the verdict; `null` inherits (default: off,
+             *     the verdict is only recorded).
+             */
+            required: boolean | null;
+        };
+        /**
+         * @description Evidence-bound outputs, once resolved: whether the verifier acts, the
+         *     coverage a verified output needs, and what happens below it.
+         */
+        EvidenceRules: {
+            /** @default mark */
+            action: components["schemas"]["EvidenceAction"];
+            /**
+             * Format: double
+             * @default 0.8
+             */
+            min_coverage: number;
+            /** @default false */
+            required: boolean;
+        };
+        /**
+         * @description How much of an output rests on what the node was given.
+         * @enum {string}
+         */
+        EvidenceVerdict: "verified" | "partial" | "unverified";
+        /**
          * @description Which executor runs a node.
          * @enum {string}
          */
@@ -5182,6 +5259,7 @@ export interface components {
             /** @description The classifications of the data the node was given. */
             context_labels: components["schemas"]["DataLabel"][];
             error: string | null;
+            evidence: components["schemas"]["Evidence"] | null;
             executor: components["schemas"]["Executor"];
             /** Format: date-time */
             finished_at: string | null;
@@ -5559,6 +5637,7 @@ export interface components {
             alerts: components["schemas"]["AlertRule"];
             dlp: components["schemas"]["DlpRule"];
             egress: components["schemas"]["ListRule"];
+            evidence: components["schemas"]["EvidenceRule"];
             injection: components["schemas"]["InjectionRule"];
             /** @description The classifications agents under this policy may read; `null` inherits. */
             labels: components["schemas"]["DataLabel"][] | null;
@@ -5834,6 +5913,14 @@ export interface components {
             dlp: components["schemas"]["DlpRules"];
             /** @default [] */
             egress_denied: string[];
+            /**
+             * @default {
+             *       "action": "mark",
+             *       "min_coverage": 0.8,
+             *       "required": false
+             *     }
+             */
+            evidence: components["schemas"]["EvidenceRules"];
             /**
              * @default {
              *       "action": "flag",

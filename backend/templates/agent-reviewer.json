@@ -20,7 +20,8 @@
   "policy": {
     "tools": { "allow": null, "deny": ["write_file", "make_docx", "run_python", "spawn_subagent"] },
     "alerts": { "denials_per_run": 1, "risk_score": 5, "quarantine_risk_score": 8 },
-    "dlp": { "secrets": "deny" }
+    "dlp": { "secrets": "deny" },
+    "evidence": { "required": true, "action": "mark" }
   },
   "knowledge": [],
   "questions": [

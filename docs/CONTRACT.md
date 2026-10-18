@@ -430,6 +430,25 @@ interface NodeRun {
   output_preview: string | null;
   policy_versions: PolicyVersions; // the policy versions that governed the node, by level
   context_labels: DataLabel[]; // the classifications of the data the node was given (its context and its upstream nodes')
+  evidence: Evidence | null; // what the verifier found about the output; null until the node answered, and for one that produced no output
+}
+// Evidence-bound outputs (AGENTSECOPS §2): once a node answered, the backend finds the citations in
+// its output and its Markdown artifacts (ids inside code are not citations), checks each against what
+// the `data_read` span lists (an id the node was never given is forged), approximates the claims as
+// the sentences, bullets and table rows of the prose (headings, block quotes, code and a `Sources`-like
+// section aside), and reads a coverage figure and a verdict off them. A claim ending with
+// `[assumption]` (or `[own reasoning]`, `[inference]`) is the model's own: counted apart, not cited.
+type EvidenceVerdict = "verified" | "partial" | "unverified";
+interface Evidence {
+  verdict: EvidenceVerdict; // verified: coverage at least the policy's `min_coverage` and nothing forged; unverified: no claim cites what was given; partial: anything between, or a forged id
+  coverage: number; // 0–1: claims citing what the node was given, over the claims not declared the model's own (0 when there are none)
+  claims: number; // sentences, bullets and table rows found
+  cited_claims: number; // claims citing at least one thing the node was given
+  declared_claims: number; // claims the model declared its own and cited nothing for
+  cited: string[]; // distinct ids cited that the node was given, `doc:…` | `mem:…` | `node:…` | `fact:…`, first cited first (at most 64)
+  unknown: string[]; // distinct ids cited that the node was never given (at most 64)
+  given: number; // how many things the node was given
+  min_coverage: number; // the threshold the verdict was read against (the resolved policy's; 0.8 by default)
 }
 interface Run {
   id: string;
@@ -504,7 +523,8 @@ interface Span {
 }
 // data_read (backend, before a node runs): attributes {document_chunk_ids, memory_ids, upstream_node_ids, citation_ids, documents, memories, chars_saved}; `citation_ids` are the ids the model was told to cite, `doc:<chunk id>`, `mem:<id>`, `node:<id>` (and `fact:<id>` once a node is given ontology facts), in that order
 // llm_call (built-in executor): attributes {provider, model, tokens_in, tokens_out, tokens_cached, stop_reason, duration_ns}
-// policy (backend): attributes {decision: allow|deny|mismatch, rule, reason, action, policy_version, …}: the model allow-list before dispatch (name: the model), what the context builder withheld (name "context": withheld_document_chunk_ids, withheld_memory_ids, withheld_by_labels|topics|namespaces), a quarantine (rule "quarantine"), and every re-check disagreement (name "policy_mismatch": span_id, principal)
+// The node's last llm_call span (the built-in executor's one call; the agent runtime's last turn) also carries the verdict on the output: {evidence: EvidenceVerdict, evidence_coverage (whole percent), evidence_claims, evidence_cited_claims, evidence_declared_claims, evidence_given, evidence_cited_ids, evidence_unknown_ids}
+// policy (backend): attributes {decision: allow|deny|mismatch, rule, reason, action, policy_version, …}: the model allow-list before dispatch (name: the model), what the context builder withheld (name "context": withheld_document_chunk_ids, withheld_memory_ids, withheld_by_labels|topics|namespaces), a quarantine (rule "quarantine"), every re-check disagreement (name "policy_mismatch": span_id, principal), and, under a policy whose `evidence.required` is on, the verdict on the output (name "evidence", action "evidence": decision allow when verified, alert under `action: mark`, deny under `reject`; rule evidence.required when nothing rests on evidence, evidence.min_coverage when not enough does or an id was forged; the same evidence_* attributes as the llm_call span, plus turn_span_id and evidence_action)
 // llm_call, tool_call, spawn, policy (agent runtime): see §8
 interface TracePage {
   spans: Span[];
@@ -878,7 +898,9 @@ interface PolicyDocument {
     labels: Partial<Record<DataLabel, { artifacts: boolean | null; egress_hosts: string[] | null }>>; // where content derived from a label may go (defaults: confidential stays an artifact and never leaves to a host; restricted leaves in no form)
   };
   injection: { action: InjectionAction | null; model_check: boolean | null }; // default flag, no model check
+  evidence: { required: boolean | null; min_coverage: number | null; action: EvidenceAction | null }; // evidence-bound outputs: whether the verdict is acted on (default off: only recorded), the share of claims that must cite what was given (0–1, default 0.8), and what an output that falls short means for its node (default mark)
 }
+type EvidenceAction = "mark" | "reject"; // mark: the verdict is a `policy` span of decision `alert` and the node succeeds; reject: the node fails with the verdict as its error and its output is not handed on
 interface Policy {
   id: string;
   workspace_id: string;
@@ -903,6 +925,7 @@ interface Rules {
   alerts: { risk_score: number | null; quarantine_risk_score: number | null; denials_per_run: number | null; novelty: number | null };
   dlp: { secrets: RuleAction; pii: { enabled: boolean; kinds: PiiKind[]; keywords: string[]; action: RuleAction }; labels: Record<DataLabel, { artifacts: boolean; egress_hosts: string[] | null }> };
   injection: { action: InjectionAction; model_check: boolean };
+  evidence: { required: boolean; min_coverage: number; action: EvidenceAction }; // required once any level requires it, the highest coverage of every level, reject once any level says so
   versions: PolicyVersions;
 }
 type ApprovalStatus = "pending" | "approved" | "denied" | "expired";
