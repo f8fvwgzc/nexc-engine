@@ -9,6 +9,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Single sign-on tests against an OpenID Connect provider in process (`backend/tests/common/oidc.rs`:
+  axum serving discovery, a key set of two RSA keys and a P-256 key made at start, a token
+  endpoint that checks the client's HTTP Basic credentials, the redirect URI and the PKCE
+  verifier, and userinfo), driving the whole browser trip through the real router
+  (`backend/tests/oidc.rs`): an account created at the first sign-in; an existing account linked
+  by a verified address, and not by an unverified one nor a second identity; a bad signature,
+  another audience, several audiences without `azp`, an expired, future, stale or not-yet-valid
+  token, another issuer, a nonce mismatch, `alg: none` and HS256 (with the client secret too) all
+  refused; a state replayed, finished in another browser, older than ten minutes, made up or
+  declined at the provider; key rotation with one refetch and none for a made-up key id; ES256;
+  the admin groups and the workspace mapping giving roles and taking back only what they gave,
+  groups from userinfo; password sign-in off with the break-glass administrator still let in;
+  `return_to` never leaving the site; a suspended account refused; `GET /auth/providers` and
+  `GET /auth/identities`. `backend/tests/worst_case.rs` sends hostile values in every parameter
+  and cookie of the two routes (every answer a redirect to the provider or to this site), races
+  eight callbacks for one state (one session), and purges what expired sign-ins left. A vitest
+  renders the login page in its three states, the break-glass form and an `sso_error`.
 - Single sign-on in the console: `GET /auth/providers` (public) says how one signs in here
   (passwords or not, registration or not, the provider and its name), and the login page shows
   "Continue with" and the provider's name, with a key icon, above the password form when single
