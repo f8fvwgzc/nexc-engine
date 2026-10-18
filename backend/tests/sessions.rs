@@ -338,6 +338,27 @@ async fn a_waiting_approval_shows_on_the_tree_until_it_is_decided(pool: PgPool) 
     );
 }
 
+/// The run's tree once `ready` holds, or after ten seconds (spans reach the database a moment
+/// after the stream announced them).
+async fn tree_once(app: &TestApp, token: &str, rid: &str, ready: impl Fn(&Value) -> bool) -> Value {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let (status, session) = call(
+            app,
+            Method::GET,
+            &format!("/runs/{rid}/sessions"),
+            token,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{session}");
+        if ready(&session) || std::time::Instant::now() > deadline {
+            return session;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
 async fn a_sub_agent_is_stopped_while_the_run_goes_on(pool: PgPool) {
     let (url, seen) = fake_grpc_runtime().await;
@@ -381,16 +402,12 @@ async fn a_sub_agent_is_stopped_while_the_run_goes_on(pool: PgPool) {
         }
     }
     let spawn_id = spawn_id.unwrap();
-    // While it works, the tree says so and offers the stop.
-    let (status, session) = call(
-        &app,
-        Method::GET,
-        &format!("/runs/{rid}/sessions"),
-        &token,
-        None,
-    )
+    // While it works, the tree says so and offers the stop. A span is fanned out before it is
+    // written, so the tree is read until it holds the researcher.
+    let session = tree_once(&app, &token, &rid, |s| {
+        s["nodes"][0]["agents"][0]["children"][0]["status"] == "running"
+    })
     .await;
-    assert_eq!(status, StatusCode::OK, "{session}");
     let researcher = &session["nodes"][0]["agents"][0]["children"][0];
     assert_eq!(researcher["status"], "running", "{researcher}");
     assert_eq!(researcher["cancellable"], true);
