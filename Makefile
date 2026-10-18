@@ -148,7 +148,7 @@ prove-gateway: ## Gateway overhead per call (target p99 < 1 ms, the tool exclude
 prove-api: ## Every public GET and the main writes under 64 concurrent callers, plus the three gRPC services: p50/p99/max per endpoint against the targets (docs/PERFORMANCE.md; needs PostgreSQL: make db-up)
 	@$(LOAD_ENV) export DATABASE_URL="$${DATABASE_URL:-$$NEXC_DATABASE_URL}"; \
 	  $(CARGO) test --release --locked --manifest-path $(BACKEND_MANIFEST) --test api_latency prove_api -- --ignored --nocapture --test-threads=1 2>&1 \
-	  | grep '^prove-api:' | sed 's/^prove-api: //'
+	  | sed 's/^test [a-z_]* \.\.\. //' | grep '^prove-api:' | sed 's/^prove-api: //'
 
 test-worst-case: ## Every documented route against missing/forged tokens, outsiders, hostile input, races and a 20,000-issue workspace
 	cd backend && cargo test --test worst_case

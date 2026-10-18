@@ -53,6 +53,50 @@ jobs:
       - name: Test
         run: cargo test --locked
 
+  api-latency:
+    name: API latency smoke (make prove-api, reduced)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: nexc
+          POSTGRES_PASSWORD: nexc-ci-password
+          POSTGRES_DB: nexc
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U nexc -d nexc"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      NEXC_DATABASE_URL: postgres://nexc:nexc-ci-password@localhost:5432/nexc
+      DATABASE_URL: postgres://nexc:nexc-ci-password@localhost:5432/nexc
+      # A shared runner: fewer callers and requests, and the targets scaled, so the gate catches a
+      # regression of an order of magnitude without failing on the runner's noise.
+      NEXC_PROVE_API_CALLERS: "8"
+      NEXC_PROVE_API_REQUESTS: "4"
+      NEXC_PROVE_API_ROUNDS: "1"
+      NEXC_PROVE_API_TARGET_SCALE: "10"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.99.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+          key: release
+      - name: Generate .env
+        run: scripts/init-env.sh
+      - name: make prove-api
+        run: make prove-api | tee prove-api.md
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## make prove-api (${NEXC_PROVE_API_CALLERS} callers × ${NEXC_PROVE_API_REQUESTS} requests, targets ×${NEXC_PROVE_API_TARGET_SCALE})"
+            echo
+            cat prove-api.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
   frontend:
     name: Frontend (React)
     runs-on: ubuntu-24.04
@@ -125,6 +169,8 @@ jobs:
             --set runtime.grpcPort=9095 > /dev/null
       - name: shellcheck
         run: shellcheck -x scripts/*.sh
+      - name: Grafana dashboard is valid JSON
+        run: python3 -m json.tool deploy/grafana/nexc-engine.json > /dev/null
       - name: hadolint
         run: |
           for file in backend/Dockerfile frontend/Dockerfile agent-runtime/Dockerfile; do

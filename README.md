@@ -332,6 +332,9 @@ the final message. Outside Docker run Symphony yourself with
   their own account.
 - Every documented route is tested against missing, forged and other people's tokens, hostile
   input, races and a 20,000-issue workspace (`make test-worst-case`).
+- Every public read and the main writes are measured under 64 concurrent callers, with the three
+  gRPC services, against targets that gate CI (`make prove-api`); the table and the machine it
+  was taken on are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 - What the software gives, and does not give, a GDPR or HIPAA case is laid out in
   [docs/INFRASTRUCTURE.md](docs/INFRASTRUCTURE.md).
 
