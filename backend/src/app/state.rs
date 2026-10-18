@@ -13,6 +13,7 @@ use crate::engine::Engine;
 use crate::engine::executor::symphony::SymphonyBridge;
 use crate::http::middleware::rate_limit::RateLimiters;
 use crate::llm::LlmProvider;
+use crate::llm::breaker::CircuitBreaker;
 use crate::llm::claude_code::ClaudeCodeProvider;
 use crate::llm::router::ProviderRouter;
 use crate::llm::service::LlmService;
@@ -56,6 +57,8 @@ pub struct AppState {
     pub ontology: Option<Arc<dyn OntologyBackend>>,
     /// The channel to the runtime's gRPC endpoint (`NEXC_RUNTIME_PROTOCOL=grpc`).
     pub runtime_grpc: Option<Channel>,
+    /// The channel to the OTLP collector (`NEXC_OTLP_ENDPOINT`), kept for the life of the process.
+    pub otlp_channel: Option<Channel>,
     /// The tools gateway's outbound HTTP client (no redirects of its own).
     pub gateway_http: reqwest::Client,
     /// The MCP server registrations the gateway read lately.
@@ -76,19 +79,29 @@ impl AppState {
             settings.claude_bin.clone(),
             settings.data_dir.join("claude-code"),
         );
-        let router = Arc::new(ProviderRouter::new(
-            http.clone(),
-            settings.llm_fallbacks,
-            claude_code,
-        ));
+        let metrics = Arc::new(Metrics::default());
+        let router = Arc::new(
+            ProviderRouter::new(http.clone(), settings.llm_fallbacks, claude_code).with_breaker(
+                CircuitBreaker::new(
+                    settings.llm_breaker_failures,
+                    settings.llm_breaker_open,
+                    metrics.clone(),
+                ),
+            ),
+        );
         let ontology: Option<Arc<dyn OntologyBackend>> = match &settings.onto_url {
             Some(url) => {
                 let token = settings.onto_token.as_ref().map(|t| t.expose().as_str());
-                Some(Arc::new(GrpcOntology::new(url, token)?))
+                Some(Arc::new(GrpcOntology::with_channel(
+                    url,
+                    token,
+                    &settings.grpc_channel(),
+                    metrics.clone(),
+                )?))
             }
             None => None,
         };
-        let state = Self::with_provider(settings, db, http, router)?;
+        let state = Self::with_provider_and_metrics(settings, db, http, router, metrics)?;
         Ok(match ontology {
             Some(backend) => state.with_ontology(backend),
             None => state,
@@ -108,18 +121,34 @@ impl AppState {
         http: reqwest::Client,
         provider: Arc<dyn LlmProvider>,
     ) -> anyhow::Result<Self> {
-        let metrics = Arc::new(Metrics::default());
+        Self::with_provider_and_metrics(settings, db, http, provider, Arc::new(Metrics::default()))
+    }
+
+    fn with_provider_and_metrics(
+        settings: Settings,
+        db: PgPool,
+        http: reqwest::Client,
+        provider: Arc<dyn LlmProvider>,
+        metrics: Arc<Metrics>,
+    ) -> anyhow::Result<Self> {
         let hub = Arc::new(Hub::default());
+        let channel = settings.grpc_channel();
         let runtime_grpc = match settings.runtime_protocol {
-            RuntimeProtocol::Grpc => Some(crate::engine::executor::runtime_grpc::channel(
+            RuntimeProtocol::Grpc => Some(crate::engine::executor::runtime_grpc::channel_with(
                 &settings.runtime_grpc_url,
+                &channel,
             )?),
             RuntimeProtocol::Ndjson => None,
+        };
+        let otlp_channel = match &settings.otlp_endpoint {
+            Some(endpoint) => Some(crate::otlp::channel_with(endpoint, &channel)?),
+            None => None,
         };
         let firewall_signer = Arc::new(Signer::from_seed(settings.firewall_signing_key.expose())?);
         Ok(AppState {
             caches: Arc::new(Caches::new(settings.cache_ttl, metrics.clone())),
             runtime_grpc,
+            otlp_channel,
             gateway_http: crate::gateway::http_client()?,
             gateway_registry: Arc::default(),
             firewall_signer,

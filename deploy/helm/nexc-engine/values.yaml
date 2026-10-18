@@ -75,9 +75,22 @@ backend:
   # The A2A adapter: the longest one outbound task may take (the remote agent's work included).
   a2a:
     timeoutSecs: 120
+  # HTTP/2 keepalive of the gRPC channels the backend opens (runtime, onto-intelli, OTLP) and of
+  # the Agent Firewall server: a PING every keepaliveSecs, the connection dropped after
+  # keepaliveTimeoutSecs without an answer; poolSize connections per channel. Keep the interval
+  # under the idle timeout of whatever sits between the pods (a mesh sidecar, a cloud NAT).
+  grpc:
+    keepaliveSecs: 30
+    keepaliveTimeoutSecs: 10
+    poolSize: 2
   # Hot-read caches: the longest an entry lives; writes drop entries on every replica through
   # PostgreSQL NOTIFY. 0 turns them off.
   cacheTtlSecs: 60
+  # The LLM circuit breaker: consecutive provider failures that open a circuit (0 turns it off)
+  # and how long it stays open before a probe.
+  llmBreaker:
+    failures: 5
+    openSecs: 30
   dataStorage: 5Gi
   resources:
     requests: { cpu: 200m, memory: 256Mi }

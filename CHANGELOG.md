@@ -59,6 +59,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the table: `GET /workspaces/{wid}/policies/resolve` p50 4.2 ms with the cache, 12.6 ms without;
   guardrails 3.3 ms against 5.4 ms; the workspace credential 5.2 ms against 5.5 ms; an agent card
   13 ms against 14 ms (two queries left: the membership and the recent spans).
+- Service to service. Every gRPC channel the backend opens (the runtime's stream, onto-intelli,
+  the OTLP collector) is built by `rpc::channel`: `NEXC_GRPC_POOL_SIZE` (2) connections per
+  channel with HTTP/2 keepalive (`NEXC_GRPC_KEEPALIVE_SECS` 30, dropped after
+  `NEXC_GRPC_KEEPALIVE_TIMEOUT_SECS` 10 unanswered), requests and streams balanced over them,
+  kept for the life of the process (the OTLP export used to open a channel per pass); the Agent
+  Firewall server pings its clients the same way; `docker-compose.yml` and the Helm chart
+  (`backend.grpc`) carry the settings with the reason to shorten them behind a NAT or a mesh.
+  `nexc_grpc_client_latency_seconds{service, method}` times every call this backend makes (the
+  runtime stream's opening, each onto-intelli call, each OTLP export). Calls to a network LLM
+  provider go through a circuit breaker per endpoint (`llm::breaker`, keyed `provider@base_url`):
+  after `NEXC_LLM_BREAKER_FAILURES` (5) consecutive provider failures (429, 5xx, no connection)
+  the circuit opens and every call fails at once with the retryable `LlmError::CircuitOpen` for
+  `NEXC_LLM_BREAKER_OPEN_SECS` (30), so a dead provider fails fast instead of each call waiting on
+  its own retries and timeouts; then one probe goes out and its outcome closes the circuit or
+  opens it again; `nexc_llm_breaker_total{provider, event}` counts the events and `0` failures
+  turns it off. Tests: the breaker's states, one probe at a time, a dead endpoint opening its
+  circuit through the router while another endpoint's stays closed.
 - A2A adapter, the console: the agent card gets an **A2A** tab with the switch that publishes
   the agent (admins; disabled for an external agent, with the reason), the addresses of its card,
   its well-known card and its JSON-RPC endpoint under the console's origin with a copy each, and

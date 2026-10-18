@@ -206,6 +206,36 @@ pub const ENV_VARS: &[EnvVar] = &[
         "longest a hot-read cache entry lives (agent cards, resolved policies, guardrails, workspace LLM settings); a write drops it on every replica before that; 0 turns the caches off",
     ),
     var(
+        "NEXC_GRPC_KEEPALIVE_SECS",
+        "30",
+        false,
+        "HTTP/2 keepalive PING interval of every gRPC channel (runtime, onto-intelli, OTLP) and of the Agent Firewall server",
+    ),
+    var(
+        "NEXC_GRPC_KEEPALIVE_TIMEOUT_SECS",
+        "10",
+        false,
+        "how long a keepalive PING may go unanswered before the connection is dropped",
+    ),
+    var(
+        "NEXC_GRPC_POOL_SIZE",
+        "2",
+        false,
+        "connections per gRPC client channel; requests and streams are spread over them (1-64)",
+    ),
+    var(
+        "NEXC_LLM_BREAKER_FAILURES",
+        "5",
+        false,
+        "consecutive failed calls to one LLM provider endpoint that open its circuit: calls fail at once until a probe succeeds; 0 turns the breaker off",
+    ),
+    var(
+        "NEXC_LLM_BREAKER_OPEN_SECS",
+        "30",
+        false,
+        "how long an open LLM circuit refuses calls before one probe is let through",
+    ),
+    var(
         "NEXC_GATEWAY_CALLS_PER_MINUTE",
         "120",
         false,

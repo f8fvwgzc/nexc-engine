@@ -3,13 +3,17 @@
 //! [`OntoError`], and the proto messages mapped to the backend's types
 //! ([`convert`], shared with the stub server).
 
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use serde_json::Value;
 use tonic::metadata::MetadataValue;
-use tonic::transport::{Channel, Endpoint};
+use tonic::transport::Channel;
 use tonic::{Code, Request, Status};
+
+use crate::observability::metrics::Metrics;
+use crate::rpc::ChannelSettings;
 
 use super::pb::admin_service_client::AdminServiceClient;
 use super::pb::event_service_client::EventServiceClient;
@@ -36,16 +40,33 @@ pub struct GrpcOntology {
     url: String,
     channel: Channel,
     token: Option<MetadataValue<tonic::metadata::Ascii>>,
+    metrics: Arc<Metrics>,
 }
 
 impl GrpcOntology {
-    /// Connects lazily: the first request opens the connection, and a server
-    /// that is down is a failed request, never a failed start.
+    /// Connects lazily with the default keepalive and pool: the first request
+    /// opens the connection, and a server that is down is a failed request,
+    /// never a failed start.
     pub fn new(url: &str, token: Option<&str>) -> Result<Self, OntoError> {
-        let endpoint = Endpoint::from_shared(url.to_owned())
-            .map_err(|err| OntoError::Invalid(format!("NEXC_ONTO_URL: {err}")))?
-            .connect_timeout(CONNECT_TIMEOUT)
-            .tcp_nodelay(true);
+        Self::with_channel(
+            url,
+            token,
+            &ChannelSettings::default(),
+            Arc::new(Metrics::default()),
+        )
+    }
+
+    /// Connects lazily, the channel kept as `settings` say (`NEXC_GRPC_*`),
+    /// every call timed into `metrics` (`nexc_grpc_client_latency_seconds`).
+    pub fn with_channel(
+        url: &str,
+        token: Option<&str>,
+        settings: &ChannelSettings,
+        metrics: Arc<Metrics>,
+    ) -> Result<Self, OntoError> {
+        let settings = settings.connect_timeout(CONNECT_TIMEOUT);
+        let channel = crate::rpc::channel(url, &settings)
+            .map_err(|err| OntoError::Invalid(format!("NEXC_ONTO_URL: {err}")))?;
         let token = match token {
             Some(token) => Some(
                 format!("Bearer {token}")
@@ -56,9 +77,16 @@ impl GrpcOntology {
         };
         Ok(GrpcOntology {
             url: url.to_owned(),
-            channel: endpoint.connect_lazy(),
+            channel,
             token,
+            metrics,
         })
+    }
+
+    /// Times one call of `service`/`method`.
+    fn timed<T>(&self, service: &str, method: &str, started: Instant, result: T) -> T {
+        self.metrics.grpc_client(service, method, started.elapsed());
+        result
     }
 
     fn request<T>(&self, message: T, workspace: Option<&str>, timeout: Duration) -> Request<T> {
@@ -116,9 +144,10 @@ impl OntologyBackend for GrpcOntology {
 
     async fn health(&self) -> Result<OntoHealth, OntoError> {
         let mut client = AdminServiceClient::new(self.channel.clone());
-        let reply = client
-            .health(self.request((), None, HEALTH_TIMEOUT))
-            .await
+        let started = Instant::now();
+        let reply = client.health(self.request((), None, HEALTH_TIMEOUT)).await;
+        let reply = self
+            .timed("AdminService", "Health", started, reply)
             .map_err(|s| error_of(&s))?
             .into_inner();
         Ok(OntoHealth {
@@ -144,9 +173,12 @@ impl OntologyBackend for GrpcOntology {
         let mut client = EventServiceClient::new(self.channel.clone());
         let messages: Vec<prost_types::Struct> = records.iter().map(json::to_struct).collect();
         let stream = futures::stream::iter(messages);
+        let started = Instant::now();
         let reply = client
             .ingest(self.request(stream, Some(workspace), INGEST_TIMEOUT))
-            .await
+            .await;
+        let reply = self
+            .timed("EventService", "Ingest", started, reply)
             .map_err(|s| error_of(&s))?
             .into_inner();
         Ok(IngestOutcome {
@@ -158,9 +190,12 @@ impl OntologyBackend for GrpcOntology {
     async fn ask(&self, principal: &Principal, req: AskRequest) -> Result<AskAnswer, OntoError> {
         let mut client = IntelliServiceClient::new(self.channel.clone());
         let message = convert::ask_request_to(&req, &principal.workspace);
+        let started = Instant::now();
         let reply = client
             .ask(self.request(message, Some(&principal.workspace), ASK_TIMEOUT))
-            .await
+            .await;
+        let reply = self
+            .timed("IntelliService", "Ask", started, reply)
             .map_err(|s| error_of(&s))?
             .into_inner();
         Ok(convert::ask_answer_from(reply))
@@ -173,9 +208,13 @@ impl OntologyBackend for GrpcOntology {
     ) -> Result<AskStream, OntoError> {
         let mut client = IntelliServiceClient::new(self.channel.clone());
         let message = convert::ask_request_to(&req, &principal.workspace);
+        let started = Instant::now();
         let stream = client
             .ask_stream(self.request(message, Some(&principal.workspace), ASK_TIMEOUT))
-            .await
+            .await;
+        // The stream's opening; its events follow at the model's pace.
+        let stream = self
+            .timed("IntelliService", "AskStream", started, stream)
             .map_err(|s| error_of(&s))?
             .into_inner();
         let events = stream.map(|item| match item {
@@ -188,9 +227,12 @@ impl OntologyBackend for GrpcOntology {
     async fn find(&self, principal: &Principal, q: FindQuery) -> Result<Vec<Entity>, OntoError> {
         let mut client = OntologyServiceClient::new(self.channel.clone());
         let message = convert::find_query_to(&q, &principal.workspace);
+        let started = Instant::now();
         let reply = client
             .find_entities(self.request(message, Some(&principal.workspace), QUERY_TIMEOUT))
-            .await
+            .await;
+        let reply = self
+            .timed("OntologyService", "FindEntities", started, reply)
             .map_err(|s| error_of(&s))?
             .into_inner();
         Ok(reply.entities.iter().map(convert::entity_from).collect())
@@ -203,9 +245,12 @@ impl OntologyBackend for GrpcOntology {
     ) -> Result<Subgraph, OntoError> {
         let mut client = OntologyServiceClient::new(self.channel.clone());
         let message = convert::traverse_query_to(&q);
+        let started = Instant::now();
         let reply = client
             .traverse(self.request(message, Some(&principal.workspace), QUERY_TIMEOUT))
-            .await
+            .await;
+        let reply = self
+            .timed("OntologyService", "Traverse", started, reply)
             .map_err(|s| error_of(&s))?
             .into_inner();
         Ok(convert::subgraph_from(reply))
@@ -218,9 +263,12 @@ impl OntologyBackend for GrpcOntology {
     ) -> Result<Vec<OntoEvent>, OntoError> {
         let mut client = EventServiceClient::new(self.channel.clone());
         let message = convert::event_query_to(&q, &principal.workspace);
+        let started = Instant::now();
         let reply = client
             .list(self.request(message, Some(&principal.workspace), QUERY_TIMEOUT))
-            .await
+            .await;
+        let reply = self
+            .timed("EventService", "List", started, reply)
             .map_err(|s| error_of(&s))?
             .into_inner();
         Ok(reply.events.into_iter().map(convert::event_from).collect())

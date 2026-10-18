@@ -31,6 +31,7 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::domain::trace::{Span, SpanKind, SpanStatus};
 use crate::repo::otlp_export::{self as cursor, OtlpSpan as Exported};
+use crate::rpc::ChannelSettings;
 
 /// How often the cursor is looked at.
 pub const TICK: Duration = Duration::from_secs(2);
@@ -70,12 +71,19 @@ pub struct OtlpStatus {
     pub last_error: Option<String>,
 }
 
-/// A lazily connected channel to the collector.
+/// A lazily connected channel to the collector with the default keepalive
+/// and pool.
 pub fn channel(endpoint: &str) -> anyhow::Result<Channel> {
-    Ok(Endpoint::from_shared(endpoint.to_owned())?
-        .connect_timeout(CONNECT_TIMEOUT)
-        .timeout(EXPORT_TIMEOUT)
-        .connect_lazy())
+    channel_with(endpoint, &ChannelSettings::default())
+}
+
+/// A lazily connected channel to the collector, kept as `settings` say
+/// (`NEXC_GRPC_*`) for the life of the process: every pass exports over it.
+pub fn channel_with(endpoint: &str, settings: &ChannelSettings) -> anyhow::Result<Channel> {
+    Ok(crate::rpc::channel(
+        endpoint,
+        &settings.connect_timeout(CONNECT_TIMEOUT),
+    )?)
 }
 
 /// Starts the worker when a collector is configured; returns whether it did.
@@ -117,7 +125,7 @@ async fn run(state: AppState, shutdown: CancellationToken) {
 /// after each one. A failed export leaves the cursor where the last good
 /// batch moved it.
 pub async fn pass(state: &AppState) -> anyhow::Result<Progress> {
-    let Some(endpoint) = &state.settings.otlp_endpoint else {
+    let Some(channel) = &state.otlp_channel else {
         return Ok(Progress::default());
     };
     let mut progress = Progress::default();
@@ -126,15 +134,21 @@ pub async fn pass(state: &AppState) -> anyhow::Result<Progress> {
         progress.skipped = true;
         return Ok(progress);
     };
-    let mut client = TraceServiceClient::new(channel(endpoint)?);
+    let mut client = TraceServiceClient::new(channel.clone());
     loop {
         let spans = cursor::spans_after(&mut *tx, seq, BATCH).await?;
         let Some(last) = spans.last() else {
             break;
         };
         let last_seq = last.ingested_seq;
-        let request = to_request(&spans);
-        match client.export(request).await {
+        let mut request = tonic::Request::new(to_request(&spans));
+        request.set_timeout(EXPORT_TIMEOUT);
+        let started = std::time::Instant::now();
+        let exported = client.export(request).await;
+        state
+            .metrics
+            .grpc_client("TraceService", "Export", started.elapsed());
+        match exported {
             Ok(reply) => {
                 let rejected = reply
                     .into_inner()

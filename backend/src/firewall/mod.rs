@@ -798,7 +798,9 @@ impl Drop for Running {
 }
 
 /// Serves the firewall, reflection and `grpc.health.v1` on `addr` (port 0
-/// for a free one) until stopped.
+/// for a free one) until stopped, with HTTP/2 keepalive as `NEXC_GRPC_*`
+/// say, so an agent platform's idle connection stays open and a dead one
+/// is noticed.
 pub async fn serve(state: AppState, addr: SocketAddr) -> std::io::Result<Running> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let addr = listener.local_addr()?;
@@ -812,9 +814,13 @@ pub async fn serve(state: AppState, addr: SocketAddr) -> std::io::Result<Running
     health_reporter
         .set_serving::<AgentFirewallServer<FirewallService>>()
         .await;
+    let keepalive = state.settings.grpc_channel();
     let service = FirewallService::new(state);
     let task = tokio::spawn(async move {
         let result = tonic::transport::Server::builder()
+            .tcp_nodelay(true)
+            .http2_keepalive_interval(Some(keepalive.keepalive))
+            .http2_keepalive_timeout(Some(keepalive.keepalive_timeout))
             .add_service(health)
             .add_service(reflection)
             .add_service(AgentFirewallServer::new(service))

@@ -94,6 +94,16 @@ pub struct Settings {
     /// How long a hot-read cache entry may live (zero turns the caches off); a write
     /// drops the entry on every replica before that.
     pub cache_ttl: Duration,
+    /// HTTP/2 keepalive of every gRPC channel and server: how often a PING goes out.
+    pub grpc_keepalive: Duration,
+    /// How long a PING may go unanswered before the connection is dropped.
+    pub grpc_keepalive_timeout: Duration,
+    /// Connections per gRPC client channel (runtime, onto-intelli, OTLP collector).
+    pub grpc_pool_size: usize,
+    /// Consecutive failed provider calls that open the LLM circuit (0 turns the breaker off).
+    pub llm_breaker_failures: u32,
+    /// How long an open circuit refuses calls before one probe is let through.
+    pub llm_breaker_open: Duration,
     /// Gateway calls one agent may make per minute.
     pub gateway_calls_per_minute: u32,
     /// Longest one gateway call may take, the tool included.
@@ -231,6 +241,13 @@ impl Settings {
             otlp_endpoint: r.optional("NEXC_OTLP_ENDPOINT"),
             api_calls_per_minute: r.parse("NEXC_API_CALLS_PER_MINUTE", 600),
             cache_ttl: Duration::from_secs(r.parse("NEXC_CACHE_TTL_SECS", 60)),
+            grpc_keepalive: Duration::from_secs(r.parse("NEXC_GRPC_KEEPALIVE_SECS", 30)),
+            grpc_keepalive_timeout: Duration::from_secs(
+                r.parse("NEXC_GRPC_KEEPALIVE_TIMEOUT_SECS", 10),
+            ),
+            grpc_pool_size: r.parse("NEXC_GRPC_POOL_SIZE", 2),
+            llm_breaker_failures: r.parse("NEXC_LLM_BREAKER_FAILURES", 5),
+            llm_breaker_open: Duration::from_secs(r.parse("NEXC_LLM_BREAKER_OPEN_SECS", 30)),
             gateway_calls_per_minute: r.parse("NEXC_GATEWAY_CALLS_PER_MINUTE", 120),
             gateway_timeout: Duration::from_secs(r.parse("NEXC_GATEWAY_TIMEOUT_SECS", 30)),
             gateway_max_response_bytes: r.parse("NEXC_GATEWAY_MAX_RESPONSE_BYTES", 1024 * 1024),
@@ -264,6 +281,16 @@ impl Settings {
     /// Directory holding run artifacts.
     pub fn artifacts_dir(&self) -> PathBuf {
         self.data_dir.join("artifacts")
+    }
+
+    /// How every gRPC client channel is kept (`NEXC_GRPC_*`).
+    pub fn grpc_channel(&self) -> crate::rpc::ChannelSettings {
+        crate::rpc::ChannelSettings {
+            keepalive: self.grpc_keepalive,
+            keepalive_timeout: self.grpc_keepalive_timeout,
+            pool: self.grpc_pool_size,
+            ..crate::rpc::ChannelSettings::default()
+        }
     }
 
     fn check_invariants(&self, errors: &mut Vec<String>) {
@@ -302,6 +329,23 @@ impl Settings {
         }
         if self.cache_ttl > Duration::from_secs(3600) {
             errors.push("NEXC_CACHE_TTL_SECS must be at most 3600".into());
+        }
+        if self.grpc_keepalive.is_zero() || self.grpc_keepalive > Duration::from_secs(3600) {
+            errors.push("NEXC_GRPC_KEEPALIVE_SECS must be between 1 and 3600".into());
+        }
+        if self.grpc_keepalive_timeout.is_zero()
+            || self.grpc_keepalive_timeout > Duration::from_secs(600)
+        {
+            errors.push("NEXC_GRPC_KEEPALIVE_TIMEOUT_SECS must be between 1 and 600".into());
+        }
+        if !(1..=64).contains(&self.grpc_pool_size) {
+            errors.push("NEXC_GRPC_POOL_SIZE must be between 1 and 64".into());
+        }
+        if self.llm_breaker_failures > 1000 {
+            errors.push("NEXC_LLM_BREAKER_FAILURES must be at most 1000".into());
+        }
+        if self.llm_breaker_open.is_zero() || self.llm_breaker_open > Duration::from_secs(3600) {
+            errors.push("NEXC_LLM_BREAKER_OPEN_SECS must be between 1 and 3600".into());
         }
         if !(1..=10_000).contains(&self.gateway_calls_per_minute) {
             errors.push("NEXC_GATEWAY_CALLS_PER_MINUTE must be between 1 and 10000".into());

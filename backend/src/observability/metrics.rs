@@ -101,6 +101,47 @@ impl Histogram {
     }
 }
 
+/// Histogram with one label set per series.
+#[derive(Debug, Default)]
+pub struct LabeledHistogram(Mutex<BTreeMap<String, Histogram>>);
+
+impl LabeledHistogram {
+    /// Records one observation on the series identified by `labels`.
+    pub fn observe(&self, labels: &[(&str, &str)], value: Duration, bounds: &'static [f64]) {
+        let key = labels
+            .iter()
+            .map(|(k, v)| format!("{k}=\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\"")))
+            .collect::<Vec<_>>()
+            .join(",");
+        self.0
+            .lock()
+            .expect("metrics lock")
+            .entry(key)
+            .or_insert_with(|| Histogram::new(bounds))
+            .observe(value);
+    }
+
+    fn render(&self, out: &mut String, name: &str) {
+        for (labels, histogram) in self.0.lock().expect("metrics lock").iter() {
+            for (bound, bucket) in histogram.bounds.iter().zip(&histogram.buckets) {
+                let _ = writeln!(
+                    out,
+                    "{name}_bucket{{{labels},le=\"{bound}\"}} {}",
+                    bucket.load(Ordering::Relaxed)
+                );
+            }
+            let count = histogram.count.load(Ordering::Relaxed);
+            let _ = writeln!(out, "{name}_bucket{{{labels},le=\"+Inf\"}} {count}");
+            let _ = writeln!(
+                out,
+                "{name}_sum{{{labels}}} {}",
+                histogram.sum_micros.load(Ordering::Relaxed) as f64 / 1e6
+            );
+            let _ = writeln!(out, "{name}_count{{{labels}}} {count}");
+        }
+    }
+}
+
 /// All metrics of the process.
 #[derive(Debug)]
 pub struct Metrics {
@@ -136,6 +177,11 @@ pub struct Metrics {
     pub a2a_tasks: LabeledCounter,
     /// Hot-read cache lookups, by cache and result (`hit`, `miss`).
     pub cache_lookups: LabeledCounter,
+    /// Latency of the gRPC calls this backend makes, by service and method.
+    pub grpc_client_latency: LabeledHistogram,
+    /// The LLM circuit breaker's events, by provider and event
+    /// (`opened`, `half_open`, `closed`, `refused`).
+    pub llm_breaker: LabeledCounter,
 }
 
 impl Default for Metrics {
@@ -161,11 +207,22 @@ impl Default for Metrics {
             alert_deliveries: LabeledCounter::default(),
             a2a_tasks: LabeledCounter::default(),
             cache_lookups: LabeledCounter::default(),
+            grpc_client_latency: LabeledHistogram::default(),
+            llm_breaker: LabeledCounter::default(),
         }
     }
 }
 
 impl Metrics {
+    /// Records one gRPC call this backend made (`nexc_grpc_client_latency_seconds`).
+    pub fn grpc_client(&self, service: &str, method: &str, took: Duration) {
+        self.grpc_client_latency.observe(
+            &[("service", service), ("method", method)],
+            took,
+            &LATENCY_BUCKETS,
+        );
+    }
+
     /// Prometheus text exposition of every metric.
     pub fn render(&self) -> String {
         let mut out = String::new();
@@ -340,6 +397,21 @@ impl Metrics {
         );
         self.cache_lookups
             .render(&mut out, "nexc_cache_lookups_total");
+        header(
+            &mut out,
+            "nexc_grpc_client_latency_seconds",
+            "histogram",
+            "Latency of the gRPC calls this backend makes, by service and method.",
+        );
+        self.grpc_client_latency
+            .render(&mut out, "nexc_grpc_client_latency_seconds");
+        header(
+            &mut out,
+            "nexc_llm_breaker_total",
+            "counter",
+            "LLM circuit breaker events, by provider and event (opened, half_open, closed, refused).",
+        );
+        self.llm_breaker.render(&mut out, "nexc_llm_breaker_total");
         out
     }
 }
@@ -365,5 +437,13 @@ mod tests {
         assert!(text.contains(r#"nexc_http_request_duration_seconds_bucket{le="0.025"} 0"#));
         assert!(text.contains("nexc_http_request_duration_seconds_count 1"));
         assert!(text.contains("nexc_llm_cache_hits_total 1"));
+        m.grpc_client("IntelliService", "Ask", Duration::from_millis(3));
+        let text = m.render();
+        assert!(text.contains(
+            r#"nexc_grpc_client_latency_seconds_bucket{service="IntelliService",method="Ask",le="0.005"} 1"#
+        ));
+        assert!(text.contains(
+            r#"nexc_grpc_client_latency_seconds_count{service="IntelliService",method="Ask"} 1"#
+        ));
     }
 }

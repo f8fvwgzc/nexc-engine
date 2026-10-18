@@ -61,6 +61,14 @@ services:
       # The gRPC stream to the runtime (the default wire); NDJSON stays available for one release.
       NEXC_RUNTIME_PROTOCOL: ${NEXC_RUNTIME_PROTOCOL:-grpc}
       NEXC_RUNTIME_GRPC_URL: http://agent-runtime:8095
+      # HTTP/2 keepalive of the gRPC channels (runtime, onto-intelli, OTLP collector) and of the
+      # Agent Firewall server: a PING every 30 s, the connection dropped 10 s after one goes
+      # unanswered, two connections per channel kept for the life of the process. Containers on
+      # one bridge network keep idle connections; shorten the interval behind a NAT or a load
+      # balancer that times idle connections out sooner.
+      NEXC_GRPC_KEEPALIVE_SECS: ${NEXC_GRPC_KEEPALIVE_SECS:-30}
+      NEXC_GRPC_KEEPALIVE_TIMEOUT_SECS: ${NEXC_GRPC_KEEPALIVE_TIMEOUT_SECS:-10}
+      NEXC_GRPC_POOL_SIZE: ${NEXC_GRPC_POOL_SIZE:-2}
       # The Agent Firewall API stays off unless NEXC_GRPC_ADDR is set in .env; it is never
       # published by this file: put it behind your own mTLS or private network.
       NEXC_SYMPHONY_URL: http://texc-symphony:4000

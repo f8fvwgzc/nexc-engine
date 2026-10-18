@@ -124,6 +124,23 @@ known migrations, whether the agent runtime answers, the server's embedding mode
 queues and caches live. API: `GET /api/v1/admin/infrastructure`,
 `POST /api/v1/admin/infrastructure/check`.
 
+## gRPC channels, keepalive and the LLM circuit breaker
+
+The backend opens one channel to each gRPC service it talks to (the agent runtime, onto-intelli,
+the OTLP collector) when it starts and keeps it for the life of the process: `NEXC_GRPC_POOL_SIZE`
+connections (2), each with HTTP/2 keepalive (`NEXC_GRPC_KEEPALIVE_SECS` 30, dropped after
+`NEXC_GRPC_KEEPALIVE_TIMEOUT_SECS` 10 without an answer), requests and streams spread over them.
+The Agent Firewall server pings its clients the same way. `docker-compose.yml` and the Helm chart
+(`backend.grpc`) carry the three settings with the reason to shorten the interval behind a NAT or
+a mesh. The `make prove-api` table (`docs/PERFORMANCE.md`) measures the round trips.
+
+Calls to a network LLM provider (Anthropic, an OpenAI-compatible server) go through a circuit
+breaker per endpoint: after `NEXC_LLM_BREAKER_FAILURES` (5) consecutive failures that say the
+provider is in trouble (429, 5xx, no connection) the circuit opens and every call to that endpoint
+fails at once with a retryable error for `NEXC_LLM_BREAKER_OPEN_SECS` (30), instead of each
+waiting on its own retries and timeouts; then one probe goes out and its outcome closes the
+circuit or opens it again. `nexc_llm_breaker_total` counts the events; `0` failures turns it off.
+
 ## onto-intelli (optional): the audit's query engine
 
 "Ask the audit" needs an [onto-intelli](https://github.com/f8fvwgzc/onto-intelli) server: the

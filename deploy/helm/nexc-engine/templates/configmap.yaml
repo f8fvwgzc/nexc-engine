@@ -20,7 +20,12 @@ data:
   NEXC_GATEWAY_TIMEOUT_SECS: {{ .Values.backend.gateway.timeoutSecs | quote }}
   NEXC_GATEWAY_MAX_RESPONSE_BYTES: {{ .Values.backend.gateway.maxResponseBytes | quote }}
   NEXC_A2A_TIMEOUT_SECS: {{ .Values.backend.a2a.timeoutSecs | quote }}
+  NEXC_GRPC_KEEPALIVE_SECS: {{ .Values.backend.grpc.keepaliveSecs | quote }}
+  NEXC_GRPC_KEEPALIVE_TIMEOUT_SECS: {{ .Values.backend.grpc.keepaliveTimeoutSecs | quote }}
+  NEXC_GRPC_POOL_SIZE: {{ .Values.backend.grpc.poolSize | quote }}
   NEXC_CACHE_TTL_SECS: {{ .Values.backend.cacheTtlSecs | quote }}
+  NEXC_LLM_BREAKER_FAILURES: {{ .Values.backend.llmBreaker.failures | quote }}
+  NEXC_LLM_BREAKER_OPEN_SECS: {{ .Values.backend.llmBreaker.openSecs | quote }}
   {{- if .Values.backend.grpcAddr }}
   NEXC_GRPC_ADDR: {{ .Values.backend.grpcAddr | quote }}
   {{- end }}
