@@ -131,7 +131,9 @@ flowchart LR
 
 Request flows (plan and run) are described with sequence diagrams in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The cross-component contract (env vars, API, events,
-runtime protocol) is [docs/CONTRACT.md](docs/CONTRACT.md).
+runtime protocol) is [docs/CONTRACT.md](docs/CONTRACT.md). The assessment of nexc-engine against SoftBank's
+AgentSecOps PF, and the roadmap to agent identity, policy, trace and audit, is
+[docs/AGENTSECOPS.md](docs/AGENTSECOPS.md).
 
 ## Repository layout
 
@@ -142,7 +144,7 @@ nexc-engine/
 ├── agent-runtime/       Python agent runtime (FastAPI, Anthropic SDK, python-docx)
 ├── deploy/k8s/          Kustomize manifests (namespace, Postgres, Deployments, Ingress, NetworkPolicies)
 ├── scripts/             init-env, dev, db, doctor and minikube helpers
-├── docs/                CONTRACT.md (source of truth), ARCHITECTURE.md, media/
+├── docs/                CONTRACT.md (source of truth), ARCHITECTURE.md, AGENTSECOPS.md, media/
 ├── .github/             CI, CodeQL, release workflows, issue templates, Dependabot
 ├── docker-compose.yml   Full stack: frontend, backend, agent-runtime, postgres (+ symphony profile)
 ├── docker-compose.demo.yml  Overlay that pins the offline demo provider
