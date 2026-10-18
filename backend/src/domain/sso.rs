@@ -1,0 +1,150 @@
+//! Single sign-on: why a sign-in through the identity provider was refused,
+//! and where the browser may be sent once it succeeded.
+
+/// Where the browser goes after signing in when it named nowhere (or
+/// somewhere it may not go).
+pub const DEFAULT_RETURN_TO: &str = "/app";
+/// Longest path the browser may ask to come back to.
+pub const RETURN_TO_MAX: usize = 512;
+
+/// Why a sign-in through the provider did not happen. The callback sends the
+/// browser to `/login?sso_error=<code>`; the code is all the address carries,
+/// the details go to the server's log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    /// The provider could not be reached or answered something unusable.
+    Unavailable,
+    /// The person (or the provider) declined at the provider.
+    Denied,
+    /// The sign-in was unknown, already used, or took longer than ten minutes.
+    Expired,
+    /// What came back does not verify: state, signature, issuer, audience, time, nonce.
+    Invalid,
+    /// The provider gave no usable e-mail address.
+    NoEmail,
+    /// The provider does not vouch for the address, which this installation requires,
+    /// or which linking it to an existing account needs.
+    UnverifiedEmail,
+    /// An account has this address and is linked to another identity of the provider.
+    EmailTaken,
+    /// The account is suspended.
+    Suspended,
+    /// Something failed on this side; the log says what.
+    Failed,
+}
+
+impl Refusal {
+    /// Every code, as the login page knows them.
+    pub const ALL: [Refusal; 9] = [
+        Refusal::Unavailable,
+        Refusal::Denied,
+        Refusal::Expired,
+        Refusal::Invalid,
+        Refusal::NoEmail,
+        Refusal::UnverifiedEmail,
+        Refusal::EmailTaken,
+        Refusal::Suspended,
+        Refusal::Failed,
+    ];
+
+    /// The code in `/login?sso_error=`.
+    pub fn code(self) -> &'static str {
+        match self {
+            Refusal::Unavailable => "unavailable",
+            Refusal::Denied => "denied",
+            Refusal::Expired => "expired",
+            Refusal::Invalid => "invalid",
+            Refusal::NoEmail => "no_email",
+            Refusal::UnverifiedEmail => "unverified_email",
+            Refusal::EmailTaken => "email_taken",
+            Refusal::Suspended => "suspended",
+            Refusal::Failed => "failed",
+        }
+    }
+
+    /// Where the browser is sent.
+    pub fn location(self) -> String {
+        format!("/login?sso_error={}", self.code())
+    }
+}
+
+/// The path to send the browser to once signed in: `requested` when it is a
+/// path of this site, else [`DEFAULT_RETURN_TO`]. Nothing that a browser
+/// could read as another site passes: not `//host`, not `/\host`, not an
+/// absolute URL, not one with a space, a control character or anything
+/// outside printable ASCII, and not one whose encoded form starts a second
+/// slash or backslash.
+pub fn safe_return_to(requested: Option<&str>) -> String {
+    let Some(path) = requested else {
+        return DEFAULT_RETURN_TO.to_owned();
+    };
+    let lower = path.to_ascii_lowercase();
+    let same_origin = path.len() <= RETURN_TO_MAX
+        && path.starts_with('/')
+        && !path.starts_with("//")
+        && !path.contains('\\')
+        && path.bytes().all(|b| b.is_ascii_graphic())
+        && !lower.starts_with("/%2f")
+        && !lower.starts_with("/%5c")
+        && !lower.contains("%0d")
+        && !lower.contains("%0a")
+        && !lower.starts_with("/api/");
+    if same_origin {
+        path.to_owned()
+    } else {
+        DEFAULT_RETURN_TO.to_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_paths_of_this_site_are_returned_to() {
+        for good in [
+            "/app",
+            "/app/graphs/0190?tab=runs#top",
+            "/app/platform/users",
+        ] {
+            assert_eq!(safe_return_to(Some(good)), good);
+        }
+        for bad in [
+            "https://evil.example",
+            "//evil.example",
+            "///evil.example",
+            "/\\evil.example",
+            "\\\\evil.example",
+            "/%2F%2Fevil.example",
+            "/%5cevil.example",
+            "javascript:alert(1)",
+            "evil.example",
+            "/app\r\nSet-Cookie: x=1",
+            "/app%0d%0aSet-Cookie:x",
+            "/app with space",
+            "/app/ünïcode",
+            "",
+            "/api/v1/auth/logout",
+        ] {
+            assert_eq!(safe_return_to(Some(bad)), DEFAULT_RETURN_TO, "{bad:?}");
+        }
+        assert_eq!(safe_return_to(None), DEFAULT_RETURN_TO);
+        assert_eq!(
+            safe_return_to(Some(&format!("/{}", "a".repeat(600)))),
+            DEFAULT_RETURN_TO
+        );
+    }
+
+    #[test]
+    fn codes_are_distinct_and_url_safe() {
+        let codes: std::collections::HashSet<&str> =
+            Refusal::ALL.iter().map(|r| r.code()).collect();
+        assert_eq!(codes.len(), Refusal::ALL.len());
+        assert!(
+            codes
+                .iter()
+                .all(|c| c.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'))
+        );
+        assert_eq!(Refusal::Expired.location(), "/login?sso_error=expired");
+    }
+}

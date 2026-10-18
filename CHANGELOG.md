@@ -9,6 +9,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Single sign-on with an OpenID Connect provider: `GET /auth/oidc/login` sends the browser to the
+  provider (authorization code flow, PKCE S256, a `state` and a `nonce` kept server-side for ten
+  minutes, single use, bound to the browser by the `nexc_sso` cookie) and
+  `GET /auth/oidc/callback` exchanges the code and verifies the ID token: an RS256 or ES256
+  signature by the provider's key set (kept an hour, fetched again once for a key id it does not
+  hold, at most once a minute; `none` and HS* never pass), `iss`, `aud` (and `azp` with several
+  audiences), `exp` and `iat` with a minute of leeway, and the nonce. Email, verification, name and
+  groups come from the ID token, else from userinfo. Accounts are found by a new `(issuer,
+  subject)` link table (`user_identities`): a first sign-in links an existing account only by a
+  verified address and only when it has no other identity of the provider, else creates the
+  account (no password; invitations accepted only for a verified address). The admin groups give
+  the platform role and the workspace mapping gives workspace roles at every sign-in, and both take
+  back what they gave once the group is gone (the role before is restored; a role changed by hand,
+  a platform role given in the console and a workspace's last owner are left alone); each workspace
+  change is in its audit log, by `system`. The callback starts the session exactly as a password
+  sign-in does and sends the browser to a same-origin `return_to` path (another site, `//host`,
+  `/\host` and encoded slashes fall back to `/app`), with no token in any address; refusals go to
+  `/login?sso_error=<code>`. Suspended accounts are refused; the local second factor is not asked.
+  Sign-ins, links and created accounts are in the account's activity (`sso_signed_in`,
+  `sso_linked`, `sso_provisioned`), and its export lists its identities. With
+  `NEXC_OIDC_ALLOW_LOCAL_LOGIN=false` password sign-in answers 403 except for the break-glass
+  platform administrator, and registration 403. Expired sign-ins are purged with the other
+  short-lived rows; deleting an account erases its identities (`backend/src/engine/sso.rs`,
+  `backend/src/http/handlers/sso.rs`, migration `20261006000080`).
 - Single sign-on settings (OpenID Connect): `NEXC_OIDC_ISSUER` turns it on (unset keeps it off
   and every other `NEXC_OIDC_*` variable is ignored), with `NEXC_OIDC_CLIENT_ID`,
   `NEXC_OIDC_CLIENT_SECRET` (redacted), `NEXC_OIDC_REDIRECT_URL` (default `NEXC_PUBLIC_URL` +

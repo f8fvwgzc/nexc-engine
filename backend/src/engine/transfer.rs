@@ -117,6 +117,7 @@ const TABLES: &[Table] = &[
         // administers, or is suspended on, another installation because they were here.
         overlay: Some(
             r#"{"password_hash": "!", "failed_logins": 0, "locked_until": null, "role": "user",
+                "admin_by_sso": false,
                 "suspended_at": null, "suspended_reason": "", "session_epoch": 0,
                 "session_epoch_at": null, "totp_secret_enc": null, "totp_enabled_at": null,
                 "totp_last_step": null}"#,

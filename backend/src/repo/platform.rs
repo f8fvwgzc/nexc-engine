@@ -237,15 +237,17 @@ pub async fn sole_owner_of(
 }
 
 /// Sets the platform role and ends the account's access tokens. Returns the
-/// new session epoch, or `None` when the role was already that.
+/// new session epoch, or `None` when the role was already that. A role set
+/// here is the console's own: single sign-on's admin groups never take it
+/// back.
 pub async fn set_role(
     db: impl PgExecutor<'_>,
     user_id: Uuid,
     role: Role,
 ) -> Result<Option<i32>, sqlx::Error> {
     sqlx::query_scalar(
-        "UPDATE users SET role = $2, session_epoch = session_epoch + 1, session_epoch_at = now(),
-                updated_at = now()
+        "UPDATE users SET role = $2, admin_by_sso = false, session_epoch = session_epoch + 1,
+                session_epoch_at = now(), updated_at = now()
          WHERE id = $1 AND role <> $2 RETURNING session_epoch",
     )
     .bind(user_id)

@@ -46,7 +46,7 @@ string_enum!(
 
 impl WorkspaceRole {
     /// Privilege rank; higher may do more.
-    fn rank(self) -> u8 {
+    pub fn rank(self) -> u8 {
         match self {
             WorkspaceRole::Owner => 3,
             WorkspaceRole::Admin => 2,

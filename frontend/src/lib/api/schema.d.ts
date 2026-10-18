@@ -841,6 +841,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/oidc/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Where the provider sends the browser back: the code is exchanged, the ID
+         *     token verified, the account found, linked or created, and a session
+         *     started as `POST /auth/login` starts one. The browser then goes to the
+         *     path it asked for, carrying no token. No second factor is asked: the
+         *     provider is the one that authenticates.
+         */
+        get: operations["oidc_callback"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/oidc/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Sends the browser to the provider to sign in. */
+        get: operations["oidc_login"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/password": {
         parameters: {
             query?: never;
@@ -3256,7 +3296,7 @@ export interface components {
          * @description What an entry of an account's security activity records.
          * @enum {string}
          */
-        AccountEventKind: "registered" | "signed_in" | "sign_in_failed" | "password_changed" | "password_reset" | "reset_link_issued" | "sessions_ended" | "suspended" | "reactivated" | "role_changed" | "two_factor_enabled" | "two_factor_disabled";
+        AccountEventKind: "registered" | "signed_in" | "sign_in_failed" | "password_changed" | "password_reset" | "reset_link_issued" | "sessions_ended" | "suspended" | "reactivated" | "role_changed" | "two_factor_enabled" | "two_factor_disabled" | "sso_signed_in" | "sso_linked" | "sso_provisioned";
         /** @description A copy of what the installation holds about one account. */
         AccountExport: {
             account: components["schemas"]["User"];
@@ -3265,7 +3305,8 @@ export interface components {
             /**
              * @description `workspaces`, `teams`, `issues_created`, `issues_assigned`,
              *     `comments`, `graphs`, `documents`, `memories`, `ai_account`, `usage`,
-             *     `security_activity`, `notifications`: each a list of plain objects.
+             *     `security_activity`, `notifications`, `assistant_conversations`,
+             *     `sign_in_identities`: each a list of plain objects.
              */
             sections: Record<string, never>;
             /** @description Sections that hold more than [`EXPORT_SECTION_MAX`] rows and were cut there. */
@@ -9078,6 +9119,15 @@ export interface operations {
                     "application/json": components["schemas"]["Problem"];
                 };
             };
+            /** @description The account is suspended, or password sign-in is off (single sign-on only) and this is not the break-glass administrator */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
             /** @description The account has two-factor sign-in: `errors.code` asks for the code, or says it is wrong */
             422: {
                 headers: {
@@ -9278,6 +9328,95 @@ export interface operations {
             };
         };
     };
+    oidc_callback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The authorization code. */
+                code: string | null;
+                /** @description The `state` of the authorization request; it works once, for ten minutes. */
+                state: string | null;
+                /** @description Set by the provider when the sign-in did not happen there. */
+                error: string | null;
+                /** @description The provider's explanation of `error`; logged, never shown. */
+                error_description: string | null;
+                /** @description The issuer the answer comes from (RFC 9207); when given it must be the configured one. */
+                iss: string | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Signed in: to the `return_to` path given at the start, with the `nexc_refresh` cookie set (the console then calls `POST /auth/refresh`). Not signed in: to `/login?sso_error=` `unavailable` | `denied` | `expired` | `invalid` | `no_email` | `unverified_email` | `email_taken` | `suspended` | `failed` */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Single sign-on is not configured */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    oidc_login: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Where to go once signed in: a path of this site (`/app/...`).
+                 *     Anything else, an address of another site included, is ignored for `/app`.
+                 */
+                return_to: string | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description To the provider's authorization endpoint (authorization code with PKCE S256, a `state` and a `nonce` kept here for ten minutes), with the `nexc_sso` cookie binding the sign-in to this browser. When the provider cannot be reached: to `/login?sso_error=unavailable` */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Single sign-on is not configured */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     change_password: {
         parameters: {
             query?: never;
@@ -9440,7 +9579,7 @@ export interface operations {
                     "application/json": components["schemas"]["AuthResponse"];
                 };
             };
-            /** @description Signups disabled */
+            /** @description Signups disabled, or password sign-in is off and accounts come from single sign-on */
             403: {
                 headers: {
                     [name: string]: unknown;

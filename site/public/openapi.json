@@ -2542,6 +2542,16 @@
               }
             }
           },
+          "403": {
+            "description": "The account is suspended, or password sign-in is off (single sign-on only) and this is not the break-glass administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "422": {
             "description": "The account has two-factor sign-in: `errors.code` asks for the code, or says it is wrong",
             "content": {
@@ -2787,6 +2797,150 @@
         ]
       }
     },
+    "/api/v1/auth/oidc/callback": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Where the provider sends the browser back: the code is exchanged, the ID\ntoken verified, the account found, linked or created, and a session\nstarted as `POST /auth/login` starts one. The browser then goes to the\npath it asked for, carrying no token. No second factor is asked: the\nprovider is the one that authenticates.",
+        "operationId": "oidc_callback",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "description": "The authorization code.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "state",
+            "in": "path",
+            "description": "The `state` of the authorization request; it works once, for ten minutes.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "error",
+            "in": "path",
+            "description": "Set by the provider when the sign-in did not happen there.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "error_description",
+            "in": "path",
+            "description": "The provider's explanation of `error`; logged, never shown.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "iss",
+            "in": "path",
+            "description": "The issuer the answer comes from (RFC 9207); when given it must be the configured one.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "Signed in: to the `return_to` path given at the start, with the `nexc_refresh` cookie set (the console then calls `POST /auth/refresh`). Not signed in: to `/login?sso_error=` `unavailable` | `denied` | `expired` | `invalid` | `no_email` | `unverified_email` | `email_taken` | `suspended` | `failed`"
+          },
+          "404": {
+            "description": "Single sign-on is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/oidc/login": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Sends the browser to the provider to sign in.",
+        "operationId": "oidc_login",
+        "parameters": [
+          {
+            "name": "return_to",
+            "in": "path",
+            "description": "Where to go once signed in: a path of this site (`/app/...`).\nAnything else, an address of another site included, is ignored for `/app`.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "To the provider's authorization endpoint (authorization code with PKCE S256, a `state` and a `nonce` kept here for ten minutes), with the `nexc_sso` cookie binding the sign-in to this browser. When the provider cannot be reached: to `/login?sso_error=unavailable`"
+          },
+          "404": {
+            "description": "Single sign-on is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/auth/password": {
       "post": {
         "tags": [
@@ -2987,7 +3141,7 @@
             }
           },
           "403": {
-            "description": "Signups disabled",
+            "description": "Signups disabled, or password sign-in is off and accounts come from single sign-on",
             "content": {
               "application/json": {
                 "schema": {
@@ -13990,7 +14144,10 @@
           "reactivated",
           "role_changed",
           "two_factor_enabled",
-          "two_factor_disabled"
+          "two_factor_disabled",
+          "sso_signed_in",
+          "sso_linked",
+          "sso_provisioned"
         ]
       },
       "AccountExport": {
@@ -14012,7 +14169,7 @@
           },
           "sections": {
             "type": "object",
-            "description": "`workspaces`, `teams`, `issues_created`, `issues_assigned`,\n`comments`, `graphs`, `documents`, `memories`, `ai_account`, `usage`,\n`security_activity`, `notifications`: each a list of plain objects."
+            "description": "`workspaces`, `teams`, `issues_created`, `issues_assigned`,\n`comments`, `graphs`, `documents`, `memories`, `ai_account`, `usage`,\n`security_activity`, `notifications`, `assistant_conversations`,\n`sign_in_identities`: each a list of plain objects."
           },
           "truncated": {
             "type": "array",

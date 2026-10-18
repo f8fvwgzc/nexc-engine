@@ -31,6 +31,9 @@ const PUBLIC: &[&str] = &[
     "/api/v1/auth/refresh",
     "/api/v1/auth/logout",
     "/api/v1/auth/password/reset",
+    // Single sign-on: the browser is sent to the provider and comes back (404 while it is off).
+    "/api/v1/auth/oidc/login",
+    "/api/v1/auth/oidc/callback",
     // The A2A agent card is for anyone to read (an agent that is not exposed is not found).
     "/.well-known/agent.json",
     "/a2a/agents/{principal}/card",
