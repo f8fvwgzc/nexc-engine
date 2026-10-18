@@ -27,6 +27,7 @@ impl FromRow<'_, PgRow> for Alert {
             created_at: row.try_get("created_at")?,
             acknowledged_at: row.try_get("acknowledged_at")?,
             acknowledged_by: row.try_get("acknowledged_by")?,
+            deliveries: row.try_get("deliveries").unwrap_or(0),
         })
     }
 }
@@ -80,9 +81,11 @@ pub async fn list(
     limit: i64,
 ) -> Result<Vec<Alert>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT * FROM alerts
-         WHERE workspace_id = $1 AND ($2::timestamptz IS NULL OR created_at < $2)
-         ORDER BY created_at DESC, id DESC LIMIT $3",
+        "SELECT a.*, (SELECT count(*) FROM alert_deliveries d
+                      WHERE d.alert_id = a.id AND d.status = 'delivered') AS deliveries
+         FROM alerts a
+         WHERE a.workspace_id = $1 AND ($2::timestamptz IS NULL OR a.created_at < $2)
+         ORDER BY a.created_at DESC, a.id DESC LIMIT $3",
     )
     .bind(workspace_id)
     .bind(before)

@@ -53,6 +53,7 @@ pub const UPLOAD_SLACK: usize = 64 * 1024;
         (name = "policies", description = "Versioned policies and what they resolve to"),
         (name = "approvals", description = "Tool calls that wait for a human"),
         (name = "alerts", description = "What needs a look"),
+        (name = "alert-destinations", description = "Where a workspace's alerts and approvals are sent: signed webhooks and Slack"),
         (name = "orchestrator"), (name = "realtime"), (name = "health"),
         (name = "audit", description = "Ask the audit: questions about what agents did, answered from onto-intelli's facts"),
         (name = "admin", description = "The platform console: every workspace and account, for platform administrators only"),
@@ -138,6 +139,17 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(approvals::deny))
         .routes(routes!(alerts::list))
         .routes(routes!(alerts::acknowledge))
+        .routes(routes!(
+            alert_destinations::list,
+            alert_destinations::create
+        ))
+        .routes(routes!(
+            alert_destinations::get,
+            alert_destinations::update,
+            alert_destinations::delete
+        ))
+        .routes(routes!(alert_destinations::send_test))
+        .routes(routes!(alert_destinations::deliveries))
         .routes(routes!(secops::overview))
         .routes(routes!(secops::spans))
         .routes(routes!(secops::events))
@@ -288,6 +300,10 @@ mod tests {
             "/api/v1/approvals/{id}/deny",
             "/api/v1/artifacts/{aid}/release",
             "/api/v1/workspaces/{wid}/alerts",
+            "/api/v1/workspaces/{wid}/alert-destinations",
+            "/api/v1/workspaces/{wid}/alert-destinations/{id}",
+            "/api/v1/workspaces/{wid}/alert-destinations/{id}/test",
+            "/api/v1/workspaces/{wid}/alert-destinations/{id}/deliveries",
             "/api/v1/workspaces/{wid}/secops/overview",
             "/api/v1/workspaces/{wid}/secops/spans",
             "/api/v1/workspaces/{wid}/secops/events",
@@ -345,9 +361,9 @@ mod tests {
     #[test]
     fn spec_enum_values_match_the_wire_format() {
         use crate::domain::{
-            account, agent, alert, approval, audit, capabilities, cycle, graph, insight, issue,
-            knowledge, memory, plan, platform, policy_document, run, search, settings, trace,
-            usage, user, workspace,
+            account, agent, alert, alert_routing, approval, audit, capabilities, cycle, graph,
+            insight, issue, knowledge, memory, plan, platform, policy_document, run, search,
+            settings, trace, usage, user, workspace,
         };
         use serde_json::Value;
 
@@ -409,10 +425,13 @@ mod tests {
                 "ApprovalStatus" => check::<approval::ApprovalStatus>(values),
                 "AlertKind" => check::<alert::AlertKind>(values),
                 "McpTransport" => check::<crate::domain::mcp::McpTransport>(values),
+                "DestinationKind" => check::<alert_routing::DestinationKind>(values),
+                "DeliveryStatus" => check::<alert_routing::DeliveryStatus>(values),
+                "DeliveryEvent" => check::<alert_routing::DeliveryEvent>(values),
                 _ => continue,
             }
             checked += 1;
         }
-        assert_eq!(checked, 41, "every string enum schema is covered");
+        assert_eq!(checked, 44, "every string enum schema is covered");
     }
 }

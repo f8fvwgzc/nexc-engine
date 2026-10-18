@@ -4,6 +4,7 @@
 pub mod account;
 pub mod agent_templates;
 pub mod agents;
+pub mod alert_destinations;
 pub mod alerts;
 pub mod approvals;
 pub mod artifacts;

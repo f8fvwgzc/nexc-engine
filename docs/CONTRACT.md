@@ -55,6 +55,8 @@ In Docker/K8s the frontend is served by unprivileged nginx on 8080 which proxies
 | `NEXC_GRPC_ADDR`                                                        | — (off)                                                   | backend: where the Agent Firewall API listens (`0.0.0.0:50052`), with reflection and `grpc.health.v1`; unset keeps it off                                                                                                                                                                |
 | `NEXC_FIREWALL_SIGNING_KEY`                                             | — (derived from `NEXC_MASTER_KEY` when unset)             | backend: base64 of 32 bytes, the Ed25519 seed the firewall signs decisions with                                                                                                                                                                                                          |
 | `NEXC_OTLP_ENDPOINT`                                                    | — (off)                                                   | backend: OTLP/gRPC endpoint (`http://host:4317`) the trace spine is exported to; unset keeps it off                                                                                                                                                                                       |
+| `NEXC_PUBLIC_URL`                                                       | `http://localhost:8080`                                   | backend: where the console is reached from outside; the links every alert delivery carries (`/app/secops`, `/app/runs/{id}?span=`, `/app/agents?agent=`)                                                                                                                                |
+| `NEXC_ALERT_ALLOW_PRIVATE_HOSTS`                                        | `false`                                                   | backend: lets alert destinations name private and loopback hosts (development only: a receiver on this machine); otherwise such a URL is refused (422), as the gateway refuses the host                                                                                                   |
 | `NEXC_DB_IMAGE`                                                         | `postgres:17-alpine`                                      | `scripts/db.sh`: image of the dev database. `pgvector/pgvector:pg17` enables HNSW memory search; only for a new volume                                                                                                                                                                   |
 | `NEXC_SYMPHONY_ENABLED`                                                 | `false`                                                   | backend                                                                                                                                                                                                                                                                                  |
 | `NEXC_SYMPHONY_URL`                                                     | `http://localhost:4000`                                   | backend                                                                                                                                                                                                                                                                                  |
@@ -472,6 +474,7 @@ interface Alert {
   created_at: string;
   acknowledged_at: string | null;
   acknowledged_by: string | null;
+  deliveries: number; // alert destinations it was delivered to (alert routing); 0 until the worker sent it
 }
 
 // The trace spine: one span per action of an agent, append-only, hash-chained per run in order of
@@ -624,6 +627,94 @@ interface McpServerInput {
   auth_header?: string; allowed_tools?: string[]; max_label?: DataLabel; // default `internal`
 }
 interface McpCheck { ok: boolean; detail: string; tools: McpTool[]; latency_ms: number }
+
+// Alert routing: where a workspace's alerts and approvals go beyond the console. The URL is kept
+// encrypted (a Slack incoming-webhook URL carries its token) and only its host is shown; the
+// signing secret is generated once, shown once, kept encrypted.
+type DestinationKind = "webhook" | "slack"; // a signed JSON POST | a Slack incoming webhook (Block Kit)
+type DeliveryStatus = "pending" | "delivered" | "failed";
+type DeliveryEvent = "alert.raised" | "approval.requested" | "approval.decided" | "test";
+interface AlertDestination {
+  id: string;
+  workspace_id: string;
+  name: string; // unique in the workspace, ≤100 characters
+  kind: DestinationKind;
+  host: string; // the URL's host; the URL itself is never shown again
+  kinds: AlertKind[]; // alert kinds sent; empty: every kind
+  min_severity: Severity; // the least severity sent
+  include_approvals: boolean; // approvals requested and decided go too
+  enabled: boolean;
+  disabled_reason: string; // why the platform switched it off (50 deliveries in a row failed), else ""
+  failures: number; // deliveries that failed in a row; reset by one that went through
+  last_delivered_at: string | null;
+  last_error: string; // what the last failed delivery said
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+interface IssuedAlertDestination { destination: AlertDestination; secret: string } // `nexc_whs_…`, shown once
+interface AlertDestinationInput {
+  name: string; kind: DestinationKind; url: string; // http(s), no credentials, no private or loopback host
+  kinds?: AlertKind[]; min_severity?: Severity; include_approvals?: boolean; enabled?: boolean; // defaults: [], low, false, true
+}
+interface AlertDestinationPatch { // a field left out stays; enabling clears `failures` and `disabled_reason`
+  name?: string; url?: string; kinds?: AlertKind[]; min_severity?: Severity; include_approvals?: boolean; enabled?: boolean;
+}
+interface AlertDelivery { // one entry of a destination's log
+  id: string; // the idempotency id the receiver saw
+  destination_id: string;
+  event: DeliveryEvent;
+  alert_id: string | null;
+  approval_id: string | null;
+  status: DeliveryStatus;
+  attempts: number;
+  next_attempt_at: string | null; // while pending
+  last_attempt_at: string | null;
+  last_status: number | null; // the HTTP status of the last attempt, when one came back
+  last_error: string;
+  created_at: string;
+  delivered_at: string | null;
+}
+interface DestinationTest { ok: boolean; status: number | null; detail: string; latency_ms: number }
+
+// What a `webhook` destination receives: one `POST` per delivery, `Content-Type: application/json`,
+// `X-Nexc-Signature: sha256=<hex HMAC-SHA256 of the raw body under the destination's secret>` and
+// `X-Nexc-Timestamp: <unix seconds when it was sent>`. `id` is the delivery's idempotency id, the
+// same on every retry; `timestamp` is when the thing happened. Free text (`alert.detail`,
+// `approval.reason`, `approval.decision_reason`) is cut at 4,000 characters. 2xx is delivered;
+// no answer, 408, 429 and 5xx are retried after 30 s, doubling up to an hour, for 24 hours;
+// anything else (3xx included: redirects are not followed) fails for good. One attempt waits
+// 10 s at most. A `slack` destination receives a Block Kit message instead, signed the same way:
+// `{text, attachments: [{color, blocks}]}` with a header (the alert's kind and title, or the
+// approval's tool and outcome), fields (severity, agent, rule, workspace), the detail, and link
+// buttons into the console (no interactive callbacks).
+interface DeliveryEnvelope {
+  id: string;
+  event: DeliveryEvent;
+  timestamp: string;
+  workspace: { id: string; name: string; slug: string };
+  agent: { id: string | null; principal: string; name: string } | null; // null on a test
+  alert?: Alert; // on alert.raised
+  approval?: Approval; // on approval.requested / approval.decided (status says approved, denied or expired)
+  message?: string; // on test
+  links: { console: string; run: string | null; agent: string | null }; // under NEXC_PUBLIC_URL
+}
+// Verifying a delivery, in Python (Flask shown; any framework that gives the raw body works):
+//
+//     import hashlib, hmac
+//
+//     def verify(secret: str, body: bytes, signature: str) -> bool:
+//         expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+//         return hmac.compare_digest(expected, signature)
+//
+//     @app.post("/hooks/nexc")
+//     def hook():
+//         if not verify(SECRET, request.get_data(), request.headers.get("X-Nexc-Signature", "")):
+//             abort(401)
+//         event = request.get_json()
+//         seen_before = event["id"] in processed  # retries carry the same id
+//         ...
+//         return "", 204
 
 interface AgentCard {
   agent: Agent;
@@ -870,6 +961,10 @@ Public: `GET /healthz`, `GET /readyz`, `POST /auth/register`, `POST /auth/login`
 | GET `/approvals/{id}` | — | `Approval` (members of its workspace; others 404) |
 | GET `/workspaces/{wid}/alerts?before=&limit=` | — | `Alert[]` newest first (admins), `before` pages by `created_at`, `limit` 1–200 (default 50) |
 | POST `/alerts/{id}/acknowledge` | — | `Alert` (admins of its workspace; others 404; 409 once acknowledged) |
+| GET/POST `/workspaces/{wid}/alert-destinations` | POST `AlertDestinationInput` | `AlertDestination[]` by name / 201 `IssuedAlertDestination` (admins; members 403; outsiders 404; 409 on a name already taken; 422 on `name` or `url`: not http(s), credentials in it, or a private or loopback host unless `NEXC_ALERT_ALLOW_PRIVATE_HOSTS`; at most 32 destinations). The secret is in the answer once. Audited as `alert_destination_changed` (subject `alerts:<name>`) |
+| GET/PATCH/DELETE `/workspaces/{wid}/alert-destinations/{id}` | PATCH `AlertDestinationPatch` | `AlertDestination` / `AlertDestination` / 204 (admins; members 403; others 404; PATCH 409 on a name taken, 422 on a URL that does not fit). Enabling a destination the platform switched off clears `failures` and `disabled_reason`; removal takes the delivery log with it; every change is audited |
+| POST `/workspaces/{wid}/alert-destinations/{id}/test` | — | `DestinationTest` (admins): sends a `test` event at once and says what the destination answered; logged, audited, not counted toward switching the destination off |
+| GET `/workspaces/{wid}/alert-destinations/{id}/deliveries?limit=` | — | `AlertDelivery[]` newest first, `limit` 1–200 (default 50) (admins): the delivery log, test events included |
 | GET `/workspaces/{wid}/secops/overview` | — | `SecopsOverview` (members and above; guests 403; outsiders 404): what the console's top of page shows, in one call |
 | GET `/workspaces/{wid}/secops/spans?agent=&kind=&tool=&host=&run=&from=&to=&decision=&limit=&before=` | — | `{spans: SecopsSpan[], next: string \| null}` newest first (by id) across every run the caller may open (members and above); `kind` is a `SpanKind`, `decision` one of `allow`, `deny`, `require_approval`, `alert`, `tool` matches `attributes.tool` or the name of a tool call, `host` matches `attributes.egress_host`, `from`/`to` bound `started_at` (RFC 3339, `from` before `to`), `limit` 1–500 (default 100), `before` continues below the previous page's `next`. Unknown kinds, decisions, ids and times are 400 or 422 |
 | GET `/workspaces/{wid}/secops/events` | — | `text/event-stream` (members and above; bearer authenticated, no ticket: read it with `fetch`): every `trace.span` and `alert` event (§6 frames) of every graph the caller may open, as one feed, with `retry: 3000` first and a `heartbeat` every 15 s; graphs created while it is open are picked up within ten seconds. Ends when the account's sessions are ended |
@@ -925,7 +1020,7 @@ Public: `GET /healthz`, `GET /readyz`, `POST /auth/register`, `POST /auth/login`
 | GET `/workspaces/{wid}/map`                                                                                                 | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `WorkspaceMap` (admins and owners): `{entities: [{key, label, count}], relations: [{from, to, label, count}]}`, the kinds of things in the workspace and the ties between them                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | GET `/workspaces/{wid}/map/{kind}?q=&limit=&offset=`                                                                        | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Admins and owners. The things of one kind (`member`, `team`, `project`, `issue`, `graph`, `document`, `agent`) by name: `MapItem[]` = `{kind, id, title, subtitle}`; `limit` 1-50, default 20                                                                                                                                                                                                                                                                                                                                                                                                   |
 | GET `/workspaces/{wid}/map/{kind}/{id}`                                                                                     | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Admins and owners. One thing with what it is tied to: `{item: MapItem, ties: {label, kind, count, items: MapItem[]}[]}`. A tie gives its count and its first 12 items; ties to nothing are left out; `run`, `node`, `memory` and `passage` are only counted, `label`, `cycle` and `topic` only named. 404 for a thing the workspace does not have                                                                                                                                                                                                                                               |
-| GET/POST `/workspaces/{wid}/transfers` | POST `{url, redis_url?}` (`postgres://…`; `redis://…`/`rediss://…`; used once, not stored) | Owners only. POST 202 `Transfer` and moves the workspace to that database in the background: every row (schema prepared with this build's migrations; one target transaction) plus the workspace's files on disk, carried as `workspace_files` rows that the server owning that database writes out when it next starts; with `redis_url`, the handover is recorded there under `nexc:workspace:<wid>`. GET lists `Transfer[]` latest first: `{id, target, redis_target, status: running\|done\|failed, report: [{table, read, written}], error, created_at, finished_at\|null}`. Password hashes, stored API keys, the `Authorization` headers of MCP servers and the API tokens of external agents are not copied (they are entered or issued again on the target); 409 while one is running; in production private and loopback targets are refused (422) | done\ | failed, report: [{table, read, written}], error, created_at, finished_at\ | null}`. Password hashes, stored API keys, the `Authorization` headers of MCP servers and the API tokens of external agents are not copied (they are entered or issued again on the target); 409 while one is running; in production private and loopback targets are refused (422) |
+| GET/POST `/workspaces/{wid}/transfers` | POST `{url, redis_url?}` (`postgres://…`; `redis://…`/`rediss://…`; used once, not stored) | Owners only. POST 202 `Transfer` and moves the workspace to that database in the background: every row (schema prepared with this build's migrations; one target transaction) plus the workspace's files on disk, carried as `workspace_files` rows that the server owning that database writes out when it next starts; with `redis_url`, the handover is recorded there under `nexc:workspace:<wid>`. GET lists `Transfer[]` latest first: `{id, target, redis_target, status: running\|done\|failed, report: [{table, read, written}], error, created_at, finished_at\|null}`. Password hashes, stored API keys, the `Authorization` headers of MCP servers, the API tokens of external agents and the alert destinations with their delivery log are not copied (they are entered, issued or registered again on the target); 409 while one is running; in production private and loopback targets are refused (422) | done\ | failed, report: [{table, read, written}], error, created_at, finished_at\ | null}`. Password hashes, stored API keys, the `Authorization` headers of MCP servers, the API tokens of external agents and the alert destinations with their delivery log are not copied (they are entered, issued or registered again on the target); 409 while one is running; in production private and loopback targets are refused (422) |
 | POST `/workspaces/{wid}/transfers/check` | `{url, redis_url?}` (used once, not stored) | Owners only. "Test connection": 200 `{database_ok, database, redis_ok\|null, redis\|null}` — the database must be reachable and empty of this workspace; Redis is reported only when given (5 s timeout). Nothing is moved |
 | GET `/admin/infrastructure`                                                                                                 | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Platform administrators: `{database: {location, version, size_bytes, pgvector\|null, migrations_applied, migrations_known}, runtime_url, runtime_reachable, runtime_protocol, runtime_grpc: BackendHealth, firewall: {enabled, addr\|null, public_key, open_sessions}, otlp: {enabled, endpoint\|null, reachable, spans_exported, behind, last_exported_at\|null, last_error\|null}, gateway: {calls_per_minute, timeout_secs, max_response_bytes}, embedding_model, ontology: BackendHealth, queue, cache}`                                                                                                                                                                                                                                                                                                        |
 | POST `/admin/infrastructure/check`                                                                                          | `{url}` (`postgres://…` or `redis://…`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | `{reachable, detail, pgvector_available\|null, migrations_applied\|null}`. Nothing is changed; the URL is not kept                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |

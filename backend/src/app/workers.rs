@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 use super::AppState;
 use crate::engine::{knowledge, scheduler};
 use crate::ontology::export;
-use crate::{firewall, orchestrator, otlp, realtime, repo};
+use crate::{alerting, firewall, orchestrator, otlp, realtime, repo};
 
 const HEARTBEAT_EVERY: Duration = Duration::from_secs(10);
 const HOUSEKEEPING_EVERY: Duration = Duration::from_secs(60);
@@ -40,6 +40,7 @@ pub fn spawn(state: &AppState, shutdown: CancellationToken) {
         );
     }
     tokio::spawn(firewall::run(state.clone(), shutdown.clone()));
+    alerting::spawn(state, shutdown.clone());
     tokio::spawn(every(
         HEARTBEAT_EVERY,
         shutdown.clone(),

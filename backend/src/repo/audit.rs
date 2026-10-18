@@ -62,6 +62,29 @@ pub async fn record(
     Ok(())
 }
 
+/// Appends an entry nobody made: the platform acted on its own (a worker
+/// switched a destination off). The actor is `null`, named `system`.
+pub async fn record_system(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    action: AuditAction,
+    subject: &str,
+    detail: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO audit_log (id, workspace_id, actor_id, actor_name, action, subject, detail)
+         VALUES ($1, $2, NULL, 'system', $3, $4, $5)",
+    )
+    .bind(Uuid::now_v7())
+    .bind(workspace_id)
+    .bind(action.as_str())
+    .bind(subject)
+    .bind(detail)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
 /// Entries of a workspace, newest first, older than `before` if given.
 pub async fn list(
     db: impl PgExecutor<'_>,

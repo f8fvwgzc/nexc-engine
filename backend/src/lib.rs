@@ -3,6 +3,7 @@
 //! library; integration tests use it directly.
 #![deny(unsafe_code)]
 
+pub mod alerting;
 pub mod app;
 pub mod cli;
 pub mod config;

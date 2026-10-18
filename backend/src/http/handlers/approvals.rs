@@ -9,6 +9,7 @@ use uuid::Uuid;
 use super::workspaces::{audit, member_of, require};
 use crate::app::AppState;
 use crate::domain::AppError;
+use crate::domain::alert_routing::DeliveryEvent;
 use crate::domain::approval::{Approval, ApprovalStatus, REASON_MAX};
 use crate::domain::audit::AuditAction;
 use crate::domain::validation::{FieldErrors, Validate, check_max_len};
@@ -117,6 +118,7 @@ async fn decide(
         })?;
     // The approvers' inbox entries are settled.
     repo::issues::mark_read_about_approval(&state.db, id).await?;
+    crate::alerting::enqueue_approval(state, &decided, DeliveryEvent::ApprovalDecided).await;
     let action = match status {
         ApprovalStatus::Approved => AuditAction::ApprovalGranted,
         _ => AuditAction::ApprovalDenied,

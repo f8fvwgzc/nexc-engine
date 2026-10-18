@@ -290,6 +290,14 @@ const NOT_COPIED: &[(&str, &str)] = &[
         "agent_api_tokens",
         "the credentials external agents hold toward this server's firewall API; they are issued again on the target",
     ),
+    (
+        "alert_destinations",
+        "their URLs and signing secrets are sealed with this server's key; they are registered again on the target",
+    ),
+    (
+        "alert_deliveries",
+        "the delivery log of this server's alert routing, which stays with its destinations",
+    ),
 ];
 
 /// A transfer is how a workspace takes all of its data with it. Whatever

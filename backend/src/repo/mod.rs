@@ -64,6 +64,8 @@ pub mod account_events;
 pub mod agent_evaluations;
 pub mod agent_tokens;
 pub mod agents;
+pub mod alert_deliveries;
+pub mod alert_destinations;
 pub mod alerts;
 pub mod approvals;
 pub mod artifacts;
