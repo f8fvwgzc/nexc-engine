@@ -294,10 +294,13 @@ pub async fn list(
 
 /// Files an issue with a team. It gets the team's next number.
 #[utoipa::path(post, path = "/workspaces/{wid}/teams/{tid}/issues", tag = "issues", security(("bearer" = [])),
-    params(("wid" = Uuid, Path, description = "Workspace id"), ("tid" = Uuid, Path, description = "Team id")),
+    params(("wid" = Uuid, Path, description = "Workspace id"), ("tid" = Uuid, Path, description = "Team id"),
+        ("Idempotency-Key" = Option<String>, Header, description = "1-255 visible ASCII characters: a retry with the same key and body within 24 hours gets the first response again (`Idempotent-Replayed: true`) instead of a second issue")),
     request_body = CreateIssue,
-    responses((status = 201, body = Issue), (status = 403, body = Problem), (status = 404, body = Problem),
-        (status = 422, body = Problem)))]
+    responses((status = 201, body = Issue), (status = 400, description = "Malformed Idempotency-Key", body = Problem),
+        (status = 403, body = Problem), (status = 404, body = Problem),
+        (status = 409, description = "A request with this Idempotency-Key is still being handled (`Retry-After`)", body = Problem),
+        (status = 422, description = "Invalid fields, or an Idempotency-Key used with another request", body = Problem)))]
 pub async fn create(
     State(state): State<AppState>,
     auth: AuthUser,

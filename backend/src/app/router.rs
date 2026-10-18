@@ -45,11 +45,13 @@ fn cors(state: &AppState) -> CorsLayer {
             header::CONTENT_TYPE,
             header::IF_NONE_MATCH,
             HeaderName::from_static("x-requested-with"),
+            middleware::idempotency::HEADER,
         ])
         .expose_headers([
             header::ETAG,
             header::RETRY_AFTER,
             HeaderName::from_static("x-request-id"),
+            middleware::idempotency::REPLAYED,
         ])
         .max_age(Duration::from_secs(600))
 }
@@ -76,6 +78,12 @@ pub fn build(state: AppState) -> Router {
         )
         .merge(Scalar::with_url("/api/docs", spec).title("nexc-engine API"))
         .fallback(middleware::not_found)
+        // Next to the handlers, where the matched route is known: a retried write with the same
+        // Idempotency-Key gets the first response again.
+        .layer(from_fn_with_state(
+            state.clone(),
+            middleware::idempotency::replay,
+        ))
         // Inside the metrics, so a 304 is counted as one; inside compression, so the tag is the
         // body's, whatever encoding it travels in.
         .layer(from_fn(middleware::etag::conditional_reads))

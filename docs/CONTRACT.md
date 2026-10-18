@@ -113,6 +113,21 @@ In Docker/K8s the frontend is served by unprivileged nginx on 8080 which proxies
   the bodies it keeps (per URL for the page; the persisted lists between visits) and reuses
   the kept body on a 304.
 - Limits: request body 1 MiB (node content max 64 KiB, title max 200 chars, ≤ 500 nodes per graph).
+- Idempotent retries. `POST /graphs/{gid}/runs`, `POST /workspaces/{wid}/teams/{tid}/issues`,
+  `POST /graphs/{gid}/nodes`, `POST /approvals/{id}/approve` and `POST /approvals/{id}/deny`
+  honour an `Idempotency-Key` header (1–255 visible ASCII characters; anything else is 400). The
+  key belongs to the account of the access token and to the method and path it is sent with. The
+  first request with a key is handled and its response kept (`idempotency_keys`: account, route,
+  key, SHA-256 of the body as canonical JSON, status, body, content type, `created_at`); a retry
+  with the same key and the same body within 24 hours gets that response again, status and body
+  as they were, with `Idempotent-Replayed: true`, and has no effect of its own (no second run,
+  issue, node or decision: a decision retried is answered 200, not 409). The same key with another
+  body is 422; a retry while the first request is still being handled is 409 with `Retry-After: 1`
+  (a first request unanswered after 60 s is taken to have died with its replica, and the key is
+  free again). Server errors (5xx) and rate limits (429) are not kept, so their retry runs again;
+  4xx answers are kept like successes. A housekeeping job deletes keys after 24 hours, and a key
+  is free again once it is that old. On other routes the header is ignored. The browser may send
+  it (CORS allows it and exposes `Idempotent-Replayed`).
 
 <!-- #endregion conventions -->
 ## 4. Types (TypeScript notation)

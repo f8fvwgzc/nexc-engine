@@ -8673,7 +8673,10 @@ export interface operations {
     approve: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description 1-255 visible ASCII characters: a retry with the same key and body within 24 hours gets the first response again (`Idempotent-Replayed: true`) instead of 409 */
+                "Idempotency-Key"?: string | null;
+            };
             path: {
                 /** @description Approval id */
                 id: string;
@@ -8694,6 +8697,15 @@ export interface operations {
                     "application/json": components["schemas"]["Approval"];
                 };
             };
+            /** @description Malformed Idempotency-Key */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -8710,7 +8722,7 @@ export interface operations {
                     "application/json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Already decided */
+            /** @description Already decided, or a request with this Idempotency-Key is still being handled */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -8719,6 +8731,7 @@ export interface operations {
                     "application/json": components["schemas"]["Problem"];
                 };
             };
+            /** @description Invalid fields, or an Idempotency-Key used with another request */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -8732,7 +8745,10 @@ export interface operations {
     deny: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description 1-255 visible ASCII characters: a retry with the same key and body within 24 hours gets the first response again (`Idempotent-Replayed: true`) instead of 409 */
+                "Idempotency-Key"?: string | null;
+            };
             path: {
                 /** @description Approval id */
                 id: string;
@@ -8753,6 +8769,15 @@ export interface operations {
                     "application/json": components["schemas"]["Approval"];
                 };
             };
+            /** @description Malformed Idempotency-Key */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -8769,7 +8794,7 @@ export interface operations {
                     "application/json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Already decided */
+            /** @description Already decided, or a request with this Idempotency-Key is still being handled */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -8778,6 +8803,7 @@ export interface operations {
                     "application/json": components["schemas"]["Problem"];
                 };
             };
+            /** @description Invalid fields, or an Idempotency-Key used with another request */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -9943,7 +9969,10 @@ export interface operations {
     create: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description 1-255 visible ASCII characters: a retry with the same key and body within 24 hours gets the first response again (`Idempotent-Replayed: true`) instead of a second node */
+                "Idempotency-Key"?: string | null;
+            };
             path: {
                 /** @description Graph id */
                 gid: string;
@@ -9964,6 +9993,15 @@ export interface operations {
                     "application/json": components["schemas"]["GraphNode"];
                 };
             };
+            /** @description Malformed Idempotency-Key */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -9972,6 +10010,16 @@ export interface operations {
                     "application/json": components["schemas"]["Problem"];
                 };
             };
+            /** @description A request with this Idempotency-Key is still being handled (`Retry-After`) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invalid fields, or an Idempotency-Key used with another request */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -10259,7 +10307,10 @@ export interface operations {
     create: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description 1-255 visible ASCII characters: a retry with the same key and body within 24 hours gets the first response again (`Idempotent-Replayed: true`) instead of a second run */
+                "Idempotency-Key"?: string | null;
+            };
             path: {
                 /** @description Graph id */
                 gid: string;
@@ -10281,6 +10332,15 @@ export interface operations {
                     "application/json": components["schemas"]["Run"];
                 };
             };
+            /** @description Malformed Idempotency-Key */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -10289,7 +10349,16 @@ export interface operations {
                     "application/json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Invalid selection or no LLM API key configured */
+            /** @description A request with this Idempotency-Key is still being handled (`Retry-After`) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invalid selection, no LLM API key configured, or an Idempotency-Key used with another request */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -15338,7 +15407,10 @@ export interface operations {
     create: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description 1-255 visible ASCII characters: a retry with the same key and body within 24 hours gets the first response again (`Idempotent-Replayed: true`) instead of a second issue */
+                "Idempotency-Key"?: string | null;
+            };
             path: {
                 /** @description Workspace id */
                 wid: string;
@@ -15361,6 +15433,15 @@ export interface operations {
                     "application/json": components["schemas"]["Issue"];
                 };
             };
+            /** @description Malformed Idempotency-Key */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -15377,6 +15458,16 @@ export interface operations {
                     "application/json": components["schemas"]["Problem"];
                 };
             };
+            /** @description A request with this Idempotency-Key is still being handled (`Retry-After`) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invalid fields, or an Idempotency-Key used with another request */
             422: {
                 headers: {
                     [name: string]: unknown;

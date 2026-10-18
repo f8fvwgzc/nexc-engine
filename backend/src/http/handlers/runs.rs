@@ -54,11 +54,15 @@ impl Validate for CreateRun {
 
 /// Queues a run; progress streams over SSE (`run.*`, `node.*` events).
 #[utoipa::path(post, path = "/graphs/{gid}/runs", tag = "runs", security(("bearer" = [])),
-    params(("gid" = Uuid, Path, description = "Graph id")), request_body = CreateRun,
+    params(("gid" = Uuid, Path, description = "Graph id"),
+        ("Idempotency-Key" = Option<String>, Header, description = "1-255 visible ASCII characters: a retry with the same key and body within 24 hours gets the first response again (`Idempotent-Replayed: true`) instead of a second run")),
+    request_body = CreateRun,
     responses(
         (status = 202, description = "Run queued", body = Run),
+        (status = 400, description = "Malformed Idempotency-Key", body = Problem),
         (status = 404, body = Problem),
-        (status = 422, description = "Invalid selection or no LLM API key configured", body = Problem),
+        (status = 409, description = "A request with this Idempotency-Key is still being handled (`Retry-After`)", body = Problem),
+        (status = 422, description = "Invalid selection, no LLM API key configured, or an Idempotency-Key used with another request", body = Problem),
     ))]
 pub async fn create(
     State(state): State<AppState>,

@@ -77,6 +77,7 @@ pub mod cycles;
 pub mod edges;
 pub mod external_runs;
 pub mod graphs;
+pub mod idempotency;
 pub mod insight;
 pub mod issues;
 pub mod knowledge;

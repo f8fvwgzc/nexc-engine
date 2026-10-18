@@ -147,9 +147,13 @@ async fn decide(
 
 /// Lets the call go ahead (an approver named by the policy, or a workspace admin).
 #[utoipa::path(post, path = "/approvals/{id}/approve", tag = "approvals", security(("bearer" = [])),
-    params(("id" = Uuid, Path, description = "Approval id")), request_body = Decide,
-    responses((status = 200, body = Approval), (status = 403, body = Problem), (status = 404, body = Problem),
-        (status = 409, description = "Already decided", body = Problem), (status = 422, body = Problem)))]
+    params(("id" = Uuid, Path, description = "Approval id"),
+        ("Idempotency-Key" = Option<String>, Header, description = "1-255 visible ASCII characters: a retry with the same key and body within 24 hours gets the first response again (`Idempotent-Replayed: true`) instead of 409")),
+    request_body = Decide,
+    responses((status = 200, body = Approval), (status = 400, description = "Malformed Idempotency-Key", body = Problem),
+        (status = 403, body = Problem), (status = 404, body = Problem),
+        (status = 409, description = "Already decided, or a request with this Idempotency-Key is still being handled", body = Problem),
+        (status = 422, description = "Invalid fields, or an Idempotency-Key used with another request", body = Problem)))]
 pub async fn approve(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -162,9 +166,13 @@ pub async fn approve(
 /// Refuses the call, with a reason the model sees (an approver named by the
 /// policy, or a workspace admin).
 #[utoipa::path(post, path = "/approvals/{id}/deny", tag = "approvals", security(("bearer" = [])),
-    params(("id" = Uuid, Path, description = "Approval id")), request_body = Decide,
-    responses((status = 200, body = Approval), (status = 403, body = Problem), (status = 404, body = Problem),
-        (status = 409, description = "Already decided", body = Problem), (status = 422, body = Problem)))]
+    params(("id" = Uuid, Path, description = "Approval id"),
+        ("Idempotency-Key" = Option<String>, Header, description = "1-255 visible ASCII characters: a retry with the same key and body within 24 hours gets the first response again (`Idempotent-Replayed: true`) instead of 409")),
+    request_body = Decide,
+    responses((status = 200, body = Approval), (status = 400, description = "Malformed Idempotency-Key", body = Problem),
+        (status = 403, body = Problem), (status = 404, body = Problem),
+        (status = 409, description = "Already decided, or a request with this Idempotency-Key is still being handled", body = Problem),
+        (status = 422, description = "Invalid fields, or an Idempotency-Key used with another request", body = Problem)))]
 pub async fn deny(
     State(state): State<AppState>,
     auth: AuthUser,

@@ -146,8 +146,13 @@ impl From<UpdateNode> for NodePatch {
 
 /// Adds a node.
 #[utoipa::path(post, path = "/graphs/{gid}/nodes", tag = "nodes", security(("bearer" = [])),
-    params(("gid" = Uuid, Path, description = "Graph id")), request_body = CreateNode,
-    responses((status = 201, body = GraphNode), (status = 404, body = Problem), (status = 422, body = Problem)))]
+    params(("gid" = Uuid, Path, description = "Graph id"),
+        ("Idempotency-Key" = Option<String>, Header, description = "1-255 visible ASCII characters: a retry with the same key and body within 24 hours gets the first response again (`Idempotent-Replayed: true`) instead of a second node")),
+    request_body = CreateNode,
+    responses((status = 201, body = GraphNode), (status = 400, description = "Malformed Idempotency-Key", body = Problem),
+        (status = 404, body = Problem),
+        (status = 409, description = "A request with this Idempotency-Key is still being handled (`Retry-After`)", body = Problem),
+        (status = 422, description = "Invalid fields, or an Idempotency-Key used with another request", body = Problem)))]
 pub async fn create(
     State(state): State<AppState>,
     auth: AuthUser,

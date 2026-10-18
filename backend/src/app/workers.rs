@@ -119,6 +119,7 @@ async fn housekeeping(state: &AppState) -> anyhow::Result<()> {
     repo::resets::purge_expired(&state.db).await?;
     repo::account_events::purge(&state.db).await?;
     repo::outbox::purge(&state.db).await?;
+    repo::idempotency::purge_expired(&state.db).await?;
     repo::plans::fail_stale(&state.db).await?;
     let purged = repo::span_payloads::purge_expired(&state.db).await?;
     if purged > 0 {

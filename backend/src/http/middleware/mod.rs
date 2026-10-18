@@ -2,6 +2,7 @@
 //! conditional reads (`ETag`), request metrics and rate limiting.
 
 pub mod etag;
+pub mod idempotency;
 pub mod rate_limit;
 
 use std::time::Instant;

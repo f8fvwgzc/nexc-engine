@@ -1994,6 +1994,18 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1-255 visible ASCII characters: a retry with the same key and body within 24 hours gets the first response again (`Idempotent-Replayed: true`) instead of 409",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           }
         ],
         "requestBody": {
@@ -2012,6 +2024,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Approval"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed Idempotency-Key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             }
@@ -2035,7 +2057,7 @@
             }
           },
           "409": {
-            "description": "Already decided",
+            "description": "Already decided, or a request with this Idempotency-Key is still being handled",
             "content": {
               "application/json": {
                 "schema": {
@@ -2045,6 +2067,7 @@
             }
           },
           "422": {
+            "description": "Invalid fields, or an Idempotency-Key used with another request",
             "content": {
               "application/json": {
                 "schema": {
@@ -2078,6 +2101,18 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1-255 visible ASCII characters: a retry with the same key and body within 24 hours gets the first response again (`Idempotent-Replayed: true`) instead of 409",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           }
         ],
         "requestBody": {
@@ -2096,6 +2131,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Approval"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed Idempotency-Key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             }
@@ -2119,7 +2164,7 @@
             }
           },
           "409": {
-            "description": "Already decided",
+            "description": "Already decided, or a request with this Idempotency-Key is still being handled",
             "content": {
               "application/json": {
                 "schema": {
@@ -2129,6 +2174,7 @@
             }
           },
           "422": {
+            "description": "Invalid fields, or an Idempotency-Key used with another request",
             "content": {
               "application/json": {
                 "schema": {
@@ -3718,6 +3764,18 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1-255 visible ASCII characters: a retry with the same key and body within 24 hours gets the first response again (`Idempotent-Replayed: true`) instead of a second node",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           }
         ],
         "requestBody": {
@@ -3740,6 +3798,16 @@
               }
             }
           },
+          "400": {
+            "description": "Malformed Idempotency-Key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "404": {
             "content": {
               "application/json": {
@@ -3749,7 +3817,18 @@
               }
             }
           },
+          "409": {
+            "description": "A request with this Idempotency-Key is still being handled (`Retry-After`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "422": {
+            "description": "Invalid fields, or an Idempotency-Key used with another request",
             "content": {
               "application/json": {
                 "schema": {
@@ -4218,6 +4297,18 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1-255 visible ASCII characters: a retry with the same key and body within 24 hours gets the first response again (`Idempotent-Replayed: true`) instead of a second run",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           }
         ],
         "requestBody": {
@@ -4241,6 +4332,16 @@
               }
             }
           },
+          "400": {
+            "description": "Malformed Idempotency-Key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "404": {
             "content": {
               "application/json": {
@@ -4250,8 +4351,18 @@
               }
             }
           },
+          "409": {
+            "description": "A request with this Idempotency-Key is still being handled (`Retry-After`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "422": {
-            "description": "Invalid selection or no LLM API key configured",
+            "description": "Invalid selection, no LLM API key configured, or an Idempotency-Key used with another request",
             "content": {
               "application/json": {
                 "schema": {
@@ -12446,6 +12557,18 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1-255 visible ASCII characters: a retry with the same key and body within 24 hours gets the first response again (`Idempotent-Replayed: true`) instead of a second issue",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           }
         ],
         "requestBody": {
@@ -12468,6 +12591,16 @@
               }
             }
           },
+          "400": {
+            "description": "Malformed Idempotency-Key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "403": {
             "content": {
               "application/json": {
@@ -12486,7 +12619,18 @@
               }
             }
           },
+          "409": {
+            "description": "A request with this Idempotency-Key is still being handled (`Retry-After`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "422": {
+            "description": "Invalid fields, or an Idempotency-Key used with another request",
             "content": {
               "application/json": {
                 "schema": {

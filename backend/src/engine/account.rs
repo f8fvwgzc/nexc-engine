@@ -234,6 +234,7 @@ pub async fn erase(state: &AppState, user: Uuid) -> Result<(), AppError> {
         "DELETE FROM password_resets WHERE user_id = $1",
         "DELETE FROM account_events WHERE user_id = $1",
         "DELETE FROM recovery_codes WHERE user_id = $1",
+        "DELETE FROM idempotency_keys WHERE user_id = $1",
         "DELETE FROM memories WHERE owner_id = $1 AND scope = 'user'",
         "DELETE FROM graphs WHERE owner_id = $1 AND workspace_id IS NULL",
     ] {
