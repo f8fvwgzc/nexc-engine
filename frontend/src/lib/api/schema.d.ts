@@ -146,6 +146,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/latency": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The latency of every endpoint this instance served in the last five
+         *     minutes, and of the gRPC calls it made (platform administrators).
+         *     Each instance answers for itself; behind a load balancer the answer
+         *     is one replica's.
+         */
+        get: operations["report"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/users": {
         parameters: {
             query?: never;
@@ -378,6 +400,8 @@ export interface paths {
         /**
          * An agent's ID card: who it is, who answers for it, what it may do, what
          *     it has left to spend and what it did last (any member of its workspace).
+         *     The card's core is served from the hot-read cache until the agent is
+         *     written; its recent spans are read live.
          */
         get: operations["get"];
         put?: never;
@@ -2635,6 +2659,8 @@ export interface paths {
         /**
          * The effective policy of an agent: its capabilities narrowed by every
          *     level, the rules beside them, and which level set each rule (members).
+         *     Resolved once per agent and policy version, from the hot-read cache,
+         *     until a policy of the workspace or the agent is written.
          */
         get: operations["resolve"];
         put?: never;
@@ -5097,6 +5123,31 @@ export interface components {
             /** Format: uuid */
             id: string;
             name: string;
+        };
+        /** @description What `GET /admin/latency` answers. */
+        LatencyReport: {
+            /** @description One row per endpoint seen in the window, slowest p99 first. */
+            rows: components["schemas"]["LatencyRow"][];
+            /**
+             * Format: int64
+             * @description The window's length.
+             */
+            window_secs: number;
+        };
+        /** @description One endpoint's figures over the window. */
+        LatencyRow: {
+            /** Format: int64 */
+            count: number;
+            /** Format: double */
+            max_ms: number;
+            /** @description `GET`, `POST`, … for HTTP; `gRPC` for the calls this backend makes. */
+            method: string;
+            /** Format: double */
+            p50_ms: number;
+            /** Format: double */
+            p99_ms: number;
+            /** @description The route template (`/api/v1/issues/{iid}`), or `service/method` for gRPC. */
+            route: string;
         };
         /** @description A level of the hierarchy, as shown in the resolve view. */
         LevelRef: {
@@ -7561,6 +7612,33 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    report: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LatencyReport"];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

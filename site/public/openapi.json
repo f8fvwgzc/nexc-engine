@@ -403,6 +403,40 @@
         ]
       }
     },
+    "/api/v1/admin/latency": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "The latency of every endpoint this instance served in the last five\nminutes, and of the gRPC calls it made (platform administrators).\nEach instance answers for itself; behind a load balancer the answer\nis one replica's.",
+        "operationId": "report",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LatencyReport"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/admin/users": {
       "get": {
         "tags": [
@@ -1228,7 +1262,7 @@
         "tags": [
           "agents"
         ],
-        "summary": "An agent's ID card: who it is, who answers for it, what it may do, what\nit has left to spend and what it did last (any member of its workspace).",
+        "summary": "An agent's ID card: who it is, who answers for it, what it may do, what\nit has left to spend and what it did last (any member of its workspace).\nThe card's core is served from the hot-read cache until the agent is\nwritten; its recent spans are read live.",
         "operationId": "get",
         "parameters": [
           {
@@ -10906,7 +10940,7 @@
         "tags": [
           "policies"
         ],
-        "summary": "The effective policy of an agent: its capabilities narrowed by every\nlevel, the rules beside them, and which level set each rule (members).",
+        "summary": "The effective policy of an agent: its capabilities narrowed by every\nlevel, the rules beside them, and which level set each rule (members).\nResolved once per agent and policy version, from the hot-read cache,\nuntil a policy of the workspace or the agent is written.",
         "operationId": "resolve",
         "parameters": [
           {
@@ -18719,6 +18753,68 @@
           },
           "name": {
             "type": "string"
+          }
+        }
+      },
+      "LatencyReport": {
+        "type": "object",
+        "description": "What `GET /admin/latency` answers.",
+        "required": [
+          "window_secs",
+          "rows"
+        ],
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LatencyRow"
+            },
+            "description": "One row per endpoint seen in the window, slowest p99 first."
+          },
+          "window_secs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The window's length.",
+            "minimum": 0
+          }
+        }
+      },
+      "LatencyRow": {
+        "type": "object",
+        "description": "One endpoint's figures over the window.",
+        "required": [
+          "method",
+          "route",
+          "count",
+          "p50_ms",
+          "p99_ms",
+          "max_ms"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "max_ms": {
+            "type": "number",
+            "format": "double"
+          },
+          "method": {
+            "type": "string",
+            "description": "`GET`, `POST`, … for HTTP; `gRPC` for the calls this backend makes."
+          },
+          "p50_ms": {
+            "type": "number",
+            "format": "double"
+          },
+          "p99_ms": {
+            "type": "number",
+            "format": "double"
+          },
+          "route": {
+            "type": "string",
+            "description": "The route template (`/api/v1/issues/{iid}`), or `service/method` for gRPC."
           }
         }
       },
