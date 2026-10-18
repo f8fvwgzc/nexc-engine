@@ -8,6 +8,7 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from '@/components/ui/chart';
+import { ErrorState } from '@/components/custom-ui/error-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { Agent } from '@/schemas/agent';
 import type { SecopsOverview } from '@/schemas/secops';
@@ -54,6 +55,9 @@ function DenialsByRule({ denials }: { denials: SecopsOverview['denials_fortnight
 
 interface RiskPanelProps {
   overview: SecopsOverview | undefined;
+  /** Why the overview could not be had, while there is none to show. */
+  error?: unknown;
+  onRetry?: () => void;
   agents: Agent[];
   onOpenAgent: (agentId: string) => void;
   className?: string;
@@ -63,7 +67,14 @@ interface RiskPanelProps {
  * Risk over the last fourteen days, one line per scored agent, next to the rules that denied
  * most and the agents scoring highest right now.
  */
-export function RiskPanel({ overview, agents, onOpenAgent, className }: RiskPanelProps) {
+export function RiskPanel({
+  overview,
+  error,
+  onRetry,
+  agents,
+  onOpenAgent,
+  className,
+}: RiskPanelProps) {
   const names = useMemo(() => new Map(agents.map((a) => [a.id, a.name])), [agents]);
   const series = useMemo(
     () => (overview ? riskSeries(overview.risk_history) : { rows: [], agents: [] }),
@@ -81,7 +92,9 @@ export function RiskPanel({ overview, agents, onOpenAgent, className }: RiskPane
   );
   return (
     <Panel id="secops-risk" title="Risk" icon={ChartLineIcon} className={className}>
-      {!overview ? (
+      {!overview && error ? (
+        <ErrorState compact title="Couldn’t load the risk scores" error={error} onRetry={onRetry} />
+      ) : !overview ? (
         <Skeleton className="h-40 rounded-lg" />
       ) : (
         <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">

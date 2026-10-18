@@ -109,7 +109,13 @@ function Console({ workspace }: { workspace: Workspace }) {
               <LiveFeedPanel workspaceId={workspace.id} agents={agents} />
               <ApprovalsPanel workspaceId={workspace.id} admin={admin} />
               <AlertsPanel workspaceId={workspace.id} admin={admin} />
-              <RiskPanel overview={overview.data} agents={agents} onOpenAgent={openCard} />
+              <RiskPanel
+                overview={overview.data}
+                error={overview.error}
+                onRetry={() => void overview.refetch()}
+                agents={agents}
+                onOpenAgent={openCard}
+              />
             </div>
           </div>
           {overview.data && (

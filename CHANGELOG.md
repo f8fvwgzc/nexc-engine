@@ -1204,7 +1204,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   graph from Sessions, Memory and Usage, the name field from Projects, the policies from
   Alerts), Usage and the workspace map have an empty state, and a failed load is an
   `ErrorState` with **Try again** instead of red text (lists, Infrastructure, policy versions,
-  an agent's approvals and alerts, a destination's deliveries), or, worse, an empty state that
+  an agent's approvals and alerts, a destination's deliveries) or a skeleton that never went
+  away (the SecOps risk panel), or, worse, an empty state that
   told the reader to create what may exist (Issues, Sessions, Knowledge, Memory, Project,
   Policies); Data transfer's earlier transfers have a placeholder while they load. The
   primary action of A2A counterparts, MCP servers and Alert destinations moved into the page
