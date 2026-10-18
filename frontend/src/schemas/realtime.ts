@@ -10,6 +10,7 @@ import {
   ontologySchema,
 } from './graph';
 import { planSchema, proposedEdgeSchema, proposedNodeSchema } from './plan';
+import { alertSchema } from './policy';
 import { artifactSchema, runSchema } from './run';
 import { spanSchema } from './trace';
 
@@ -51,6 +52,7 @@ export const sseEventSchemas = {
   }),
   'artifact.created': z.object({ artifact: artifactSchema }),
   'trace.span': z.object({ span: spanSchema }),
+  alert: z.object({ alert: alertSchema }),
   'run.finished': z.object({ run: runSchema }),
   heartbeat: z.object({ at: z.string() }),
 } as const;

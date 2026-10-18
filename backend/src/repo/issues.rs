@@ -11,7 +11,8 @@ use super::enum_col;
 use crate::domain::cycle::CycleRef;
 use crate::domain::issue::{
     Issue, IssueChange, IssueEvent, IssuePerson, IssueRef, IssueState, Label, Notification,
-    NotificationIssue, NotificationKind, Project, STARTER_STATES, StateCategory, SubIssueCount,
+    NotificationAlert, NotificationApproval, NotificationIssue, NotificationKind, Project,
+    STARTER_STATES, StateCategory, SubIssueCount,
 };
 
 impl FromRow<'_, PgRow> for IssueState {
@@ -764,16 +765,54 @@ impl FromRow<'_, PgRow> for Notification {
     fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
         let actor_id: Option<Uuid> = row.try_get("actor_id")?;
         let actor_name: Option<String> = row.try_get("actor_name")?;
-        let team_key: String = row.try_get("team_key")?;
-        let number: i32 = row.try_get("number")?;
+        let issue_id: Option<Uuid> = row.try_get("issue_id")?;
+        let issue = match issue_id {
+            Some(id) => {
+                let team_key: String = row.try_get("team_key")?;
+                let number: i32 = row.try_get("number")?;
+                Some(NotificationIssue {
+                    id,
+                    identifier: format!("{team_key}-{number}"),
+                    title: row.try_get("title")?,
+                })
+            }
+            None => None,
+        };
+        let approval_id: Option<Uuid> = row.try_get("approval_id")?;
+        let approval = match approval_id {
+            Some(id) => Some(NotificationApproval {
+                id,
+                run_id: row.try_get("approval_run_id")?,
+                node_id: row.try_get("approval_node_id")?,
+                graph_id: row.try_get("approval_graph_id")?,
+                principal: row.try_get("approval_principal")?,
+                tool: row.try_get("approval_tool")?,
+                reason: row.try_get("approval_reason")?,
+                status: enum_col(row, "approval_status")?,
+                expires_at: row.try_get("approval_expires_at")?,
+            }),
+            None => None,
+        };
+        let alert_id: Option<Uuid> = row.try_get("alert_id")?;
+        let alert = match alert_id {
+            Some(id) => Some(NotificationAlert {
+                id,
+                kind: enum_col(row, "alert_kind")?,
+                severity: enum_col(row, "alert_severity")?,
+                rule: row.try_get("alert_rule")?,
+                title: row.try_get("alert_title")?,
+                principal: row.try_get("alert_principal")?,
+                run_id: row.try_get("alert_run_id")?,
+                graph_id: row.try_get("alert_graph_id")?,
+            }),
+            None => None,
+        };
         Ok(Notification {
             id: row.try_get("id")?,
             kind: enum_col(row, "kind")?,
-            issue: NotificationIssue {
-                id: row.try_get("issue_id")?,
-                identifier: format!("{team_key}-{number}"),
-                title: row.try_get("title")?,
-            },
+            issue,
+            approval,
+            alert,
             actor: actor_id.map(|user_id| IssuePerson {
                 user_id,
                 name: actor_name.unwrap_or_default(),
@@ -860,15 +899,25 @@ pub async fn inbox(
 ) -> Result<Vec<Notification>, sqlx::Error> {
     sqlx::query_as(concat!(
         "SELECT n.id, n.kind, n.issue_id, t.key AS team_key, i.number, i.title, n.actor_id,
-                u.name AS actor_name, n.created_at, n.read_at
+                u.name AS actor_name, n.created_at, n.read_at,
+                n.approval_id, a.run_id AS approval_run_id, a.node_id AS approval_node_id,
+                a.graph_id AS approval_graph_id, a.principal AS approval_principal,
+                a.tool AS approval_tool, a.reason AS approval_reason, a.status AS approval_status,
+                a.expires_at AS approval_expires_at,
+                n.alert_id, al.kind AS alert_kind, al.severity AS alert_severity, al.rule AS alert_rule,
+                al.title AS alert_title, al.principal AS alert_principal, al.run_id AS alert_run_id,
+                al.graph_id AS alert_graph_id
          FROM notifications n
-         JOIN issues i ON i.id = n.issue_id
-         JOIN teams t ON t.id = i.team_id
+         LEFT JOIN issues i ON i.id = n.issue_id
+         LEFT JOIN teams t ON t.id = i.team_id
+         LEFT JOIN approvals a ON a.id = n.approval_id
+         LEFT JOIN alerts al ON al.id = n.alert_id
          JOIN workspace_members wm ON wm.workspace_id = n.workspace_id AND wm.user_id = $1
          LEFT JOIN users u ON u.id = n.actor_id
-         WHERE n.user_id = $1 AND n.workspace_id = $2 AND ",
+         WHERE n.user_id = $1 AND n.workspace_id = $2
+           AND (n.issue_id IS NULL OR ",
         team_visible!("t", "wm", "$1"),
-        " ORDER BY n.created_at DESC, n.id DESC LIMIT $3"
+        ") ORDER BY n.created_at DESC, n.id DESC LIMIT $3"
     ))
     .bind(user_id)
     .bind(workspace_id)
@@ -892,6 +941,20 @@ pub async fn mark_read(
     .bind(user_id)
     .bind(workspace_id)
     .bind(ids)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Settles every inbox entry about an approval once it is decided.
+pub async fn mark_read_about_approval(
+    db: impl PgExecutor<'_>,
+    approval_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE notifications SET read_at = now() WHERE approval_id = $1 AND read_at IS NULL",
+    )
+    .bind(approval_id)
     .execute(db)
     .await?;
     Ok(())

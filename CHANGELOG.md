@@ -85,6 +85,105 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   counts in the audit's schema are typed as floats and events carry the moment they happened as
   `payload.at` rather than `ts` (its `Append`, which keeps integers, only reads back the newest 64
   events); the time-windowed questions narrow by `at`.
+- Versioned policies (AgentSecOps phase 2, `docs/AGENTSECOPS.md` §4.3 and §4.4): rules are data,
+  kept as an append-only history per level in `policies` (`workspace`, `team`, `agent`; each
+  version has an author and a time). A `PolicyDocument` holds tool, host and model allow- and
+  deny-lists, the clearance labels, token and cost ceilings per run and per day, tool calls per
+  minute and node starts per hour, time windows (UTC), which tools and labels require an
+  approval and who approves, alert and quarantine thresholds, the DLP rules (secrets, PII
+  shapes and keywords, where content of each label may go) and the prompt-injection screen's
+  action. Resolution walks workspace → team → agent over the agent's own capabilities and only
+  narrows: allow-lists are met, deny-lists added, labels intersected, limits lowered, approvals
+  and thresholds added, actions tightened; `GET /workspaces/{wid}/policies/resolve?agent_id=`
+  shows the effective policy and which level set each rule. `GET/POST
+  /workspaces/{wid}/policies` list the history and add a version (admins); a version that would
+  widen the levels above is refused rule by rule, and every version is audited as
+  `policy_changed` with what changed since the previous one. The resolved policy is compiled
+  into the per-run token (`capabilities` narrowed, plus `rules`, contract §8) and the versions
+  in force are recorded on the run (`policy_versions`), on each node run (with the
+  `context_labels` of the data it was given) and on every policy span. Before dispatch the
+  backend refuses a node outside its time windows, over the day's token or dollar ceiling or
+  past the agent's starts per hour (a `policy` span of rule `time_windows`,
+  `limits.tokens_per_day`, `limits.cost_usd_per_day` or `limits.runs_per_hour`); the ceiling per
+  run caps the budget the runtime is given.
+- Decisions beyond allow and deny: a `Decision` now carries an effect, `allow`, `deny`,
+  `require_approval` (with the approvers) or `alert` (with a severity). The runtime decides every
+  tool call from the token's rules as well as its capabilities: a deny-list refuses first
+  (`tools.deny`, `models.deny`), then the capabilities, then an approval rule holds the call.
+  A held call (`require_approval.tools`, or `write_file` and `make_docx` after data of a label in
+  `require_approval.labels`) is reported as a `policy` span with decision `require_approval` and
+  waits; the backend records the request (`approvals`), sets the node to the new status
+  `waiting_approval` while the run stays `running`, asks the approvers in their inbox (the new
+  notification kind `approval`; every admin unless the policy names members) and, once one of
+  them decides with `POST /approvals/{id}/approve` or `/deny` (a reason is required to deny),
+  hands the decision to the runtime (`POST /v1/approvals/{id}`, contract §8), records it as an
+  `approval` span naming who decided and why, audits it (`approval_granted`, `approval_denied`)
+  and sets the node back to `running`. Approved, the tool runs with its approval on the span;
+  denied, the model sees the reason as a tool error and goes on; undecided within the policy's
+  `timeout_s` (default 600 s), the node fails and the approval is `expired`. `GET /approvals/{id}`
+  and `GET /workspaces/{wid}/approvals` show them. The runtime also refuses tool calls past
+  `limits.tool_calls_per_minute` and keeps the automatic Markdown-to-.docx fallback from making
+  what a policy holds or denies.
+- DLP on the way out: every artifact a node delivers is classified (credentials with the
+  guardrails' scrubber; e-mail addresses, phone numbers, card numbers and national-id shapes by
+  hand; the workspace's own keywords; the words of Office documents are read out of their XML)
+  and checked against the strictest classification the node read, its own context's and its
+  upstream nodes' (`context_labels` on the node run). Content derived from `restricted` data
+  never leaves as an artifact and `confidential` content never leaves to a host unless the
+  policy opens it (`dlp.labels`); a credential keeps the file in by default (`dlp.secrets`),
+  personal data raises an alert by default or keeps the file in under `pii.action: deny`. A
+  quarantined artifact is stored but answers 403 to downloads and stays out of the zip until an
+  admin releases it (`POST /artifacts/{aid}/release`, audited as `artifact_released`;
+  `Artifact.quarantined_at`, `quarantine_reason`, `released_at`). A tool that calls out reports
+  `egress_host` on its span and the backend checks the host and the labels (`egress.deny`,
+  `dlp.labels`). Every finding is a `policy` span (decision `deny` or `alert`, counts and digests
+  only) and an alert: the new `alerts` table, `GET /workspaces/{wid}/alerts`, `POST
+  /alerts/{id}/acknowledge`, the inbox kind `alert` for every admin, the SSE event `alert` on the
+  graph, the metrics `nexc_alerts_total{kind}` and `nexc_artifacts_quarantined_total`, and the
+  audit actions `artifact_quarantined`, `artifact_released` and `alert_raised`.
+- Behaviour baseline and risk score: `agent_baselines` keeps, per agent, what one of its runs
+  usually looks like (tool calls per turn, tokens per turn, distinct tools, distinct hosts,
+  sub-agents, denials, bytes out, as running means and deviations) and the MinHash signatures
+  (the C kernel) of its last twenty tool sequences. When a run finishes every agent that worked
+  in it is scored first and learns the run after: the capped sum of the z-scores of what strayed,
+  plus hosts and tools it never used and a tool sequence unlike any earlier run, explained in
+  words on the agent (`risk_score`, `risk_reasons`: "4.8x its usual bytes out", "2 hosts it never
+  called"). The policy's `alerts` thresholds raise alerts of kind `risk` and, at
+  `quarantine_risk_score`, quarantine the agent automatically (its running nodes are cancelled,
+  new ones refused, audited as `agent_quarantined` with the score and the reasons).
+- Prompt-injection screen: the backend screens every upstream output, memory and document passage
+  as it builds a node's context and the runtime screens every tool result before it goes to the
+  model, with the same cheap pattern set (ignored instructions, role overrides, prompt-leak and
+  exfiltration requests, tool hijacking, chat-template markup, hidden zero-width text) and an
+  optional confirmation by the run's model (`injection.model_check` in the policy, behind
+  `RUNTIME_INJECTION_MODEL_CHECK`). A finding is a `policy` span named `injection` with its
+  severity and patterns; by default the text goes through (`flag`), under `injection.action:
+  block` it is withheld and the model told why; a high finding is an alert of kind `injection`.
+- Console: a **Policies** page under Settings (admins) with the version history of each level,
+  the diff against the version before, a JSON editor for the next version and the effective
+  policy of any agent rule by rule with the level that set each; approvals in the **Inbox** with
+  Approve and Deny (with a reason); an **Alerts** feed under Settings with acknowledgement; the
+  risk score and its reasons on the agent card; the run page shows a node waiting for an
+  approval, the decision and who took it in the trace, and quarantined artifacts with Release
+  for admins; the audit log reads the new actions.
+- Tests (`backend/tests/policy.rs`, `agent-runtime/tests/test_policy.py`,
+  `agent-runtime/tests/test_injection.py`): policies are versioned, audited with their diff and
+  refused when they widen the level above; the resolved policy reaches the token and its versions
+  the run, the node run and the spans; working hours, the day's spend and the pace stop a node
+  before dispatch; a policy that requires an approval pauses a run until an admin approves from
+  the inbox, and a denial reaches the model with its reason; a restricted-derived artifact is
+  quarantined until an admin releases it, a credential keeps a file in, personal data raises an
+  alert, confidential content stays off the wire; a run five times louder than usual raises the
+  risk score and the threshold quarantines the agent; a planted instruction in a tool result or
+  an upstream output is flagged, and withheld when the policy blocks. `make prove-policy` prints
+  the resolution and decision latencies (targets: resolution under 1 ms, decision p99 under
+  100 µs). Apple M2 Pro, release build:
+  - resolution of three levels over the agent's capabilities, 10,000 rounds: p50 3.0 µs,
+    p99 6.4 µs, max 264 µs;
+  - backend decisions under the resolved policy (`decide_with`, a quarter denied, a quarter held
+    for approval), 100,000 of them: p50 0.08 µs, p99 0.25 µs, max 792 µs;
+  - runtime decisions under rules (`decide_tool_with`), 100,000 of them: p50 0.58 µs,
+    p99 1.46 µs, max 44.9 µs.
 - Agent identity and scopes (AgentSecOps phase 1, `docs/AGENTSECOPS.md` §4.1): every agent is a
   principal, `agent://{workspace}/{name}` (`principal_id`, unique, following the name), with an
   owner (`owner_user_id`), a team, a `purpose` and a `capabilities` document: the tools it may

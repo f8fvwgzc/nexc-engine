@@ -8,8 +8,16 @@ use sqlx::{FromRow, PgExecutor, Row};
 use uuid::Uuid;
 
 use super::enum_col;
+use crate::domain::capabilities::DataLabel;
 use crate::domain::graph::{Executor, NodeStatus};
+use crate::domain::policy::PolicyVersions;
 use crate::domain::run::{NodeRun, OUTPUT_PREVIEW_CHARS, Run, RunStatus};
+
+/// Reads a `jsonb` column holding [`PolicyVersions`]; anything odd reads as none.
+fn versions_col(row: &PgRow, col: &str) -> Result<PolicyVersions, sqlx::Error> {
+    let raw: serde_json::Value = row.try_get(col)?;
+    Ok(serde_json::from_value(raw).unwrap_or_default())
+}
 
 /// A run row without its node results.
 #[derive(Debug, Clone)]
@@ -29,6 +37,7 @@ pub struct RunRow {
     /// The final hash of the run's trace chain, once sealed.
     pub trace_hash: Option<Vec<u8>>,
     pub policy_mismatches: i32,
+    pub policy_versions: PolicyVersions,
 }
 
 impl RunRow {
@@ -46,6 +55,7 @@ impl RunRow {
             created_at: self.created_at,
             trace_hash: self.trace_hash.as_deref().map(hex::encode),
             policy_mismatches: self.policy_mismatches,
+            policy_versions: self.policy_versions,
             node_runs,
         }
     }
@@ -68,6 +78,7 @@ impl FromRow<'_, PgRow> for RunRow {
             created_at: row.try_get("created_at")?,
             trace_hash: row.try_get("trace_hash")?,
             policy_mismatches: row.try_get("policy_mismatches")?,
+            policy_versions: versions_col(row, "policy_versions")?,
         })
     }
 }
@@ -86,6 +97,12 @@ impl FromRow<'_, PgRow> for NodeRun {
             started_at: row.try_get("started_at")?,
             finished_at: row.try_get("finished_at")?,
             output_preview: row.try_get("output_preview")?,
+            policy_versions: versions_col(row, "policy_versions")?,
+            context_labels: row
+                .try_get::<Vec<String>, _>("context_labels")?
+                .iter()
+                .filter_map(|l| l.parse().ok())
+                .collect(),
         })
     }
 }
@@ -169,7 +186,7 @@ pub async fn find_owned(
 pub async fn node_runs(db: impl PgExecutor<'_>, run_id: Uuid) -> Result<Vec<NodeRun>, sqlx::Error> {
     sqlx::query_as(
         "SELECT node_id, status, attempt, executor, tokens_in, tokens_out, cached, error, started_at, finished_at,
-                left(output, $2) AS output_preview
+                left(output, $2) AS output_preview, policy_versions, context_labels
          FROM node_runs WHERE run_id = $1 ORDER BY position",
     )
     .bind(run_id)
@@ -246,7 +263,7 @@ pub async fn close_unfinished_nodes(
 ) -> Result<Vec<Uuid>, sqlx::Error> {
     sqlx::query_scalar(
         "UPDATE node_runs SET status = $2, finished_at = now()
-         WHERE run_id = $1 AND status IN ('queued', 'running') RETURNING node_id",
+         WHERE run_id = $1 AND status IN ('queued', 'running', 'waiting_approval') RETURNING node_id",
     )
     .bind(run_id)
     .bind(status.as_str())
@@ -270,7 +287,7 @@ pub async fn quarantined_agents_running(
 ) -> Result<Vec<Uuid>, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT DISTINCT a.id FROM node_runs nr JOIN agents a ON a.id = nr.agent_id
-         WHERE nr.run_id = $1 AND nr.status = 'running' AND a.status = 'quarantined'",
+         WHERE nr.run_id = $1 AND nr.status IN ('running', 'waiting_approval') AND a.status = 'quarantined'",
     )
     .bind(run_id)
     .fetch_all(db)
@@ -323,26 +340,100 @@ pub async fn finish(
     .await
 }
 
-/// Marks a node result as running attempt `attempt`.
+/// Marks a node result as running attempt `attempt`, under `policy_versions`,
+/// having been given data of `labels`.
 pub async fn start_node(
     db: impl PgExecutor<'_>,
     run_id: Uuid,
     node_id: Uuid,
     attempt: i32,
     agent_id: Option<Uuid>,
+    policy_versions: &PolicyVersions,
+    labels: &[DataLabel],
 ) -> Result<(), sqlx::Error> {
+    let labels: Vec<&str> = labels.iter().map(|l| l.as_str()).collect();
     sqlx::query(
         "UPDATE node_runs SET status = 'running', attempt = $3, agent_id = $4, error = NULL,
-                started_at = COALESCE(started_at, now())
+                started_at = COALESCE(started_at, now()), policy_versions = $5, context_labels = $6
          WHERE run_id = $1 AND node_id = $2",
     )
     .bind(run_id)
     .bind(node_id)
     .bind(attempt)
     .bind(agent_id)
+    .bind(serde_json::to_value(policy_versions).expect("versions serialise"))
+    .bind(&labels)
     .execute(db)
     .await?;
     Ok(())
+}
+
+/// Pauses a running node for an approval, or resumes it: the node run and
+/// the node itself change status between `running` and `waiting_approval`.
+pub async fn set_waiting(
+    db: &mut sqlx::PgConnection,
+    run_id: Uuid,
+    node_id: Uuid,
+    waiting: bool,
+) -> Result<bool, sqlx::Error> {
+    let (from, to) = if waiting {
+        ("running", "waiting_approval")
+    } else {
+        ("waiting_approval", "running")
+    };
+    let done = sqlx::query(
+        "UPDATE node_runs SET status = $4 WHERE run_id = $1 AND node_id = $2 AND status = $3",
+    )
+    .bind(run_id)
+    .bind(node_id)
+    .bind(from)
+    .bind(to)
+    .execute(&mut *db)
+    .await?;
+    if done.rows_affected() == 1 {
+        sqlx::query(
+            "UPDATE nodes SET status = $2, updated_at = now() WHERE id = $1 AND status = $3",
+        )
+        .bind(node_id)
+        .bind(to)
+        .bind(from)
+        .execute(&mut *db)
+        .await?;
+    }
+    Ok(done.rows_affected() == 1)
+}
+
+/// Records the workspace policy version that governs a run.
+pub async fn set_policy_versions(
+    db: impl PgExecutor<'_>,
+    run_id: Uuid,
+    versions: &PolicyVersions,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE runs SET policy_versions = $2 WHERE id = $1")
+        .bind(run_id)
+        .bind(serde_json::to_value(versions).expect("versions serialise"))
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// The classifications of the data the given nodes were given in any
+/// successful run: what their outputs are derived from.
+pub async fn context_labels_of(
+    db: impl PgExecutor<'_>,
+    node_ids: &[Uuid],
+) -> Result<Vec<DataLabel>, sqlx::Error> {
+    if node_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let labels: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT l FROM node_runs, unnest(context_labels) AS l
+         WHERE node_id = ANY($1) AND status = 'succeeded'",
+    )
+    .bind(node_ids)
+    .fetch_all(db)
+    .await?;
+    Ok(labels.iter().filter_map(|l| l.parse().ok()).collect())
 }
 
 /// Final outcome of one node.
@@ -425,7 +516,7 @@ pub async fn activity(
 ) -> Result<(i64, i64, i64), sqlx::Error> {
     let row = sqlx::query(
         "SELECT count(*) FILTER (WHERE nr.status = 'queued') AS queued,
-                count(*) FILTER (WHERE nr.status = 'running') AS running,
+                count(*) FILTER (WHERE nr.status IN ('running', 'waiting_approval')) AS running,
                 count(DISTINCT r.id) AS runs
          FROM runs r LEFT JOIN node_runs nr ON nr.run_id = r.id
          WHERE r.owner_id = $1 AND r.status IN ('queued', 'running')",

@@ -9,11 +9,14 @@ use futures::StreamExt;
 use futures::future::BoxFuture;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use super::super::approvals::{self, Granted};
 use super::super::artifacts::MAX_ARTIFACT_BYTES;
 use super::{ExecContext, ExecError, ExecOutput, NodeExecutor};
-use crate::domain::policy::Action;
+use crate::domain::policy::{Action, Effect};
 use crate::domain::prompt::UpstreamOutput;
 use crate::domain::trace::{self, SPAN_LINE_MAX_BYTES, SpanDraft, SpanKind, SpanStatus};
 use crate::realtime::events::LogLevel;
@@ -105,6 +108,11 @@ struct Progress {
     began: DateTime<Utc>,
     /// Sub-agents each principal has spawned so far (the fan-out re-check).
     spawns: HashMap<String, u8>,
+    /// Approvals granted during the attempt (a held tool may run once with one).
+    granted: Granted,
+    /// Watchers of the approvals asked for; they stop with the attempt.
+    watchers: Vec<JoinHandle<()>>,
+    stop: CancellationToken,
 }
 
 impl Progress {
@@ -115,6 +123,17 @@ impl Progress {
             ids: HashMap::new(),
             began: Utc::now(),
             spawns: HashMap::new(),
+            granted: Granted::default(),
+            watchers: Vec::new(),
+            stop: CancellationToken::new(),
+        }
+    }
+
+    /// Ends the attempt's approval watchers: a still-pending approval expires.
+    async fn close(self) {
+        self.stop.cancel();
+        for watcher in self.watchers {
+            let _ = watcher.await;
         }
     }
 }
@@ -235,6 +254,7 @@ fn context(
     upstream: &[UpstreamOutput],
     memories: &[String],
     documents: &[String],
+    labels: &[crate::domain::capabilities::DataLabel],
 ) -> serde_json::Value {
     json!({
         "goal": goal,
@@ -243,6 +263,7 @@ fn context(
         })).collect::<Vec<_>>(),
         "memories": memories,
         "documents": documents,
+        "labels": labels,
     })
 }
 
@@ -258,11 +279,26 @@ fn mint_token(ctx: &ExecContext) -> Result<String, ExecError> {
         workspace_id: ctx.workspace_id,
         policy_version: ctx.policy_version,
         capabilities: &ctx.capabilities,
+        rules: &ctx.rules,
+        labels: &ctx.labels_given,
     };
     ctx.state
         .agent_tokens
         .issue(&grant, ctx.state.settings.node_timeout + EXPIRY_SLACK)
         .map_err(|e| ExecError::fatal(format!("cannot mint the agent token: {e}")))
+}
+
+/// Tokens the run may spend: what the agent has left, capped by the
+/// policy's ceiling per run (0 means no agent budget).
+fn budget_tokens(ctx: &ExecContext) -> i64 {
+    let left = ctx
+        .agent
+        .as_ref()
+        .map_or(0, |a| (a.budget_tokens - a.spent_tokens).max(0));
+    match ctx.rules.limits.tokens_per_run {
+        Some(ceiling) if left == 0 || ceiling < left => ceiling,
+        _ => left,
+    }
 }
 
 fn request_body(ctx: &ExecContext, token: &str) -> serde_json::Value {
@@ -279,7 +315,7 @@ fn request_body(ctx: &ExecContext, token: &str) -> serde_json::Value {
             "principal": ctx.principal(),
             "system_prompt": ctx.system_prompt(),
             "model": target.model,
-            "budget_tokens": agent.map_or(0, |a| (a.budget_tokens - a.spent_tokens).max(0)),
+            "budget_tokens": budget_tokens(ctx),
         },
         "task": {
             "title": ctx.node.title,
@@ -288,7 +324,13 @@ fn request_body(ctx: &ExecContext, token: &str) -> serde_json::Value {
             "kind_description": ctx.node_type.as_ref().map_or("", |t| t.description.as_str()),
             "produces_artifact": ctx.node_type.as_ref().is_some_and(|t| t.produces_artifact),
         },
-        "context": context(&ctx.goal, &ctx.upstream, &ctx.memories, &ctx.documents),
+        "context": context(
+            &ctx.goal,
+            &ctx.upstream,
+            &ctx.memories,
+            &ctx.documents,
+            &ctx.labels_given,
+        ),
         "llm": {
             "provider": target.provider,
             "api_key": target.api_key.as_ref().map(|k| k.expose().as_str()),
@@ -328,9 +370,20 @@ async fn run(ctx: &ExecContext) -> Result<ExecOutput, ExecError> {
             ExecError::fatal(message)
         });
     }
+    let mut progress = Progress::new();
+    let outcome = stream(ctx, resp, &mut progress).await;
+    progress.close().await;
+    outcome
+}
+
+/// Reads the runtime's stream to its terminal line.
+async fn stream(
+    ctx: &ExecContext,
+    resp: reqwest::Response,
+    progress: &mut Progress,
+) -> Result<ExecOutput, ExecError> {
     let mut bytes = resp.bytes_stream();
     let mut buf: Vec<u8> = Vec::new();
-    let mut progress = Progress::new();
     while let Some(chunk) = bytes.next().await {
         let chunk = chunk.map_err(|e| {
             ExecError::transient(format!("agent runtime stream failed: {}", e.without_url()))
@@ -338,7 +391,7 @@ async fn run(ctx: &ExecContext) -> Result<ExecOutput, ExecError> {
         buf.extend_from_slice(&chunk);
         while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
             let line: Vec<u8> = buf.drain(..=pos).collect();
-            if let Some(done) = handle_line(ctx, &line, &mut progress).await? {
+            if let Some(done) = handle_line(ctx, &line, progress).await? {
                 return Ok(done);
             }
         }
@@ -346,7 +399,7 @@ async fn run(ctx: &ExecContext) -> Result<ExecOutput, ExecError> {
             return Err(ExecError::fatal("agent runtime sent an oversized line"));
         }
     }
-    if let Some(done) = handle_line(ctx, &buf, &mut progress).await? {
+    if let Some(done) = handle_line(ctx, &buf, progress).await? {
         return Ok(done);
     }
     Err(ExecError::transient(
@@ -451,9 +504,53 @@ async fn handle_line(
                     progress.spans += 1;
                     let mismatch = recheck(ctx, progress, &span);
                     let span_id = span.id;
+                    let request = approvals::Request::from_span(&span);
+                    let egress = (span.kind == SpanKind::ToolCall)
+                        .then(|| span.attributes.get("egress_host").and_then(Value::as_str))
+                        .flatten()
+                        .map(str::to_owned);
+                    let injection = (span.kind == SpanKind::Policy
+                        && span.attributes.get("rule").and_then(Value::as_str)
+                            == Some("injection")
+                        && span.attributes.get("severity").and_then(Value::as_str) == Some("high"))
+                    .then(|| {
+                        (
+                            span.name.clone(),
+                            span.attributes
+                                .get("reason")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_owned(),
+                        )
+                    });
                     ctx.record(span);
+                    if let Some((tool, reason)) = injection {
+                        ctx.alert(&crate::engine::defend::Finding {
+                            span_id: Some(span_id),
+                            kind: crate::domain::alert::AlertKind::Injection,
+                            severity: crate::domain::policy_document::Severity::High,
+                            rule: "injection",
+                            title: &format!("instructions found in the result of {tool}"),
+                            detail: &reason,
+                        })
+                        .await;
+                    }
+                    if let Some(host) = egress {
+                        // The call already happened; what left is on the record either way.
+                        ctx.screen_egress(&host, span_id).await;
+                    }
                     if let Some((rule, detail)) = mismatch {
                         ctx.policy_mismatch(span_id, rule, detail).await;
+                    } else if let Some(request) = request {
+                        // A tool call waits for a human: the node pauses until the decision.
+                        let watcher = approvals::open(
+                            ctx,
+                            request,
+                            progress.stop.clone(),
+                            progress.granted.clone(),
+                        )
+                        .await;
+                        progress.watchers.extend(watcher);
                     }
                 }
                 Err(warning) => ctx.log(LogLevel::Warn, warning),
@@ -495,7 +592,27 @@ fn recheck(
     match span.kind {
         SpanKind::ToolCall => {
             let tool = text("tool").unwrap_or(&span.name);
-            denied(Action::Tool(tool), format!("the runtime ran tool {tool}"))
+            let decision = ctx.decide(&Action::Tool(tool));
+            match decision.effect {
+                // A held tool may run once a human said yes; the span names the approval.
+                Effect::RequireApproval { .. } => {
+                    let approved = text("approval_id")
+                        .and_then(|id| id.parse::<Uuid>().ok())
+                        .is_some_and(|id| {
+                            progress.granted.lock().expect("granted set").contains(&id)
+                        });
+                    (!approved).then(|| {
+                        (
+                            decision.rule,
+                            format!(
+                                "the runtime ran tool {tool} without an approval; {}",
+                                decision.reason
+                            ),
+                        )
+                    })
+                }
+                _ => denied(Action::Tool(tool), format!("the runtime ran tool {tool}")),
+            }
         }
         SpanKind::Spawn => {
             let role = text("role").unwrap_or_default();
@@ -745,9 +862,16 @@ mod tests {
     fn document_passages_travel_apart_from_memories() {
         let memories = ["The team writes in British English.".to_owned()];
         let documents = ["[customs.pdf, p. 17]\nGoods under 150 EUR are exempt.".to_owned()];
-        let sent = context("Ship the handbook", &[], &memories, &documents);
+        let sent = context(
+            "Ship the handbook",
+            &[],
+            &memories,
+            &documents,
+            &[crate::domain::capabilities::DataLabel::Internal],
+        );
         assert_eq!(sent["memories"], json!(memories));
         assert_eq!(sent["documents"], json!(documents));
         assert_eq!(sent["goal"], "Ship the handbook");
+        assert_eq!(sent["labels"], json!(["internal"]));
     }
 }

@@ -31,6 +31,8 @@ string_enum!(
         Idle => "idle",
         Queued => "queued",
         Running => "running",
+        /// A tool call of the node waits for an approval; the run goes on.
+        WaitingApproval => "waiting_approval",
         Succeeded => "succeeded",
         Failed => "failed",
         Skipped => "skipped",

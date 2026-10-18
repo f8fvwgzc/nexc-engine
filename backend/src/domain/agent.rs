@@ -73,6 +73,13 @@ pub struct Agent {
     /// When the agent was quarantined; `null` unless it is.
     #[schema(required = true)]
     pub quarantined_at: Option<DateTime<Utc>>,
+    /// How far its latest run strayed from what it usually does (0 to 10; 0 until
+    /// three runs were learned from).
+    pub risk_score: f64,
+    /// Why, in words.
+    pub risk_reasons: Vec<String>,
+    #[schema(required = true)]
+    pub risk_updated_at: Option<DateTime<Utc>>,
 }
 
 impl Agent {

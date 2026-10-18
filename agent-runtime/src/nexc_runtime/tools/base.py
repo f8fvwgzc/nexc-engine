@@ -2,20 +2,26 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import time
+from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, NoReturn
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from ..approvals import ApprovalOutcome, ApprovalRegistry, ApprovalTimeout
 from ..config import Settings
 from ..llm.base import ToolSpec
-from ..policy import AgentToken, Decision, decide_tool
+from ..policy import AgentToken, Decision, decide_tool_with
 from ..streaming import EventStream
 from ..trace import args_digest, new_span_id, now_ns, rfc3339_ns
 from .workspace import PathError, Workspace
+
+# While a call waits for its approval the stream would otherwise be silent.
+APPROVAL_HEARTBEAT_S = 20.0
 
 SpawnFn = Callable[[str, str], Awaitable[str]]
 
@@ -48,10 +54,31 @@ class ToolContext:
     token: AgentToken | None = None
     # The principal the agent's spans are attributed to (defaults to the name).
     principal: str = ""
+    # Where decisions on held calls arrive (None in unit tests of single tools).
+    approvals: ApprovalRegistry | None = None
+    # When the agent's recent tool calls started, against `limits.tool_calls_per_minute`.
+    recent_calls: deque[float] = field(default_factory=deque)
 
     def __post_init__(self) -> None:
         if not self.principal:
             self.principal = self.agent_name
+
+    def over_pace(self) -> Decision | None:
+        """The refusal when the agent already made its tool calls for this minute."""
+        if self.token is None or self.token.rules.tool_calls_per_minute is None:
+            return None
+        limit = self.token.rules.tool_calls_per_minute
+        now = time.monotonic()
+        while self.recent_calls and now - self.recent_calls[0] > 60.0:
+            self.recent_calls.popleft()
+        if len(self.recent_calls) >= limit:
+            return Decision(
+                False,
+                "limits.tool_calls_per_minute",
+                f"already made {limit} tool call(s) this minute",
+            )
+        self.recent_calls.append(now)
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,10 +100,18 @@ class Tool[A: BaseModel]:
         reported as a `tool_call` span: the tool, a digest of the arguments (never the
         arguments), the size of the result, whether it failed, and how long it took.
         """
+        approval_id: str | None = None
         if ctx.token is not None:
-            decision = decide_tool(ctx.token.capabilities, self.name)
-            if not decision.allowed:
+            token = ctx.token
+            decision = decide_tool_with(token.capabilities, token.rules, token.labels, self.name)
+            if decision.needs_approval:
+                approval_id = await wait_for_approval(ctx, token, self.name, raw, decision)
+            elif not decision.allowed:
                 refuse(ctx, action="tool_call", subject=self.name, decision=decision)
+            # Finishing is not an action on the world: the pace does not hold it back.
+            paced = ctx.over_pace() if self.name != "finish" else None
+            if paced is not None:
+                refuse(ctx, action="tool_call", subject=self.name, decision=paced)
         span_id = new_span_id()
         started = now_ns()
         clock = time.perf_counter_ns()
@@ -96,6 +131,8 @@ class Tool[A: BaseModel]:
             }
             if ctx.token is not None:
                 attributes["policy_version"] = ctx.token.policy_version
+            if approval_id is not None:
+                attributes["approval_id"] = approval_id
             ctx.events.span(
                 span_id=span_id,
                 parent_id=ctx.turn_span_id,
@@ -158,6 +195,67 @@ def refuse(
         "warning", f"{ctx.agent_name}: {action} {subject} refused by policy ({decision.rule})"
     )
     raise ToolError(f"not allowed by this agent's policy ({decision.rule}): {decision.reason}")
+
+
+async def wait_for_approval(
+    ctx: ToolContext, token: AgentToken, tool: str, raw: dict[str, Any], decision: Decision
+) -> str:
+    """Asks for an approval of the call and waits for the decision.
+
+    The request is a `policy` span (decision `require_approval`, the approval id, a digest of
+    the arguments) the backend turns into an inbox item. Returns the approval id once a human
+    said yes; raises `ToolError` with the reason when they said no (the model sees it), and
+    `ApprovalTimeout` when nobody decided in time (the node fails).
+    """
+    approval_id = new_span_id()
+    digest, _ = args_digest(raw)
+    timeout = token.rules.approval_timeout_s
+    ctx.events.log(
+        "info", f"{ctx.agent_name}: {tool} waits for an approval ({decision.rule}, {timeout}s)"
+    )
+    now = rfc3339_ns(now_ns())
+    ctx.events.span(
+        span_id=new_span_id(),
+        parent_id=ctx.turn_span_id,
+        kind="policy",
+        name=tool,
+        agent=ctx.principal,
+        started_at=now,
+        ended_at=now,
+        status="ok",
+        attributes={
+            "decision": "require_approval",
+            "rule": decision.rule,
+            "reason": decision.reason,
+            "action": "tool_call",
+            "subject": tool,
+            "approval_id": approval_id,
+            "args_sha256": digest,
+            "policy_version": token.policy_version,
+        },
+    )
+    if ctx.approvals is None:
+        raise ApprovalTimeout(f"{tool} needs an approval and this runtime cannot receive one")
+    future = ctx.approvals.register(approval_id)
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise ApprovalTimeout(f"approval for {tool} not given within {timeout}s")
+            done, _ = await asyncio.wait({future}, timeout=min(APPROVAL_HEARTBEAT_S, left))
+            if done:
+                break
+            ctx.events.log("info", f"{ctx.agent_name}: still waiting for the approval of {tool}")
+    finally:
+        ctx.approvals.forget(approval_id)
+    outcome: ApprovalOutcome = future.result()
+    who = outcome.decided_by or "an approver"
+    if outcome.approved:
+        ctx.events.log("info", f"{ctx.agent_name}: {tool} approved by {who}")
+        return approval_id
+    ctx.events.log("warning", f"{ctx.agent_name}: {tool} denied by {who}: {outcome.reason}")
+    raise ToolError(f"{tool} was denied by {who}: {outcome.reason}")
 
 
 def strict_schema(model: type[BaseModel]) -> dict[str, Any]:

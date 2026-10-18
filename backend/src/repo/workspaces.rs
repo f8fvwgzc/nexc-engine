@@ -242,6 +242,17 @@ pub async fn members(
     .await
 }
 
+/// The owners and admins of a workspace: who decides approvals and hears alerts.
+pub async fn admins(db: impl PgExecutor<'_>, workspace_id: Uuid) -> Result<Vec<Uuid>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT user_id FROM workspace_members
+         WHERE workspace_id = $1 AND role IN ('owner', 'admin') ORDER BY created_at, user_id",
+    )
+    .bind(workspace_id)
+    .fetch_all(db)
+    .await
+}
+
 /// The id of the user with this e-mail address, if any.
 pub async fn user_id_by_email(
     db: impl PgExecutor<'_>,

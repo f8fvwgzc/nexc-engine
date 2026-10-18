@@ -12,11 +12,19 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from .. import __version__
 from ..agents import Census
+from ..approvals import ApprovalOutcome, ApprovalRegistry
 from ..config import Settings
 from ..parsing import ParseError, UnsupportedFormatError, parse_document
 from ..runner import ProviderFactory, default_provider_factory, execute
 from ..streaming import EventStream
-from .schemas import ExecuteRequest, Health, ParseBlock, ParseResponse
+from .schemas import (
+    ApprovalDecisionIn,
+    ApprovalDelivered,
+    ExecuteRequest,
+    Health,
+    ParseBlock,
+    ParseResponse,
+)
 from .security import BodySizeLimit, require_bearer
 
 NDJSON = "application/x-ndjson"
@@ -36,6 +44,7 @@ def create_app(
     app.state.settings = settings
     app.state.census = Census()
     app.state.provider_factory = provider_factory
+    app.state.approvals = ApprovalRegistry()
     app.add_middleware(
         BodySizeLimit,
         max_bytes=settings.runtime_max_request_bytes,
@@ -72,6 +81,23 @@ def create_app(
             media_type=NDJSON,
             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
+
+    @app.post(
+        "/v1/approvals/{approval_id}",
+        dependencies=[Depends(require_bearer)],
+        response_model=ApprovalDelivered,
+    )
+    async def decide_approval(
+        approval_id: str, body: ApprovalDecisionIn, request: Request
+    ) -> ApprovalDelivered:
+        """The backend hands a decision to the call waiting for it on this runtime."""
+        registry: ApprovalRegistry = request.app.state.approvals
+        outcome = ApprovalOutcome(body.decision, body.reason, body.decided_by)
+        if not registry.resolve(approval_id, outcome):
+            raise HTTPException(
+                status_code=404, detail="no call waits for this approval on this runtime"
+            )
+        return ApprovalDelivered()
 
     @app.post(PARSE_PATH, dependencies=[Depends(require_bearer)], response_model=None)
     async def parse(request: Request, filename: str = "") -> Response:
@@ -120,6 +146,7 @@ async def _stream(app: FastAPI, body: ExecuteRequest) -> AsyncIterator[bytes]:
             census=app.state.census,
             events=events,
             provider_factory=app.state.provider_factory,
+            approvals=app.state.approvals,
         )
     )
     try:

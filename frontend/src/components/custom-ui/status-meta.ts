@@ -8,6 +8,7 @@ import {
   DatabaseZapIcon,
   LoaderCircleIcon,
   type LucideIcon,
+  UserCheckIcon,
 } from 'lucide-react';
 
 import type { NodeStatus } from '@/schemas/graph';
@@ -27,6 +28,11 @@ export const STATUS_META: Record<DisplayStatus, StatusMeta> = {
   idle: { label: 'Idle', icon: CircleDashedIcon, color: 'var(--status-idle)' },
   queued: { label: 'Queued', icon: ClockIcon, color: 'var(--status-queued)' },
   running: { label: 'Running', icon: LoaderCircleIcon, color: 'var(--status-running)' },
+  waiting_approval: {
+    label: 'Waiting approval',
+    icon: UserCheckIcon,
+    color: 'var(--status-queued)',
+  },
   succeeded: { label: 'Succeeded', icon: CircleCheckIcon, color: 'var(--status-succeeded)' },
   failed: { label: 'Failed', icon: CircleXIcon, color: 'var(--status-failed)' },
   skipped: { label: 'Skipped', icon: CircleDotIcon, color: 'var(--status-skipped)' },

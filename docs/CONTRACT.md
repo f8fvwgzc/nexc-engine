@@ -151,6 +151,7 @@ type NodeStatus =
   | "idle"
   | "queued"
   | "running"
+  | "waiting_approval" // a tool call of the node waits for a human; the run stays running
   | "succeeded"
   | "failed"
   | "skipped"
@@ -413,6 +414,8 @@ interface NodeRun {
   started_at: string | null;
   finished_at: string | null;
   output_preview: string | null;
+  policy_versions: PolicyVersions; // the policy versions that governed the node, by level
+  context_labels: DataLabel[]; // the classifications of the data the node was given (its context and its upstream nodes')
 }
 interface Run {
   id: string;
@@ -426,6 +429,7 @@ interface Run {
   created_at: string;
   trace_hash: string | null; // hex SHA-256 sealing the trace once the run finished; null while it runs or when nothing was traced
   policy_mismatches: number; // actions the runtime reported that the run's policy did not allow (each a `policy` span and a `policy_mismatch` audit entry)
+  policy_versions: PolicyVersions; // the workspace policy version that governed the run (`team` and `agent` are null here; each node run has every level)
   node_runs: NodeRun[];
 }
 interface Artifact {
@@ -436,6 +440,28 @@ interface Artifact {
   size: number;
   mime: string;
   created_at: string;
+  quarantined_at: string | null; // the DLP classifier kept the file in; downloadable only once released
+  quarantine_reason: string; // `dlp.labels: content derived from restricted data may not leave as an artifact`, `dlp.secrets: 1 credential in the content`, ...
+  released_at: string | null;
+}
+type AlertKind = "dlp" | "risk" | "injection" | "policy";
+interface Alert {
+  id: string;
+  workspace_id: string;
+  agent_id: string | null;
+  principal: string;
+  run_id: string | null;
+  node_id: string | null;
+  graph_id: string | null;
+  span_id: string | null; // the policy span that recorded the finding
+  kind: AlertKind;
+  severity: Severity;
+  rule: string; // `dlp.secrets`, `dlp.pii`, `dlp.labels`, `egress.deny`, `alerts.risk_score`, `injection`, ...
+  title: string;
+  detail: string;
+  created_at: string;
+  acknowledged_at: string | null;
+  acknowledged_by: string | null;
 }
 
 // The trace spine: one span per action of an agent, append-only, hash-chained per run in order of
@@ -541,6 +567,9 @@ interface Agent {
   capabilities: Capabilities;
   policy_version: number; // raised with every change to the capabilities, and on quarantine and release
   quarantined_at: string | null;
+  risk_score: number; // 0–10: how far its latest run strayed from its baseline (0 until three runs were learned from)
+  risk_reasons: string[]; // in words: "3.2x its usual bytes out", "2 hosts it never called: a.example, b.example"
+  risk_updated_at: string | null;
 }
 interface AgentCard {
   agent: Agent;
@@ -548,6 +577,109 @@ interface AgentCard {
   team: { id: string; name: string; key: string } | null;
   budget_left: number | null; // null without a budget
   recent_spans: Span[]; // its last 20 spans across the runs the caller may open
+}
+
+// Versioned policies (AgentSecOps phase 2). A document only says what it sets; what it leaves out
+// (`null`, `[]`, `{}`) is inherited from the level above. Resolution walks workspace -> team -> agent
+// over the agent's own `Capabilities` and only narrows: allow-lists are met, deny-lists added,
+// labels intersected, limits lowered, approvals and alert thresholds added, DLP and injection
+// actions tightened. A version that would widen the levels above is refused (422, `document.<rule>`).
+type PolicyScope = "workspace" | "team" | "agent";
+type RuleAction = "alert" | "deny";
+type Severity = "low" | "medium" | "high" | "critical";
+type PiiKind = "email" | "phone" | "card" | "national_id";
+type InjectionAction = "flag" | "block";
+interface ListRule { allow: string[] | null; deny: string[] } // `allow: null` inherits
+interface TimeWindow { days: number[]; start: string; end: string } // ISO weekdays (1 = Monday), `HH:MM` UTC; an end before the start wraps midnight
+interface PolicyDocument {
+  tools: ListRule;
+  egress: ListRule; // hosts: `api.example.com`, `*.example.com`
+  models: ListRule;
+  labels: DataLabel[] | null; // the clearance agents under the policy may hold
+  limits: {
+    tokens_per_run: number | null; // caps the budget the runtime is given
+    tokens_per_day: number | null; // across runs, UTC day, checked before dispatch
+    cost_usd_per_day: number | null;
+    tool_calls_per_minute: number | null; // within one run, enforced by the runtime
+    runs_per_hour: number | null; // node starts per agent, per backend instance
+    max_depth: number | null;
+    max_fan_out: number | null;
+  };
+  time_windows: TimeWindow[] | null; // when work may start; `[]` never
+  require_approval: {
+    tools: string[]; // wait for a human before they run
+    labels: DataLabel[]; // a node given data of these labels needs an approval before `write_file` or `make_docx`
+    approvers: string[]; // member ids; empty: every workspace admin
+    timeout_s: number | null; // 1–86400; default 600; the node fails when it runs out
+  };
+  alerts: {
+    risk_score: number | null; // at and above: an alert
+    quarantine_risk_score: number | null; // at and above: the agent is quarantined
+    denials_per_run: number | null;
+    novelty: number | null; // 0–1: how unlike every earlier run of the agent
+  };
+  dlp: {
+    secrets: RuleAction | null; // a credential in an artifact (default deny)
+    pii: { enabled: boolean | null; kinds: PiiKind[] | null; keywords: string[]; action: RuleAction | null }; // default on, every kind, alert
+    labels: Partial<Record<DataLabel, { artifacts: boolean | null; egress_hosts: string[] | null }>>; // where content derived from a label may go (defaults: confidential stays an artifact and never leaves to a host; restricted leaves in no form)
+  };
+  injection: { action: InjectionAction | null; model_check: boolean | null }; // default flag, no model check
+}
+interface Policy {
+  id: string;
+  workspace_id: string;
+  scope: PolicyScope;
+  scope_id: string | null; // the team or agent; null at the workspace level
+  version: number; // 1, 2, ... per scope
+  document: PolicyDocument;
+  author_id: string | null;
+  author_name: string;
+  created_at: string;
+}
+interface PolicyVersions { workspace: number | null; team: number | null; agent: number | null }
+// The resolved rules beside the capabilities, carried in the per-run token (§8) and evaluated the
+// same way on both sides. `Rules` with nothing set is what an agent gets when no policy exists.
+interface Rules {
+  tools_denied: string[];
+  egress_denied: string[];
+  models_denied: string[];
+  require_approval: { tools: string[]; labels: DataLabel[]; approvers: string[]; timeout_s: number };
+  limits: { tokens_per_run: number | null; tokens_per_day: number | null; cost_usd_per_day: number | null; tool_calls_per_minute: number | null; runs_per_hour: number | null };
+  time_windows: TimeWindow[][]; // one set per level that set some; a time must be in a window of every set
+  alerts: { risk_score: number | null; quarantine_risk_score: number | null; denials_per_run: number | null; novelty: number | null };
+  dlp: { secrets: RuleAction; pii: { enabled: boolean; kinds: PiiKind[]; keywords: string[]; action: RuleAction }; labels: Record<DataLabel, { artifacts: boolean; egress_hosts: string[] | null }> };
+  injection: { action: InjectionAction; model_check: boolean };
+  versions: PolicyVersions;
+}
+type ApprovalStatus = "pending" | "approved" | "denied" | "expired";
+interface Approval {
+  id: string;
+  workspace_id: string;
+  run_id: string;
+  node_id: string;
+  graph_id: string;
+  agent_id: string | null;
+  principal: string; // who asked
+  span_id: string; // the policy span that asked (decision require_approval)
+  tool: string; // what waits
+  args_sha256: string | null; // a digest of its arguments, never the arguments
+  rule: string; // approvals.tools | approvals.labels
+  reason: string;
+  approver_ids: string[]; // empty: every workspace admin
+  status: ApprovalStatus;
+  requested_at: string;
+  expires_at: string; // the call stops waiting here
+  decided_by: { id: string | null; name: string } | null;
+  decided_at: string | null;
+  decision_reason: string;
+  decision_span_id: string | null; // the `approval` span, once recorded
+  policy_versions: PolicyVersions;
+}
+interface ResolvedPolicy {
+  capabilities: Capabilities; // the agent's, narrowed by every level: what the token carries
+  rules: Rules;
+  origins: Record<string, "workspace" | "team" | "agent" | "capabilities">; // rule path (`tools.allow`, `limits.tokens_per_run`, `dlp.labels.restricted.artifacts`, …) -> the level that set it; rules at their default are absent
+  levels: { scope: PolicyScope; scope_id: string | null; version: number }[]; // outermost first
 }
 
 type MemoryKind = "fact" | "experience" | "observation" | "preference";
@@ -621,6 +753,14 @@ Public: `GET /healthz`, `GET /readyz`, `POST /auth/register`, `POST /auth/login`
 | GET/POST `/agents?workspace_id=` | POST `{name, role, title?, model?, system_prompt?, reports_to?, budget_tokens?, runtime?, workspace_id?, purpose?, owner_user_id?, team_id?, capabilities?}` | `Agent[]` of the workspace (any member) / 201 `Agent` (member+; guests 403). The owner defaults to the caller and must be a member; the team one of the workspace's; the capabilities the default policy. A new workspace starts with a default organisation, each agent with a principal and the default policy |
 | GET/PATCH/DELETE `/agents/{id}` | PATCH: any subset of the agent fields (`team_id: null` detaches; `status` may be `active` or `paused`; `capabilities` replaces the whole document) | GET `AgentCard` (any member) / `Agent` / 204 (member+ of the agent's workspace; others 404). A change of capabilities raises `policy_version` and is audited (`policy_changed`); a quarantined agent's status is changed only through release (422) |
 | GET `/agents/{id}/activity?limit=` | — | `Span[]`: the agent's most recent spans across runs, newest first, `limit` 1–200 (default 20); only spans of runs whose graph the caller may open (any member of the agent's workspace; others 404) |
+| GET/POST `/workspaces/{wid}/policies?scope=&scope_id=&limit=` | POST `{scope: PolicyScope, scope_id?, document: PolicyDocument}` | `Policy[]` newest first, `limit` 1–200 (default 50), narrowed to one level by `scope` and `scope_id` / 201 `Policy` (workspace admins; members 403; others 404). The new version is the next number at its level; `scope_id` must be a team or agent of the workspace (422 `scope_id`); a document that would widen what the levels above resolve to is refused (422, `document.<rule>`: "would widen the policy of the level above"). Audited as `policy_changed` (subject: `the workspace`, `team {id}` or the agent's principal; detail: the version and what changed since the previous one, rule by rule) |
+| GET `/workspaces/{wid}/policies/resolve?agent_id=` | — | `ResolvedPolicy` of the agent (any member; unknown agent 404): its capabilities narrowed by every level, the rules beside them, which level set each rule, and the versions in force |
+| GET `/workspaces/{wid}/approvals?status=&limit=` | — | `Approval[]` newest first (admins), `limit` 1–200 (default 50) |
+| GET `/approvals/{id}` | — | `Approval` (members of its workspace; others 404) |
+| GET `/workspaces/{wid}/alerts?before=&limit=` | — | `Alert[]` newest first (admins), `before` pages by `created_at`, `limit` 1–200 (default 50) |
+| POST `/alerts/{id}/acknowledge` | — | `Alert` (admins of its workspace; others 404; 409 once acknowledged) |
+| POST `/artifacts/{aid}/release` | — | `Artifact` (admins of the run's workspace; members 403; others 404; 409 when not quarantined): a quarantined artifact can be downloaded again. Audited as `artifact_released` |
+| POST `/approvals/{id}/approve`, POST `/approvals/{id}/deny` | `{reason?}` (a reason is required to deny) | `Approval` (an approver the policy names, or a workspace admin; other members 403; outsiders 404; 409 once decided). The decision reaches the runtime holding the call within about a second, is recorded as an `approval` span of the run (`decision`, `decided_by`, `decided_by_name`, `reason`, `request_span_id`, `waited_ms`) and audited as `approval_granted` / `approval_denied` (subject: the principal; detail: the tool, the run and the reason); the approvers' inbox entries are marked read |
 | POST `/agents/{id}/quarantine`, POST `/agents/{id}/release` | — | `Agent` (workspace admins; members 403; others 404). Quarantine cancels the agent's running nodes (they fail, with a `policy` span of rule `quarantine`), refuses new ones and raises `policy_version` so no earlier token is honoured; release puts it back in service (`active`, or `over_budget`). Audited as `agent_quarantined` / `agent_released`; 409 when already in that state |
 | GET `/memories?workspace_id=&graph_id=&q=&limit=&offset=&preview=`                                                          | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `Memory[]`: what the workspace's graphs learned, limited to graphs the caller can open, plus the caller's own notes; with `q` a hybrid search with `score`. `graph_id` narrows to one graph                                                                                                                                                                                                                                                                                                                                                                                                     |
 | GET `/memories/{id}`                                                                                                        | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `Memory` in full, for those who may read it (404 otherwise). Lists page with `offset` (0-5000) and may carry previews: `preview=N` cuts each `content` to N characters (20-2000) and ends it with `…`                                                                                                                                                                                                                                                                                                                                                                                           |
@@ -642,7 +782,7 @@ Public: `GET /healthz`, `GET /readyz`, `POST /auth/register`, `POST /auth/login`
 | GET `/issues/{iid}/events`                                                                                                  | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `IssueEvent[]`, oldest first: comments and the changes to state, priority, assignee, title and due date. `{id, issue_id, kind: comment\|state\|priority\|assignee\|title\|due, actor: {user_id, name}\|null, body, from, to, created_at, edited_at}`                                                                                                                                                                                                                                                                                                                                            |
 | POST `/issues/{iid}/comments`                                                                                               | `{body}` (1 byte - 16 KiB)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | 201 `IssueEvent`. Whoever may edit the issue                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | PATCH/DELETE `/issues/{iid}/comments/{cid}`                                                                                 | PATCH `{body}`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `IssueEvent` / 204. Only the author edits; the author or whoever manages the team deletes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| GET `/workspaces/{wid}/inbox`                                                                                               | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | The caller's last 100 `Notification`s, newest first: `{id, kind: assigned\|comment\|state\|due, issue: {id, identifier, title}, actor: {user_id, name}\|null, created_at, read_at}`. A member is told when an issue is assigned to them, and when someone else comments on or moves an issue they created or are assigned                                                                                                                                                                                                                                                                       |
+| GET `/workspaces/{wid}/inbox`                                                                                               | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | The caller's last 100 `Notification`s, newest first: `{id, kind: assigned\|comment\|state\|due\|approval\|alert, issue: {id, identifier, title}\|null, approval: {id, run_id, node_id, graph_id, principal, tool, reason, status, expires_at}\|null, actor: {user_id, name}\|null, created_at, read_at}`. A member is told when an issue is assigned to them, and when someone else comments on or moves an issue they created or are assigned; an approver (every admin, or the members a policy names) is asked to decide a held tool call (`approval`, with the `approval` to open); admins hear alerts                                                                                                                                                                                                                                                                       |
 | POST `/workspaces/{wid}/inbox/read`                                                                                         | `{ids?}` (all when left out)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | The inbox after marking                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | GET/POST `/workspaces/{wid}/labels`                                                                                         | POST `{name, color}`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `Label[]` by name / 201 `Label` `{id, name, color}`. Everyone but guests adds; names are unique ignoring case (409)                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | PATCH/DELETE `/workspaces/{wid}/labels/{lid}`                                                                               | PATCH `{name?, color?}`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | `Label` / 204. Everyone but guests edits; workspace admins delete (issues lose the label)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
@@ -653,7 +793,7 @@ Public: `GET /healthz`, `GET /readyz`, `POST /auth/register`, `POST /auth/login`
 | GET/POST `/workspaces/{wid}/projects`                                                                                       | POST `{name, description?, target_date?}` (member+)                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `Project[]` / 201 `Project`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | PATCH/DELETE `/workspaces/{wid}/projects/{pid}`                                                                             | PATCH `{name?, description?, status?, lead_id?, target_date?}` (member+)                                                                                                                                                                                                                                                                                                                                                                                                                                            | `Project` / 204 (admin+; issues stay)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | GET/PUT `/workspaces/{wid}/guardrails`                                                                                      | PUT `Guardrails` (admin+; omitted fields take their defaults)                                                                                                                                                                                                                                                                                                                                                                                                                                                       | `Guardrails` `memory_limit` (>= 100) and `memory_forget_after_days` (>= 7), both `null` by default, let memory forget: untouched memories first, then the least important and least recalled beyond the limit; applied hourly                                                                                                                                                                                                                                                                                                                                                                   |
-| GET `/workspaces/{wid}/audit?before=&limit=` | — | `AuditEntry[]` newest first (admins and owners): `{id, action, actor_id\|null, actor_name, subject, detail, created_at}`. Records changes to members, invitations, teams and their members, the workspace credential (provider and model, never the key), guardrails and deleted labels, the seal of every finished run's trace (`trace_sealed`: subject the run id, detail the span count and the chain's final hash), an agent's capabilities (`policy_changed`, subject its principal, detail the policy version), quarantine and release (`agent_quarantined`, `agent_released`), classifications (`classification_changed`) and every action the runtime reported that a run's policy did not allow (`policy_mismatch`: subject the principal, detail the run, the span and the rule; the actor is whoever started the run). `before` pages by `created_at`; `limit` 1-200, default 100 |
+| GET `/workspaces/{wid}/audit?before=&limit=` | — | `AuditEntry[]` newest first (admins and owners): `{id, action, actor_id\|null, actor_name, subject, detail, created_at}`. Records changes to members, invitations, teams and their members, the workspace credential (provider and model, never the key), guardrails and deleted labels, the seal of every finished run's trace (`trace_sealed`: subject the run id, detail the span count and the chain's final hash), an agent's capabilities (`policy_changed`, subject its principal, detail the policy version), quarantine and release (`agent_quarantined`, `agent_released`), classifications (`classification_changed`), every action the runtime reported that a run's policy did not allow (`policy_mismatch`: subject the principal, detail the run, the span and the rule; the actor is whoever started the run), every policy version (`policy_changed`, subject the level, detail the diff), every decided approval (`approval_granted`, `approval_denied`: subject the principal, detail the tool, the run and the reason), every artifact the DLP classifier kept in or an admin released (`artifact_quarantined`, `artifact_released`) and every alert (`alert_raised`: subject the principal, detail the severity, kind and title). `before` pages by `created_at`; `limit` 1-200, default 100 |
 | POST `/workspaces/{wid}/audit/ask` | `{question}` (1–1,000 characters) | `AuditAnswer` (members and above; guests 403; outsiders 404; 422 for an empty or oversized question; 503 problem+json when no onto-intelli is configured or it does not answer, 403 when it refuses the principal). The six canned questions (`GET …/audit/questions`) are recognised with their slots (a run id, an agent's name, a time window: today, this week, this month, last N days) and answered as graph and event queries: `deterministic`, 0 tokens, milliseconds. Any other question goes to onto-intelli's `IntelliService/Ask` (mode auto): its facts are resolved to nexc things and an answer that cites none is `unverified`. The asker's role is their clearance: owners and admins see every fact; members do not see confidential or restricted document and memory ids (the fact is `withheld` and the id is replaced in the text) |
 | POST `/workspaces/{wid}/audit/ask/stream` | `{question}` | `text/event-stream`: `stage` `{text}` and `delta` `{text}` while onto-intelli explains, then `done` `AuditAnswer`, or `error` `{detail}`; same rules as the ask. A canned question, and any question from a member (the clearance applies to the text), arrives as one `done` |
 | GET `/workspaces/{wid}/audit/questions` | — | `CannedQuestion[]`: the six chips in the order the console offers them (any member) |
@@ -708,7 +848,7 @@ Public: `GET /healthz`, `GET /readyz`, `POST /auth/register`, `POST /auth/login`
 | GET `/runs/{rid}/trace/verify`                                                                                              | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `TraceVerification`: the chain recomputed from the stored spans; `ok` only if every span hashes as stored, every link holds and the hash sealed at the end of the run is the last one, else `broken` names the first span that does not fit                                                                                                                                                                                                                                                                                                                                                     |
 | GET `/runs/{rid}/artifacts`                                                                                                 | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `Artifact[]`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | GET `/runs/{rid}/artifacts.zip`                                                                                             | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | zip of all artifacts                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| GET `/artifacts/{aid}/download`                                                                                             | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | file, `Content-Disposition: attachment`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| GET `/artifacts/{aid}/download`                                                                                             | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | file, `Content-Disposition: attachment` A quarantined artifact answers 403 with the reason until an admin releases it; `/runs/{rid}/artifacts.zip` leaves quarantined files out |
 | GET `/templates`                                                                                                            | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `GraphTemplate[]` (built-in starter graphs)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | POST `/graphs/from-template`                                                                                                | `{template_id, name?, topic?}` (`topic` leads the graph goal: `Topic: …`)                                                                                                                                                                                                                                                                                                                                                                                                                                           | 201 `Graph`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | GET `/orchestrator/status`                                                                                                  | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `OrchestratorStatus`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
@@ -738,12 +878,13 @@ Frames: `id: <seq>\nevent: <type>\ndata: <json>\n\n`; `retry: 3000` first; `hear
 | `plan.ready`       | `{plan: Plan}`                                                                                            |
 | `plan.failed`      | `{plan_id, error}`                                                                                        |
 | `run.started`      | `{run: Run}`                                                                                              |
-| `node.status`      | `{run_id, node_id, status, attempt, error: string\|null, cached: boolean}`                                |
+| `node.status`      | `{run_id, node_id, status, attempt, error: string\|null, cached: boolean}`; `waiting_approval` while a tool call of the node waits for a human, `running` again once it was decided |
 | `node.output`      | `{run_id, node_id, delta}` (streamed text)                                                                |
 | `node.log`         | `{run_id, node_id, level, message}`                                                                       |
 | `node.tokens`      | `{run_id, node_id, tokens_in, tokens_out}` — cumulative totals for that node in this run (not increments) |
 | `artifact.created` | `{artifact: Artifact}`                                                                                    |
 | `trace.span`       | `{span: Span}`, once per span appended to a run's chain, in chain order (`seq`)                           |
+| `alert`            | `{alert: Alert}`, once per alert raised about a run of the graph (a DLP finding, a risk score over its threshold, an injection) |
 | `run.finished`     | `{run: Run}`                                                                                              |
 | `heartbeat`        | `{at}`                                                                                                    |
 
@@ -764,7 +905,8 @@ runs after each node create/update and pushes `suggestions` plus any auto-create
 Auth: `Authorization: Bearer $NEXC_RUNTIME_TOKEN` (constant-time compare). Bind to the internal network only.
 
 - `GET /healthz` → `{status:"ok", version, agents_loaded}`
-- `POST /v1/execute` → `application/x-ndjson` stream. Request:
+- `POST /v1/execute` → `application/x-ndjson` stream; `POST /v1/approvals/{id}` → the backend hands a
+waiting call its decision (below). Request of `/v1/execute`:
 
 ```json
 {
@@ -790,7 +932,8 @@ Auth: `Authorization: Bearer $NEXC_RUNTIME_TOKEN` (constant-time compare). Bind 
     "goal": "…",
     "upstream": [{ "node_id": "…", "title": "…", "output": "…" }],
     "memories": ["…"],
-    "documents": ["[report.pdf, p. 17]\n…"]
+    "documents": ["[report.pdf, p. 17]\n…"],
+    "labels": ["internal"]
   },
   "llm": {
     "provider": "anthropic",
@@ -806,8 +949,12 @@ Auth: `Authorization: Bearer $NEXC_RUNTIME_TOKEN` (constant-time compare). Bind 
 (derived from `NEXC_RUNTIME_TOKEN` as SHA-256(`nexc-agent-token-v1:` + token) when unset; the
 master key never leaves the backend), issuer `nexc-engine`, audience `nexc-runtime`, claims
 `sub` (the principal), `jti`, `iat`, `nbf`, `exp` (the node's `timeout_s` plus 60 s), `run_id`,
-`node_id`, `agent_id`, `workspace_id`, `depth` (0 for the root agent), `policy_version` and
-`capabilities` (the agent's `Capabilities` document, §4). The runtime starts nothing without a
+`node_id`, `agent_id`, `workspace_id`, `depth` (0 for the root agent), `policy_version`,
+`capabilities` (the agent's `Capabilities` document narrowed by every policy level, §4), `rules`
+(the resolved `Rules`, §4: deny-lists, approvals, limits, DLP, the injection screen and the
+policy versions in force) and `labels` (the classifications of the data the node was given;
+`context.labels` says the same to the runtime). A token minted before these claims existed reads
+as `Rules` with nothing set and no labels. The runtime starts nothing without a
 token that verifies (signature compared in constant time, algorithm `HS256` only, audience, `exp`
 and `nbf` with 5 s of leeway, `run_id` and `node_id` equal to the request's): a missing, forged,
 expired or misdirected token ends the stream with
@@ -856,6 +1003,80 @@ The stream always ends with exactly one `result` or `error`. Artifact paths are 
 | `tool_call` | every tool call that runs (`Tool.invoke`), `spawn_subagent` included | the tool   | the turn that asked for it           | `tool, args_sha256, args_bytes, result_bytes, is_error, duration_ns`                  |
 | `spawn`     | a sub-agent's birth, an instant (`started_at == ended_at`)           | the child  | the parent agent's current turn      | `child, role, depth, budget_tokens, policy_version`                                   |
 | `policy`    | a tool call or spawn the token refused, an instant; `status: "error"` | the subject (the tool, the role) | the turn that asked | `decision: "deny", rule, reason, action: tool_call\|spawn, subject, policy_version` (+ `depth, children` for a spawn) |
+
+Every `policy` span of the backend also carries `policy_versions` (`PolicyVersions`, §4), as does
+the `data_read` span of a node (with `labels`, what the node was given).
+
+**DLP on the way out.** Every artifact a node delivers is stored and then screened: its text
+(plain text as it is, the words of a `.docx`, `.xlsx` or `.pptx`; other binaries are not read) is
+classified for credentials (the guardrails' scrubber), personal data (`rules.dlp.pii.kinds`:
+e-mail addresses, phone numbers, card numbers passing Luhn, national-id shapes) and the
+workspace's keywords, and the strictest label the node read (its own context and its upstream
+nodes') is checked against `rules.dlp.labels[label].artifacts`. A label that may not leave, a
+credential under `secrets: deny` or personal data under `pii.action: deny` keeps the artifact in
+(`quarantined_at`, `quarantine_reason`), with a `policy` span of status `error` (`action:
+"artifact"`, `artifact_id`, `label`, `secrets`, `pii`, `keywords`, `findings`), an `alert` and an
+`artifact_quarantined` audit entry; under `alert` the same span has decision `alert` and only the
+alert is raised. A tool that calls out reports `egress_host` (and `payload_sha256`,
+`payload_bytes`) on its `tool_call` span; the backend checks the host against the egress rules
+(`egress.deny`, then the allow-list) and the node's labels against
+`rules.dlp.labels[label].egress_hosts` (`action: "egress"`), and a denial is a `policy` span and
+an alert: the call already happened, so what left is on the record. Spans and alerts carry
+counts and digests, never the content.
+
+**Behaviour baseline and risk.** When a run finishes, each agent that worked in it is scored
+against its baseline before the baseline learns the run: tool calls per turn, tokens per turn,
+distinct tools, distinct hosts, sub-agents, policy denials (and mismatches) and bytes out
+(artifact sizes plus `payload_bytes` of calls out) as running means and deviations (Welford), the
+MinHash of the run's tool sequence against the last twenty runs. Features a baseline of at least
+three runs has seen score their z (capped at 3 each), hosts and tools never seen before add to it,
+and a sequence unlike every earlier run adds one; the score is capped at 10 and every unusual
+feature is a reason in words (`Agent.risk_score`, `risk_reasons`). The policy's `alerts` turn it
+into alerts (`alerts.risk_score`, `alerts.denials_per_run`, `alerts.novelty`, kind `risk`) and,
+at `alerts.quarantine_risk_score`, into a quarantine (as `POST /agents/{id}/quarantine` does,
+audited as `agent_quarantined` with `automatic: risk score …`, a `critical` alert). The run's
+trace is sealed by then, so these alerts name no span.
+
+**The prompt-injection screen.** Data about to go to the model is looked at for instructions
+aimed at it, cheaply and without a model: a fixed set of patterns (ignoring earlier instructions,
+new or real instructions, role overrides, prompt-leak requests, exfiltration of keys and secrets,
+tool hijacking, chat-template markup, directives to the assistant, urgency overrides) and
+zero-width or tag characters that hide text from a reader; two patterns together, markup, hidden
+text or exfiltration rate `high`. The backend screens every upstream output, memory and document
+passage as it builds a node's context; the runtime screens every tool result (a sub-agent's answer
+included) before it goes to the model. A finding is a `policy` span named `injection` (`rule:
+"injection"`, `action: "context"` with `source` `upstream` | `memory` | `document` and `subject`
+the node, memory or chunk id, or `action: "tool_result"` with `subject` the tool; `severity`,
+`patterns`, `hidden_chars`), decision `alert` by default: the text goes through. Under
+`rules.injection.action: "block"` the decision is `deny`, an upstream output or a tool result is
+replaced by a notice (`[… withheld by policy: it contained instructions aimed at the model (…)]`)
+and a memory or passage is dropped. A `high` finding is also an alert of kind `injection`. With
+`rules.injection.model_check` and the runtime setting `RUNTIME_INJECTION_MODEL_CHECK=true`, the
+run's model is asked to confirm a tool-result finding first (one short turn, accounted to the
+run); a `NO` clears it.
+
+**Approvals.** A tool the rules hold (`require_approval.tools`, or `write_file` / `make_docx`
+after data of a label in `require_approval.labels`) does not run at once. The runtime reports a
+`policy` span with `decision: "require_approval"`, `rule`, `reason`, `action: "tool_call"`,
+`subject` (the tool), `approval_id` (a UUID v7 it chose) and `args_sha256`, logs that it waits,
+and keeps the call waiting for `rules.require_approval.timeout_s` (heartbeat log lines every 20 s
+keep the stream alive). The backend records the request (`Approval`, §4), sets the node run and
+the node to `waiting_approval`, puts an `approval` entry in every approver's inbox and watches the
+approvals table; when someone decides it hands the decision to the runtime holding the call,
+`POST /v1/approvals/{approval_id}` with the runtime's bearer token and `{"decision": "approved" |
+"denied", "reason", "decided_by"}` (200 `{"status":"delivered"}`; 404 when no call waits for that
+id on this runtime), records an `approval` span and sets the node back to `running`. Approved, the
+tool runs and its `tool_call` span carries `approval_id`; the backend's re-check accepts a held
+tool only with an approval it granted. Denied, the model sees `"{tool} was denied by {who}:
+{reason}"` as a tool error and goes on. Nobody deciding in time ends the stream with
+`{"type":"error","message":"approval for {tool} not given within {n}s","retryable":false}` and
+the approval is `expired`. A decision has to reach the runtime instance that holds the call:
+with several runtime replicas behind one address, route by run or accept that a misrouted
+decision times out (phase 4's stream removes the hop). The deny-lists (`tools_denied`,
+`models_denied`) are refused before the allow-lists (`rule` `tools.deny`, `models.deny`), and
+`limits.tool_calls_per_minute` refuses the calls past it within a minute (`rule`
+`limits.tool_calls_per_minute`; `finish` is never held back). `limits.tokens_per_run` caps the
+agent's budget.
 
 `args_sha256` is the SHA-256 of the arguments as JSON with sorted keys and no whitespace. Ids are
 UUID v7 made by the runtime; times are RFC 3339 UTC with nanoseconds; `agent` is the acting

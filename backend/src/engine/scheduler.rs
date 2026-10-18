@@ -19,19 +19,25 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::analysis::dependency_graph;
+use super::defend::{About, Finding};
 use super::executor::{self, ExecContext, ExecError, ExecOutput};
+use super::policy as policies;
 use super::trace::{self, Sealed, TraceHandle};
 use super::{artifacts, credentials, editor, guardrails, knowledge, usage};
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::agent::{Agent, AgentStatus};
+use crate::domain::alert::AlertKind;
 use crate::domain::audit::AuditAction;
-use crate::domain::capabilities::Capabilities;
+use crate::domain::capabilities::{Capabilities, DataLabel};
 use crate::domain::context;
 use crate::domain::graph::{Executor, GraphEdge, GraphNode, NodeStatus};
 use crate::domain::guardrails::Guardrails;
+use crate::domain::injection::{self, InjectionFinding};
 use crate::domain::ontology::Ontology;
 use crate::domain::policy::{self, Action, Decision};
+use crate::domain::policy_document::Policy;
+use crate::domain::policy_document::{InjectionAction, Severity};
 use crate::domain::prompt::{AGENT_UPSTREAM_CHARS, UPSTREAM_CHARS, UpstreamOutput};
 use crate::domain::run::{Run, RunStatus, final_status};
 use crate::domain::settings::{ConfigScope, LlmProviderKind};
@@ -252,6 +258,12 @@ async fn finish_run(
     if let Some(hash) = hash {
         seal_audit(state, &row, hash, sealed.spans).await;
     }
+    // Every agent that worked is scored against what it usually does, and learns the run.
+    let assessed = super::risk::assess(state, &row).await;
+    if assessed.alerts > 0 || assessed.quarantined > 0 {
+        tracing::info!(%run_id, agents = assessed.agents, alerts = assessed.alerts,
+            quarantined = assessed.quarantined, "run assessed");
+    }
     let graph_id = row.graph_id;
     let run = row.into_run(repo::runs::node_runs(&state.db, run_id).await?);
     state.hub.publish(graph_id, SseEvent::RunFinished { run });
@@ -297,8 +309,10 @@ struct RunData {
     target: LlmTarget,
     /// Whose configuration `target` came from; usage is booked to it.
     credential: ConfigScope,
-    /// The workspace's policy, as it stood when the run started.
+    /// The workspace's guardrails, as they stood when the run started.
     policy: Guardrails,
+    /// The latest version of every policy of the workspace, as the run started.
+    policies: Vec<Policy>,
     workspace_id: Option<Uuid>,
     ontology: Ontology,
     edges: Vec<GraphEdge>,
@@ -376,6 +390,13 @@ impl Execution {
             .collect();
         let resolved = credentials::resolve(state, row.owner_id, graph.workspace_id).await?;
         let (target, credential) = (resolved.target, resolved.scope);
+        let policies = match graph.workspace_id {
+            Some(workspace) => repo::policies::latest_all(&state.db, workspace).await?,
+            None => Vec::new(),
+        };
+        // The workspace level governs the whole run; each node records every level.
+        let versions = policies::versions_of(&policies::levels_for(&policies, None, None));
+        repo::runs::set_policy_versions(&state.db, row.id, &versions).await?;
         let data = RunData {
             run_id: row.id,
             graph_id: row.graph_id,
@@ -385,6 +406,7 @@ impl Execution {
             target,
             credential,
             policy: guardrails::load(state, graph.workspace_id).await?,
+            policies,
             workspace_id: graph.workspace_id,
             ontology: graph.ontology,
             edges,
@@ -830,12 +852,16 @@ impl NodeTask {
             }
             None => Vec::new(),
         };
-        // The agent's data scopes decide what reaches it; a node without an agent reads as the
-        // system does. What was withheld is on the record before the node runs, ids only.
-        let capabilities = agent
-            .as_ref()
-            .map(|a| a.capabilities.clone())
-            .unwrap_or_default();
+        // The policies in force, resolved for this agent (workspace -> team -> agent over its
+        // own capabilities), decide what reaches it; a node without an agent reads as the system
+        // does. What was withheld is on the record before the node runs, ids only.
+        let levels = policies::levels_for(
+            &data.policies,
+            agent.as_ref().and_then(|a| a.team_id),
+            agent.as_ref().map(|a| a.id),
+        );
+        let resolved = policies::resolve(&levels, agent.as_ref().map(|a| &a.capabilities));
+        let (capabilities, rules) = (resolved.capabilities, resolved.rules);
         let policy_version = agent.as_ref().map_or(0, |a| a.policy_version);
         let mut withheld = Withheld::default();
         let recalled: Vec<_> = recalled
@@ -871,6 +897,21 @@ impl NodeTask {
             })
             .collect();
         let memory_ids: Vec<Uuid> = recalled.iter().map(|m| m.id).collect();
+        // What the node produces is derived from what it reads: its own context and its
+        // upstream nodes' (whatever earlier run they were given it in).
+        let upstream_ids: Vec<Uuid> = upstream.iter().map(|(id, _)| *id).collect();
+        let mut labels_given: Vec<DataLabel> = recalled
+            .iter()
+            .map(|m| m.label)
+            .chain(passages.iter().map(|p| p.label))
+            .chain(
+                repo::runs::context_labels_of(&state.db, &upstream_ids)
+                    .await
+                    .unwrap_or_default(),
+            )
+            .collect();
+        labels_given.sort_by_key(|l| l.rank());
+        labels_given.dedup();
         let memories = recalled
             .into_iter()
             .map(|m| data.policy.scrub(m.content))
@@ -905,7 +946,6 @@ impl NodeTask {
         };
         let mut context_saved = 0;
         // The titles of all upstream nodes in one read, not one per node.
-        let upstream_ids: Vec<Uuid> = upstream.iter().map(|(id, _)| *id).collect();
         let titles: HashMap<Uuid, String> =
             repo::nodes::find_many(&state.db, data.graph_id, &upstream_ids)
                 .await?
@@ -933,6 +973,112 @@ impl NodeTask {
                 reason: edge.map(|e| e.reason.clone()).unwrap_or_default(),
             });
         }
+        // Data about to go to the model is screened for instructions aimed at it: a finding
+        // is a `policy` span, and under `injection.action: block` the piece is withheld.
+        let block = rules.injection.action == InjectionAction::Block;
+        let mut findings: Vec<(&str, String, InjectionFinding)> = Vec::new();
+        for output in &mut upstream_outputs {
+            if let Some(finding) = injection::screen(&output.output) {
+                if block {
+                    output.output = injection::withheld_notice("upstream output", &finding);
+                }
+                findings.push(("upstream", output.node_id.to_string(), finding));
+            }
+        }
+        let screened =
+            |items: Vec<String>,
+             ids: &[Uuid],
+             source: &'static str,
+             findings: &mut Vec<(&str, String, InjectionFinding)>| {
+                items
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(i, text)| match injection::screen(&text) {
+                        Some(finding) => {
+                            let subject = ids.get(i).map(ToString::to_string).unwrap_or_default();
+                            findings.push((source, subject, finding));
+                            (!block).then_some(text)
+                        }
+                        None => Some(text),
+                    })
+                    .collect::<Vec<String>>()
+            };
+        let memories = screened(memories, &memory_ids, "memory", &mut findings);
+        let documents = screened(documents, &chunk_ids, "document", &mut findings);
+        for (source, subject, finding) in &findings {
+            let reason = format!(
+                "instructions aimed at the model in {source} {subject}: {}",
+                finding.describe()
+            );
+            let decision = if block {
+                Decision::deny("injection", reason.clone())
+            } else {
+                Decision::alert("injection", finding.severity, reason.clone())
+            };
+            let span_id = Uuid::now_v7();
+            data.trace.emit(SpanDraft {
+                id: span_id,
+                node_id: node.id,
+                agent_id: agent.as_ref().map(|a| a.id),
+                principal: principal.clone(),
+                parent_id: None,
+                kind: SpanKind::Policy,
+                name: "injection".into(),
+                started_at: began,
+                ended_at: Some(Utc::now()),
+                status: if block {
+                    SpanStatus::Error
+                } else {
+                    SpanStatus::Ok
+                },
+                attributes: json!({
+                    "decision": decision.verdict(),
+                    "rule": "injection",
+                    "reason": reason,
+                    "action": "context",
+                    "source": source,
+                    "subject": subject,
+                    "severity": finding.severity,
+                    "patterns": finding.patterns,
+                    "hidden_chars": finding.hidden_chars,
+                    "policy_version": policy_version,
+                    "policy_versions": rules.versions,
+                }),
+            });
+            if finding.severity == Severity::High
+                && let Some(workspace_id) = data.workspace_id
+            {
+                super::defend::raise(
+                    &state,
+                    &About {
+                        workspace_id,
+                        agent_id: agent.as_ref().map(|a| a.id),
+                        principal: &principal,
+                        run_id: Some(data.run_id),
+                        node_id: Some(node.id),
+                        graph_id: Some(data.graph_id),
+                        actor: data.owner,
+                    },
+                    &Finding {
+                        span_id: Some(span_id),
+                        kind: AlertKind::Injection,
+                        severity: finding.severity,
+                        rule: "injection",
+                        title: &format!("instructions found in a {source} given to {}", node.title),
+                        detail: &format!(
+                            "{}{}",
+                            finding.describe(),
+                            if block {
+                                "; withheld"
+                            } else {
+                                "; let through, flagged"
+                            }
+                        ),
+                    },
+                )
+                .await;
+            }
+        }
         // What the node was given to read is on the record before it runs.
         data.trace.emit(SpanDraft {
             id: Uuid::now_v7(),
@@ -952,6 +1098,8 @@ impl NodeTask {
                 "documents": chunk_ids.len(),
                 "memories": memory_ids.len(),
                 "chars_saved": context_saved,
+                "labels": labels_given,
+                "policy_versions": rules.versions,
             }),
         });
         let ctx = ExecContext {
@@ -970,9 +1118,12 @@ impl NodeTask {
             agent,
             capabilities,
             policy_version,
+            rules,
+            labels_given,
             target: data.target.clone(),
             force: data.force,
             trace: data.trace.clone(),
+            attempt: std::sync::atomic::AtomicI32::new(0),
         };
         Ok(NodeTask {
             ctx,
@@ -1074,6 +1225,13 @@ impl NodeTask {
             let reason = format!("policy: {}", decision.reason);
             return self.finish(NodeStatus::Failed, 0, None, Some(reason)).await;
         }
+        // So are the rules only the backend can see: working hours, the day's spend, the pace.
+        if let Some(decision) = self.gate().await {
+            self.ctx
+                .policy_span(decision.rule, &decision, json!({"action": "node"}));
+            let reason = format!("policy: {}", decision.reason);
+            return self.finish(NodeStatus::Failed, 0, None, Some(reason)).await;
+        }
         let state = &self.ctx.state;
         let settings = state.settings.clone();
         let executor = executor::for_kind(self.ctx.node.executor);
@@ -1112,11 +1270,7 @@ impl NodeTask {
                     );
                     self.ctx.policy_span(
                         "quarantine",
-                        &Decision {
-                            allowed: false,
-                            rule: "quarantine",
-                            reason: reason.clone(),
-                        },
+                        &Decision::deny("quarantine", reason.clone()),
                         json!({"action": "node"}),
                     );
                     return self
@@ -1160,10 +1314,68 @@ impl NodeTask {
         unreachable!("the last attempt always returns")
     }
 
+    /// Why the node may not start now under the resolved rules, if it may not:
+    /// outside the time windows, over the day's token or dollar ceiling, or
+    /// past the agent's starts per hour.
+    async fn gate(&self) -> Option<Decision> {
+        let rules = &self.ctx.rules;
+        let windows = rules.within_time_windows(Utc::now());
+        if !windows.allowed {
+            return Some(windows);
+        }
+        let agent = self.ctx.agent.as_ref()?;
+        let limits = &rules.limits;
+        if limits.tokens_per_day.is_some() || limits.cost_usd_per_day.is_some() {
+            let (tokens, cost) = repo::usage::agent_today(&self.ctx.state.db, agent.id)
+                .await
+                .unwrap_or((0, 0.0));
+            if let Some(ceiling) = limits.tokens_per_day
+                && tokens >= ceiling
+            {
+                return Some(Decision::deny(
+                    "limits.tokens_per_day",
+                    format!("the agent spent {tokens} of its {ceiling} tokens for today"),
+                ));
+            }
+            if let Some(ceiling) = limits.cost_usd_per_day
+                && cost >= ceiling
+            {
+                return Some(Decision::deny(
+                    "limits.cost_usd_per_day",
+                    format!("the agent spent ${cost:.2} of its ${ceiling:.2} for today"),
+                ));
+            }
+        }
+        if let Some(per_hour) = limits.runs_per_hour
+            && let Err(wait) = self.ctx.state.engine.admit_dispatch(agent.id, per_hour)
+        {
+            return Some(Decision::deny(
+                "limits.runs_per_hour",
+                format!(
+                    "the agent already started {per_hour} node(s) this hour; next in {}s",
+                    wait.as_secs()
+                ),
+            ));
+        }
+        None
+    }
+
     async fn mark_running(&self, attempt: i32, agent_id: Option<Uuid>) -> anyhow::Result<()> {
         let state = &self.ctx.state;
         let node_id = self.ctx.node.id;
-        repo::runs::start_node(&state.db, self.data.run_id, node_id, attempt, agent_id).await?;
+        self.ctx
+            .attempt
+            .store(attempt, std::sync::atomic::Ordering::Relaxed);
+        repo::runs::start_node(
+            &state.db,
+            self.data.run_id,
+            node_id,
+            attempt,
+            agent_id,
+            &self.ctx.rules.versions,
+            &self.ctx.labels_given,
+        )
+        .await?;
         repo::nodes::set_status(&state.db, node_id, NodeStatus::Running, None).await?;
         publish_status(
             state,

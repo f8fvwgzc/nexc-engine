@@ -23,6 +23,9 @@ pub struct ArtifactRow {
     pub size: i64,
     pub mime: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    pub quarantined_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub quarantine_reason: String,
+    pub released_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl From<ArtifactRow> for Artifact {
@@ -35,8 +38,22 @@ impl From<ArtifactRow> for Artifact {
             size: r.size,
             mime: r.mime,
             created_at: r.created_at,
+            quarantined_at: r.quarantined_at,
+            quarantine_reason: r.quarantine_reason,
+            released_at: r.released_at,
         }
     }
+}
+
+/// The columns of an artifact row (SQL stays static).
+macro_rules! artifact_columns {
+    () => {
+        "id, run_id, node_id, path, size, mime, created_at, quarantined_at, quarantine_reason, released_at"
+    };
+    (a) => {
+        "a.id, a.run_id, a.node_id, a.path, a.size, a.mime, a.created_at, a.quarantined_at,
+         a.quarantine_reason, a.released_at"
+    };
 }
 
 /// Records an artifact (replacing one with the same run, node and path).
@@ -49,13 +66,16 @@ pub async fn upsert(
     mime: &str,
     storage_path: &str,
 ) -> Result<Artifact, sqlx::Error> {
-    let row: ArtifactRow = sqlx::query_as(
+    let row: ArtifactRow = sqlx::query_as(concat!(
         "INSERT INTO artifacts (id, run_id, node_id, path, size, mime, storage_path)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (run_id, node_id, path) DO UPDATE
-            SET size = EXCLUDED.size, mime = EXCLUDED.mime, storage_path = EXCLUDED.storage_path, created_at = now()
-         RETURNING id, run_id, node_id, path, size, mime, created_at",
-    )
+            SET size = EXCLUDED.size, mime = EXCLUDED.mime, storage_path = EXCLUDED.storage_path,
+                created_at = now(), quarantined_at = NULL, quarantine_reason = '', released_at = NULL,
+                released_by = NULL
+         RETURNING ",
+        artifact_columns!()
+    ))
     .bind(Uuid::now_v7())
     .bind(run_id)
     .bind(node_id)
@@ -73,10 +93,11 @@ pub async fn list_stored(
     db: impl PgExecutor<'_>,
     run_id: Uuid,
 ) -> Result<Vec<StoredArtifact>, sqlx::Error> {
-    sqlx::query_as(
-        "SELECT id, run_id, node_id, path, size, mime, created_at, storage_path
-         FROM artifacts WHERE run_id = $1 ORDER BY created_at, path",
-    )
+    sqlx::query_as(concat!(
+        "SELECT ",
+        artifact_columns!(),
+        ", storage_path FROM artifacts WHERE run_id = $1 ORDER BY created_at, path"
+    ))
     .bind(run_id)
     .fetch_all(db)
     .await
@@ -88,14 +109,51 @@ pub async fn list_for_node(
     run_id: Uuid,
     node_id: Uuid,
 ) -> Result<Vec<StoredArtifact>, sqlx::Error> {
-    sqlx::query_as(
-        "SELECT id, run_id, node_id, path, size, mime, created_at, storage_path
-         FROM artifacts WHERE run_id = $1 AND node_id = $2 ORDER BY path",
-    )
+    sqlx::query_as(concat!(
+        "SELECT ",
+        artifact_columns!(),
+        ", storage_path FROM artifacts WHERE run_id = $1 AND node_id = $2 ORDER BY path"
+    ))
     .bind(run_id)
     .bind(node_id)
     .fetch_all(db)
     .await
+}
+
+/// Keeps an artifact from being downloaded until an admin releases it.
+pub async fn quarantine(
+    db: impl PgExecutor<'_>,
+    id: Uuid,
+    reason: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE artifacts SET quarantined_at = now(), quarantine_reason = $2, released_at = NULL,
+                released_by = NULL WHERE id = $1",
+    )
+    .bind(id)
+    .bind(reason)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Releases a quarantined artifact; `None` when it is not quarantined or unknown.
+pub async fn release(
+    db: impl PgExecutor<'_>,
+    id: Uuid,
+    user_id: Uuid,
+) -> Result<Option<Artifact>, sqlx::Error> {
+    let row: Option<ArtifactRow> = sqlx::query_as(concat!(
+        "UPDATE artifacts SET released_at = now(), released_by = $2
+         WHERE id = $1 AND quarantined_at IS NOT NULL AND released_at IS NULL
+         RETURNING ",
+        artifact_columns!()
+    ))
+    .bind(id)
+    .bind(user_id)
+    .fetch_optional(db)
+    .await?;
+    Ok(row.map(Into::into))
 }
 
 /// One artifact, only if `owner_id` may work on the graph of its run.
@@ -105,7 +163,9 @@ pub async fn find_owned(
     id: Uuid,
 ) -> Result<Option<StoredArtifact>, sqlx::Error> {
     sqlx::query_as(concat!(
-        "SELECT a.id, a.run_id, a.node_id, a.path, a.size, a.mime, a.created_at, a.storage_path
+        "SELECT ",
+        artifact_columns!(a),
+        ", a.storage_path
          FROM artifacts a JOIN runs r ON r.id = a.run_id JOIN graphs g ON g.id = r.graph_id
          WHERE a.id = $1 AND ",
         graph_access!("g", "$2")

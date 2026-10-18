@@ -6,6 +6,7 @@ import {
   CircleDotIcon,
   CircleUserIcon,
   FolderKanbanIcon,
+  GavelIcon,
   InboxIcon,
   type LucideIcon,
   MessagesSquareIcon,
@@ -13,6 +14,7 @@ import {
   PlayIcon,
   ScrollTextIcon,
   SettingsIcon,
+  SirenIcon,
   UsersIcon,
   UsersRoundIcon,
 } from 'lucide-react';
@@ -61,6 +63,8 @@ export const NAV_ITEMS: NavItem[] = [
   { title: 'Members', to: '/app/settings/members', icon: UsersIcon },
   { title: 'Usage', to: '/app/settings/usage', icon: ChartNoAxesColumnIcon },
   { title: 'Audit log', to: '/app/settings/audit', icon: ScrollTextIcon, adminOnly: true },
+  { title: 'Policies', to: '/app/settings/policies', icon: GavelIcon, adminOnly: true },
+  { title: 'Alerts', to: '/app/settings/alerts', icon: SirenIcon, adminOnly: true },
   { title: 'Settings', to: '/app/settings', icon: SettingsIcon },
 ];
 

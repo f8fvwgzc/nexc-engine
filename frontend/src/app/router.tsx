@@ -131,6 +131,8 @@ export const routes: RouteObject[] = [
               { path: 'teams', ...page(routeModules.teams) },
               { path: 'ai', ...page(routeModules.settingsAi) },
               { path: 'guardrails', ...page(routeModules.settingsGuardrails) },
+              { path: 'policies', ...page(routeModules.settingsPolicies) },
+              { path: 'alerts', ...page(routeModules.settingsAlerts) },
               { path: 'memory', ...page(routeModules.memory) },
               { path: 'knowledge', ...page(routeModules.settingsKnowledge) },
               { path: 'usage', ...page(routeModules.usage) },

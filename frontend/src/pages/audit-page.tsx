@@ -43,6 +43,11 @@ const VERB: Record<AuditAction, string> = {
   agent_quarantined: 'quarantined',
   agent_released: 'released',
   classification_changed: 'classified',
+  approval_granted: 'approved a tool call of',
+  approval_denied: 'denied a tool call of',
+  artifact_quarantined: 'saw the DLP screen keep in the artifact of',
+  artifact_released: 'released the artifact',
+  alert_raised: 'saw an alert about',
 };
 
 /** Actions whose subject is a thing of the workspace, not a name: it reads on in lower case. */

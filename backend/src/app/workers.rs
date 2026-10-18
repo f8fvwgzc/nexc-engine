@@ -111,5 +111,6 @@ async fn housekeeping(state: &AppState) -> anyhow::Result<()> {
     export::purge_when_off(state).await?;
     state.hub.prune();
     state.limiters.prune();
+    state.engine.prune_dispatches();
     Ok(())
 }

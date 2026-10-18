@@ -130,6 +130,8 @@ export const nodeRun: NodeRun = {
   started_at: at,
   finished_at: '2026-10-03T12:00:09Z',
   output_preview: 'Found 12 sources',
+  policy_versions: { workspace: null, team: null, agent: null },
+  context_labels: [],
 };
 
 export const run: Run = {
@@ -144,6 +146,7 @@ export const run: Run = {
   created_at: at,
   trace_hash: null,
   policy_mismatches: 0,
+  policy_versions: { workspace: null, team: null, agent: null },
   node_runs: [
     nodeRun,
     {
@@ -215,6 +218,9 @@ export const artifact: Artifact = {
   size: 20480,
   mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   created_at: at,
+  quarantined_at: null,
+  quarantine_reason: '',
+  released_at: null,
 };
 
 export const agent: Agent = {
@@ -245,6 +251,9 @@ export const agent: Agent = {
   },
   policy_version: 3,
   quarantined_at: null,
+  risk_score: 0,
+  risk_reasons: [],
+  risk_updated_at: null,
 };
 
 export const memory: Memory = {

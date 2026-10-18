@@ -1,30 +1,219 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCheckIcon, InboxIcon } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import {
+  CheckCheckIcon,
+  CheckIcon,
+  InboxIcon,
+  SirenIcon,
+  UserCheckIcon,
+  XIcon,
+} from 'lucide-react';
+import { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 
+import { AnimatedButton } from '@/components/custom-ui/animated-button';
 import { EmptyState } from '@/components/custom-ui/empty-state';
 import { PersonGlyph } from '@/components/custom-ui/issue-glyphs';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { PageSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
 import { inboxQuery, markInboxRead } from '@/features/issues/api';
+import { approveApproval, denyApproval } from '@/features/policies/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { errorMessage } from '@/lib/api/errors';
 import { formatRelative } from '@/lib/format';
 import { qk } from '@/lib/query-keys';
+import { displayPrincipal } from '@/schemas/agent';
 import type { Notification } from '@/schemas/issue';
+import { SEVERITY_META } from '@/schemas/policy';
 import type { Workspace } from '@/schemas/workspace';
 
 /** What the actor did to the issue. */
-const VERB: Record<Notification['kind'], string> = {
+const VERB: Record<'assigned' | 'comment' | 'state' | 'due', string> = {
   assigned: 'assigned you',
   comment: 'commented on',
   state: 'moved',
   // Nobody did this one: the day arrived.
   due: 'is due:',
 };
+
+const ROW =
+  'flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] transition-colors outline-none hover:bg-muted/60 focus-visible:bg-muted/60';
+
+function Unread({ read }: { read: boolean }) {
+  return (
+    <span
+      aria-label={read ? undefined : 'Unread'}
+      className={`size-1.5 shrink-0 rounded-full ${read ? 'bg-transparent' : 'bg-primary'}`}
+    />
+  );
+}
+
+function IssueEntry({ n, onOpen }: { n: Notification; onOpen: (n: Notification) => void }) {
+  if (!n.issue || n.kind === 'approval' || n.kind === 'alert') return null;
+  const read = n.read_at !== null;
+  return (
+    <button type="button" onClick={() => onOpen(n)} className={ROW}>
+      <Unread read={read} />
+      <PersonGlyph name={n.kind === 'due' ? 'Reminder' : n.actor?.name} />
+      <span className={`min-w-0 flex-1 truncate ${read ? 'text-muted-foreground' : ''}`}>
+        <span className="font-medium">
+          {n.kind === 'due' ? 'Your issue' : (n.actor?.name ?? 'Someone who left')}
+        </span>{' '}
+        {VERB[n.kind]} <span className="font-mono text-xs">{n.issue.identifier}</span>{' '}
+        {n.issue.title}
+      </span>
+      <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+        {formatRelative(n.created_at)}
+      </span>
+    </button>
+  );
+}
+
+interface DecideProps {
+  n: Notification;
+  workspaceId: string;
+}
+
+/** A held tool call: who asks, what for, and the two buttons. */
+function ApprovalEntry({ n, workspaceId }: DecideProps) {
+  const queryClient = useQueryClient();
+  const [denying, setDenying] = useState(false);
+  const [reason, setReason] = useState('');
+  const approval = n.approval;
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: qk.issues.inbox(workspaceId) });
+    void queryClient.invalidateQueries({ queryKey: qk.approvals.all });
+  };
+  const approve = useMutation({
+    mutationFn: () => approveApproval(approval?.id ?? '', ''),
+    onSuccess: (a) => {
+      toast.success(`${a.tool} approved: the run goes on`);
+      refresh();
+    },
+    onError: (err) => toast.error(errorMessage(err)),
+  });
+  const deny = useMutation({
+    mutationFn: () => denyApproval(approval?.id ?? '', reason),
+    onSuccess: (a) => {
+      toast.success(`${a.tool} denied: the agent was told why`);
+      setDenying(false);
+      refresh();
+    },
+    onError: (err) => toast.error(errorMessage(err)),
+  });
+  if (!approval) return null;
+  const read = n.read_at !== null;
+  const pending = approval.status === 'pending';
+  return (
+    <div className={`${ROW} cursor-default`}>
+      <Unread read={read} />
+      <UserCheckIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+      <span className={`min-w-0 flex-1 ${read ? 'text-muted-foreground' : ''}`}>
+        <span className="font-medium">{displayPrincipal(approval.principal)}</span> asks to run{' '}
+        <code className="rounded bg-muted px-1 py-0.5 text-xs">{approval.tool}</code>
+        {approval.reason && (
+          <span className="text-muted-foreground"> · {approval.reason}</span>
+        )}{' '}
+        <Link
+          to={`/app/runs/${approval.run_id}`}
+          className="text-xs text-muted-foreground hover:underline"
+        >
+          run {approval.run_id.slice(0, 8)}
+        </Link>
+        {!pending && (
+          <Badge variant="outline" className="ml-2">
+            {approval.status}
+          </Badge>
+        )}
+      </span>
+      {pending ? (
+        <span className="flex shrink-0 items-center gap-1">
+          <AnimatedButton size="sm" loading={approve.isPending} onClick={() => approve.mutate()}>
+            <CheckIcon />
+            Approve
+          </AnimatedButton>
+          <Button size="sm" variant="outline" onClick={() => setDenying(true)}>
+            <XIcon />
+            Deny
+          </Button>
+        </span>
+      ) : (
+        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+          {formatRelative(n.created_at)}
+        </span>
+      )}
+      <Dialog open={denying} onOpenChange={setDenying}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Deny {approval.tool}?</DialogTitle>
+            <DialogDescription>
+              The agent sees your reason as the tool’s answer and goes on without it.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Why the call may not go ahead"
+            aria-label="Reason"
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDenying(false)}>
+              Cancel
+            </Button>
+            <AnimatedButton
+              variant="destructive"
+              disabled={reason.trim().length === 0}
+              loading={deny.isPending}
+              onClick={() => deny.mutate()}
+            >
+              Deny
+            </AnimatedButton>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function AlertEntry({ n, onOpen }: { n: Notification; onOpen: (n: Notification) => void }) {
+  const alert = n.alert;
+  if (!alert) return null;
+  const read = n.read_at !== null;
+  const meta = SEVERITY_META[alert.severity];
+  return (
+    <button type="button" onClick={() => onOpen(n)} className={ROW}>
+      <Unread read={read} />
+      <SirenIcon
+        className="size-4 shrink-0"
+        style={{ color: meta.color }}
+        aria-label={`${meta.label} alert`}
+      />
+      <span className={`min-w-0 flex-1 truncate ${read ? 'text-muted-foreground' : ''}`}>
+        <span className="font-medium">{alert.title}</span>
+        <span className="text-muted-foreground">
+          {' '}
+          · {displayPrincipal(alert.principal)} · {alert.rule}
+        </span>
+      </span>
+      <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+        {formatRelative(n.created_at)}
+      </span>
+    </button>
+  );
+}
 
 function List({ workspace }: { workspace: Workspace }) {
   const navigate = useNavigate();
@@ -55,14 +244,15 @@ function List({ workspace }: { workspace: Workspace }) {
       <EmptyState
         icon={InboxIcon}
         title="Nothing for you yet"
-        description="You hear here when an issue is assigned to you, when someone comments on or moves an issue you created or are assigned, and when an issue of yours is due."
+        description="You hear here when an issue is assigned to you, when someone comments on or moves an issue you created or are assigned, when an issue of yours is due, when an agent's tool call waits for your approval, and when an agent needs a look."
       />
     );
   }
   const unread = inbox.filter((n) => n.read_at === null).length;
   const open = (n: Notification) => {
     if (n.read_at === null) read.mutate([n.id]);
-    void navigate(`/app/issues?issue=${n.issue.id}`);
+    if (n.issue) void navigate(`/app/issues?issue=${n.issue.id}`);
+    else if (n.alert) void navigate('/app/settings/alerts');
   };
   return (
     <div className="space-y-3">
@@ -81,29 +271,13 @@ function List({ workspace }: { workspace: Workspace }) {
       <ol className="divide-y rounded-lg border">
         {inbox.map((n) => (
           <li key={n.id}>
-            <button
-              type="button"
-              onClick={() => open(n)}
-              className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] transition-colors outline-none hover:bg-muted/60 focus-visible:bg-muted/60"
-            >
-              <span
-                aria-label={n.read_at === null ? 'Unread' : undefined}
-                className={`size-1.5 shrink-0 rounded-full ${n.read_at === null ? 'bg-primary' : 'bg-transparent'}`}
-              />
-              <PersonGlyph name={n.kind === 'due' ? 'Reminder' : n.actor?.name} />
-              <span
-                className={`min-w-0 flex-1 truncate ${n.read_at === null ? '' : 'text-muted-foreground'}`}
-              >
-                <span className="font-medium">
-                  {n.kind === 'due' ? 'Your issue' : (n.actor?.name ?? 'Someone who left')}
-                </span>{' '}
-                {VERB[n.kind]} <span className="font-mono text-xs">{n.issue.identifier}</span>{' '}
-                {n.issue.title}
-              </span>
-              <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                {formatRelative(n.created_at)}
-              </span>
-            </button>
+            {n.kind === 'approval' ? (
+              <ApprovalEntry n={n} workspaceId={workspace.id} />
+            ) : n.kind === 'alert' ? (
+              <AlertEntry n={n} onOpen={open} />
+            ) : (
+              <IssueEntry n={n} onOpen={open} />
+            )}
           </li>
         ))}
       </ol>
@@ -116,7 +290,10 @@ function Inbox() {
   if (!current) return <PageSkeleton />;
   return (
     <div className="mx-auto w-full max-w-4xl space-y-6 p-4 sm:p-6">
-      <PageHeader title="Inbox" description={`What happened to your issues in ${current.name}.`} />
+      <PageHeader
+        title="Inbox"
+        description={`What happened to your issues in ${current.name}, and what waits for your decision.`}
+      />
       <List key={current.id} workspace={current} />
     </div>
   );

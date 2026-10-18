@@ -3,6 +3,8 @@
 
 pub mod account;
 pub mod agents;
+pub mod alerts;
+pub mod approvals;
 pub mod artifacts;
 pub mod audit;
 pub mod auth;
@@ -19,6 +21,7 @@ pub mod nodes;
 pub mod orchestrator;
 pub mod plans;
 pub mod platform;
+pub mod policies;
 pub mod realtime;
 pub mod runs;
 pub mod search;

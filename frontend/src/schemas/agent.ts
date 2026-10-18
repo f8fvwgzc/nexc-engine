@@ -68,6 +68,10 @@ export const agentSchema = z.object({
   /** Raised with every change to the capabilities, and on quarantine and release. */
   policy_version: z.number().int().nonnegative(),
   quarantined_at: nullableTimestampSchema,
+  /** 0–10: how far its latest run strayed from its baseline (0 until three runs were learned). */
+  risk_score: z.number().min(0),
+  risk_reasons: z.array(z.string()),
+  risk_updated_at: nullableTimestampSchema,
 });
 export type Agent = z.infer<typeof agentSchema>;
 

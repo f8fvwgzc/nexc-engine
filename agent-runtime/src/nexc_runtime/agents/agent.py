@@ -9,7 +9,9 @@ from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import Any
 
+from ..approvals import ApprovalRegistry, ApprovalTimeout
 from ..config import Settings
+from ..injection import confirm_with_model, screen, withheld_notice
 from ..llm import LLMProvider, ToolCall, ToolResult, Turn
 from ..policy import AgentToken, decide_spawn
 from ..prompts import build_subagent_prompt, build_system_prompt
@@ -83,6 +85,8 @@ class RunScope:
     token_key: bytes
     kind_description: str = ""
     produces_artifact: bool = False
+    # Where the backend delivers decisions on held tool calls (None: nothing can wait).
+    approvals: ApprovalRegistry | None = None
 
 
 class Agent:
@@ -139,6 +143,7 @@ class Agent:
             produces_artifact=scope.produces_artifact,
             token=self.token,
             principal=self.record.principal,
+            approvals=scope.approvals,
         )
         self._ctx = ctx
         last_text = ""
@@ -247,12 +252,59 @@ class Agent:
         except ToolError as exc:
             self.scope.events.log("warning", f"{self.record.name}: {call.name} failed: {exc}")
             return ToolResult(call.id, str(exc), is_error=True)
+        except ApprovalTimeout as exc:
+            # Nobody decided in time: the node fails rather than the model going on without.
+            raise AgentFailure(str(exc), retryable=False) from None
         except (AgentFailure, SpawnRefused) as exc:
             return ToolResult(call.id, str(exc), is_error=True)
         except OSError as exc:
             log.warning("tool %s raised %s", call.name, type(exc).__name__)
             return ToolResult(call.id, f"{call.name} failed: {exc.strerror or exc}", is_error=True)
-        return ToolResult(call.id, output)
+        return ToolResult(call.id, await self._screen_result(call.name, output))
+
+    async def _screen_result(self, tool: str, output: str) -> str:
+        """The prompt-injection screen on a tool result about to go to the model: a finding is
+        a `policy` span; under `injection.action: block` the result is withheld."""
+        finding = screen(output)
+        if finding is None:
+            return output
+        rules = self.token.rules
+        if rules.injection_model_check and self.scope.settings.runtime_injection_model_check:
+            confirmed, tokens_in, tokens_out = await confirm_with_model(self.scope.provider, output)
+            if tokens_in or tokens_out:
+                self._account(tokens_in, tokens_out)
+            if not confirmed:
+                return output
+        block = rules.injection_action == "block"
+        reason = f"instructions aimed at the model in the result of {tool}: {finding.describe()}"
+        now = rfc3339_ns(now_ns())
+        self.scope.events.span(
+            span_id=new_span_id(),
+            parent_id=self._turn_span_id,
+            kind="policy",
+            name="injection",
+            agent=self.record.principal,
+            started_at=now,
+            ended_at=now,
+            status="error" if block else "ok",
+            attributes={
+                "decision": "deny" if block else "alert",
+                "rule": "injection",
+                "reason": reason,
+                "action": "tool_result",
+                "subject": tool,
+                "severity": finding.severity,
+                "patterns": list(finding.patterns),
+                "hidden_chars": finding.hidden_chars,
+                "result_bytes": len(output.encode("utf-8")),
+                "policy_version": self.token.policy_version,
+            },
+        )
+        self.scope.events.log(
+            "warning",
+            f"{self.record.name}: {reason}" + ("; withheld" if block else "; let through, flagged"),
+        )
+        return withheld_notice(tool, finding) if block else output
 
     async def _spawn(self, role: str, task: str) -> str:
         scope = self.scope

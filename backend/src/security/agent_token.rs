@@ -11,7 +11,8 @@ use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, deco
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::domain::capabilities::Capabilities;
+use crate::domain::capabilities::{Capabilities, DataLabel};
+use crate::domain::policy::Rules;
 
 const ISSUER: &str = "nexc-engine";
 const AUDIENCE: &str = "nexc-runtime";
@@ -44,6 +45,13 @@ pub struct AgentClaims {
     pub policy_version: i32,
     #[serde(default)]
     pub capabilities: Capabilities,
+    /// The resolved rules beside the capabilities (approvals, limits, DLP,
+    /// the injection screen, the policy versions in force).
+    #[serde(default)]
+    pub rules: Rules,
+    /// The classifications of the data the node was given.
+    #[serde(default)]
+    pub labels: Vec<DataLabel>,
 }
 
 /// What a token grants: everything but the times and the id.
@@ -56,6 +64,8 @@ pub struct AgentGrant<'a> {
     pub workspace_id: Option<Uuid>,
     pub policy_version: i32,
     pub capabilities: &'a Capabilities,
+    pub rules: &'a Rules,
+    pub labels: &'a [DataLabel],
 }
 
 /// Signing and verification keys of agent tokens.
@@ -115,6 +125,8 @@ impl AgentTokenKeys {
             depth: 0,
             policy_version: grant.policy_version,
             capabilities: grant.capabilities.clone(),
+            rules: grant.rules.clone(),
+            labels: grant.labels.to_vec(),
         };
         Ok(encode(
             &Header::new(Algorithm::HS256),
@@ -148,8 +160,12 @@ mod tests {
             workspace_id: Some(Uuid::now_v7()),
             policy_version: 3,
             capabilities: caps,
+            rules: &RULES,
+            labels: &[DataLabel::Internal],
         }
     }
+
+    static RULES: std::sync::LazyLock<Rules> = std::sync::LazyLock::new(Rules::default);
 
     #[test]
     fn issues_and_verifies_with_the_capabilities_inside() {
@@ -166,6 +182,8 @@ mod tests {
         assert_eq!(claims.sub, "agent://ws/Researcher");
         assert_eq!((claims.run_id, claims.node_id), (run, node));
         assert_eq!(claims.capabilities, caps);
+        assert_eq!(claims.rules, Rules::default());
+        assert_eq!(claims.labels, vec![DataLabel::Internal]);
         assert_eq!((claims.policy_version, claims.depth), (3, 0));
         assert_eq!(claims.exp - claims.iat, 660);
         assert_eq!(derive_key("abc").len(), 32);
@@ -217,6 +235,8 @@ mod tests {
             depth: 0,
             policy_version: 0,
             capabilities: caps.clone(),
+            rules: Rules::default(),
+            labels: Vec::new(),
         };
         let token = encode(
             &Header::new(Algorithm::HS256),

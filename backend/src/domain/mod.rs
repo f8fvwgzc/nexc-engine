@@ -6,14 +6,18 @@
 
 pub mod account;
 pub mod agent;
+pub mod alert;
+pub mod approval;
 pub mod assistant;
 pub mod audit;
 pub mod capabilities;
 pub mod context;
 pub mod cycle;
+pub mod dlp;
 pub mod error;
 pub mod graph;
 pub mod guardrails;
+pub mod injection;
 pub mod insight;
 pub mod issue;
 pub mod knowledge;
@@ -22,7 +26,9 @@ pub mod ontology;
 pub mod plan;
 pub mod platform;
 pub mod policy;
+pub mod policy_document;
 pub mod prompt;
+pub mod risk;
 pub mod run;
 pub mod search;
 pub mod settings;
@@ -48,7 +54,7 @@ macro_rules! string_enum {
     ($(#[$meta:meta])* $name:ident { $($(#[$vmeta:meta])* $variant:ident => $s:literal),+ $(,)? }) => {
         $(#[$meta])*
         #[derive(
-            Debug, Clone, Copy, PartialEq, Eq, Hash,
+            Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash,
             serde::Serialize, serde::Deserialize, utoipa::ToSchema,
         )]
         // utoipa cannot see the per-variant `rename = $s` through the macro, so the

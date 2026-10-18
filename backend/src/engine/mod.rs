@@ -4,9 +4,11 @@
 
 pub mod account;
 pub mod analysis;
+pub mod approvals;
 pub mod artifacts;
 pub mod assistant;
 pub mod credentials;
+pub mod defend;
 pub mod deps;
 pub mod editor;
 pub mod executor;
@@ -14,6 +16,8 @@ pub mod guardrails;
 pub mod json_stream;
 pub mod knowledge;
 pub mod planner;
+pub mod policy;
+pub mod risk;
 pub mod scheduler;
 pub mod summary;
 pub mod templates;
@@ -22,6 +26,8 @@ pub mod transfer;
 pub mod two_factor;
 pub mod usage;
 pub mod workspaces;
+
+use std::time::{Duration, Instant};
 
 use dashmap::{DashMap, DashSet};
 use tokio::sync::Notify;
@@ -36,6 +42,8 @@ pub struct Engine {
     active_runs: DashMap<Uuid, CancellationToken>,
     /// The nodes each agent is working on here, with what stops each of them.
     busy_agents: DashMap<Uuid, Vec<(Uuid, CancellationToken)>>,
+    /// Nodes started per agent, against a policy's `runs_per_hour`.
+    dispatches: DashMap<Uuid, crate::dsa::token_bucket::TokenBucket>,
     deps_pending: DashSet<Uuid>,
 }
 
@@ -47,6 +55,7 @@ impl Engine {
             wake: Notify::new(),
             active_runs: DashMap::new(),
             busy_agents: DashMap::new(),
+            dispatches: DashMap::new(),
             deps_pending: DashSet::new(),
         }
     }
@@ -113,6 +122,25 @@ impl Engine {
         })
     }
 
+    /// Takes one of the `per_hour` node starts an agent is allowed, or says
+    /// how long until the next one. The bucket is this instance's: with
+    /// several instances the limit applies per instance.
+    pub fn admit_dispatch(&self, agent: Uuid, per_hour: u32) -> Result<(), Duration> {
+        let mut bucket = self.dispatches.entry(agent).or_insert_with(|| {
+            crate::dsa::token_bucket::TokenBucket::new(
+                per_hour.max(1),
+                f64::from(per_hour) / 3600.0,
+            )
+        });
+        bucket.try_acquire()
+    }
+
+    /// Forgets dispatch buckets that are full again.
+    pub fn prune_dispatches(&self) {
+        let now = Instant::now();
+        self.dispatches.retain(|_, bucket| !bucket.is_idle(now));
+    }
+
     /// Agents currently executing nodes on this instance.
     pub fn busy_agents(&self) -> Vec<Uuid> {
         self.busy_agents.iter().map(|e| *e.key()).collect()
@@ -153,5 +181,18 @@ mod tests {
         assert!(e.busy_agents().is_empty());
         assert_eq!(e.quarantine_local(agent), 0);
         assert!(e.mark_deps_pending(run) && !e.mark_deps_pending(run));
+    }
+
+    #[test]
+    fn dispatches_are_rate_limited_per_agent() {
+        let e = Engine::new(Uuid::now_v7());
+        let agent = Uuid::now_v7();
+        assert!(e.admit_dispatch(agent, 2).is_ok());
+        assert!(e.admit_dispatch(agent, 2).is_ok());
+        let wait = e.admit_dispatch(agent, 2).unwrap_err();
+        assert!(wait > Duration::from_secs(60), "{wait:?}");
+        assert!(e.admit_dispatch(Uuid::now_v7(), 2).is_ok(), "another agent");
+        e.prune_dispatches();
+        assert_eq!(e.dispatches.len(), 2, "buckets still refilling are kept");
     }
 }

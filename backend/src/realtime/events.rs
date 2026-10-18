@@ -5,6 +5,7 @@ use serde::Serialize;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use crate::domain::alert::Alert;
 use crate::domain::graph::{EdgeSuggestion, GraphEdge, GraphNode, GraphSummary, NodeStatus};
 use crate::domain::ontology::Ontology;
 use crate::domain::plan::{Plan, ProposedEdge, ProposedNode};
@@ -82,6 +83,10 @@ pub enum SseEvent {
     TraceSpan {
         span: Span,
     },
+    /// Something about an agent needs a look (contract §6).
+    Alert {
+        alert: Alert,
+    },
     RunFinished {
         run: Run,
     },
@@ -103,6 +108,7 @@ impl SseEvent {
             SseEvent::NodeTokens { .. } => "node.tokens",
             SseEvent::ArtifactCreated { .. } => "artifact.created",
             SseEvent::TraceSpan { .. } => "trace.span",
+            SseEvent::Alert { .. } => "alert",
             SseEvent::RunFinished { .. } => "run.finished",
         }
     }

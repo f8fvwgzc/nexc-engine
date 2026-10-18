@@ -1,5 +1,12 @@
 import { useQuery, useSuspenseQuery } from '@tanstack/react-query';
-import { ClockIcon, CoinsIcon, CpuIcon, ListChecksIcon, SquareIcon } from 'lucide-react';
+import {
+  ClockIcon,
+  CoinsIcon,
+  CpuIcon,
+  ListChecksIcon,
+  SquareIcon,
+  UserCheckIcon,
+} from 'lucide-react';
 import { Suspense } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
@@ -20,6 +27,7 @@ import { TraceVerification } from '@/features/runs/components/trace-verification
 import { TraceWaterfall } from '@/features/runs/components/trace-waterfall';
 import { useCancelRun } from '@/features/runs/hooks/use-cancel-run';
 import { useLiveTrace } from '@/features/runs/hooks/use-live-trace';
+import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import {
   durationBetween,
   formatCost,
@@ -28,10 +36,14 @@ import {
   formatTokens,
 } from '@/lib/format';
 import { isRunActive } from '@/schemas/run';
+import { isWorkspaceAdmin } from '@/schemas/workspace';
 
 function RunDetail({ runId }: { runId: string }) {
   const { data: run } = useSuspenseQuery(runQuery(runId));
   const { data: graph } = useQuery(graphQuery(run.graph_id));
+  const { current } = useCurrentWorkspace();
+  const admin = current !== undefined && isWorkspaceAdmin(current.role);
+  const waiting = run.node_runs.filter((nr) => nr.status === 'waiting_approval');
   const cancelRun = useCancelRun();
   const titles = new Map(graph?.nodes.map((n) => [n.id, n.title]) ?? []);
   const duration = durationBetween(run.started_at, run.finished_at);
@@ -100,6 +112,24 @@ function RunDetail({ runId }: { runId: string }) {
         />
         <StatTile label="Cost" value={formatCost(run.cost_usd)} icon={CoinsIcon} />
       </div>
+      {waiting.length > 0 && (
+        <p
+          role="status"
+          className="flex items-center gap-2 rounded-lg border border-[color-mix(in_oklch,var(--status-queued)_40%,transparent)] bg-[color-mix(in_oklch,var(--status-queued)_10%,transparent)] px-3 py-2 text-sm"
+        >
+          <UserCheckIcon className="size-4 shrink-0" aria-hidden />
+          <span>
+            {waiting.length === 1
+              ? `${titles.get(waiting[0]?.node_id ?? '') ?? 'A node'} waits for an approval`
+              : `${waiting.length} nodes wait for an approval`}
+            : a tool call is held until an admin decides it from the{' '}
+            <Link to="/app/inbox" className="font-medium underline">
+              Inbox
+            </Link>
+            . The run goes on meanwhile.
+          </span>
+        </p>
+      )}
       <section className="space-y-3" aria-labelledby="node-runs">
         <h2 id="node-runs" className="text-sm font-medium">
           Node runs
@@ -131,7 +161,7 @@ function RunDetail({ runId }: { runId: string }) {
         <h2 id="artifacts" className="text-sm font-medium">
           Artifacts
         </h2>
-        <ArtifactsList runId={run.id} titles={titles} />
+        <ArtifactsList runId={run.id} titles={titles} admin={admin} />
       </section>
     </div>
   );

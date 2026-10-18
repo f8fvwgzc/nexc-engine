@@ -62,9 +62,12 @@ macro_rules! team_visible {
 
 pub mod account_events;
 pub mod agents;
+pub mod alerts;
+pub mod approvals;
 pub mod artifacts;
 pub mod assistant;
 pub mod audit;
+pub mod baselines;
 pub mod cycles;
 pub mod edges;
 pub mod graphs;
@@ -79,6 +82,7 @@ pub mod onto_export;
 pub mod outbox;
 pub mod plans;
 pub mod platform;
+pub mod policies;
 pub mod resets;
 pub mod runs;
 pub mod settings;
