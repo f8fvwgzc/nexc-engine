@@ -148,6 +148,33 @@ async fn policy_runtime() -> (String, Arc<Mutex<Vec<Value>>>, Decisions) {
                     "text/csv",
                     "name,email\nAda,ada@example.org\nGrace,grace@example.org\n",
                 ));
+            } else if title.contains("LOUD") {
+                // Five times the usual output, many calls, tools it never used, hosts it never called.
+                for tool in [
+                    "read_file",
+                    "list_files",
+                    "read_file",
+                    "list_files",
+                    "read_file",
+                ] {
+                    lines.push(span("tool_call", tool, &agent, json!({"tool": tool})));
+                }
+                for host in ["a.partner.example", "b.partner.example"] {
+                    lines.push(span(
+                        "tool_call",
+                        "http_post",
+                        &agent,
+                        json!({"tool": "http_post", "egress_host": host, "payload_bytes": 4096}),
+                    ));
+                }
+                lines.push(artifact(
+                    "deliverable.md",
+                    "text/markdown",
+                    &format!(
+                        "# {title}\n\n{}\n",
+                        "Goods under 150 EUR are exempt. ".repeat(5)
+                    ),
+                ));
             } else if title.contains("EGRESS") {
                 lines.push(span(
                     "tool_call",
@@ -1501,5 +1528,139 @@ async fn confidential_content_stays_off_the_wire(pool: PgPool) {
             .iter()
             .any(|s| s["kind"] == "policy" && s["attributes"]["action"] == "egress"),
         "{spans:?}"
+    );
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn an_unusual_run_raises_the_risk_score_and_the_threshold_quarantines_the_agent(
+    pool: PgPool,
+) {
+    let (runtime, _, _) = policy_runtime().await;
+    let app = TestApp::new(pool, &[("NEXC_RUNTIME_URL", &runtime)]).await;
+    let (owner, _) = app.register("owner@example.com").await;
+    let wid = workspace(&app, &owner).await;
+    let clerk = agent(&app, &owner, "Clerk", "clerk", json!({})).await;
+    let aid = clerk["id"].as_str().unwrap().to_owned();
+    let principal = format!("agent://{wid}/Clerk");
+    assert_eq!(clerk["risk_score"], 0.0);
+    assert_eq!(clerk["risk_reasons"], json!([]));
+    let gid = app.graph(&owner, "Keep the books").await;
+    let node = app
+        .node(
+            &owner,
+            &gid,
+            json!({"title": "Books", "kind": "research", "executor": "agent", "agent_role": "clerk"}),
+        )
+        .await;
+    // Four usual runs: one turn, one tool call, one small artifact. The baseline learns them.
+    for _ in 0..4 {
+        let (_, events) = run(&app, &owner, &gid, true).await;
+        assert_eq!(events.last().unwrap().1["run"]["status"], "succeeded");
+    }
+    let (_, card) = call(&app, Method::GET, &format!("/agents/{aid}"), &owner, None).await;
+    assert_eq!(card["agent"]["risk_score"], 0.0, "{}", card["agent"]);
+    assert!(card["agent"]["risk_updated_at"].is_string());
+
+    // Alert at 3, quarantine at 6; then a run five times louder than usual.
+    let (status, body) = policy(
+        &app,
+        &owner,
+        &wid,
+        "workspace",
+        None,
+        json!({"alerts": {"risk_score": 3.0, "quarantine_risk_score": 6.0}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    call(
+        &app,
+        Method::PATCH,
+        &format!("/graphs/{gid}/nodes/{node}"),
+        &owner,
+        Some(json!({"title": "LOUD books"})),
+    )
+    .await;
+    let (rid, events) = run(&app, &owner, &gid, true).await;
+    let finished = &events.last().unwrap().1["run"];
+    assert_eq!(finished["status"], "succeeded", "{finished}");
+    let (_, card) = call(&app, Method::GET, &format!("/agents/{aid}"), &owner, None).await;
+    let shown = &card["agent"];
+    let score = shown["risk_score"].as_f64().unwrap();
+    assert!(score >= 6.0, "{shown}");
+    let reasons = shown["risk_reasons"].as_array().unwrap();
+    let text = serde_json::to_string(reasons).unwrap();
+    assert!(text.contains("its usual bytes out"), "{text}");
+    assert!(text.contains("its usual tool calls per turn"), "{text}");
+    assert!(text.contains("2 hosts it never called"), "{text}");
+    assert!(text.contains("tools it never used"), "{text}");
+    // The threshold quarantined the agent, on the record.
+    assert_eq!(shown["status"], "quarantined", "{shown}");
+    let quarantined = audit_actions(&app, &owner, &wid, "agent_quarantined").await;
+    assert_eq!(quarantined.len(), 1, "{quarantined:?}");
+    assert_eq!(quarantined[0]["subject"], principal);
+    assert!(
+        quarantined[0]["detail"]
+            .as_str()
+            .unwrap()
+            .starts_with("automatic: risk score"),
+        "{quarantined:?}"
+    );
+    let (_, feed) = call(
+        &app,
+        Method::GET,
+        &format!("/workspaces/{wid}/alerts"),
+        &owner,
+        None,
+    )
+    .await;
+    let rules: Vec<&str> = feed
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|a| a["kind"] == "risk")
+        .map(|a| a["rule"].as_str().unwrap())
+        .collect();
+    assert!(rules.contains(&"alerts.risk_score"), "{feed}");
+    assert!(rules.contains(&"alerts.quarantine_risk_score"), "{feed}");
+    let critical = feed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["rule"] == "alerts.quarantine_risk_score")
+        .unwrap();
+    assert_eq!(critical["severity"], "critical");
+    assert_eq!(critical["run_id"], rid);
+    assert!(critical["detail"].as_str().unwrap().contains("bytes out"));
+    assert!(
+        events
+            .iter()
+            .any(|(e, d)| e == "alert" && d["alert"]["kind"] == "risk"),
+        "the alert was on the stream: {events:?}"
+    );
+    let (_, inbox) = call(
+        &app,
+        Method::GET,
+        &format!("/workspaces/{wid}/inbox"),
+        &owner,
+        None,
+    )
+    .await;
+    assert!(
+        inbox
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|n| n["kind"] == "alert" && n["alert"]["kind"] == "risk"),
+        "{inbox}"
+    );
+    // Quarantined: the next run is refused before dispatch.
+    let (_, events) = run(&app, &owner, &gid, true).await;
+    let finished = &events.last().unwrap().1["run"];
+    assert_eq!(finished["status"], "failed");
+    assert!(
+        finished["node_runs"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("is quarantined")
     );
 }

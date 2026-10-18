@@ -37,8 +37,32 @@ impl FromRow<'_, PgRow> for Agent {
             capabilities,
             policy_version: row.try_get("policy_version")?,
             quarantined_at: row.try_get("quarantined_at")?,
+            risk_score: row.try_get("risk_score")?,
+            risk_reasons: serde_json::from_value(
+                row.try_get::<serde_json::Value, _>("risk_reasons")?,
+            )
+            .unwrap_or_default(),
+            risk_updated_at: row.try_get("risk_updated_at")?,
         })
     }
+}
+
+/// Records what the agent's latest run scored against its baseline.
+pub async fn set_risk(
+    db: impl PgExecutor<'_>,
+    id: Uuid,
+    score: f64,
+    reasons: &[String],
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE agents SET risk_score = $2, risk_reasons = $3, risk_updated_at = now() WHERE id = $1",
+    )
+    .bind(id)
+    .bind(score)
+    .bind(serde_json::to_value(reasons).expect("reasons serialise"))
+    .execute(db)
+    .await?;
+    Ok(())
 }
 
 /// Fields of an agent to insert or fully replace.

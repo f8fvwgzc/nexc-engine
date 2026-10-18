@@ -254,6 +254,12 @@ async fn finish_run(
     if let Some(hash) = hash {
         seal_audit(state, &row, hash, sealed.spans).await;
     }
+    // Every agent that worked is scored against what it usually does, and learns the run.
+    let assessed = super::risk::assess(state, &row).await;
+    if assessed.alerts > 0 || assessed.quarantined > 0 {
+        tracing::info!(%run_id, agents = assessed.agents, alerts = assessed.alerts,
+            quarantined = assessed.quarantined, "run assessed");
+    }
     let graph_id = row.graph_id;
     let run = row.into_run(repo::runs::node_runs(&state.db, run_id).await?);
     state.hub.publish(graph_id, SseEvent::RunFinished { run });

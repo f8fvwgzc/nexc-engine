@@ -67,6 +67,7 @@ pub mod approvals;
 pub mod artifacts;
 pub mod assistant;
 pub mod audit;
+pub mod baselines;
 pub mod cycles;
 pub mod edges;
 pub mod graphs;

@@ -535,6 +535,9 @@ interface Agent {
   capabilities: Capabilities;
   policy_version: number; // raised with every change to the capabilities, and on quarantine and release
   quarantined_at: string | null;
+  risk_score: number; // 0–10: how far its latest run strayed from its baseline (0 until three runs were learned from)
+  risk_reasons: string[]; // in words: "3.2x its usual bytes out", "2 hosts it never called: a.example, b.example"
+  risk_updated_at: string | null;
 }
 interface AgentCard {
   agent: Agent;
@@ -982,6 +985,19 @@ alert is raised. A tool that calls out reports `egress_host` (and `payload_sha25
 `rules.dlp.labels[label].egress_hosts` (`action: "egress"`), and a denial is a `policy` span and
 an alert: the call already happened, so what left is on the record. Spans and alerts carry
 counts and digests, never the content.
+
+**Behaviour baseline and risk.** When a run finishes, each agent that worked in it is scored
+against its baseline before the baseline learns the run: tool calls per turn, tokens per turn,
+distinct tools, distinct hosts, sub-agents, policy denials (and mismatches) and bytes out
+(artifact sizes plus `payload_bytes` of calls out) as running means and deviations (Welford), the
+MinHash of the run's tool sequence against the last twenty runs. Features a baseline of at least
+three runs has seen score their z (capped at 3 each), hosts and tools never seen before add to it,
+and a sequence unlike every earlier run adds one; the score is capped at 10 and every unusual
+feature is a reason in words (`Agent.risk_score`, `risk_reasons`). The policy's `alerts` turn it
+into alerts (`alerts.risk_score`, `alerts.denials_per_run`, `alerts.novelty`, kind `risk`) and,
+at `alerts.quarantine_risk_score`, into a quarantine (as `POST /agents/{id}/quarantine` does,
+audited as `agent_quarantined` with `automatic: risk score …`, a `critical` alert). The run's
+trace is sealed by then, so these alerts name no span.
 
 **Approvals.** A tool the rules hold (`require_approval.tools`, or `write_file` / `make_docx`
 after data of a label in `require_approval.labels`) does not run at once. The runtime reports a

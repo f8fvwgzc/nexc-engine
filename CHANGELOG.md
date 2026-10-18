@@ -65,6 +65,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   /alerts/{id}/acknowledge`, the inbox kind `alert` for every admin, the SSE event `alert` on the
   graph, the metrics `nexc_alerts_total{kind}` and `nexc_artifacts_quarantined_total`, and the
   audit actions `artifact_quarantined`, `artifact_released` and `alert_raised`.
+- Behaviour baseline and risk score: `agent_baselines` keeps, per agent, what one of its runs
+  usually looks like (tool calls per turn, tokens per turn, distinct tools, distinct hosts,
+  sub-agents, denials, bytes out, as running means and deviations) and the MinHash signatures
+  (the C kernel) of its last twenty tool sequences. When a run finishes every agent that worked
+  in it is scored first and learns the run after: the capped sum of the z-scores of what strayed,
+  plus hosts and tools it never used and a tool sequence unlike any earlier run, explained in
+  words on the agent (`risk_score`, `risk_reasons`: "4.8x its usual bytes out", "2 hosts it never
+  called"). The policy's `alerts` thresholds raise alerts of kind `risk` and, at
+  `quarantine_risk_score`, quarantine the agent automatically (its running nodes are cancelled,
+  new ones refused, audited as `agent_quarantined` with the score and the reasons).
 - Agent identity and scopes (AgentSecOps phase 1, `docs/AGENTSECOPS.md` §4.1): every agent is a
   principal, `agent://{workspace}/{name}` (`principal_id`, unique, following the name), with an
   owner (`owner_user_id`), a team, a `purpose` and a `capabilities` document: the tools it may
