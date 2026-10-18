@@ -225,11 +225,22 @@ async fn a_first_sign_in_creates_the_account_just_in_time(pool: PgPool) {
         "the account's address stays"
     );
     assert_eq!(count(&pool, "SELECT count(*) FROM users").await, 1);
-    let shown: String = sqlx::query_scalar("SELECT email FROM user_identities")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(shown, "ada.lovelace@example.com");
+    let shown = || async {
+        sqlx::query_scalar::<_, String>("SELECT email FROM user_identities")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    assert_eq!(shown().await, "ada.lovelace@example.com");
+    // A sign-in whose provider gives no address keeps the one it gave before.
+    let (_, again) = signed_in(
+        &app,
+        &stub,
+        Assertion::person("sub-ada", "unused@example.com").without("email"),
+    )
+    .await;
+    assert_eq!(again["id"], user["id"]);
+    assert_eq!(shown().await, "ada.lovelace@example.com");
 }
 
 /// The bytes an authenticator app decodes a typed secret to (RFC 4648 base32).

@@ -116,7 +116,8 @@ pub async fn link(
     Ok(done.rows_affected() == 1)
 }
 
-/// Notes a sign-in with an identity, and the address the provider gave this time.
+/// Notes a sign-in with an identity, and the address the provider gave this
+/// time (the one it gave before stays when it gave none).
 pub async fn touch(
     db: impl PgExecutor<'_>,
     issuer: &str,
@@ -124,7 +125,8 @@ pub async fn touch(
     email: &str,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "UPDATE user_identities SET last_login_at = now(), email = $3
+        "UPDATE user_identities
+         SET last_login_at = now(), email = CASE WHEN $3 = '' THEN email ELSE $3 END
          WHERE issuer = $1 AND subject = $2",
     )
     .bind(issuer)
