@@ -680,6 +680,26 @@ async fn groups_give_roles_and_take_back_only_what_they_gave(pool: PgPool) {
         ],
         "the first role was given at creation, the change is noted: {kinds:?}"
     );
+    // Both are in the platform's activity log too, by single sign-on, as the console's are.
+    let events: Vec<(Option<uuid::Uuid>, String, String, String, String)> = sqlx::query_as(
+        "SELECT actor_id, actor_name, action, subject, detail FROM platform_events
+         ORDER BY created_at, id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(events.len(), 2, "{events:?}");
+    for (actor_id, actor, action, subject, _) in &events {
+        assert_eq!(*actor_id, None);
+        assert_eq!(actor, "single sign-on (Acme SSO)");
+        assert_eq!(action, "role_changed");
+        assert_eq!(subject, "Ada Lovelace <root@example.com>");
+    }
+    assert!(
+        events[0].4.contains("→ admin") && events[0].4.contains("`nexc-admins`"),
+        "{events:?}"
+    );
+    assert!(events[1].4.starts_with("admin → user"), "{events:?}");
     // A platform role given in the console is never taken back by a sign-in.
     sqlx::query("UPDATE users SET role = 'admin' WHERE email = 'root@example.com'")
         .execute(&pool)

@@ -28,6 +28,7 @@ use crate::config::oidc::OidcSettings;
 use crate::domain::AppError;
 use crate::domain::account::AccountEventKind;
 use crate::domain::audit::AuditAction;
+use crate::domain::platform::PlatformAction;
 use crate::domain::sso::Refusal;
 use crate::domain::user::{self, Role, User};
 use crate::domain::validation::FieldErrors;
@@ -210,12 +211,37 @@ async fn provision(
     let detail = format!("{} ({})", settings.display_name, settings.issuer);
     let kind = AccountEventKind::SsoProvisioned;
     note(state, created.id, kind, Some(ip), &detail).await;
+    if let Some(group) = admin_group(settings, groups) {
+        let detail = format!("new account → admin, by the single sign-on group `{group}`");
+        log_platform_role(state, settings, &created, &detail).await;
+    }
     tracing::info!(user_id = %created.id, %role, "account created at its first single sign-on");
     Ok(Found::Account(created.id))
 }
 
 fn in_admin_group(settings: &OidcSettings, groups: &[String]) -> bool {
-    groups.iter().any(|g| settings.admin_groups.contains(g))
+    admin_group(settings, groups).is_some()
+}
+
+/// The first of the person's groups that makes a platform administrator.
+fn admin_group<'a>(settings: &OidcSettings, groups: &'a [String]) -> Option<&'a str> {
+    groups
+        .iter()
+        .find(|g| settings.admin_groups.contains(g))
+        .map(String::as_str)
+}
+
+/// Puts a platform role the admin groups gave or took back in the
+/// platform's activity log, as the console's own role changes are.
+async fn log_platform_role(state: &AppState, settings: &OidcSettings, user: &User, detail: &str) {
+    let actor = format!("single sign-on ({})", settings.display_name);
+    let subject = format!("{} <{}>", user.name, user.email);
+    let action = PlatformAction::RoleChanged;
+    if let Err(err) =
+        repo::platform::record_system(&state.db, &actor, action, &subject, detail).await
+    {
+        tracing::error!(user_id = %user.id, error = %err, "platform activity entry was not written");
+    }
 }
 
 /// Gives or takes back the platform role the admin groups decide. Returns
@@ -227,9 +253,8 @@ async fn platform_role(
     groups: &[String],
 ) -> Result<Role, AppError> {
     let id = account.user.id;
-    let wants = in_admin_group(settings, groups);
-    match account.user.role {
-        Role::User if wants => {
+    match (account.user.role, admin_group(settings, groups)) {
+        (Role::User, Some(group)) => {
             let held = repo::platform::sole_owner_of(&state.db, id).await?;
             if !held.is_empty() {
                 // A platform administrator works in no workspace: those would lose their owner.
@@ -243,20 +268,23 @@ async fn platform_role(
                 state.sessions.raise(id, epoch);
                 let detail = "user → admin, by a single sign-on admin group";
                 note(state, id, AccountEventKind::RoleChanged, None, detail).await;
+                let detail = format!("user → admin, by the single sign-on group `{group}`");
+                log_platform_role(state, settings, &account.user, &detail).await;
             }
             Ok(Role::Admin)
         }
-        Role::Admin if !wants && account.admin_by_sso => {
+        (Role::Admin, None) if account.admin_by_sso => {
             if let Some(epoch) =
                 repo::sso::set_platform_role(&state.db, id, Role::User, false).await?
             {
                 state.sessions.raise(id, epoch);
                 let detail = "admin → user: no single sign-on admin group any more";
                 note(state, id, AccountEventKind::RoleChanged, None, detail).await;
+                log_platform_role(state, settings, &account.user, detail).await;
             }
             Ok(Role::User)
         }
-        role => Ok(role),
+        (role, _) => Ok(role),
     }
 }
 

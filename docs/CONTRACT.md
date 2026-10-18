@@ -1359,7 +1359,9 @@ the authorization code flow with PKCE (`S256`), as a confidential client.
    workspaces its verified address was invited to. With `NEXC_OIDC_REQUIRE_VERIFIED_EMAIL=true` an
    unverified address gets no account. An account created this way has no password.
 5. At every sign-in the groups are applied: the admin groups give the platform role and take back
-   one they gave (`role_changed`); `NEXC_OIDC_WORKSPACE_ROLES` gives each mapped workspace the
+   one they gave (`role_changed` in the account's activity, and in `GET /admin/events` with no
+   `actor_id`, by `single sign-on (<display name>)`, naming the group; an account created as an
+   administrator is logged there too); `NEXC_OIDC_WORKSPACE_ROLES` gives each mapped workspace the
    highest role of the person's groups, and takes back a role it gave once no group gives it (the
    role the account had before is restored, or it leaves the workspace), unless the role was changed
    by hand since. Each change is in that workspace's audit log, by `system`. A workspace never loses

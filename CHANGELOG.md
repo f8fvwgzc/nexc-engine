@@ -62,7 +62,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the platform role and the workspace mapping gives workspace roles at every sign-in, and both take
   back what they gave once the group is gone (the role before is restored; a role changed by hand,
   a platform role given in the console and a workspace's last owner are left alone); each workspace
-  change is in its audit log, by `system`. A sign-in without the groups claim at all (an Entra ID
+  change is in its audit log, by `system`, and each platform role given or taken back is in the
+  platform's activity log (`GET /admin/events`, no `actor_id`, by `single sign-on (<name>)`,
+  naming the group). A sign-in without the groups claim at all (an Entra ID
   overage, a mapper left out of the token) changes no role and logs a warning naming the claim;
   only a claim that is there, even empty, takes roles back. The callback starts the session exactly as a password
   sign-in does and sends the browser to a same-origin `return_to` path (another site, `//host`,

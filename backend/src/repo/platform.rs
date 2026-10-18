@@ -310,6 +310,29 @@ pub async fn record(
     Ok(())
 }
 
+/// Records what the platform did by itself, without an administrator
+/// acting (single sign-on's admin groups): `actor_name` says what did it.
+pub async fn record_system(
+    db: impl PgExecutor<'_>,
+    actor_name: &str,
+    action: PlatformAction,
+    subject: &str,
+    detail: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO platform_events (id, actor_id, actor_name, action, subject, detail)
+         VALUES ($1, NULL, $2, $3, $4, $5)",
+    )
+    .bind(Uuid::now_v7())
+    .bind(actor_name)
+    .bind(action.as_str())
+    .bind(subject)
+    .bind(detail)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
 /// The platform's activity log, newest first.
 pub async fn events(
     db: impl PgExecutor<'_>,

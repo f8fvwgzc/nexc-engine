@@ -107,7 +107,9 @@ pub struct PlatformUser {
 pub struct PlatformEvent {
     pub id: Uuid,
     pub action: PlatformAction,
-    /// `null` once the administrator's account is gone; `actor_name` stays.
+    /// `null` once the administrator's account is gone, and when the platform
+    /// acted by itself (single sign-on's admin groups); `actor_name` says who
+    /// or what acted, and stays.
     #[schema(required = true)]
     pub actor_id: Option<Uuid>,
     pub actor_name: String,
