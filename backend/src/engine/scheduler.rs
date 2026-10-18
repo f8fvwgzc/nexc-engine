@@ -249,6 +249,13 @@ async fn take_over_expired(state: &AppState) {
                 tracing::warn!(run_id = %taken.row.id, previous = ?taken.previous,
                     epoch = taken.row.lease_epoch, released = taken.released,
                     "run taken over from an instance that no longer holds it");
+                if let Some(theirs) = taken
+                    .previous_lease_secs
+                    .filter(|theirs| (theirs - lease_secs(state)).abs() >= 0.5)
+                {
+                    tracing::warn!(run_id = %taken.row.id, theirs, ours = lease_secs(state),
+                        "replicas run with different NEXC_RUN_LEASE_SECS; set the same on every replica");
+                }
                 tokio::spawn(execute(
                     state.clone(),
                     taken.row,

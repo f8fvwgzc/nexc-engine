@@ -1147,3 +1147,39 @@ async fn a_node_queued_again_by_a_holder_that_died_resumes_at_its_next_attempt(p
     assert_eq!(run["node_runs"][0]["attempt"], 2, "attempt 1 stays counted");
     assert_eq!(executed(&seen)["NAP 3000 Draft"], 2);
 }
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_peer_with_a_longer_lease_takes_a_run_over_a_lease_of_its_holder_after_it_died(
+    pool: PgPool,
+) {
+    let (url, _seen) = fake_grpc_runtime().await;
+    let a = instance(&pool, &url).await;
+    let (token, _) = a.register("owner@example.com").await;
+    scribe(&a, &token).await;
+    let (gid, nodes) = chain_of(&a, &token, &["NAP 3000 Draft"]).await;
+    let mut on_a = a.events(&gid);
+    let rid = start_run(&a, &token, &gid).await;
+    until_status(&mut on_a, &nodes[0], "running").await;
+    let held: Option<f64> = sqlx::query_scalar("SELECT lease_secs FROM runs WHERE id = $1")
+        .bind(rid.parse::<Uuid>().unwrap())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        held,
+        Some(LEASE_SECS as f64),
+        "the run records its holder's lease"
+    );
+    a.crash();
+    // B was configured with a lease of 30 s: it still waits for A's, not its own.
+    let b = instance_with_lease(&pool, &url, 30).await;
+    until_held_by(
+        &pool,
+        &rid,
+        b.state.engine.instance(),
+        Duration::from_secs(LEASE_SECS + 5),
+    )
+    .await;
+    let run = until_finished(&b, &token, &rid).await;
+    assert_eq!(run["status"], "succeeded", "{run}");
+}

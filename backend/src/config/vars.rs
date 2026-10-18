@@ -317,7 +317,7 @@ pub const ENV_VARS: &[EnvVar] = &[
         "NEXC_RUN_LEASE_SECS",
         "30",
         false,
-        "lease an instance holds on a run it executes, renewed every third of it; a run whose lease ran out is taken over by another instance (docs/HA.md)",
+        "lease an instance holds on a run it executes, renewed every third of it; a run whose lease ran out is taken over by another instance (docs/HA.md); at least 10 in production",
     ),
     var(
         "NEXC_TRUST_PROXY",

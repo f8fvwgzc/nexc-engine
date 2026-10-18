@@ -240,7 +240,8 @@ pub async fn claim_next(
 ) -> Result<Option<RunRow>, sqlx::Error> {
     sqlx::query_as(
         "UPDATE runs SET status = 'running', claimed_by = $1, started_at = now(), heartbeat_at = now(),
-                lease_expires_at = now() + make_interval(secs => $2), lease_epoch = lease_epoch + 1
+                lease_expires_at = now() + make_interval(secs => $2), lease_epoch = lease_epoch + 1,
+                lease_secs = $2
          WHERE id = (SELECT id FROM runs WHERE status = 'queued' ORDER BY created_at
                      FOR UPDATE SKIP LOCKED LIMIT 1)
          RETURNING *",
@@ -262,7 +263,8 @@ pub async fn claim(
 ) -> Result<Option<RunRow>, sqlx::Error> {
     sqlx::query_as(
         "UPDATE runs SET status = 'running', claimed_by = $1, started_at = now(), heartbeat_at = now(),
-                lease_expires_at = now() + make_interval(secs => $3), lease_epoch = lease_epoch + 1
+                lease_expires_at = now() + make_interval(secs => $3), lease_epoch = lease_epoch + 1,
+                lease_secs = $3
          WHERE id = $2 AND status = 'queued' RETURNING *",
     )
     .bind(instance)
@@ -281,6 +283,8 @@ pub struct Takeover {
     pub previous: Option<Uuid>,
     /// Whether that instance released it (it shut down) rather than stopped renewing.
     pub released: bool,
+    /// The lease that instance held it under (`None`: a replica of a version before it was kept).
+    pub previous_lease_secs: Option<f64>,
 }
 
 impl FromRow<'_, PgRow> for Takeover {
@@ -289,6 +293,7 @@ impl FromRow<'_, PgRow> for Takeover {
             row: RunRow::from_row(row)?,
             previous: row.try_get("previous_owner")?,
             released: row.try_get("released")?,
+            previous_lease_secs: row.try_get("previous_lease_secs")?,
         })
     }
 }
@@ -299,8 +304,10 @@ impl FromRow<'_, PgRow> for Takeover {
 /// left alone. A holder that still sends heartbeats (an instance of an
 /// earlier version, which knows no leases) is never taken over; a run such
 /// an instance claimed has no lease at all, and is taken over once its
-/// heartbeat is older than a lease. An external agent's session (claimed
-/// by nobody) is never taken over.
+/// heartbeat is older than a lease. Every age is measured against the
+/// holder's own lease (`lease_secs`), or `lease_secs` here for a holder that
+/// did not record one. An external agent's session (claimed by nobody) is
+/// never taken over.
 pub async fn take_over(
     db: impl PgExecutor<'_>,
     instance: Uuid,
@@ -309,16 +316,19 @@ pub async fn take_over(
 ) -> Result<Option<Takeover>, sqlx::Error> {
     sqlx::query_as(
         "WITH expired AS (
-             SELECT id, claimed_by, heartbeat_at IS NULL AS released FROM runs
+             SELECT id, claimed_by, heartbeat_at IS NULL AS released, lease_secs FROM runs
              WHERE status = 'running'
                AND (lease_expires_at < now() OR (lease_expires_at IS NULL AND claimed_by IS NOT NULL))
-               AND (heartbeat_at IS NULL OR heartbeat_at < now() - make_interval(secs => $2))
+               AND (heartbeat_at IS NULL
+                    OR heartbeat_at < now() - make_interval(secs => COALESCE(lease_secs, $2)))
                AND NOT (id = ANY($3))
              ORDER BY lease_expires_at FOR UPDATE SKIP LOCKED LIMIT 1)
          UPDATE runs r SET claimed_by = $1, heartbeat_at = now(),
-                lease_expires_at = now() + make_interval(secs => $2), lease_epoch = r.lease_epoch + 1
+                lease_expires_at = now() + make_interval(secs => $2), lease_epoch = r.lease_epoch + 1,
+                lease_secs = $2
          FROM expired WHERE r.id = expired.id
-         RETURNING r.*, expired.claimed_by AS previous_owner, expired.released",
+         RETURNING r.*, expired.claimed_by AS previous_owner, expired.released,
+                   expired.lease_secs AS previous_lease_secs",
     )
     .bind(instance)
     .bind(lease_secs)
@@ -338,7 +348,8 @@ pub async fn renew(
     let ids: Vec<Uuid> = held.iter().map(|(id, _)| *id).collect();
     let epochs: Vec<i64> = held.iter().map(|(_, epoch)| *epoch).collect();
     sqlx::query_scalar(
-        "UPDATE runs r SET heartbeat_at = now(), lease_expires_at = now() + make_interval(secs => $4)
+        "UPDATE runs r SET heartbeat_at = now(), lease_expires_at = now() + make_interval(secs => $4),
+                lease_secs = $4
          FROM unnest($1::uuid[], $2::bigint[]) AS l(id, epoch)
          WHERE r.id = l.id AND r.lease_epoch = l.epoch AND r.claimed_by = $3 AND r.status = 'running'
          RETURNING r.id",

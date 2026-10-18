@@ -127,11 +127,13 @@ for expired leases every 2 s.
 ## Deploying for high availability
 
 Run at least two backend replicas and two runtime replicas against one PostgreSQL that has a
-standby. Every replica gets the same `NEXC_RUN_LEASE_SECS`.
+standby. Every replica gets the same `NEXC_RUN_LEASE_SECS`; each run records the lease its holder
+works under (`runs.lease_secs`) and a takeover waits for that one, so a replica set differently
+still takes a dead peer's runs over in time, and logs a warning when it does.
 
 | Setting                                  | Where                                    | What it does                                                                                                                       |
 | ---------------------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `NEXC_RUN_LEASE_SECS`                    | `.env`, Helm `backend.runLeaseSecs`      | The lease (1 to 3600 s, default 30). Shorter takes runs over sooner after a crash and renews more often; keep it above 10 s in production. |
+| `NEXC_RUN_LEASE_SECS`                    | `.env`, Helm `backend.runLeaseSecs`      | The lease (1 to 3600 s, default 30). Shorter takes runs over sooner after a crash and renews more often; `NEXC_ENV=production` refuses less than 10 s, which a slow answer of the database would turn into takeovers. |
 | `replicas.backend`, `replicas.runtime`   | Helm values                              | Two each by default.                                                                                                               |
 | `autoscaling.backend`, `autoscaling.runtime` | Helm values                          | Optional HorizontalPodAutoscalers on CPU (off by default). When one is on, `replicas` no longer sets that Deployment's size; keep `minReplicas` at 2 or more. |
 | `podDisruptionBudgets.maxUnavailable`    | Helm values                              | How many pods of each tier a node drain may evict at once (default 1).                                                             |

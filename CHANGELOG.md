@@ -18,7 +18,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Run takeover with fencing (`docs/HA.md`; `docs/CONTRACT.md` §2 and §5, run leases): an in-flight
   run survives the loss of the replica executing it. The executing replica holds a lease on the
   run (`runs.lease_epoch`, `runs.lease_expires_at`, migration `20261006000070_run_leases`) and
-  renews all its leases in one statement every third of `NEXC_RUN_LEASE_SECS` (default 30 s). A
+  renews all its leases in one statement every third of `NEXC_RUN_LEASE_SECS` (default 30 s; at
+  least 10 s with `NEXC_ENV=production`). Each run records the lease of its holder
+  (`runs.lease_secs`, migration `20261006000073_run_lease_secs`): a takeover waits for that one,
+  so replicas set differently still take a dead peer's runs over in time, and say so in a
+  warning. A
   run whose lease ran out is claimed by another replica's dispatcher with one atomic `UPDATE`
   that raises the epoch, and every write the executor makes for the run (node status, outputs,
   spans, usage, artifacts, approval requests and their inbox entries, the run's status) first

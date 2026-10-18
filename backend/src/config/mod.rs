@@ -309,6 +309,11 @@ impl Settings {
         }
         if self.run_lease.is_zero() || self.run_lease > Duration::from_secs(3600) {
             errors.push("NEXC_RUN_LEASE_SECS must be between 1 and 3600".into());
+        } else if self.is_production() && self.run_lease < MIN_PRODUCTION_LEASE {
+            errors.push(format!(
+                "NEXC_RUN_LEASE_SECS must be at least {} in production: a shorter lease is given up, and its run taken over, on any slow answer of the database",
+                MIN_PRODUCTION_LEASE.as_secs()
+            ));
         }
         if !(1..=1000).contains(&self.db_max_connections) {
             errors.push("NEXC_DB_MAX_CONNECTIONS must be between 1 and 1000".into());
@@ -600,6 +605,11 @@ impl Reader<'_> {
     }
 }
 
+/// The shortest run lease production accepts (docs/HA.md): renewals every
+/// third of it must get through, so a shorter one turns a slow database into
+/// takeovers.
+const MIN_PRODUCTION_LEASE: Duration = Duration::from_secs(10);
+
 /// An `http://` origin that is not the local machine.
 fn is_insecure_remote_origin(origin: &str) -> bool {
     reqwest::Url::parse(origin).is_ok_and(|url| {
@@ -703,6 +713,20 @@ mod tests {
             load(&m).is_err(),
             "remote plain-http origins are refused in production"
         );
+    }
+
+    #[test]
+    fn production_refuses_a_lease_too_short_to_renew_in_time() {
+        let mut m = base();
+        m.insert("NEXC_RUN_LEASE_SECS", "2".into());
+        assert_eq!(load(&m).unwrap().run_lease, Duration::from_secs(2));
+        m.insert("NEXC_ENV", "production".into());
+        m.insert("NEXC_CORS_ORIGINS", "https://nexc.example.org".into());
+        let err = load(&m).unwrap_err();
+        assert_eq!(err.0.len(), 1, "{err}");
+        assert!(err.0[0].starts_with("NEXC_RUN_LEASE_SECS must be at least 10"));
+        m.insert("NEXC_RUN_LEASE_SECS", "10".into());
+        assert!(load(&m).is_ok());
     }
 
     #[test]
