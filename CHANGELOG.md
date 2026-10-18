@@ -12,7 +12,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Operate, Single sign-on (`site/operate/sso.md`): how a sign-in goes (CONTRACT §5's single
   sign-on region), every `NEXC_OIDC_*` setting, roles from groups, the break-glass
   administrator, and configuration examples for Keycloak, Microsoft Entra ID (which sends no
-  `email_verified`), Okta and Google (no groups; keep the consent screen internal), clearly
+  `email_verified`), Okta (the groups claim on the authorization server the issuer names) and
+  Google (no groups; keep the consent screen internal), clearly
   marked as not yet tried against those providers, with what to look at when a sign-in fails.
   The Helm chart gains an `oidc` block: the settings go into the ConfigMap and the client secret
   is read from a Secret of your own (`oidc.existingSecret`, key `oidc.existingSecretKey`); the

@@ -92,7 +92,7 @@ NEXC_OIDC_REQUIRE_VERIFIED_EMAIL=false
 
 ### Okta
 
-Create an app integration: *OIDC*, *Web Application*, grant type *Authorization Code*, the redirect URL as a *Sign-in redirect URI*; copy the client id and secret. For groups, on the *Sign On* tab set the *Groups claim* of the ID token: claim name `groups`, a filter such as *Starts with* `nexc-` (with a custom authorization server, add a `groups` claim to the server instead).
+Create an app integration: *OIDC*, *Web Application*, grant type *Authorization Code*, the redirect URL as a *Sign-in redirect URI*; copy the client id and secret. The example uses the `default` custom authorization server, whose issuer ends in `/oauth2/default`. Its tokens carry groups only once the server has a claim for them: under *Security*, *API*, *Authorization Servers*, `default`, *Claims*, add a claim named `groups`, included in the *ID Token*, *Always*, value type *Groups*, with a filter such as *Starts with* `nexc-`.
 
 ```bash
 NEXC_OIDC_ISSUER=https://acme.okta.com/oauth2/default
@@ -103,7 +103,7 @@ NEXC_OIDC_ADMIN_GROUPS=nexc-admins
 NEXC_OIDC_WORKSPACE_ROLES=nexc-engineering=<workspace id>:member
 ```
 
-With the org authorization server the issuer is `https://acme.okta.com`.
+With the org authorization server instead, the issuer is `https://acme.okta.com`, and the groups claim is set on the app's *Sign On* tab (*Groups claim*: name `groups`, the same filter); that tab does nothing for a custom authorization server. Either way, a sign-in whose ID token carries no `groups` claim changes no role, and the server's log says so.
 
 ### Google
 
@@ -146,13 +146,13 @@ Every value is on [Helm chart](/operate/helm).
 
 ## When it does not work
 
-The login page says what went wrong in words; the server's log says why, at `warn`, under `single sign-on`.
+The login page says what went wrong in words; the server's log says why, under `single sign-on`: at `warn` for what the provider or the browser sent and for a refused account (with whether an address was given and what `email_verified` said, never the address), at `error` for a failure on this side, and at `info` for a sign-in declined at the provider.
 
 | The login page says                        | Look at                                                                                                                                       |
 | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | … could not be reached                     | `nexc doctor`: the issuer, the network path from the backend to the provider, the discovery document.                                          |
-| … took too long or was already used        | A sign-in older than ten minutes, a page reloaded at the callback, or cookies blocked for the console.                                         |
-| … sent back did not check out              | The log names the check: the redirect URL registered at the provider, the client id (`aud`), the clock (`iat`, `exp`), the signing algorithm. |
+| … took too long or was already used        | A sign-in older than ten minutes, or a page reloaded at the callback: a sign-in works once.                                                    |
+| … sent back did not check out              | The log names the check: the redirect URL registered at the provider, the client id (`aud`), the clock (`iat`, `exp`), the signing algorithm. "The browser that came back is not the one that left": cookies blocked for the console, the sign-in finished in another browser, or a redirect URL on another host than the console (`nexc doctor` warns). |
 | … has not verified your e-mail address     | The provider sends no `email_verified: true`; see Entra ID above.                                                                             |
 | … is linked to another … identity          | The provider re-created the person (a new subject) or another identity was linked: unlink the old one in the platform console (Accounts, *Single sign-on identities*). |
 | … does not open by itself                   | The account administers the platform, has two-factor sign-in or is the break-glass account: its holder links the provider from their profile page. |
