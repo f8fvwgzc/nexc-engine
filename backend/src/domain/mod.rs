@@ -6,12 +6,14 @@
 
 pub mod account;
 pub mod agent;
+pub mod alert;
 pub mod approval;
 pub mod assistant;
 pub mod audit;
 pub mod capabilities;
 pub mod context;
 pub mod cycle;
+pub mod dlp;
 pub mod error;
 pub mod graph;
 pub mod guardrails;

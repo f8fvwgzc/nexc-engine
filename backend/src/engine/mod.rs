@@ -8,6 +8,7 @@ pub mod approvals;
 pub mod artifacts;
 pub mod assistant;
 pub mod credentials;
+pub mod defend;
 pub mod deps;
 pub mod editor;
 pub mod executor;

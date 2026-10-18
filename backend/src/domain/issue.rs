@@ -300,6 +300,21 @@ pub struct NotificationApproval {
     pub expires_at: DateTime<Utc>,
 }
 
+/// The alert an inbox entry points at, as much as the inbox shows.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct NotificationAlert {
+    pub id: Uuid,
+    pub kind: super::alert::AlertKind,
+    pub severity: super::policy_document::Severity,
+    pub rule: String,
+    pub title: String,
+    pub principal: String,
+    #[schema(required = true)]
+    pub run_id: Option<Uuid>,
+    #[schema(required = true)]
+    pub graph_id: Option<Uuid>,
+}
+
 /// One entry of a member's inbox.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Notification {
@@ -311,6 +326,9 @@ pub struct Notification {
     /// The approval to decide (`approval`); `null` for the other kinds.
     #[schema(required = true)]
     pub approval: Option<NotificationApproval>,
+    /// The alert to look at (`alert`); `null` for the other kinds.
+    #[schema(required = true)]
+    pub alert: Option<NotificationAlert>,
     /// Who assigned, commented or moved the issue; `null` once the account is gone.
     #[schema(required = true)]
     pub actor: Option<IssuePerson>,

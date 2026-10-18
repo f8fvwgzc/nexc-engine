@@ -51,6 +51,7 @@ pub const UPLOAD_SLACK: usize = 64 * 1024;
         (name = "artifacts"), (name = "templates"), (name = "agents"), (name = "memories"),
         (name = "policies", description = "Versioned policies and what they resolve to"),
         (name = "approvals", description = "Tool calls that wait for a human"),
+        (name = "alerts", description = "What needs a look"),
         (name = "orchestrator"), (name = "realtime"), (name = "health"),
         (name = "admin", description = "The platform console: every workspace and account, for platform administrators only"),
     )
@@ -129,6 +130,9 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(approvals::get))
         .routes(routes!(approvals::approve))
         .routes(routes!(approvals::deny))
+        .routes(routes!(alerts::list))
+        .routes(routes!(alerts::acknowledge))
+        .routes(routes!(artifacts::release))
         .routes(routes!(search::search))
         .routes(routes!(platform::workspaces))
         .routes(routes!(platform::workspace))
@@ -263,6 +267,8 @@ mod tests {
             "/api/v1/workspaces/{wid}/policies/resolve",
             "/api/v1/approvals/{id}/approve",
             "/api/v1/approvals/{id}/deny",
+            "/api/v1/artifacts/{aid}/release",
+            "/api/v1/workspaces/{wid}/alerts",
             "/metrics",
         ] {
             assert!(paths.contains_key(p), "missing {p}");
@@ -311,9 +317,9 @@ mod tests {
     #[test]
     fn spec_enum_values_match_the_wire_format() {
         use crate::domain::{
-            account, agent, approval, audit, capabilities, cycle, graph, insight, issue, knowledge,
-            memory, plan, platform, policy_document, run, search, settings, trace, usage, user,
-            workspace,
+            account, agent, alert, approval, audit, capabilities, cycle, graph, insight, issue,
+            knowledge, memory, plan, platform, policy_document, run, search, settings, trace,
+            usage, user, workspace,
         };
         use serde_json::Value;
 
@@ -372,10 +378,11 @@ mod tests {
                 "PiiKind" => check::<policy_document::PiiKind>(values),
                 "InjectionAction" => check::<policy_document::InjectionAction>(values),
                 "ApprovalStatus" => check::<approval::ApprovalStatus>(values),
+                "AlertKind" => check::<alert::AlertKind>(values),
                 _ => continue,
             }
             checked += 1;
         }
-        assert_eq!(checked, 37, "every string enum schema is covered");
+        assert_eq!(checked, 39, "every string enum schema is covered");
     }
 }

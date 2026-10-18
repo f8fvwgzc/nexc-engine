@@ -11,8 +11,8 @@ use super::enum_col;
 use crate::domain::cycle::CycleRef;
 use crate::domain::issue::{
     Issue, IssueChange, IssueEvent, IssuePerson, IssueRef, IssueState, Label, Notification,
-    NotificationApproval, NotificationIssue, NotificationKind, Project, STARTER_STATES,
-    StateCategory, SubIssueCount,
+    NotificationAlert, NotificationApproval, NotificationIssue, NotificationKind, Project,
+    STARTER_STATES, StateCategory, SubIssueCount,
 };
 
 impl FromRow<'_, PgRow> for IssueState {
@@ -793,11 +793,26 @@ impl FromRow<'_, PgRow> for Notification {
             }),
             None => None,
         };
+        let alert_id: Option<Uuid> = row.try_get("alert_id")?;
+        let alert = match alert_id {
+            Some(id) => Some(NotificationAlert {
+                id,
+                kind: enum_col(row, "alert_kind")?,
+                severity: enum_col(row, "alert_severity")?,
+                rule: row.try_get("alert_rule")?,
+                title: row.try_get("alert_title")?,
+                principal: row.try_get("alert_principal")?,
+                run_id: row.try_get("alert_run_id")?,
+                graph_id: row.try_get("alert_graph_id")?,
+            }),
+            None => None,
+        };
         Ok(Notification {
             id: row.try_get("id")?,
             kind: enum_col(row, "kind")?,
             issue,
             approval,
+            alert,
             actor: actor_id.map(|user_id| IssuePerson {
                 user_id,
                 name: actor_name.unwrap_or_default(),
@@ -888,11 +903,15 @@ pub async fn inbox(
                 n.approval_id, a.run_id AS approval_run_id, a.node_id AS approval_node_id,
                 a.graph_id AS approval_graph_id, a.principal AS approval_principal,
                 a.tool AS approval_tool, a.reason AS approval_reason, a.status AS approval_status,
-                a.expires_at AS approval_expires_at
+                a.expires_at AS approval_expires_at,
+                n.alert_id, al.kind AS alert_kind, al.severity AS alert_severity, al.rule AS alert_rule,
+                al.title AS alert_title, al.principal AS alert_principal, al.run_id AS alert_run_id,
+                al.graph_id AS alert_graph_id
          FROM notifications n
          LEFT JOIN issues i ON i.id = n.issue_id
          LEFT JOIN teams t ON t.id = i.team_id
          LEFT JOIN approvals a ON a.id = n.approval_id
+         LEFT JOIN alerts al ON al.id = n.alert_id
          JOIN workspace_members wm ON wm.workspace_id = n.workspace_id AND wm.user_id = $1
          LEFT JOIN users u ON u.id = n.actor_id
          WHERE n.user_id = $1 AND n.workspace_id = $2

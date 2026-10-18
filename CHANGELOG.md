@@ -48,6 +48,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and `GET /workspaces/{wid}/approvals` show them. The runtime also refuses tool calls past
   `limits.tool_calls_per_minute` and keeps the automatic Markdown-to-.docx fallback from making
   what a policy holds or denies.
+- DLP on the way out: every artifact a node delivers is classified (credentials with the
+  guardrails' scrubber; e-mail addresses, phone numbers, card numbers and national-id shapes by
+  hand; the workspace's own keywords; the words of Office documents are read out of their XML)
+  and checked against the strictest classification the node read, its own context's and its
+  upstream nodes' (`context_labels` on the node run). Content derived from `restricted` data
+  never leaves as an artifact and `confidential` content never leaves to a host unless the
+  policy opens it (`dlp.labels`); a credential keeps the file in by default (`dlp.secrets`),
+  personal data raises an alert by default or keeps the file in under `pii.action: deny`. A
+  quarantined artifact is stored but answers 403 to downloads and stays out of the zip until an
+  admin releases it (`POST /artifacts/{aid}/release`, audited as `artifact_released`;
+  `Artifact.quarantined_at`, `quarantine_reason`, `released_at`). A tool that calls out reports
+  `egress_host` on its span and the backend checks the host and the labels (`egress.deny`,
+  `dlp.labels`). Every finding is a `policy` span (decision `deny` or `alert`, counts and digests
+  only) and an alert: the new `alerts` table, `GET /workspaces/{wid}/alerts`, `POST
+  /alerts/{id}/acknowledge`, the inbox kind `alert` for every admin, the SSE event `alert` on the
+  graph, the metrics `nexc_alerts_total{kind}` and `nexc_artifacts_quarantined_total`, and the
+  audit actions `artifact_quarantined`, `artifact_released` and `alert_raised`.
 - Agent identity and scopes (AgentSecOps phase 1, `docs/AGENTSECOPS.md` §4.1): every agent is a
   principal, `agent://{workspace}/{name}` (`principal_id`, unique, following the name), with an
   owner (`owner_user_id`), a team, a `purpose` and a `capabilities` document: the tools it may

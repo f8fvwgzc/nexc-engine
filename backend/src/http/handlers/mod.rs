@@ -3,6 +3,7 @@
 
 pub mod account;
 pub mod agents;
+pub mod alerts;
 pub mod approvals;
 pub mod artifacts;
 pub mod auth;

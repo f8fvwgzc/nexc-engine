@@ -9,12 +9,15 @@ use axum::response::{IntoResponse, Response};
 use uuid::Uuid;
 use zip::write::SimpleFileOptions;
 
+use super::workspaces::audit;
 use crate::app::AppState;
 use crate::domain::AppError;
+use crate::domain::audit::AuditAction;
 use crate::domain::run::Artifact;
 use crate::engine::artifacts;
 use crate::http::extract::{AuthUser, Path};
 use crate::http::problem::Problem;
+use crate::repo::audit::Subject;
 use crate::repo::{self, OrNotFound};
 
 /// Largest zip built in memory.
@@ -82,7 +85,12 @@ pub async fn zip(
     repo::runs::find_owned(&state.db, auth.id, rid)
         .await
         .or_not_found("run")?;
-    let stored = repo::artifacts::list_stored(&state.db, rid).await?;
+    // Quarantined files stay out of the archive until an admin releases them.
+    let stored: Vec<_> = repo::artifacts::list_stored(&state.db, rid)
+        .await?
+        .into_iter()
+        .filter(|s| Artifact::from(s.artifact.clone()).is_downloadable())
+        .collect();
     if stored.iter().map(|s| s.artifact.size).sum::<i64>() > MAX_ZIP_BYTES {
         return Err(AppError::PayloadTooLarge);
     }
@@ -132,6 +140,13 @@ pub async fn download(
     let stored = repo::artifacts::find_owned(&state.db, auth.id, aid)
         .await
         .or_not_found("artifact")?;
+    let artifact: Artifact = stored.artifact.clone().into();
+    if !artifact.is_downloadable() {
+        return Err(AppError::Forbidden(format!(
+            "the artifact is quarantined until an admin releases it ({})",
+            artifact.quarantine_reason
+        )));
+    }
     let path = artifacts::resolve(&state, &stored.storage_path)?;
     let bytes = tokio::fs::read(&path)
         .await
@@ -153,6 +168,51 @@ pub async fn download(
         ),
     ];
     Ok((headers, bytes).into_response())
+}
+
+/// Releases a quarantined artifact (admins of the run's workspace): it can be
+/// downloaded again. Audited as `artifact_released`.
+#[utoipa::path(post, path = "/artifacts/{aid}/release", tag = "artifacts", security(("bearer" = [])),
+    params(("aid" = Uuid, Path, description = "Artifact id")),
+    responses((status = 200, body = Artifact), (status = 403, body = Problem), (status = 404, body = Problem),
+        (status = 409, description = "Not quarantined", body = Problem)))]
+pub async fn release(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(aid): Path<Uuid>,
+) -> Result<Json<Artifact>, AppError> {
+    let stored = repo::artifacts::find_owned(&state.db, auth.id, aid)
+        .await
+        .or_not_found("artifact")?;
+    let run = repo::runs::find_row(&state.db, stored.artifact.run_id)
+        .await
+        .or_not_found("artifact")?;
+    let workspace = repo::graphs::workspace_of(&state.db, run.graph_id)
+        .await?
+        .ok_or(AppError::Forbidden(
+            "artifacts of a graph outside any workspace cannot be released".into(),
+        ))?;
+    let role = repo::workspaces::role_of(&state.db, workspace, auth.id)
+        .await?
+        .ok_or(AppError::NotFound("artifact"))?;
+    if !role.is_admin() {
+        return Err(AppError::Forbidden(
+            "only a workspace admin releases a quarantined artifact".into(),
+        ));
+    }
+    let released = repo::artifacts::release(&state.db, aid, auth.id)
+        .await?
+        .ok_or(AppError::Conflict("the artifact is not quarantined".into()))?;
+    audit(
+        &state,
+        workspace,
+        auth.id,
+        AuditAction::ArtifactReleased,
+        Subject::Text(&released.path),
+        &format!("run {}: {}", released.run_id, released.quarantine_reason),
+    )
+    .await;
+    Ok(Json(released))
 }
 
 #[cfg(test)]

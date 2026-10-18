@@ -42,6 +42,11 @@ string_enum!(
         /// A human let a held tool call go ahead (subject: the principal; detail: the tool and run).
         ApprovalGranted => "approval_granted",
         ApprovalDenied => "approval_denied",
+        /// The DLP classifier kept an artifact in (subject: the principal; detail: the file and why).
+        ArtifactQuarantined => "artifact_quarantined",
+        ArtifactReleased => "artifact_released",
+        /// An alert was raised (subject: the principal; detail: the title).
+        AlertRaised => "alert_raised",
         /// A document, topic or memory was given a classification (subject: what; detail: the label).
         ClassificationChanged => "classification_changed",
     }

@@ -113,6 +113,10 @@ pub struct Metrics {
     pub node_cache_hits: Counter,
     /// Actions the agent runtime reported that the policy minted for the run did not allow.
     pub policy_mismatches: Counter,
+    /// Alerts raised, by kind.
+    pub alerts: LabeledCounter,
+    /// Artifacts the DLP classifier kept in.
+    pub artifacts_quarantined: Counter,
     pub runs: LabeledCounter,
     pub run_duration: Histogram,
     /// Trace spans recorded, by kind.
@@ -132,6 +136,8 @@ impl Default for Metrics {
             node_runs: LabeledCounter::default(),
             node_cache_hits: Counter::default(),
             policy_mismatches: Counter::default(),
+            alerts: LabeledCounter::default(),
+            artifacts_quarantined: Counter::default(),
             runs: LabeledCounter::default(),
             run_duration: Histogram::new(&RUN_BUCKETS),
             spans: LabeledCounter::default(),
@@ -220,6 +226,24 @@ impl Metrics {
             out,
             "nexc_policy_mismatches_total {}",
             self.policy_mismatches.get()
+        );
+        header(
+            &mut out,
+            "nexc_alerts_total",
+            "counter",
+            "Alerts raised, by kind.",
+        );
+        self.alerts.render(&mut out, "nexc_alerts_total");
+        header(
+            &mut out,
+            "nexc_artifacts_quarantined_total",
+            "counter",
+            "Artifacts the DLP classifier kept in.",
+        );
+        let _ = writeln!(
+            out,
+            "nexc_artifacts_quarantined_total {}",
+            self.artifacts_quarantined.get()
         );
         header(
             &mut out,

@@ -505,7 +505,15 @@ async fn handle_line(
                     let mismatch = recheck(ctx, progress, &span);
                     let span_id = span.id;
                     let request = approvals::Request::from_span(&span);
+                    let egress = (span.kind == SpanKind::ToolCall)
+                        .then(|| span.attributes.get("egress_host").and_then(Value::as_str))
+                        .flatten()
+                        .map(str::to_owned);
                     ctx.record(span);
+                    if let Some(host) = egress {
+                        // The call already happened; what left is on the record either way.
+                        ctx.screen_egress(&host, span_id).await;
+                    }
                     if let Some((rule, detail)) = mismatch {
                         ctx.policy_mismatch(span_id, rule, detail).await;
                     } else if let Some(request) = request {

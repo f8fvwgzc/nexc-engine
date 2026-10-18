@@ -268,14 +268,15 @@ impl ExecContext {
         );
     }
 
-    /// Stores an artifact produced by this node.
+    /// Stores an artifact produced by this node and screens it on the way
+    /// out: a DLP denial keeps it in until an admin releases it.
     pub async fn artifact(
         &self,
         path: &str,
         mime: Option<&str>,
         bytes: &[u8],
     ) -> Result<Artifact, String> {
-        super::artifacts::store(
+        let artifact = super::artifacts::store(
             &self.state,
             self.graph_id,
             self.run_id,
@@ -284,7 +285,9 @@ impl ExecContext {
             mime,
             bytes,
         )
-        .await
+        .await?;
+        self.screen_artifact(&artifact, bytes).await;
+        Ok(artifact)
     }
 
     /// System prompt: the assigned agent's, or a generic one.

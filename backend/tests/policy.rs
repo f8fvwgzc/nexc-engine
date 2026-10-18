@@ -122,7 +122,11 @@ async fn policy_runtime() -> (String, Arc<Mutex<Vec<Value>>>, Decisions) {
                 )
                     .into_response();
             }
-            let lines = [
+            let artifact = |path: &str, mime: &str, content: &str| {
+                json!({"type": "artifact", "path": path, "mime": mime,
+                    "content_b64": base64::engine::general_purpose::STANDARD.encode(content)})
+            };
+            let mut lines = vec![
                 turn,
                 span(
                     "tool_call",
@@ -131,8 +135,35 @@ async fn policy_runtime() -> (String, Arc<Mutex<Vec<Value>>>, Decisions) {
                     json!({"tool": "write_file"}),
                 ),
                 json!({"type": "tokens", "input": 10, "output": 5}),
-                result,
             ];
+            if title.contains("LEAK") {
+                lines.push(artifact(
+                    "notes.md",
+                    "text/markdown",
+                    "# Notes\n\nexport ANTHROPIC_API_KEY=sk-ant-api03-AbCdEf0123456789xyz_-Q\n",
+                ));
+            } else if title.contains("PII") {
+                lines.push(artifact(
+                    "contacts.csv",
+                    "text/csv",
+                    "name,email\nAda,ada@example.org\nGrace,grace@example.org\n",
+                ));
+            } else if title.contains("EGRESS") {
+                lines.push(span(
+                    "tool_call",
+                    "http_post",
+                    &agent,
+                    json!({"tool": "http_post", "egress_host": "api.partner.example",
+                        "payload_sha256": "cd".repeat(32), "payload_bytes": 512}),
+                ));
+            } else {
+                lines.push(artifact(
+                    "deliverable.md",
+                    "text/markdown",
+                    &format!("# {title}\n\nGoods under 150 EUR are exempt.\n"),
+                ));
+            }
+            lines.push(result);
             let body: String = lines.iter().map(line).collect();
             ([(header::CONTENT_TYPE, "application/x-ndjson")], body).into_response()
         }
@@ -989,4 +1020,486 @@ async fn a_policy_that_requires_an_approval_pauses_the_run_until_an_admin_decide
         1
     );
     let _ = aid;
+}
+
+const HANDBOOK: &str = "# Warehouse handbook
+
+General rules for everyone on the floor.
+
+## Customs
+
+Invoices from the Rotterdam warehouse need a customs reference before they are released.
+The reference is issued by the port authority and starts with NL.
+";
+
+/// Uploads the handbook, ingests it and classifies it `label`; returns the document id.
+async fn classified_handbook(app: &TestApp, owner: &str, wid: &str, label: &str) -> String {
+    tokio::fs::create_dir_all(app.state.settings.documents_dir())
+        .await
+        .unwrap();
+    let r = app
+        .send_bytes(
+            &format!("/api/v1/workspaces/{wid}/documents?name=handbook.md"),
+            owner,
+            HANDBOOK.into(),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let did = r.body["id"].as_str().unwrap().to_owned();
+    nexc::engine::knowledge::work(&app.state).await.unwrap();
+    let (status, body) = call(
+        app,
+        Method::PATCH,
+        &format!("/workspaces/{wid}/documents/{did}"),
+        owner,
+        Some(json!({"label": label})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    did
+}
+
+async fn artifacts_of(app: &TestApp, token: &str, rid: &str) -> Vec<Value> {
+    let (status, list) = call(
+        app,
+        Method::GET,
+        &format!("/runs/{rid}/artifacts"),
+        token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    list.as_array().unwrap().clone()
+}
+
+async fn download_status(app: &TestApp, token: &str, aid: &str) -> StatusCode {
+    app.request(
+        Method::GET,
+        &format!("/api/v1/artifacts/{aid}/download"),
+        Some(token),
+        None,
+    )
+    .await
+    .status
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_restricted_derived_artifact_is_quarantined_until_an_admin_releases_it(pool: PgPool) {
+    let (runtime, seen, _) = policy_runtime().await;
+    let app = TestApp::new(pool, &[("NEXC_RUNTIME_URL", &runtime)]).await;
+    let (owner, _) = app.register("owner@example.com").await;
+    let (member, _) = app.register("member@example.com").await;
+    let wid = workspace(&app, &owner).await;
+    add_member(&app, &owner, &wid, "member@example.com", "member").await;
+    classified_handbook(&app, &owner, &wid, "restricted").await;
+    // Cleared for restricted data: the agent reads the passage, and what it makes is derived from it.
+    let clerk = agent(
+        &app,
+        &owner,
+        "Clerk",
+        "clerk",
+        json!({"data": {"labels": ["public", "internal", "confidential", "restricted"]}}),
+    )
+    .await;
+    let principal = format!("agent://{wid}/Clerk");
+    let gid = app.graph(&owner, "Release the Rotterdam invoices").await;
+    let first = app
+        .node(
+            &owner,
+            &gid,
+            json!({"title": "Customs", "kind": "research", "executor": "agent", "agent_role": "clerk",
+                "content": "Which customs reference do invoices from the Rotterdam warehouse need?"}),
+        )
+        .await;
+    let second = app
+        .node(
+            &owner,
+            &gid,
+            json!({"title": "Summary of nothing special", "kind": "research", "executor": "agent",
+                "agent_role": "clerk", "content": "Summarise the upstream note in one line."}),
+        )
+        .await;
+    assert_eq!(
+        app.edge(&owner, &gid, &first, &second).await.status,
+        StatusCode::CREATED
+    );
+    let (rid, events) = run(&app, &owner, &gid, false).await;
+    let finished = &events.last().unwrap().1["run"];
+    assert_eq!(finished["status"], "succeeded", "{finished}");
+    let requests = seen.lock().unwrap().clone();
+    assert!(
+        !requests[0]["context"]["documents"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "the cleared agent was given the passage: {}",
+        requests[0]
+    );
+    assert_eq!(requests[0]["context"]["labels"], json!(["restricted"]));
+    // The downstream node inherits what its upstream read (a memory learned from the first
+    // node's output in the background may add `internal` to it).
+    assert!(
+        requests[1]["context"]["labels"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("restricted")),
+        "{}",
+        requests[1]["context"]
+    );
+    let node_runs = finished["node_runs"].as_array().unwrap();
+    assert!(
+        node_runs.iter().all(|nr| nr["context_labels"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("restricted"))),
+        "{node_runs:?}"
+    );
+
+    // Both artifacts are stored and kept in; nobody downloads them, the zip leaves them out.
+    let artifacts = artifacts_of(&app, &owner, &rid).await;
+    assert_eq!(artifacts.len(), 2, "{artifacts:?}");
+    for artifact in &artifacts {
+        assert!(artifact["quarantined_at"].is_string(), "{artifact}");
+        assert!(
+            artifact["quarantine_reason"]
+                .as_str()
+                .unwrap()
+                .starts_with("dlp.labels: content derived from restricted data"),
+            "{artifact}"
+        );
+        assert_eq!(artifact["released_at"], Value::Null);
+        let aid = artifact["id"].as_str().unwrap();
+        assert_eq!(
+            download_status(&app, &owner, aid).await,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            download_status(&app, &member, aid).await,
+            StatusCode::FORBIDDEN
+        );
+    }
+    let zip = app
+        .request(
+            Method::GET,
+            &format!("/api/v1/runs/{rid}/artifacts.zip"),
+            Some(&owner),
+            None,
+        )
+        .await;
+    assert_eq!(zip.status, StatusCode::OK);
+    // On the record: a policy span per artifact, an alert per artifact in the admin's inbox,
+    // on the stream and in the feed; the audit log has the quarantine.
+    let spans = spans_of(&app, &owner, &rid).await;
+    let kept: Vec<&Value> = spans
+        .iter()
+        .filter(|s| s["kind"] == "policy" && s["attributes"]["rule"] == "dlp.labels")
+        .collect();
+    assert_eq!(kept.len(), 2, "{spans:?}");
+    assert!(kept.iter().all(|s| s["attributes"]["decision"] == "deny"
+        && s["attributes"]["action"] == "artifact"
+        && s["attributes"]["label"] == "restricted"
+        && s["status"] == "error"
+        && s["principal"] == principal));
+    let alerts_on_stream: Vec<&Value> = events
+        .iter()
+        .filter(|(e, _)| e == "alert")
+        .map(|(_, d)| &d["alert"])
+        .collect();
+    assert_eq!(alerts_on_stream.len(), 2, "{events:?}");
+    assert_eq!(alerts_on_stream[0]["kind"], "dlp");
+    assert_eq!(alerts_on_stream[0]["severity"], "high");
+    assert_eq!(alerts_on_stream[0]["rule"], "dlp.labels");
+    assert_eq!(alerts_on_stream[0]["principal"], principal);
+    assert_eq!(alerts_on_stream[0]["run_id"], rid);
+    let (status, feed) = call(
+        &app,
+        Method::GET,
+        &format!("/workspaces/{wid}/alerts"),
+        &owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{feed}");
+    assert_eq!(feed.as_array().unwrap().len(), 2);
+    assert_eq!(feed[0]["acknowledged_at"], Value::Null);
+    let (status, _) = call(
+        &app,
+        Method::GET,
+        &format!("/workspaces/{wid}/alerts"),
+        &member,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (_, inbox) = call(
+        &app,
+        Method::GET,
+        &format!("/workspaces/{wid}/inbox"),
+        &owner,
+        None,
+    )
+    .await;
+    let alerts_in_inbox: Vec<&Value> = inbox
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|n| n["kind"] == "alert")
+        .collect();
+    assert_eq!(alerts_in_inbox.len(), 2, "{inbox}");
+    assert_eq!(alerts_in_inbox[0]["alert"]["kind"], "dlp");
+    assert_eq!(alerts_in_inbox[0]["alert"]["principal"], principal);
+    assert_eq!(alerts_in_inbox[0]["issue"], Value::Null);
+    assert_eq!(
+        audit_actions(&app, &owner, &wid, "artifact_quarantined")
+            .await
+            .len(),
+        2
+    );
+    assert_eq!(
+        audit_actions(&app, &owner, &wid, "alert_raised")
+            .await
+            .len(),
+        2
+    );
+
+    // Only an admin releases; then the file downloads and the release is audited.
+    let aid = artifacts[0]["id"].as_str().unwrap().to_owned();
+    let release = format!("/artifacts/{aid}/release");
+    let (status, _) = call(&app, Method::POST, &release, &member, None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, released) = call(&app, Method::POST, &release, &owner, None).await;
+    assert_eq!(status, StatusCode::OK, "{released}");
+    assert!(released["released_at"].is_string());
+    assert!(released["quarantined_at"].is_string(), "the history stays");
+    assert_eq!(download_status(&app, &owner, &aid).await, StatusCode::OK);
+    let (status, _) = call(&app, Method::POST, &release, &owner, None).await;
+    assert_eq!(status, StatusCode::CONFLICT, "released once");
+    let other = artifacts[1]["id"].as_str().unwrap();
+    assert_eq!(
+        download_status(&app, &owner, other).await,
+        StatusCode::FORBIDDEN,
+        "the other one is still in"
+    );
+    assert_eq!(
+        audit_actions(&app, &owner, &wid, "artifact_released")
+            .await
+            .len(),
+        1
+    );
+    // Acknowledging an alert takes an admin and happens once.
+    let alert_id = feed[0]["id"].as_str().unwrap();
+    let ack = format!("/alerts/{alert_id}/acknowledge");
+    let (status, _) = call(&app, Method::POST, &ack, &member, None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, seen_alert) = call(&app, Method::POST, &ack, &owner, None).await;
+    assert_eq!(status, StatusCode::OK, "{seen_alert}");
+    assert!(seen_alert["acknowledged_at"].is_string());
+    let (status, _) = call(&app, Method::POST, &ack, &owner, None).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let _ = clerk;
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn credentials_personal_data_and_external_calls_are_caught_on_the_way_out(pool: PgPool) {
+    let (runtime, _, _) = policy_runtime().await;
+    let app = TestApp::new(pool, &[("NEXC_RUNTIME_URL", &runtime)]).await;
+    let (owner, _) = app.register("owner@example.com").await;
+    let wid = workspace(&app, &owner).await;
+    agent(&app, &owner, "Clerk", "clerk", json!({})).await;
+    let principal = format!("agent://{wid}/Clerk");
+    let gid = app.graph(&owner, "Collect what we know").await;
+    for title in ["LEAK the key", "PII contacts", "EGRESS post"] {
+        app.node(
+            &owner,
+            &gid,
+            json!({"title": title, "kind": "research", "executor": "agent", "agent_role": "clerk"}),
+        )
+        .await;
+    }
+    let (rid, events) = run(&app, &owner, &gid, false).await;
+    assert_eq!(events.last().unwrap().1["run"]["status"], "succeeded");
+    let artifacts = artifacts_of(&app, &owner, &rid).await;
+    let by_path = |path: &str| {
+        artifacts
+            .iter()
+            .find(|a| a["path"] == path)
+            .cloned()
+            .unwrap_or_else(|| panic!("{path} in {artifacts:?}"))
+    };
+    // A credential: kept in (the default action for secrets is deny).
+    let notes = by_path("notes.md");
+    assert!(notes["quarantined_at"].is_string(), "{notes}");
+    assert!(
+        notes["quarantine_reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("dlp.secrets: 1 credential"),
+        "{notes}"
+    );
+    // Personal data: delivered, with an alert (the default action is alert).
+    let contacts = by_path("contacts.csv");
+    assert_eq!(contacts["quarantined_at"], Value::Null, "{contacts}");
+    assert_eq!(
+        download_status(&app, &owner, contacts["id"].as_str().unwrap()).await,
+        StatusCode::OK
+    );
+    let spans = spans_of(&app, &owner, &rid).await;
+    let pii = spans
+        .iter()
+        .find(|s| s["kind"] == "policy" && s["attributes"]["rule"] == "dlp.pii")
+        .expect("the finding is a span");
+    assert_eq!(pii["attributes"]["decision"], "alert");
+    assert_eq!(pii["status"], "ok");
+    assert_eq!(pii["attributes"]["pii"], 2);
+    assert!(
+        pii["attributes"]["findings"]
+            .as_str()
+            .unwrap()
+            .contains("2 e-mail addresses"),
+        "{pii}"
+    );
+    assert_eq!(pii["principal"], principal);
+    let secret = spans
+        .iter()
+        .find(|s| s["kind"] == "policy" && s["attributes"]["rule"] == "dlp.secrets")
+        .unwrap();
+    assert_eq!(secret["attributes"]["decision"], "deny");
+    assert_eq!(secret["attributes"]["secrets"], 1);
+    // The trace never carries the content, only counts.
+    let text = serde_json::to_string(&spans).unwrap();
+    assert!(!text.contains("sk-ant") && !text.contains("ada@example.org"));
+    // An external call the policy allows (no host restriction) with internal content: fine.
+    assert!(
+        !spans
+            .iter()
+            .any(|s| s["kind"] == "policy" && s["attributes"]["action"] == "egress"),
+        "{spans:?}"
+    );
+    let (_, feed) = call(
+        &app,
+        Method::GET,
+        &format!("/workspaces/{wid}/alerts"),
+        &owner,
+        None,
+    )
+    .await;
+    let kinds: Vec<(&str, &str)> = feed
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| (a["rule"].as_str().unwrap(), a["severity"].as_str().unwrap()))
+        .collect();
+    assert_eq!(kinds.len(), 2, "{feed}");
+    assert!(kinds.contains(&("dlp.secrets", "high")) && kinds.contains(&("dlp.pii", "medium")));
+
+    // Tighten the policy: personal data is kept in too, and the partner host is denied.
+    let (status, body) = policy(
+        &app,
+        &owner,
+        &wid,
+        "workspace",
+        None,
+        json!({"dlp": {"pii": {"action": "deny", "keywords": ["Grace"]}},
+            "egress": {"deny": ["*.partner.example"]}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let (rid, _) = run(&app, &owner, &gid, true).await;
+    let artifacts = artifacts_of(&app, &owner, &rid).await;
+    let contacts = artifacts
+        .iter()
+        .find(|a| a["path"] == "contacts.csv")
+        .unwrap();
+    assert!(contacts["quarantined_at"].is_string(), "{contacts}");
+    assert!(
+        contacts["quarantine_reason"]
+            .as_str()
+            .unwrap()
+            .contains("keyword \"Grace\""),
+        "{contacts}"
+    );
+    let spans = spans_of(&app, &owner, &rid).await;
+    let egress = spans
+        .iter()
+        .find(|s| s["kind"] == "policy" && s["attributes"]["action"] == "egress")
+        .expect("the call out is on the record");
+    assert_eq!(egress["name"], "api.partner.example");
+    assert_eq!(egress["attributes"]["rule"], "egress.deny");
+    assert_eq!(egress["attributes"]["decision"], "deny");
+    let (_, feed) = call(
+        &app,
+        Method::GET,
+        &format!("/workspaces/{wid}/alerts?limit=10"),
+        &owner,
+        None,
+    )
+    .await;
+    assert!(
+        feed.as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["rule"] == "egress.deny" && a["title"] == "data sent to api.partner.example"),
+        "{feed}"
+    );
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn confidential_content_stays_off_the_wire(pool: PgPool) {
+    let (runtime, _, _) = policy_runtime().await;
+    let app = TestApp::new(pool, &[("NEXC_RUNTIME_URL", &runtime)]).await;
+    let (owner, _) = app.register("owner@example.com").await;
+    let wid = workspace(&app, &owner).await;
+    classified_handbook(&app, &owner, &wid, "confidential").await;
+    agent(
+        &app,
+        &owner,
+        "Clerk",
+        "clerk",
+        json!({"data": {"labels": ["public", "internal", "confidential"]}}),
+    )
+    .await;
+    let gid = app.graph(&owner, "Release the Rotterdam invoices").await;
+    app.node(
+        &owner,
+        &gid,
+        json!({"title": "EGRESS customs", "kind": "research", "executor": "agent", "agent_role": "clerk",
+            "content": "Which customs reference do invoices from the Rotterdam warehouse need?"}),
+    )
+    .await;
+    let (rid, _) = run(&app, &owner, &gid, false).await;
+    let spans = spans_of(&app, &owner, &rid).await;
+    let read = spans.iter().find(|s| s["kind"] == "data_read").unwrap();
+    assert_eq!(read["attributes"]["labels"], json!(["confidential"]));
+    // The host is allowed by the capabilities, but confidential content may not go anywhere.
+    let egress = spans
+        .iter()
+        .find(|s| s["kind"] == "policy" && s["attributes"]["action"] == "egress")
+        .expect("the call out is on the record");
+    assert_eq!(egress["attributes"]["rule"], "dlp.labels");
+    assert_eq!(egress["attributes"]["label"], "confidential");
+    assert!(
+        egress["attributes"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("may not be sent to api.partner.example")
+    );
+    // Open it for that host alone: the same call passes.
+    let (status, body) = policy(
+        &app,
+        &owner,
+        &wid,
+        "workspace",
+        None,
+        json!({"dlp": {"labels": {"confidential": {"egress_hosts": ["api.partner.example"]}}}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let (rid, _) = run(&app, &owner, &gid, true).await;
+    let spans = spans_of(&app, &owner, &rid).await;
+    assert!(
+        !spans
+            .iter()
+            .any(|s| s["kind"] == "policy" && s["attributes"]["action"] == "egress"),
+        "{spans:?}"
+    );
 }
