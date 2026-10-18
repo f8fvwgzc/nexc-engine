@@ -13,7 +13,10 @@ export const FRESH = {
    * workflows, labels, cycles, settings, guardrails, policies, servers, counterparts, destinations.
    */
   setup: 5 * 60_000,
-  /** What people work through: graphs, issues, projects, agents, runs, sessions, documents. */
+  /**
+   * What people work through, and what their work adds up to: graphs, issues, projects, agents,
+   * runs, sessions, documents, the usage report.
+   */
   list: 60_000,
   /** Things that change as agents work and are also polled: the inbox, approvals, alerts. */
   live: 10_000,

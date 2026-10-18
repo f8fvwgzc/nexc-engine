@@ -79,7 +79,8 @@ export function withdrawInvite(workspaceId: string, inviteId: string) {
 export const usageQuery = (workspaceId: string, days: number) =>
   queryOptions({
     queryKey: qk.workspaces.usage(workspaceId, days),
-    staleTime: FRESH.setup,
+    // Tokens and cost grow with every run: a list's freshness, not the setup's.
+    staleTime: FRESH.list,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/usage?days=${days}`, usageReportSchema, { signal }),
   });

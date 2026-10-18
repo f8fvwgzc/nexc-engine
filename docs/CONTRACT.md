@@ -118,14 +118,14 @@ In Docker/K8s the frontend is served by unprivileged nginx on 8080 which proxies
   the kept body on a 304. It asks again only once a body is stale, by the kind of resource
   (`frontend/src/lib/freshness.ts`): catalogues (templates, the audit's questions) after 30
   minutes, a workspace's setup (members, teams, workflows, labels, settings, policies,
-  servers, destinations) after 5, the lists people work through after 1, live state (inbox,
-  approvals, alerts, an active run, the runs of a graph while one of them is queued or
-  running) after 10 seconds besides its own poll. A change the console makes itself refreshes
-  what it touched at once. Per-item queries fanned out over a page are not refetched when the
-  tab regains focus: an agent's activity never, a graph's runs only while one of them is live,
-  and those are polled every 10 seconds meanwhile (the run-status stream is the canvas's, not
-  the Runs page's), so a run that finishes shows as finished. A run started elsewhere on a
-  graph with no live run shows the next time the Runs page is opened.
+  servers, destinations) after 5, the lists people work through and the usage report after 1,
+  live state (inbox, approvals, alerts, an active run, the runs of a graph while one of them
+  is queued or running) after 10 seconds besides its own poll. A change the console makes
+  itself refreshes what it touched at once. Per-item queries fanned out over a page are not
+  refetched when the tab regains focus: an agent's activity never, a graph's runs only while
+  one of them is live, and those are polled every 10 seconds meanwhile (the run-status stream
+  is the canvas's, not the Runs page's), so a run that finishes shows as finished. A run
+  started elsewhere on a graph with no live run shows the next time the Runs page is opened.
 - Limits: request body 1 MiB (node content max 64 KiB, title max 200 chars, ≤ 500 nodes per graph).
 
 <!-- #endregion conventions -->
