@@ -24,6 +24,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   state to the same layout and axe checks at 375 and 1280 px; ten main pages (Graphs, Runs, a run,
   Agents, AgentSecOps, Sessions, Inbox, Issues, Projects, Members) are compared with screenshot
   baselines at the three widths (`frontend/e2e/__screenshots__`, light, 1% of pixels may differ).
+  The overlap check holds the header and the sidebar to it too (only the overlays marked
+  `data-floating` float over the page).
   `behaviour.spec.ts` checks what pages do over time: the Runs page following a run to its end,
   **Try again** on a page that failed to load, data kept on screen when a background refetch
   fails, a filter that matches nothing, and the inbox's unread count at 768 and 1280 px.

@@ -162,7 +162,10 @@ function AssistantPanel({ current }: { current: Workspace }) {
       {/* The notch sits on the right edge, halfway down, and slides away while the panel is open.
           It is narrower than the page's gutter, so it never covers the page; on a phone, where
           the gutter is narrower still, the header's button opens the assistant instead. */}
-      <div className="pointer-events-none fixed inset-y-0 right-0 z-40 hidden items-center md:flex">
+      <div
+        data-floating
+        className="pointer-events-none fixed inset-y-0 right-0 z-40 hidden items-center md:flex"
+      >
         <AnimatePresence initial={false}>
           {!open && (
             <motion.button

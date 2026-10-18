@@ -97,7 +97,10 @@ export interface LayoutReport {
 
 /**
  * The layout check: no horizontal scroll, and no two visible interactive elements whose boxes
- * intersect (nested ones and fixed overlays such as the assistant button excepted).
+ * intersect, each box clipped to its scrolling ancestors. Fixed and sticky controls (the header,
+ * the sidebar and its rail) are held to it like the rest; only nested controls and the overlays
+ * meant to float over the page (`[data-floating]`: the assistant's notch, the demo notice) are
+ * left out.
  */
 export async function checkLayout(page: Page): Promise<LayoutReport> {
   return page.evaluate(() => {
@@ -123,14 +126,6 @@ export async function checkLayout(page: Page): Promise<LayoutReport> {
         '';
       const id = el.id ? `#${el.id}` : '';
       return `${el.tagName.toLowerCase()}${id}[${label}]`;
-    };
-
-    const isFixed = (el: Element) => {
-      for (let node: Element | null = el; node; node = node.parentElement) {
-        const position = getComputedStyle(node).position;
-        if (position === 'fixed' || position === 'sticky') return true;
-      }
-      return false;
     };
 
     /** The part of the element not clipped away by a scrolling or clipping ancestor. */
@@ -166,7 +161,7 @@ export async function checkLayout(page: Page): Promise<LayoutReport> {
     };
 
     const elements = [...document.querySelectorAll(SELECTOR)].filter(
-      (el) => visible(el) && !isFixed(el),
+      (el) => visible(el) && !el.closest('[data-floating]'),
     );
     const boxes = elements
       .map((el) => ({ el, r: visibleRect(el) }))

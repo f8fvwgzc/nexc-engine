@@ -132,10 +132,12 @@ answering the boot-time refresh with a mocked token; the clock is fixed at 2026-
 `ui.spec.ts` visits every route of `src/app/router.tsx` (the login and register pages aside) with
 realistic and with empty data at 375, 768 and 1280 px, and fails on an API call no fixture
 answers, an uncaught error, a placeholder that never resolves, anything that scrolls sideways, two
-interactive elements that overlap, or a serious or critical axe violation (light, and dark at 1280
-px); each page's skeleton (requests left pending) and error state (requests answered 500) get the
-same layout and axe checks at 375 and 1280 px. The main pages are compared with the baselines in
-`e2e/__screenshots__` (light; 1% of pixels may differ past a small colour distance).
+interactive elements that overlap (the header and the sidebar included; only the overlays marked
+`data-floating`, the assistant's notch and the demo notice, float over the page), or a serious or
+critical axe violation (light, and dark at 1280 px); each page's skeleton (requests left
+pending) and error state (requests answered 500) get the same layout and axe checks at 375 and
+1280 px. The main pages are compared with the baselines in `e2e/__screenshots__` (light; 1% of
+pixels may differ past a small colour distance).
 `behaviour.spec.ts` checks what pages do over time: the Runs page following a run to its end,
 **Try again** on a page that failed to load, data kept on screen when a background refetch
 fails, a filter that matches nothing, and the unread count in the tablet's icon rail.

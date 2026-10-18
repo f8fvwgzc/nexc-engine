@@ -23,6 +23,7 @@ export function DemoBanner() {
   return (
     <div
       role="status"
+      data-floating
       className="fixed inset-x-3 bottom-3 z-40 flex items-start gap-3 rounded-xl border border-brand/30 bg-popover/90 p-3 text-sm shadow-lg shadow-brand/10 backdrop-blur-xl motion-safe:animate-fade-up sm:inset-x-auto sm:right-4 sm:bottom-4 sm:max-w-sm sm:items-center"
     >
       <FlaskConicalIcon className="mt-0.5 size-4 shrink-0 text-brand sm:mt-0" aria-hidden />
