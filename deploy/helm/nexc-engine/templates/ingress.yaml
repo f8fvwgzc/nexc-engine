@@ -1,0 +1,32 @@
+{{- if .Values.ingress.enabled }}
+# The host -> frontend (SPA); /api goes straight to the backend so SSE and WebSockets skip a hop.
+# /metrics is not routed at all.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nexc
+  labels:
+    {{- include "nexc.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service: { name: backend, port: { name: http } }
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: frontend, port: { name: http } }
+{{- end }}

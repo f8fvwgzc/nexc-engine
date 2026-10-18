@@ -249,7 +249,9 @@ make minikube-up      # minikube + ingress + calico, builds images in-cluster, k
 ```
 
 Then map `nexc.local` as printed by the script and open http://nexc.local. See
-[deploy/k8s/README.md](deploy/k8s/README.md) for production notes (TLS, storage, scaling).
+[deploy/k8s/README.md](deploy/k8s/README.md) for production notes (TLS, storage, scaling) and
+for the Helm chart (`deploy/helm/nexc-engine`), the same deployment with the runtime's gRPC
+port, the Agent Firewall API, the OTLP collector and onto-intelli as values.
 
 ## Configuration
 

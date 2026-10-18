@@ -1,0 +1,99 @@
+{{- if .Values.networkPolicies.enabled }}
+# Zero-trust ingress inside the namespace. Enforced only by a CNI that implements NetworkPolicy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  labels:
+    {{- include "nexc.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+# frontend: only from the ingress controller.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-from-ingress
+  labels:
+    {{- include "nexc.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: frontend }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: {{ .Values.networkPolicies.ingressNamespace }} }
+      ports:
+        - { port: 8080, protocol: TCP }
+---
+# backend: only from the frontend pods and the ingress controller; the Agent Firewall API, when
+# on, from the namespaces named in networkPolicies.firewallFrom.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-from-frontend-and-ingress
+  labels:
+    {{- include "nexc.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: backend }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: frontend }
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: {{ .Values.networkPolicies.ingressNamespace }} }
+      ports:
+        - { port: 8080, protocol: TCP }
+    {{- if and .Values.backend.grpcAddr .Values.networkPolicies.firewallFrom }}
+    - from:
+        {{- range .Values.networkPolicies.firewallFrom }}
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: {{ . }} }
+        {{- end }}
+      ports:
+        - { port: {{ .Values.backend.firewall.port }}, protocol: TCP }
+    {{- end }}
+---
+# agent runtime: only from the backend, on its HTTP port and its gRPC stream.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: runtime-from-backend
+  labels:
+    {{- include "nexc.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: agent-runtime }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: backend }
+      ports:
+        - { port: {{ .Values.runtime.httpPort }}, protocol: TCP }
+        - { port: {{ .Values.runtime.grpcPort }}, protocol: TCP }
+{{- if .Values.postgres.enabled }}
+---
+# postgres: only from the backend.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-from-backend
+  labels:
+    {{- include "nexc.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: postgres }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: backend }
+      ports:
+        - { port: 5432, protocol: TCP }
+{{- end }}
+{{- end }}

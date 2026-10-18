@@ -132,6 +132,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   133 µs, p99 387 µs); `fetch_url` p50 7 µs, p99 13 µs, max 17 µs (the whole call p50 53 µs,
   p99 147 µs). Per-event latency from the runtime's send to the backend's fan-out, 2000 deltas:
   gRPC p50 56 µs, p99 117 µs, max 167 µs; NDJSON p50 63 µs, p99 128 µs, max 161 µs.
+- A Helm chart, `deploy/helm/nexc-engine`: the objects of `deploy/k8s` templated, with the
+  images and their tag, the replicas, the non-secret settings, the runtime's HTTP and gRPC
+  ports (`runtime.grpcPort`, carried into the backend's `NEXC_RUNTIME_GRPC_URL`, the runtime's
+  Service and the NetworkPolicy), the Agent Firewall API (`backend.grpcAddr` sets
+  `NEXC_GRPC_ADDR` and opens its Service port to the namespaces of
+  `networkPolicies.firewallFrom`), `backend.otlpEndpoint` (`NEXC_OTLP_ENDPOINT`) and
+  `backend.ontoUrl` (`NEXC_ONTO_URL`), the ingress host and TLS, PostgreSQL in the chart or
+  brought along, and the secrets from an existing Secret or from values (the chart refuses to
+  render while a required one is empty). CI lints the chart and renders it with the firewall,
+  the collector and onto-intelli on; `deploy/k8s/README.md` has the install.
 - Operations: `.env.example`, `docker-compose.yml` (the runtime's gRPC port on the internal
   network only), the Kubernetes manifests (the runtime's Service and NetworkPolicy admit the
   backend on 8095; the firewall port is documented for when it is opened to another namespace),

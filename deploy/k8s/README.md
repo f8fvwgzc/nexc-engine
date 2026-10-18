@@ -58,6 +58,32 @@ Every pod runs as non-root with `readOnlyRootFilesystem`, `allowPrivilegeEscalat
 
 Render without applying: `make k8s-render`.
 
+## Helm
+
+`deploy/helm/nexc-engine` is the same deployment as a chart, for clusters that are managed with
+Helm: the objects above, templated. `values.yaml` sets the images and their tag (the chart's
+`appVersion` by default, `local` for images built by `scripts/minikube-up.sh`), the replicas,
+the non-secret settings (`config`), the runtime's ports (`runtime.httpPort`, `runtime.grpcPort`:
+the gRPC stream the backend opens, the only port the NetworkPolicy admits besides HTTP), the
+Agent Firewall API (`backend.grpcAddr` turns it on; `backend.firewall.port` is its Service port
+and `networkPolicies.firewallFrom` the namespaces admitted to it), the OTLP collector
+(`backend.otlpEndpoint`) and onto-intelli (`backend.ontoUrl`, its token in the Secret as
+`NEXC_ONTO_TOKEN`), the ingress host and TLS, and whether the chart runs PostgreSQL
+(`postgres.enabled=false` for a managed database, its URL in the Secret). Secrets come from a
+Secret you create (`secrets.existingSecret`) or from `secrets.values`; the chart refuses to
+render while a required one is empty. One release per namespace: the object names are fixed.
+
+```sh
+scripts/init-env.sh --k8s                      # secret.env with generated secrets
+kubectl create namespace nexc
+kubectl label namespace nexc pod-security.kubernetes.io/enforce=restricted
+kubectl -n nexc create secret generic nexc-secrets --from-env-file=deploy/k8s/secret.env
+helm install nexc deploy/helm/nexc-engine -n nexc --set secrets.existingSecret=nexc-secrets
+helm template nexc deploy/helm/nexc-engine -n nexc --set secrets.existingSecret=nexc-secrets   # render only
+```
+
+CI lints the chart and renders it with the firewall, the collector and onto-intelli on.
+
 ## Production checklist
 
 * **TLS** – add a `tls:` block to `ingress.yaml` (for example with cert-manager), enable

@@ -1,0 +1,86 @@
+# Python agent runtime: internal only (the NetworkPolicy admits the backend alone).
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-runtime
+  labels:
+    app.kubernetes.io/name: agent-runtime
+    {{- include "nexc.labels" . | nindent 4 }}
+spec:
+  selector: { app.kubernetes.io/name: agent-runtime }
+  ports:
+    - name: http
+      port: {{ .Values.runtime.httpPort }}
+      targetPort: http
+    # The gRPC stream the backend speaks (AgentRuntime/Execute); admitted from the backend only.
+    - name: grpc
+      port: {{ .Values.runtime.grpcPort }}
+      targetPort: grpc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-runtime
+  labels:
+    app.kubernetes.io/name: agent-runtime
+    app.kubernetes.io/component: agents
+    {{- include "nexc.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas.runtime }}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels: { app.kubernetes.io/name: agent-runtime }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: agent-runtime, app.kubernetes.io/component: agents }
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        {{- include "nexc.podSecurity" (dict "uid" 10001 "fsGroup" true) | nindent 8 }}
+      containers:
+        - name: agent-runtime
+          image: {{ include "nexc.image" (dict "image" .Values.images.runtime "chart" .Chart) }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.runtime.httpPort }}
+            - name: grpc
+              containerPort: {{ .Values.runtime.grpcPort }}
+          # Only what the runtime needs: no database, JWT or master-key secrets.
+          env:
+            - name: NEXC_RUNTIME_TOKEN
+              valueFrom: { secretKeyRef: { name: {{ include "nexc.secretName" . }}, key: NEXC_RUNTIME_TOKEN } }
+            # Signs the per-run agent tokens; derived from NEXC_RUNTIME_TOKEN on both sides when absent.
+            - name: NEXC_AGENT_TOKEN_KEY
+              valueFrom:
+                secretKeyRef: { name: {{ include "nexc.secretName" . }}, key: NEXC_AGENT_TOKEN_KEY, optional: true }
+            {{- range $key := list "NEXC_LLM_MODEL" "RUNTIME_HOST" "RUNTIME_PORT" "RUNTIME_GRPC_PORT" "RUNTIME_WORKSPACE" "RUNTIME_ALLOW_CODE_EXEC" "RUNTIME_LOG_LEVEL" }}
+            - name: {{ $key }}
+              valueFrom: { configMapKeyRef: { name: nexc-config, key: {{ $key }} } }
+            {{- end }}
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 15
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.runtime.resources | nindent 12 }}
+          securityContext:
+            {{- include "nexc.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            - { name: workspace, mountPath: /workspace }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: workspace
+          emptyDir: { sizeLimit: {{ .Values.runtime.workspaceSize }} }
+        - name: tmp
+          emptyDir: { sizeLimit: 128Mi }

@@ -1,0 +1,14 @@
+apiVersion: v2
+name: nexc-engine
+description: >-
+  nexc-engine on Kubernetes: PostgreSQL 17, the backend, the agent runtime and the web UI behind
+  an nginx Ingress, with NetworkPolicies and the restricted Pod Security Standard. The same
+  objects as deploy/k8s, templated: the runtime's gRPC port, the Agent Firewall API
+  (NEXC_GRPC_ADDR), the OTLP collector (NEXC_OTLP_ENDPOINT) and onto-intelli (NEXC_ONTO_URL).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/f8fvwgzc/nexc-engine
+sources:
+  - https://github.com/f8fvwgzc/nexc-engine
+keywords: [agents, agentsecops, llm]

@@ -1,0 +1,37 @@
+# Non-secret configuration of every service. The checksum annotation on the Deployments rolls
+# the pods when it changes.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nexc-config
+  labels:
+    {{- include "nexc.labels" . | nindent 4 }}
+data:
+  {{- range $key, $value := .Values.config }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+  NEXC_HOST: "0.0.0.0"
+  NEXC_PORT: "8080"
+  NEXC_DATA_DIR: /data
+  NEXC_RUNTIME_URL: http://agent-runtime:{{ .Values.runtime.httpPort }}
+  NEXC_RUNTIME_PROTOCOL: {{ .Values.backend.runtimeProtocol | quote }}
+  NEXC_RUNTIME_GRPC_URL: http://agent-runtime:{{ .Values.runtime.grpcPort }}
+  NEXC_GATEWAY_CALLS_PER_MINUTE: {{ .Values.backend.gateway.callsPerMinute | quote }}
+  NEXC_GATEWAY_TIMEOUT_SECS: {{ .Values.backend.gateway.timeoutSecs | quote }}
+  NEXC_GATEWAY_MAX_RESPONSE_BYTES: {{ .Values.backend.gateway.maxResponseBytes | quote }}
+  {{- if .Values.backend.grpcAddr }}
+  NEXC_GRPC_ADDR: {{ .Values.backend.grpcAddr | quote }}
+  {{- end }}
+  {{- if .Values.backend.otlpEndpoint }}
+  NEXC_OTLP_ENDPOINT: {{ .Values.backend.otlpEndpoint | quote }}
+  {{- end }}
+  {{- if .Values.backend.ontoUrl }}
+  NEXC_ONTO_URL: {{ .Values.backend.ontoUrl | quote }}
+  NEXC_ONTO_WORKSPACE_PREFIX: {{ .Values.backend.ontoWorkspacePrefix | quote }}
+  {{- end }}
+  RUNTIME_HOST: "0.0.0.0"
+  RUNTIME_PORT: {{ .Values.runtime.httpPort | quote }}
+  RUNTIME_GRPC_PORT: {{ .Values.runtime.grpcPort | quote }}
+  RUNTIME_WORKSPACE: /workspace
+  RUNTIME_ALLOW_CODE_EXEC: {{ .Values.runtime.allowCodeExec | quote }}
+  RUNTIME_LOG_LEVEL: {{ .Values.runtime.logLevel | quote }}

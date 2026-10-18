@@ -1,0 +1,17 @@
+nexc-engine is rolling out in namespace {{ .Release.Namespace }}.
+
+  kubectl -n {{ .Release.Namespace }} rollout status deployment/backend
+  kubectl -n {{ .Release.Namespace }} get pods
+{{- if .Values.ingress.enabled }}
+
+Open http{{ if .Values.ingress.tls }}s{{ end }}://{{ .Values.ingress.host }} once the ingress answers
+(map the host in /etc/hosts on minikube: `minikube ip`).
+{{- end }}
+
+The namespace should carry the restricted Pod Security Standard, as deploy/k8s does:
+  kubectl label namespace {{ .Release.Namespace }} pod-security.kubernetes.io/enforce=restricted --overwrite
+
+Runtime wire: {{ .Values.backend.runtimeProtocol }} (gRPC stream on {{ .Values.runtime.grpcPort }}).
+Agent Firewall API: {{ if .Values.backend.grpcAddr }}on, {{ .Values.backend.grpcAddr }}, Service port {{ .Values.backend.firewall.port }} (admitted from: {{ join ", " .Values.networkPolicies.firewallFrom | default "no namespace yet: set networkPolicies.firewallFrom" }}){{ else }}off (backend.grpcAddr){{ end }}.
+OTLP export: {{ .Values.backend.otlpEndpoint | default "off (backend.otlpEndpoint)" }}.
+Ask the audit: {{ .Values.backend.ontoUrl | default "off (backend.ontoUrl)" }}.

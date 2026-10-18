@@ -1,0 +1,148 @@
+# nexc-engine Helm chart: one release per namespace (object names are fixed, as in deploy/k8s).
+#
+#   scripts/init-env.sh --k8s
+#   kubectl create namespace nexc
+#   kubectl label namespace nexc pod-security.kubernetes.io/enforce=restricted
+#   kubectl -n nexc create secret generic nexc-secrets --from-env-file=deploy/k8s/secret.env
+#   helm install nexc deploy/helm/nexc-engine -n nexc --set secrets.existingSecret=nexc-secrets
+#
+# Or let the chart write the Secret: --set secrets.values.POSTGRES_PASSWORD=... and so on for
+# every key of deploy/k8s/secret.example.env (NEXC_DATABASE_URL is derived when empty).
+
+images:
+  backend:
+    repository: ghcr.io/f8fvwgzc/nexc-engine-backend
+    tag: "" # Chart.appVersion when empty; `local` for images built by scripts/minikube-up.sh
+  runtime:
+    repository: ghcr.io/f8fvwgzc/nexc-engine-runtime
+    tag: ""
+  frontend:
+    repository: ghcr.io/f8fvwgzc/nexc-engine-frontend
+    tag: ""
+  postgres:
+    repository: postgres
+    tag: 17-alpine
+  pullPolicy: IfNotPresent
+
+replicas:
+  backend: 2
+  runtime: 2
+  frontend: 2
+
+# Non-secret settings of every service (ConfigMap nexc-config); CONTRACT §2 lists them.
+# `development` because an ingress without TLS serves plain http and production mode forces
+# Secure cookies: with TLS, set NEXC_ENV=production, NEXC_COOKIE_SECURE=true and
+# NEXC_CORS_ORIGINS=https://<your host>.
+config:
+  NEXC_ENV: development
+  NEXC_LOG: info
+  NEXC_DB_MAX_CONNECTIONS: "20"
+  NEXC_CORS_ORIGINS: http://nexc.local
+  NEXC_COOKIE_SECURE: "false"
+  NEXC_ALLOW_SIGNUP: "true"
+  NEXC_TRUST_PROXY: "true"
+  NEXC_ACCESS_TTL_SECS: "900"
+  NEXC_REFRESH_TTL_SECS: "1209600"
+  NEXC_LLM_PROVIDER: demo
+  NEXC_LLM_MODEL: claude-opus-5
+  NEXC_LLM_FALLBACKS: "true"
+  NEXC_SYMPHONY_ENABLED: "false"
+  NEXC_SYMPHONY_URL: http://texc-symphony:4000
+  NEXC_SYMPHONY_WORKFLOW: /data/symphony/WORKFLOW.md
+  NEXC_MAX_CONCURRENCY: "4"
+  NEXC_MAX_ATTEMPTS: "3"
+  NEXC_NODE_TIMEOUT_SECS: "600"
+
+backend:
+  # The runtime wire: `grpc` (the default) or `ndjson` (kept for one release).
+  runtimeProtocol: grpc
+  # The Agent Firewall API (CONTRACT §8): the address the backend serves it on, e.g.
+  # 0.0.0.0:50052. Empty keeps it off. When set, the backend Service exposes `firewall.port` and
+  # the NetworkPolicy admits the namespaces of `networkPolicies.firewallFrom`.
+  grpcAddr: ""
+  firewall:
+    port: 50052
+  # OpenTelemetry: the OTLP/gRPC collector every span is exported to; empty keeps it off.
+  otlpEndpoint: ""
+  # Ask the audit: onto-intelli's gRPC endpoint; empty keeps it off. Its token goes in the
+  # Secret as NEXC_ONTO_TOKEN.
+  ontoUrl: ""
+  ontoWorkspacePrefix: nexc-
+  gateway:
+    callsPerMinute: 120
+    timeoutSecs: 30
+    maxResponseBytes: 1048576
+  dataStorage: 5Gi
+  resources:
+    requests: { cpu: 200m, memory: 256Mi }
+    limits: { cpu: "2", memory: 1Gi }
+
+runtime:
+  httpPort: 8090
+  # The gRPC stream the backend opens (AgentRuntime/Execute), admitted from the backend only.
+  grpcPort: 8095
+  allowCodeExec: false
+  logLevel: info
+  workspaceSize: 1Gi
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "2", memory: 1Gi, ephemeral-storage: 2Gi }
+
+frontend:
+  resources:
+    requests: { cpu: 50m, memory: 32Mi }
+    limits: { cpu: 500m, memory: 128Mi }
+
+postgres:
+  # false: bring your own (a managed database or an operator) and put its URL in the Secret as
+  # NEXC_DATABASE_URL.
+  enabled: true
+  storage: 5Gi
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+secrets:
+  # The name of a Secret holding the keys of deploy/k8s/secret.example.env. Empty: the chart
+  # writes `nexc-secrets` from `values` below, and refuses to render while a required one is
+  # empty.
+  existingSecret: ""
+  values:
+    POSTGRES_USER: nexc
+    POSTGRES_DB: nexc
+    POSTGRES_PASSWORD: ""
+    NEXC_DATABASE_URL: "" # postgres://<user>:<password>@postgres:5432/<db> when empty
+    NEXC_JWT_SECRET: ""
+    NEXC_MASTER_KEY: ""
+    NEXC_RUNTIME_TOKEN: ""
+    NEXC_AGENT_TOKEN_KEY: ""
+    NEXC_METRICS_TOKEN: ""
+    NEXC_FIREWALL_SIGNING_KEY: ""
+    NEXC_ONTO_TOKEN: ""
+    ANTHROPIC_API_KEY: ""
+    NEXC_ADMIN_EMAIL: ""
+    NEXC_ADMIN_PASSWORD: ""
+
+ingress:
+  enabled: true
+  className: nginx
+  host: nexc.local
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "2m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+  # - hosts: [nexc.example.com]
+  #   secretName: nexc-tls
+  tls: []
+
+networkPolicies:
+  enabled: true
+  # The namespace of the ingress controller (kubernetes.io/metadata.name).
+  ingressNamespace: ingress-nginx
+  # Namespaces whose pods may call the Agent Firewall API when `backend.grpcAddr` is set.
+  firewallFrom: []
+
+podDisruptionBudgets:
+  enabled: true
