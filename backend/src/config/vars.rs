@@ -153,7 +153,7 @@ pub const ENV_VARS: &[EnvVar] = &[
         "NEXC_OIDC_WORKSPACE_ROLES",
         "",
         false,
-        "comma separated group=workspace:role (workspace id or slug; owner|admin|member|guest), applied on every sign-in",
+        "comma separated group=workspace:role (the workspace's id, never its slug; owner|admin|member|guest), applied on every sign-in",
     ),
     var(
         "NEXC_OIDC_ALLOW_LOCAL_LOGIN",

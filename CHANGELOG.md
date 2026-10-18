@@ -84,7 +84,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `NEXC_OIDC_SCOPES` (`openid email profile`; `openid` is always
   asked for), `NEXC_OIDC_DISPLAY_NAME` (`SSO`), `NEXC_OIDC_GROUPS_CLAIM` (`groups`),
   `NEXC_OIDC_ADMIN_GROUPS`, `NEXC_OIDC_WORKSPACE_ROLES` (`group=workspace:role`, the workspace
-  by id or slug), `NEXC_OIDC_ALLOW_LOCAL_LOGIN` (`true`), `NEXC_OIDC_BREAK_GLASS_EMAIL` and
+  by its id, which the platform console's workspace panel now shows; a slug is refused, since
+  whoever creates a workspace of that name could take it), `NEXC_OIDC_ALLOW_LOCAL_LOGIN` (`true`), `NEXC_OIDC_BREAK_GLASS_EMAIL` and
   `NEXC_OIDC_REQUIRE_VERIFIED_EMAIL` (`true`). Every problem is reported at start-up (an
   `http://` issuer or redirect URL in production, a missing client, a scope that is not one, an
   unknown role). `nexc doctor` fetches the issuer's discovery document and its signing keys,

@@ -447,8 +447,8 @@ async fn check_sso(r: &mut Report, settings: &Settings) {
         }
     }
     for mapping in &oidc.workspace_roles {
-        match repo::workspaces::by_ref(&pool, &mapping.workspace).await {
-            Ok(Some((_, name))) => r.line(
+        match repo::workspaces::name_of(&pool, mapping.workspace).await {
+            Ok(Some(name)) => r.line(
                 Level::Ok,
                 "sso",
                 format!("group {} is {} of {name}", mapping.group, mapping.role),
@@ -457,7 +457,7 @@ async fn check_sso(r: &mut Report, settings: &Settings) {
                 Level::Warn,
                 "sso",
                 format!(
-                    "group {}: no workspace is {}; the mapping is skipped",
+                    "group {}: no workspace has the id {}; the mapping is skipped",
                     mapping.group, mapping.workspace
                 ),
             ),

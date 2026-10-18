@@ -318,12 +318,15 @@ async fn workspace_roles(
         .iter()
         .filter(|m| groups.is_some_and(|groups| groups.contains(&m.group)))
     {
-        let Some((workspace, _)) = repo::workspaces::by_ref(&state.db, &mapping.workspace).await?
-        else {
+        let workspace = mapping.workspace;
+        if repo::workspaces::name_of(&state.db, workspace)
+            .await?
+            .is_none()
+        {
             tracing::warn!(workspace = %mapping.workspace, group = %mapping.group,
                 "single sign-on group mapping names no workspace; skipped");
             continue;
-        };
+        }
         let entry = wanted
             .entry(workspace)
             .or_insert((mapping.role, mapping.group.as_str()));

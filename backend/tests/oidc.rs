@@ -646,7 +646,9 @@ async fn groups_give_roles_and_take_back_only_what_they_gave(pool: PgPool) {
     let (owner, _) = plain.register("owner@example.com").await;
     let (_, list) = call(&plain, Method::GET, "/workspaces", &owner, None).await;
     let wid = list[0]["id"].as_str().unwrap().to_owned();
-    let mapping = format!("eng={wid}:member,leads={wid}:admin,ghosts=no-such-workspace:owner");
+    // `ghosts` names a workspace that does not exist (any more).
+    let gone = uuid::Uuid::now_v7();
+    let mapping = format!("eng={wid}:member,leads={wid}:admin,ghosts={gone}:owner");
     let app = app(
         pool.clone(),
         &stub,

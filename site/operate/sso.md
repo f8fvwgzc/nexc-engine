@@ -24,7 +24,7 @@ Single sign-on is off until `NEXC_OIDC_ISSUER` is set. The other variables are r
 | `NEXC_OIDC_DISPLAY_NAME`           | `SSO`                                           | The login page's button reads "Continue with" this.                                                                                                                                                                                         |
 | `NEXC_OIDC_GROUPS_CLAIM`           | `groups`                                        | The claim listing the person's groups, in the ID token or the userinfo answer: an array of strings, or one string. A dotted path reads a nested claim (`realm_access.roles`).                                                                 |
 | `NEXC_OIDC_ADMIN_GROUPS`           | —                                               | Comma separated groups whose members administer the platform.                                                                                                                                                                              |
-| `NEXC_OIDC_WORKSPACE_ROLES`        | —                                               | Comma separated `group=workspace:role`: the workspace by its id or its slug, the role `owner`, `admin`, `member` or `guest`. A group name with a comma cannot be mapped.                                                                       |
+| `NEXC_OIDC_WORKSPACE_ROLES`        | —                                               | Comma separated `group=workspace:role`: the workspace by its id (open it in the platform console's Workspaces), the role `owner`, `admin`, `member` or `guest`. A slug is refused: whoever creates a workspace of that name, before yours exists or after it is deleted, would get the group's members. A group name with a comma cannot be mapped.                                                                       |
 | `NEXC_OIDC_ALLOW_LOCAL_LOGIN`      | `true`                                          | `false` hides the password form and refuses password sign-in and registration, except for the break-glass administrator.                                                                                                                    |
 | `NEXC_OIDC_BREAK_GLASS_EMAIL`      | —                                               | The one platform administrator who still signs in with a password when local login is off, at `/login?break_glass=1`.                                                                                                                       |
 | `NEXC_OIDC_REQUIRE_VERIFIED_EMAIL` | `true`                                          | Refuse an identity whose provider does not say (`email_verified`) that its address is verified. Linking to an existing account always needs a verified address, whatever this says.                                                         |
@@ -67,7 +67,7 @@ NEXC_OIDC_CLIENT_ID=nexc
 NEXC_OIDC_CLIENT_SECRET=<the client's secret>
 NEXC_OIDC_DISPLAY_NAME=Keycloak
 NEXC_OIDC_ADMIN_GROUPS=nexc-admins
-NEXC_OIDC_WORKSPACE_ROLES=engineering=acme:member,engineering-leads=acme:admin
+NEXC_OIDC_WORKSPACE_ROLES=engineering=<workspace id>:member,engineering-leads=<workspace id>:admin
 ```
 
 Realm roles instead of groups: `NEXC_OIDC_GROUPS_CLAIM=realm_access.roles`.
@@ -82,7 +82,7 @@ NEXC_OIDC_CLIENT_ID=<application (client) id>
 NEXC_OIDC_CLIENT_SECRET=<client secret value>
 NEXC_OIDC_DISPLAY_NAME=Microsoft
 NEXC_OIDC_ADMIN_GROUPS=<object id of the admins group>
-NEXC_OIDC_WORKSPACE_ROLES=<object id of a group>=acme:member
+NEXC_OIDC_WORKSPACE_ROLES=<object id of a group>=<workspace id>:member
 # Entra ID does not send email_verified: without this, every new person is refused, and existing
 # accounts are never linked by address (they need a verified one).
 NEXC_OIDC_REQUIRE_VERIFIED_EMAIL=false
@@ -98,7 +98,7 @@ NEXC_OIDC_CLIENT_ID=<client id>
 NEXC_OIDC_CLIENT_SECRET=<client secret>
 NEXC_OIDC_DISPLAY_NAME=Okta
 NEXC_OIDC_ADMIN_GROUPS=nexc-admins
-NEXC_OIDC_WORKSPACE_ROLES=nexc-engineering=acme:member
+NEXC_OIDC_WORKSPACE_ROLES=nexc-engineering=<workspace id>:member
 ```
 
 With the org authorization server the issuer is `https://acme.okta.com`.
@@ -134,7 +134,7 @@ oidc:
   displayName: Keycloak
   adminGroups: [nexc-admins]
   workspaceRoles:
-    - { group: engineering, workspace: acme, role: member }
+    - { group: engineering, workspace: 0190f3a2-7b1c-7d2e-8f00-00000000ac3e, role: member }
   allowLocalLogin: true
   breakGlassEmail: ""
   requireVerifiedEmail: true

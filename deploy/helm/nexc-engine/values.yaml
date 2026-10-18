@@ -142,9 +142,10 @@ oidc:
   groupsClaim: groups
   # Members of these groups administer the platform.
   adminGroups: []
-  # Workspace roles by group, applied at every sign-in; the workspace by id or slug, the role
-  # owner, admin, member or guest. A role the mapping gave is taken back without the group.
-  # - { group: engineering, workspace: acme, role: member }
+  # Workspace roles by group, applied at every sign-in; the workspace by its id (the platform
+  # console's Workspaces shows it; slugs are refused), the role owner, admin, member or guest. A
+  # role the mapping gave is taken back without the group.
+  # - { group: engineering, workspace: 0190f3a2-7b1c-7d2e-8f00-00000000ac3e, role: member }
   workspaceRoles: []
   # false hides and refuses password sign-in, except for the break-glass platform administrator.
   allowLocalLogin: true

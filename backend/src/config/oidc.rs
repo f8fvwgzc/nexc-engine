@@ -19,27 +19,13 @@ pub const DISPLAY_NAME_MAX: usize = 40;
 /// Longest group name a mapping may name.
 pub const GROUP_MAX: usize = 256;
 
-/// A workspace named by a group mapping: its id, or its slug.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WorkspaceRef {
-    Id(Uuid),
-    Slug(String),
-}
-
-impl std::fmt::Display for WorkspaceRef {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            WorkspaceRef::Id(id) => write!(f, "{id}"),
-            WorkspaceRef::Slug(slug) => f.write_str(slug),
-        }
-    }
-}
-
 /// Members of `group` get `role` in `workspace` (`NEXC_OIDC_WORKSPACE_ROLES`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupRole {
     pub group: String,
-    pub workspace: WorkspaceRef,
+    /// The workspace's id. Never its slug: a slug goes to whoever creates a
+    /// workspace of that name first, once the one that had it is gone.
+    pub workspace: Uuid,
     pub role: WorkspaceRole,
 }
 
@@ -115,24 +101,18 @@ pub fn parse_scopes(raw: &str) -> Result<Vec<String>, String> {
     Ok(scopes)
 }
 
-/// One workspace reference: a UUID, or a workspace slug.
-fn parse_workspace(raw: &str) -> Result<WorkspaceRef, String> {
-    if let Ok(id) = raw.parse::<Uuid>() {
-        return Ok(WorkspaceRef::Id(id));
-    }
-    let slug_ok = raw.len() >= 2
-        && raw.len() <= crate::domain::workspace::SLUG_MAX
-        && raw
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-        && !raw.starts_with('-');
-    if slug_ok {
-        Ok(WorkspaceRef::Slug(raw.to_owned()))
-    } else {
-        Err(format!(
-            "`{raw}` is neither a workspace id nor a workspace slug"
-        ))
-    }
+/// One workspace, by its id. A slug is refused: any signed-in person can
+/// create a workspace and so take a slug nobody holds (before the mapped
+/// workspace exists, or after it is deleted), and the mapping would hand
+/// that workspace the group's members.
+fn parse_workspace(raw: &str) -> Result<Uuid, String> {
+    raw.parse::<Uuid>().map_err(|_| {
+        format!(
+            "`{raw}` is not a workspace id: name the workspace by its id (the platform console's \
+             Workspaces shows it), never by its slug, which whoever creates a workspace of that \
+             name could take"
+        )
+    })
 }
 
 /// `group=workspace:role` entries separated by commas. The group ends at the
@@ -433,7 +413,7 @@ mod tests {
             ("NEXC_OIDC_ADMIN_GROUPS", " nexc-admins , ops "),
             (
                 "NEXC_OIDC_WORKSPACE_ROLES",
-                "eng=acme:member, leads=a=b=0190f3a2-7b1c-7d2e-8f00-0123456789ab:admin",
+                "eng=0190f3a2-7b1c-7d2e-8f00-00000000ac3e:member, leads=a=b=0190f3a2-7b1c-7d2e-8f00-0123456789ab:admin",
             ),
             ("NEXC_OIDC_ALLOW_LOCAL_LOGIN", "false"),
             ("NEXC_OIDC_BREAK_GLASS_EMAIL", " Root@Example.com "),
@@ -455,14 +435,12 @@ mod tests {
             [
                 GroupRole {
                     group: "eng".into(),
-                    workspace: WorkspaceRef::Slug("acme".into()),
+                    workspace: "0190f3a2-7b1c-7d2e-8f00-00000000ac3e".parse().unwrap(),
                     role: WorkspaceRole::Member,
                 },
                 GroupRole {
                     group: "leads=a=b".into(),
-                    workspace: WorkspaceRef::Id(
-                        "0190f3a2-7b1c-7d2e-8f00-0123456789ab".parse().unwrap()
-                    ),
+                    workspace: "0190f3a2-7b1c-7d2e-8f00-0123456789ab".parse().unwrap(),
                     role: WorkspaceRole::Admin,
                 },
             ]
@@ -543,7 +521,10 @@ mod tests {
                 ("NEXC_OIDC_ISSUER", "http://idp.example.com"),
                 ("NEXC_OIDC_SCOPES", "openid \"bad"),
                 ("NEXC_OIDC_DISPLAY_NAME", &"x".repeat(41)),
-                ("NEXC_OIDC_WORKSPACE_ROLES", "eng=acme:superuser"),
+                (
+                    "NEXC_OIDC_WORKSPACE_ROLES",
+                    "eng=0190f3a2-7b1c-7d2e-8f00-00000000ac3e:superuser",
+                ),
                 ("NEXC_OIDC_ALLOW_LOCAL_LOGIN", "maybe"),
                 ("NEXC_OIDC_BREAK_GLASS_EMAIL", "root"),
                 ("NEXC_OIDC_GROUPS_CLAIM", "two words"),
@@ -566,18 +547,19 @@ mod tests {
 
     #[test]
     fn workspace_references() {
-        assert_eq!(
-            parse_workspace("acme-eu"),
-            Ok(WorkspaceRef::Slug("acme-eu".into()))
-        );
-        for bad in ["Acme", "-acme", "a", "acme_eu", "../x"] {
-            assert!(parse_workspace(bad).is_err(), "{bad}");
+        let id = "0190f3a2-7b1c-7d2e-8f00-00000000ac3e";
+        assert_eq!(parse_workspace(id), Ok(id.parse().unwrap()));
+        // A slug could be anybody's: whoever creates a workspace of that name.
+        for bad in ["acme", "acme-eu", "Acme", "-acme", "a", "../x", ""] {
+            let err = parse_workspace(bad).unwrap_err();
+            assert!(err.contains("not a workspace id"), "{bad}: {err}");
         }
         assert!(parse_workspace_roles("eng").is_err());
-        assert!(parse_workspace_roles("eng=acme").is_err());
-        assert!(parse_workspace_roles("=acme:member").is_err());
+        assert!(parse_workspace_roles(&format!("eng={id}")).is_err());
+        assert!(parse_workspace_roles(&format!("={id}:member")).is_err());
+        assert!(parse_workspace_roles("eng=acme:member").is_err());
         // A comma ends an entry, so a group holding one is split and refused, not misread.
-        assert!(parse_workspace_roles("cn=leads,ou=groups=acme:admin").is_err());
+        assert!(parse_workspace_roles(&format!("cn=leads,ou=groups={id}:admin")).is_err());
         assert_eq!(parse_workspace_roles(" , ").unwrap(), []);
     }
 }

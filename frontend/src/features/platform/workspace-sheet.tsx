@@ -213,6 +213,13 @@ function Detail({
   const owned = workspace.members.some((m) => m.role === 'owner' && usable(m));
   return (
     <div className="space-y-5 px-4 pb-6">
+      <p className="text-xs text-muted-foreground">
+        Id{' '}
+        <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px] text-foreground select-all">
+          {workspace.id}
+        </code>
+        , which single sign-on&apos;s group mapping names it by.
+      </p>
       <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Count label="Members" value={formatInteger(workspace.member_count)} />
         <Count label="Teams" value={formatInteger(workspace.team_count)} />
