@@ -43,7 +43,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `make prove-api` drives the login (held to the write target) and the whole callback
   (informational: half of it is the provider's) against the same provider in process, each
   caller a person of their own (`docs/PERFORMANCE.md`). A vitest
-  renders the login page in its three states, the break-glass form and an `sso_error`.
+  renders the login page in its three states, the break-glass form and an `sso_error`; others
+  render the profile page's sign-in cards: the link form and its password, a refusal in words, and
+  no password or two-factor forms for an account without a password.
 - Single sign-on in the console: `GET /auth/providers` (public) says how one signs in here
   (passwords or not, registration or not, the provider and its name), and the login page shows
   "Continue with" and the provider's name (wrapping on a phone), with a key icon, above the password form when single
