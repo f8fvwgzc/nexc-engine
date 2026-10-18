@@ -375,18 +375,29 @@ pub async fn release(
 /// write after a takeover sees the new epoch. A write that changes the run
 /// row itself takes `FOR NO KEY UPDATE` (`updates_run`); the others share
 /// the row (`FOR SHARE`), so they do not wait for each other.
+///
+/// The transaction may then sit idle for at most `idle_limit` between its
+/// statements (`idle_in_transaction_session_timeout`, for this transaction
+/// only): when the instance writing vanishes in the middle (its host died,
+/// the network between it and the database broke), the database ends its
+/// session after that instead of keeping the row locked until TCP notices,
+/// which would hold off every takeover of the run.
 pub async fn lock_lease(
     db: impl PgExecutor<'_>,
     run_id: Uuid,
     updates_run: bool,
+    idle_limit: std::time::Duration,
 ) -> Result<Option<i64>, sqlx::Error> {
     let sql = if updates_run {
-        "SELECT lease_epoch FROM runs WHERE id = $1 AND status = 'running' FOR NO KEY UPDATE"
+        "SELECT lease_epoch, set_config('idle_in_transaction_session_timeout', $2, true)
+         FROM runs WHERE id = $1 AND status = 'running' FOR NO KEY UPDATE"
     } else {
-        "SELECT lease_epoch FROM runs WHERE id = $1 AND status = 'running' FOR SHARE"
+        "SELECT lease_epoch, set_config('idle_in_transaction_session_timeout', $2, true)
+         FROM runs WHERE id = $1 AND status = 'running' FOR SHARE"
     };
     sqlx::query_scalar(sql)
         .bind(run_id)
+        .bind(idle_limit.as_millis().max(1).to_string())
         .fetch_optional(db)
         .await
 }

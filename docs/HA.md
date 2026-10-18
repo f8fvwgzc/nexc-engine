@@ -68,7 +68,7 @@ for expired leases every 2 s.
 | Aspect    | Behaviour                                                                                                                                                                                                                                                                                          |
 | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Detection | The replica cannot renew; its `/readyz` fails, so the load balancer stops sending it requests. Its peers see the lease run out.                                                                                                                                                                    |
-| Recovery  | A peer takes the run over as after a crash. When the partition heals, the cut-off replica's first write for the run is refused by the fence and recorded (`fenced`), and its next renewal finds the epoch moved: it stops its copy of the run without writing anything else. A replica that keeps running nodes while cut off cannot record their results. |
+| Recovery  | A peer takes the run over as after a crash. A write the cut-off replica had begun keeps the run row locked only until PostgreSQL ends its idle transaction, `L` after its last statement (the executor's transactions set `idle_in_transaction_session_timeout` for themselves), so it does not hold the takeover off until TCP notices the dead peer. When the partition heals, the cut-off replica's first write for the run is refused by the fence and recorded (`fenced`), and its next renewal finds the epoch moved: it stops its copy of the run without writing anything else. A replica that keeps running nodes while cut off cannot record their results. |
 | RTO       | `L + 5 s`.                                                                                                                                                                                                                                                                                         |
 | RPO       | As after a crash. Nothing is recorded twice.                                                                                                                                                                                                                                                      |
 
@@ -137,6 +137,13 @@ standby. Every replica gets the same `NEXC_RUN_LEASE_SECS`.
 | `podDisruptionBudgets.maxUnavailable`    | Helm values                              | How many pods of each tier a node drain may evict at once (default 1).                                                             |
 | `backend.terminationGracePeriodSeconds`  | Helm values                              | Time a backend pod gets to drain on `SIGTERM` (default 60 s; the hand-off itself takes at most 15 s).                              |
 | `docker compose up -d --scale backend=2` | Docker Compose                           | Two backend replicas on one host; restart `frontend` afterwards so its nginx resolves both. Each gets 30 s to drain (`stop_grace_period`). |
+
+Every write the executor makes for a run is one short transaction that sets
+`idle_in_transaction_session_timeout` to `L` for itself (`SET LOCAL`), so nothing needs
+configuring on PostgreSQL. A connection pooler in front of it must keep each transaction on one
+server connection, as PgBouncer does in session and transaction pooling (not in statement
+pooling), and must pass `SET LOCAL` through; a managed PostgreSQL that caps the setting lower
+ends such transactions sooner, which is harmless.
 
 The backend's readiness probe is `/api/v1/readyz`. It answers 503 while the database does not
 answer and from the moment the replica is told to stop, so a load balancer stops sending it

@@ -23,7 +23,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   that raises the epoch, and every write the executor makes for the run (node status, outputs,
   spans, usage, the run's status) first locks the run row at the epoch it holds (shared, so the
   writes of one run do not wait for each other, unless the write changes the run row; a span
-  batch does it in its one statement), so a former
+  batch does it in its one statement; the transaction sets `idle_in_transaction_session_timeout`
+  to the lease for itself, so one left open by a replica whose host or network vanished mid-write
+  does not hold the run's takeover off until TCP notices), so a former
   holder that comes back cannot write: its write is refused and recorded as a `fenced` event, and
   it stops its copy of the run (also when its renewal or the run's watcher sees the epoch moved,
   or when the database could not confirm its lease for a whole lease). The new holder resumes the

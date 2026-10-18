@@ -187,7 +187,15 @@ async fn open(
     let Some(held) = lease.epoch() else {
         return Ok(tx);
     };
-    let current = repo::runs::lock_lease(&mut *tx, lease.run_id(), updates_run).await?;
+    // A transaction of a vanished instance is ended after a lease, so it never holds a run
+    // longer than the lease would have.
+    let current = repo::runs::lock_lease(
+        &mut *tx,
+        lease.run_id(),
+        updates_run,
+        state.settings.run_lease,
+    )
+    .await?;
     if current == Some(held) {
         return Ok(tx);
     }

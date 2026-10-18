@@ -1313,7 +1313,9 @@ no lease and a heartbeat older than a lease) and takes it over with one `UPDATE`
 `claimed_by`, a fresh `lease_expires_at` and `lease_epoch + 1`. Every write the executor makes for the run (node
 results and statuses, outputs, spans, usage, the run's counters and status) runs in a transaction
 that first locks the run row at the epoch it holds (`FOR SHARE`, or `FOR NO KEY UPDATE` when the
-write changes the run row itself; span batches do it in their one statement): a former holder's write
+write changes the run row itself; span batches do it in their one statement) and sets
+`idle_in_transaction_session_timeout` to the lease for itself, so the transaction of a replica that
+vanished mid-write does not keep the row locked past a lease: a former holder's write
 is refused, recorded once per lease as a `fenced` event, and the former holder stops its copy of
 the run. A write that fails for another reason stops the run on that replica too; its lease runs
 out and the next holder resumes it. The new holder resumes from what was written: a `succeeded`

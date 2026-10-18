@@ -764,6 +764,42 @@ async fn a_run_claimed_by_a_replica_of_the_earlier_version_is_taken_over_once_it
 }
 
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_holder_that_vanished_in_the_middle_of_a_write_does_not_keep_its_run(pool: PgPool) {
+    let (url, seen) = fake_grpc_runtime().await;
+    let a = instance(&pool, &url).await;
+    let (token, _) = a.register("owner@example.com").await;
+    scribe(&a, &token).await;
+    let (gid, nodes) = chain_of(&a, &token, &["NAP 3000 Draft"]).await;
+    let mut on_a = a.events(&gid);
+    let rid = start_run(&a, &token, &gid).await;
+    until_status(&mut on_a, &nodes[0], "running").await;
+    collect_until(&mut on_a, "node.output").await;
+    // A's host vanishes between two statements of a write: as far as the database knows, its
+    // transaction is open and holds the run row.
+    let run_id: Uuid = rid.parse().unwrap();
+    let held = a.state.engine.lease(run_id).expect("A executes the run");
+    let open = lease::begin(&a.state, &held, "node outcome")
+        .await
+        .expect("A still holds the run");
+    a.crash();
+    let b = instance(&pool, &url).await;
+    // The database ends the idle transaction after a lease, so the run is taken over as usual.
+    until_held_by(
+        &pool,
+        &rid,
+        b.state.engine.instance(),
+        Duration::from_secs(LEASE_SECS + 5),
+    )
+    .await;
+    let run = until_finished(&b, &token, &rid).await;
+    assert_eq!(run["status"], "succeeded", "{run}");
+    assert_eq!(run["node_runs"][0]["attempt"], 2);
+    assert_eq!(executed(&seen)["NAP 3000 Draft"], 2);
+    assert_eq!(verified(&b, &token, &rid).await["ok"], true);
+    drop(open);
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
 async fn a_holder_cut_off_from_its_lease_stops_by_itself(pool: PgPool) {
     let (url, seen) = fake_grpc_runtime().await;
     let a = instance(&pool, &url).await;
