@@ -130,6 +130,12 @@ impl OntologyBackend for GrpcOntology {
         })
     }
 
+    /// One `Ingest` stream per batch, applied atomically by the server.
+    /// Records carry no `ts`: the stream's `google.protobuf.Struct` would
+    /// turn it into a double, which the server refuses as a timestamp, and
+    /// its `Append` only reads back events newer than the last 64. Events
+    /// are stamped by the server when they arrive and carry the moment they
+    /// happened in `payload.at` (see `facts`).
     async fn ingest(
         &self,
         workspace: &str,

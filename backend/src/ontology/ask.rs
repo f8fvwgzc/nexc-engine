@@ -565,6 +565,19 @@ fn since_ms(days: i64) -> i64 {
     (Utc::now() - Duration::days(days.max(1))).timestamp_millis()
 }
 
+/// When an event happened: `payload.at` (what the export recorded), else
+/// when onto-intelli received it.
+fn happened_at(event: &OntoEvent) -> i64 {
+    event
+        .payload
+        .get("at")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(event.ts)
+}
+
+/// Events of `action` in the last `days` (every one when 0). onto-intelli
+/// filters by when it received them, which is never before they happened,
+/// so what it returns is narrowed here to when they did.
 async fn events_since(
     backend: &dyn OntologyBackend,
     principal: &Principal,
@@ -573,20 +586,25 @@ async fn events_since(
     actor: Option<String>,
     target: Option<String>,
 ) -> Result<Vec<OntoEvent>, AppError> {
-    backend
+    let since = (days > 0).then(|| since_ms(days));
+    let mut events = backend
         .events(
             principal,
             EventQuery {
                 actor,
                 target,
                 action: Some(action.to_owned()),
-                since_ms: (days > 0).then(|| since_ms(days)),
+                since_ms: since,
                 until_ms: None,
                 limit: EVENTS_MAX,
             },
         )
         .await
-        .map_err(failed)
+        .map_err(failed)?;
+    if let Some(since) = since {
+        events.retain(|e| happened_at(e) >= since);
+    }
+    Ok(events)
 }
 
 async fn canned(

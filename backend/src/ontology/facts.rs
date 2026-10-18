@@ -254,6 +254,9 @@ impl Batch {
         }));
     }
 
+    /// An event of the audit trail. onto-intelli stamps it with the moment it
+    /// arrives (`ts`); the moment it happened travels as `payload.at`, Unix
+    /// milliseconds, so a backfill of old spans does not look like today.
     fn event(
         &mut self,
         action: &str,
@@ -261,12 +264,15 @@ impl Batch {
         target: &str,
         at: DateTime<Utc>,
         outcome: &str,
-        payload: Value,
+        mut payload: Value,
     ) {
+        if let Value::Object(map) = &mut payload {
+            map.insert("at".into(), json!(millis(at)));
+        }
         self.records.push(json!({
             "op": "event", "action": action, "actor": actor, "target": target,
             "workspace": self.workspace, "outcome": outcome, "source": "nexc",
-            "ts": millis(at), "payload": payload,
+            "payload": payload,
         }));
     }
 
@@ -822,7 +828,12 @@ mod tests {
             None,
             &ReadLabels::default(),
         );
-        assert_eq!(ops(&batch, "event")[0]["payload"]["tokens_in"], 10);
+        let event = ops(&batch, "event")[0];
+        assert_eq!(event["payload"]["tokens_in"], 10);
+        assert!(
+            event["payload"]["at"].is_i64() && event.get("ts").is_none(),
+            "{event}"
+        );
     }
 
     #[test]
