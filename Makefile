@@ -14,9 +14,9 @@ BACKEND_MANIFEST := backend/Cargo.toml
 LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a;
 
 .PHONY: help init setup dev dev-backend dev-frontend dev-runtime db-up db-down db-shell \
-        backup backup-check restore prove prove-trace prove-identity test-worst-case \
+        backup backup-check restore prove prove-trace prove-identity prove-audit test-worst-case \
         build test test-backend test-frontend test-runtime lint fmt check \
-        docker-build docker-up docker-down docker-logs demo seed-demo \
+        docker-build docker-up docker-down docker-logs demo demo-onto seed-demo \
         minikube-up minikube-down k8s-render openapi doctor clean
 
 help: ## Show this help
@@ -129,6 +129,11 @@ prove-identity: ## In-process policy decision latency over 100,000 decisions, in
 	  | sed -n '/^prove-identity/,$$p' | grep -v '^test \|^$$\|test result'
 	cd agent-runtime && $(UV) run pytest -q -m prove -s tests/test_policy.py 2>&1 | grep '^prove-identity'
 
+prove-audit: ## Ask latency end to end with onto-intelli stubbed (target p99 < 5 ms in process; needs PostgreSQL: make db-up)
+	@$(LOAD_ENV) export DATABASE_URL="$${DATABASE_URL:-$$NEXC_DATABASE_URL}"; \
+	  $(CARGO) test --release --locked --manifest-path $(BACKEND_MANIFEST) --test audit prove_audit -- --ignored --nocapture 2>&1 \
+	  | sed -n '/^prove-audit:/,$$p' | grep -v '^test \|^$$\|test result'
+
 test-worst-case: ## Every documented route against missing/forged tokens, outsiders, hostile input, races and a 20,000-issue workspace
 	cd backend && cargo test --test worst_case
 
@@ -137,8 +142,15 @@ demo: ## Start the stack in demo mode (offline LLM, no API key needed)
 	$(COMPOSE) -f docker-compose.yml -f docker-compose.demo.yml up -d --build
 	@echo "demo running on http://localhost:$${NEXC_HTTP_PORT:-8080}"
 
+demo-onto: ## Demo mode plus onto-intelli (built from ../onto-intelli): a demo graph, then the six audit questions with mode, tokens and latency
+	@[ -f .env ] || scripts/init-env.sh
+	@[ -d ../onto-intelli ] || { echo "clone https://github.com/f8fvwgzc/onto-intelli next to this repository first"; exit 1; }
+	$(COMPOSE) -f docker-compose.yml -f docker-compose.demo.yml -f docker-compose.onto.yml --profile onto up -d --build
+	@echo "demo running on http://localhost:$${NEXC_HTTP_PORT:-8080} with onto-intelli; running the audit demo"
+	@python3 scripts/demo-onto.py
+
 docker-down: ## Stop the stack (volumes are kept; add -v manually to wipe data)
-	$(COMPOSE) --profile symphony down
+	$(COMPOSE) -f docker-compose.yml -f docker-compose.onto.yml --profile symphony --profile onto down
 
 docker-logs: ## Follow logs of every service
 	$(COMPOSE) logs -f --tail=100

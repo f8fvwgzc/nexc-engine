@@ -1,0 +1,44 @@
+# Optional: onto-intelli as the audit's query engine ("ask the audit").
+#
+#   docker compose -f docker-compose.yml -f docker-compose.onto.yml --profile onto up -d --build
+#   # or: make demo-onto
+#
+# Builds onto-intelli from its Dockerfile in the sibling checkout ../onto-intelli
+# (https://github.com/f8fvwgzc/onto-intelli; clone it next to this repository) and
+# points the backend at it over the internal `agents` network. The backend's token is
+# NEXC_ONTO_TOKEN from .env (`make init` generates one); onto-intelli knows the backend by it.
+services:
+  onto-intelli:
+    profiles: [onto]
+    build:
+      context: ../onto-intelli
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    init: true
+    environment:
+      ONTO_CONFIG: /data/onto-intelli.toml
+      NEXC_ONTO_TOKEN: ${NEXC_ONTO_TOKEN:?NEXC_ONTO_TOKEN is empty - run `make init`}
+      # Real explanations need a key; without one the mock provider answers offline.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - onto-data:/data
+      - ./deploy/onto/onto-intelli.toml:/data/onto-intelli.toml:ro
+      - ./deploy/onto/nexc-audit.toml:/data/nexc-audit.toml:ro
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD-SHELL", "onto call system.health '{}' --remote http://127.0.0.1:50051 --token \"$$NEXC_ONTO_TOKEN\" >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    networks: [agents, egress]
+
+  backend:
+    environment:
+      NEXC_ONTO_URL: ${NEXC_ONTO_URL:-http://onto-intelli:50051}
+
+volumes:
+  onto-data:
