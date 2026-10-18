@@ -408,12 +408,30 @@ pub async fn execute_claimed(
     execute(state, row, Start::Fresh { opening, refusal }).await;
 }
 
+/// Keeps a run registered here while its execution lives. Dropping it (the
+/// run finished or stopped here, or its task panicked) forgets the run, so
+/// its lease is no longer renewed and runs out for a peer to take it over.
+struct Registered {
+    engine: Arc<super::Engine>,
+    lease: Lease,
+}
+
+impl Drop for Registered {
+    fn drop(&mut self) {
+        self.engine.unregister_run(&self.lease);
+    }
+}
+
 /// Executes a run under the lease its row carries until it finishes, or
 /// until the lease says to stop (it was lost, or this instance hands it to
 /// a peer).
 async fn execute(state: AppState, row: RunRow, start: Start) {
     let lease = Lease::held(row.id, row.lease_epoch, state.engine.instance());
     let token = state.engine.register_run(lease.clone());
+    let _registered = Registered {
+        engine: state.engine.clone(),
+        lease: lease.clone(),
+    };
     // Claimed just as the instance began to shut down: handed on at once.
     if state.engine.is_draining() {
         lease.hand_off();
@@ -459,7 +477,6 @@ async fn execute(state: AppState, row: RunRow, start: Start) {
                     // out again and the next takeover tries again.
                     tracing::error!(run_id = %row.id, error = %err, "the run's trace could not be read; not resumed");
                     lease.lose();
-                    state.engine.unregister_run(&lease);
                     return;
                 }
             }
@@ -475,7 +492,6 @@ async fn execute(state: AppState, row: RunRow, start: Start) {
     };
     let Some(statuses) = statuses.filter(|_| !lease.is_stopped()) else {
         stop_here(&state, &row, &lease, sink).await;
-        state.engine.unregister_run(&lease);
         return;
     };
     let cancelled = token.is_cancelled();
@@ -495,7 +511,6 @@ async fn execute(state: AppState, row: RunRow, start: Start) {
         // The lease runs out, and whoever takes the run over finishes it from what was written.
         Err(err) => tracing::error!(run_id = %row.id, error = %err, "cannot finish run"),
     }
-    state.engine.unregister_run(&lease);
 }
 
 /// Prepares and drives the run: from the start, or from what was written
@@ -632,7 +647,7 @@ async fn finish_run(
         NodeStatus::Skipped
     };
     let hash = sealed.hash;
-    let mut tx = lease::begin(state, lease, "run status").await?;
+    let mut tx = lease::begin_run_update(state, lease, "run status").await?;
     for node_id in repo::runs::close_unfinished_nodes(&mut *tx, run_id, leftover).await? {
         repo::nodes::set_status(&mut *tx, node_id, leftover, None).await?;
     }
@@ -815,7 +830,7 @@ impl Execution {
         // run keeps the versions it started under; its nodes record the ones they run under.
         if !resumed {
             let versions = policies::versions_of(&policies::levels_for(&policies, None, None));
-            let mut tx = lease::begin(state, &lease, "run policy versions").await?;
+            let mut tx = lease::begin_run_update(state, &lease, "run policy versions").await?;
             repo::runs::set_policy_versions(&mut *tx, row.id, &versions).await?;
             tx.commit().await?;
         }
@@ -1334,7 +1349,12 @@ async fn record(
     context_chars_saved: i64,
     span_id: Option<Uuid>,
 ) -> Result<(), WriteError> {
-    let mut tx = lease::begin(state, &data.lease, "node outcome").await?;
+    // Tokens spent are added to the run's totals: the run row itself changes.
+    let mut tx = if !outcome.cached && (outcome.tokens_in > 0 || outcome.tokens_out > 0) {
+        lease::begin_run_update(state, &data.lease, "node outcome").await?
+    } else {
+        lease::begin(state, &data.lease, "node outcome").await?
+    };
     repo::runs::finish_node(&mut tx, data.run_id, node_id, outcome).await?;
     if let Some(agent) = agent
         && !outcome.cached

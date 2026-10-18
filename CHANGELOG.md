@@ -21,7 +21,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   renews all its leases in one statement every third of `NEXC_RUN_LEASE_SECS` (default 30 s). A
   run whose lease ran out is claimed by another replica's dispatcher with one atomic `UPDATE`
   that raises the epoch, and every write the executor makes for the run (node status, outputs,
-  spans, usage, the run's status) first locks the run row at the epoch it holds, so a former
+  spans, usage, the run's status) first locks the run row at the epoch it holds (shared, so the
+  writes of one run do not wait for each other, unless the write changes the run row; a span
+  batch does it in its one statement), so a former
   holder that comes back cannot write: its write is refused and recorded as a `fenced` event, and
   it stops its copy of the run (also when its renewal or the run's watcher sees the epoch moved,
   or when the database could not confirm its lease for a whole lease). The new holder resumes the

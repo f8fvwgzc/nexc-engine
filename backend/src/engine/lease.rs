@@ -148,13 +148,35 @@ impl WriteError {
     }
 }
 
-/// Opens a transaction for a write of the run's executor, fenced by the
-/// lease: the run row is locked and its epoch checked first. `what` names
-/// the write for the record when it is refused.
+/// Opens a transaction for a write of the run's executor that leaves the
+/// run row alone (node results, statuses, spans), fenced by the lease: the
+/// run row is locked `FOR SHARE` at the epoch held first, so writes of one
+/// run do not wait for each other but a takeover waits for them all. `what`
+/// names the write for the record when it is refused.
 pub async fn begin(
     state: &AppState,
     lease: &Lease,
     what: &str,
+) -> Result<Transaction<'static, Postgres>, WriteError> {
+    open(state, lease, what, false).await
+}
+
+/// Like [`begin`], for a write that also changes the run row (its totals,
+/// its status): the row is locked `FOR NO KEY UPDATE` from the start, so the
+/// transaction never has to strengthen its lock.
+pub async fn begin_run_update(
+    state: &AppState,
+    lease: &Lease,
+    what: &str,
+) -> Result<Transaction<'static, Postgres>, WriteError> {
+    open(state, lease, what, true).await
+}
+
+async fn open(
+    state: &AppState,
+    lease: &Lease,
+    what: &str,
+    updates_run: bool,
 ) -> Result<Transaction<'static, Postgres>, WriteError> {
     // Known lost here already: refused without asking (and without a record:
     // this instance stopped the run itself, nothing was attempted against it).
@@ -165,13 +187,25 @@ pub async fn begin(
     let Some(held) = lease.epoch() else {
         return Ok(tx);
     };
-    let current = repo::runs::lock_lease(&mut *tx, lease.run_id()).await?;
+    let current = repo::runs::lock_lease(&mut *tx, lease.run_id(), updates_run).await?;
     if current == Some(held) {
         return Ok(tx);
     }
     let _ = tx.rollback().await;
     refused(state, lease, what, current).await;
     Err(WriteError::Fenced)
+}
+
+/// A write that checked the lease itself (in its own statement) found it
+/// moved on: recorded like one [`begin`] refused.
+pub async fn refuse(state: &AppState, lease: &Lease, what: &str) {
+    let current = repo::runs::find_row(&state.db, lease.run_id())
+        .await
+        .ok()
+        .flatten()
+        .filter(|row| row.status == crate::domain::run::RunStatus::Running)
+        .map(|row| row.lease_epoch);
+    refused(state, lease, what, current).await;
 }
 
 /// Records a write the database refused to a former holder (once per

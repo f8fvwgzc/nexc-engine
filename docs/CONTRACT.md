@@ -124,7 +124,9 @@ In Docker/K8s the frontend is served by unprivileged nginx on 8080 which proxies
   issue, node or decision: a decision retried is answered 200, not 409). The same key with another
   body is 422; a retry while the first request is still being handled is 409 with `Retry-After: 1`
   (a first request unanswered after 60 s is taken to have died with its replica, and the key is
-  free again). Server errors (5xx) and rate limits (429) are not kept, so their retry runs again;
+  free again: the response is kept right after the write commits, so a replica that dies between
+  the two leaves a key whose retry, after those 60 s, runs the request again). Server errors (5xx)
+  and rate limits (429) are not kept, so their retry runs again;
   4xx answers are kept like successes. A housekeeping job deletes keys after 24 hours, and a key
   is free again once it is that old. On other routes the header is ignored. The browser may send
   it (CORS allows it and exposes `Idempotent-Replayed`).
@@ -1309,7 +1311,8 @@ lease for a whole lease) stops the run on that replica. Every replica's dispatch
 for a running run whose lease ran out and takes it over with one `UPDATE` that sets `claimed_by`,
 a fresh `lease_expires_at` and `lease_epoch + 1`. Every write the executor makes for the run (node
 results and statuses, outputs, spans, usage, the run's counters and status) runs in a transaction
-that first locks the run row (`FOR NO KEY UPDATE`) at the epoch it holds: a former holder's write
+that first locks the run row at the epoch it holds (`FOR SHARE`, or `FOR NO KEY UPDATE` when the
+write changes the run row itself; span batches do it in their one statement): a former holder's write
 is refused, recorded once per lease as a `fenced` event, and the former holder stops its copy of
 the run. A write that fails for another reason stops the run on that replica too; its lease runs
 out and the next holder resumes it. The new holder resumes from what was written: a `succeeded`

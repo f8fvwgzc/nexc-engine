@@ -56,6 +56,26 @@ pub async fn insert(db: impl PgExecutor<'_>, spans: &[Span]) -> Result<(), sqlx:
     if spans.is_empty() {
         return Ok(());
     }
+    write(db, spans, None).await.map(|_| ())
+}
+
+/// Appends `spans` of run `run_id` in one statement, fenced by the lease held
+/// at `epoch`: the run row is locked (`FOR SHARE`) and the spans written only
+/// when it is still running at that epoch. Returns whether they were.
+pub async fn insert_fenced(
+    db: impl PgExecutor<'_>,
+    spans: &[Span],
+    run_id: Uuid,
+    epoch: i64,
+) -> Result<bool, sqlx::Error> {
+    write(db, spans, Some((run_id, epoch))).await
+}
+
+async fn write(
+    db: impl PgExecutor<'_>,
+    spans: &[Span],
+    fence: Option<(Uuid, i64)>,
+) -> Result<bool, sqlx::Error> {
     let ids: Vec<Uuid> = spans.iter().map(|s| s.id).collect();
     let run_ids: Vec<Uuid> = spans.iter().map(|s| s.run_id).collect();
     let node_ids: Vec<Uuid> = spans.iter().map(|s| s.node_id).collect();
@@ -71,13 +91,21 @@ pub async fn insert(db: impl PgExecutor<'_>, spans: &[Span]) -> Result<(), sqlx:
     let seqs: Vec<i32> = spans.iter().map(|s| s.seq).collect();
     let prev_hashes: Vec<Vec<u8>> = spans.iter().map(|s| s.prev_hash.to_vec()).collect();
     let hashes: Vec<Vec<u8>> = spans.iter().map(|s| s.hash.to_vec()).collect();
-    sqlx::query(
-        "INSERT INTO agent_spans (id, run_id, node_id, agent_id, principal, parent_id, kind, name,
-                                  started_at, ended_at, status, attributes, seq, prev_hash, hash)
-         SELECT * FROM unnest($1::uuid[], $2::uuid[], $3::uuid[], $4::uuid[], $5::text[], $6::uuid[],
-                              $7::text[], $8::text[], $9::timestamptz[], $10::timestamptz[], $11::text[],
-                              $12::jsonb[], $13::int[], $14::bytea[], $15::bytea[])
-         ON CONFLICT (id) DO NOTHING",
+    // Without a fence $16 is NULL and the condition holds; with one, the run row is locked at
+    // the epoch held, or nothing is written.
+    sqlx::query_scalar(
+        "WITH fence AS (
+             SELECT 1 FROM runs WHERE $16::uuid IS NOT NULL AND id = $16 AND lease_epoch = $17
+               AND status = 'running' FOR SHARE),
+         written AS (
+             INSERT INTO agent_spans (id, run_id, node_id, agent_id, principal, parent_id, kind, name,
+                                      started_at, ended_at, status, attributes, seq, prev_hash, hash)
+             SELECT * FROM unnest($1::uuid[], $2::uuid[], $3::uuid[], $4::uuid[], $5::text[], $6::uuid[],
+                                  $7::text[], $8::text[], $9::timestamptz[], $10::timestamptz[], $11::text[],
+                                  $12::jsonb[], $13::int[], $14::bytea[], $15::bytea[])
+             WHERE $16::uuid IS NULL OR EXISTS (SELECT 1 FROM fence)
+             ON CONFLICT (id) DO NOTHING RETURNING 1)
+         SELECT $16::uuid IS NULL OR EXISTS (SELECT 1 FROM fence)",
     )
     .bind(&ids)
     .bind(&run_ids)
@@ -94,9 +122,10 @@ pub async fn insert(db: impl PgExecutor<'_>, spans: &[Span]) -> Result<(), sqlx:
     .bind(&seqs)
     .bind(&prev_hashes)
     .bind(&hashes)
-    .execute(db)
-    .await?;
-    Ok(())
+    .bind(fence.map(|(run, _)| run))
+    .bind(fence.map_or(0, |(_, epoch)| epoch))
+    .fetch_one(db)
+    .await
 }
 
 /// Up to `limit` spans of a run in id order, after `after` if given.

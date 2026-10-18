@@ -209,7 +209,8 @@ impl ExecContext {
         );
         self.state.metrics.policy_mismatches.add(1);
         let counted = async {
-            let mut tx = lease::begin(&self.state, &self.lease, "policy mismatch count").await?;
+            let mut tx =
+                lease::begin_run_update(&self.state, &self.lease, "policy mismatch count").await?;
             repo::runs::add_policy_mismatch(&mut *tx, self.run_id).await?;
             tx.commit().await?;
             Ok::<(), WriteError>(())

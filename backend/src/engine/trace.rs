@@ -245,9 +245,18 @@ async fn write(state: &AppState, lease: &Lease, batch: &mut Vec<Span>) {
     batch.clear();
 }
 
+/// Writes a batch in one statement that checks the lease itself.
 async fn insert(state: &AppState, lease: &Lease, batch: &[Span]) -> Result<(), WriteError> {
-    let mut tx = lease::begin(state, lease, "trace spans").await?;
-    repo::spans::insert(&mut *tx, batch).await?;
-    tx.commit().await?;
-    Ok(())
+    let Some(epoch) = lease.epoch() else {
+        repo::spans::insert(&state.db, batch).await?;
+        return Ok(());
+    };
+    if lease.is_lost() {
+        return Err(WriteError::Fenced);
+    }
+    if repo::spans::insert_fenced(&state.db, batch, lease.run_id(), epoch).await? {
+        return Ok(());
+    }
+    lease::refuse(state, lease, "trace spans").await;
+    Err(WriteError::Fenced)
 }

@@ -365,14 +365,23 @@ pub async fn release(
 /// Locks the row of a running run for a write of its executor and returns
 /// its epoch (`None` when the run is no longer running). The lock is held to
 /// the end of the transaction, so a takeover waits for the write, and a
-/// write after a takeover sees the new epoch.
-pub async fn lock_lease(db: impl PgExecutor<'_>, run_id: Uuid) -> Result<Option<i64>, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT lease_epoch FROM runs WHERE id = $1 AND status = 'running' FOR NO KEY UPDATE",
-    )
-    .bind(run_id)
-    .fetch_optional(db)
-    .await
+/// write after a takeover sees the new epoch. A write that changes the run
+/// row itself takes `FOR NO KEY UPDATE` (`updates_run`); the others share
+/// the row (`FOR SHARE`), so they do not wait for each other.
+pub async fn lock_lease(
+    db: impl PgExecutor<'_>,
+    run_id: Uuid,
+    updates_run: bool,
+) -> Result<Option<i64>, sqlx::Error> {
+    let sql = if updates_run {
+        "SELECT lease_epoch FROM runs WHERE id = $1 AND status = 'running' FOR NO KEY UPDATE"
+    } else {
+        "SELECT lease_epoch FROM runs WHERE id = $1 AND status = 'running' FOR SHARE"
+    };
+    sqlx::query_scalar(sql)
+        .bind(run_id)
+        .fetch_optional(db)
+        .await
 }
 
 /// What the run's cancel watcher looks at every second: whether a cancel was
