@@ -29,7 +29,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   empty state: an icon, a sentence and a link or a button (`routes.ts` names the exceptions).
   `behaviour.spec.ts` checks what pages do over time: the Runs page following a run to its end,
   **Try again** on a page that failed to load, data kept on screen when a background refetch
-  fails, a filter that matches nothing, and the inbox's unread count at 768 and 1280 px.
+  fails, a filter that matches nothing, and the inbox's unread count at 768 and 1280 px. The
+  suite serves its build on port 4174, or `E2E_PORT`, and a port already in use fails the run
+  instead of testing another checkout's build (`E2E_REUSE_SERVER=1` reuses a server).
   The baselines are rendered in the Playwright image (`mcr.microsoft.com/playwright`, the
   version of `@playwright/test`), which the new CI job **Frontend UI** runs and `make e2e-ui`
   runs locally through Docker (`scripts/e2e-ui.sh`; `make e2e-ui-update` re-renders the

@@ -1,6 +1,12 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const PORT = 4174;
+/**
+ * The suite builds the app and serves it on this port. Pick another (E2E_PORT) when a second
+ * checkout runs its suite at the same time; a port already in use fails the run rather than
+ * testing whatever answers there, unless E2E_REUSE_SERVER=1 asks to reuse a server left running
+ * from this checkout.
+ */
+const PORT = Number(process.env.E2E_PORT ?? 4174);
 const CI = !!process.env.CI;
 
 /**
@@ -63,7 +69,7 @@ export default defineConfig({
     // The production build, served as nginx would serve it (vite preview falls back to index.html).
     command: `pnpm exec vite build --logLevel warn && pnpm exec vite preview --port ${PORT} --strictPort`,
     url: `http://localhost:${PORT}`,
-    reuseExistingServer: !CI,
+    reuseExistingServer: process.env.E2E_REUSE_SERVER === '1',
     timeout: 240_000,
   },
 });
