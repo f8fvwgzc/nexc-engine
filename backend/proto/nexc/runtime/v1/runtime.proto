@@ -1,0 +1,237 @@
+// The backend ⇄ agent runtime stream (CONTRACT §8, AgentSecOps phase 4).
+//
+// The runtime serves `AgentRuntime` on its gRPC port; the backend opens one
+// `Execute` stream per node attempt. The backend's side of the stream carries
+// commands, the first of which is the execute request; the runtime's side
+// carries events, the last of which is exactly one `result` or `error`. The
+// vocabulary is the NDJSON protocol's: a span, a delta, an artifact mean the
+// same on either wire.
+syntax = "proto3";
+
+package nexc.runtime.v1;
+
+import "google/protobuf/struct.proto";
+
+service AgentRuntime {
+  // One node attempt. Commands go down (the execute request first, then
+  // acks, cancel, approval decisions, policy updates and tool results);
+  // events come up (log, delta, tokens, spawn, span, artifact, approval and
+  // tool requests, and one terminal result or error).
+  rpc Execute(stream BackendCommand) returns (stream RuntimeEvent);
+  // Liveness, with the same counters as `GET /healthz`.
+  rpc Health(HealthRequest) returns (HealthReply);
+}
+
+message HealthRequest {}
+
+message HealthReply {
+  string status = 1;
+  string version = 2;
+  uint32 agents_loaded = 3;
+  uint32 runs_active = 4;
+}
+
+// --- backend → runtime ---------------------------------------------------------------------
+
+message BackendCommand {
+  oneof command {
+    ExecuteRequest execute = 1;
+    Ack ack = 2;
+    Cancel cancel = 3;
+    ApprovalDecision approval_decision = 4;
+    PolicyUpdate policy_update = 5;
+    ToolResult tool_result = 6;
+  }
+}
+
+// The request of `POST /v1/execute` as a message; the same fields, the same
+// validation on the runtime's side.
+message ExecuteRequest {
+  string run_id = 1;
+  string node_id = 2;
+  // The signed per-run agent token; nothing starts without it.
+  string token = 3;
+  AgentSpec agent = 4;
+  Task task = 5;
+  Context context = 6;
+  Llm llm = 7;
+  Limits limits = 8;
+  // Tools the backend performs on the agent's behalf (`fetch_url`,
+  // `mcp:<server>/<tool>`): the model sees them, a call comes back up as a
+  // `tool_request`.
+  repeated GatewayTool gateway_tools = 9;
+}
+
+message AgentSpec {
+  string name = 1;
+  string role = 2;
+  string principal = 3;
+  string system_prompt = 4;
+  string model = 5;
+  int64 budget_tokens = 6;
+}
+
+message Task {
+  string title = 1;
+  string content = 2;
+  string kind = 3;
+  string kind_description = 4;
+  optional bool produces_artifact = 5;
+}
+
+message Upstream {
+  string node_id = 1;
+  string title = 2;
+  string output = 3;
+}
+
+message Context {
+  string goal = 1;
+  repeated Upstream upstream = 2;
+  repeated string memories = 3;
+  repeated string documents = 4;
+  repeated string labels = 5;
+}
+
+message Llm {
+  string provider = 1;
+  // Empty when the provider needs none.
+  string api_key = 2;
+  string model = 3;
+  string base_url = 4;
+}
+
+message Limits {
+  uint32 max_turns = 1;
+  uint32 timeout_s = 2;
+  bool allow_code_exec = 3;
+}
+
+message GatewayTool {
+  string name = 1;
+  string description = 2;
+  // JSON Schema of the arguments, as the tool's server published it.
+  google.protobuf.Struct input_schema = 3;
+}
+
+// The backend received a request (an approval or tool request) and is working on it.
+message Ack {
+  string request_id = 1;
+}
+
+// Stop the attempt: the runtime answers with its terminal `error`.
+message Cancel {
+  string reason = 1;
+}
+
+// A human decided on a held tool call.
+message ApprovalDecision {
+  string approval_id = 1;
+  // `approved` | `denied`.
+  string decision = 2;
+  string reason = 3;
+  string decided_by = 4;
+}
+
+// A fresh per-run token (same run and node) whose rules apply from the next decision on.
+message PolicyUpdate {
+  string token = 1;
+}
+
+// The outcome of a `tool_request`.
+message ToolResult {
+  string request_id = 1;
+  string output = 2;
+  bool is_error = 3;
+}
+
+// --- runtime → backend ---------------------------------------------------------------------
+
+message RuntimeEvent {
+  oneof event {
+    Log log = 1;
+    Delta delta = 2;
+    Tokens tokens = 3;
+    Spawn spawn = 4;
+    Span span = 5;
+    Artifact artifact = 6;
+    ApprovalRequest approval_request = 7;
+    ToolRequest tool_request = 8;
+    Result result = 9;
+    Error error = 10;
+  }
+}
+
+message Log {
+  string level = 1;
+  string message = 2;
+}
+
+message Delta {
+  string text = 1;
+}
+
+// Usage of one model call (incremental; `result` carries the totals).
+message Tokens {
+  int64 input = 1;
+  int64 output = 2;
+  int64 cached = 3;
+}
+
+message Spawn {
+  string name = 1;
+  string role = 2;
+}
+
+// One action of an agent, as the NDJSON `span` line (CONTRACT §8).
+message Span {
+  string id = 1;
+  string parent_id = 2;
+  string kind = 3;
+  string name = 4;
+  string agent = 5;
+  string started_at = 6;
+  string ended_at = 7;
+  string status = 8;
+  google.protobuf.Struct attributes = 9;
+}
+
+message Artifact {
+  string path = 1;
+  string mime = 2;
+  bytes content = 3;
+}
+
+// A tool call the policy holds for a human; answered by an `approval_decision`.
+message ApprovalRequest {
+  string approval_id = 1;
+  string tool = 2;
+  string rule = 3;
+  string reason = 4;
+  string args_sha256 = 5;
+  // The `policy` span that recorded the request.
+  string span_id = 6;
+  string agent = 7;
+  string turn_span_id = 8;
+}
+
+// A gateway tool call the backend performs; answered by a `tool_result`.
+message ToolRequest {
+  string request_id = 1;
+  string tool = 2;
+  google.protobuf.Struct arguments = 3;
+  string agent = 4;
+  string turn_span_id = 5;
+}
+
+message Result {
+  string output = 1;
+  int64 tokens_in = 2;
+  int64 tokens_out = 3;
+  int64 tokens_cached = 4;
+}
+
+message Error {
+  string message = 1;
+  bool retryable = 2;
+}

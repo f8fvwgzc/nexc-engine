@@ -28,6 +28,7 @@ strip = "symbols"
 [dependencies]
 aes-gcm = "0.11"
 anyhow = "1.0.104"
+aws-lc-rs = "1"
 argon2 = "0.6"
 async-stream = "0.3.6"
 async-trait = "0.1"
@@ -43,6 +44,7 @@ hex = "0.4.3"
 http-body-util = "0.1.5"
 jsonwebtoken = { version = "11.1", default-features = false, features = ["aws_lc_rs"] }
 mime_guess = "2.0.5"
+opentelemetry-proto = { version = "0.33", default-features = false, features = ["gen-tonic", "trace"] }
 prost = "0.14"
 prost-types = "0.14"
 rand = "0.10.3"
@@ -59,7 +61,9 @@ tokio = { version = "1.53", features = ["full"] }
 tokio-stream = { version = "0.1.19", features = ["sync"] }
 tokio-util = { version = "0.7.19", features = ["io"] }
 tonic = { version = "0.14", features = ["transport", "codegen", "router", "server", "channel"] }
+tonic-health = "0.14"
 tonic-prost = "0.14"
+tonic-reflection = "0.14"
 tower = { version = "0.5", features = ["util", "limit"] }
 tower-http = { version = "0.7", features = ["cors", "trace", "limit", "set-header", "request-id", "compression-gzip", "timeout", "util"] }
 tracing = "0.1.44"
@@ -72,6 +76,7 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [build-dependencies]
 cc = "1.6"
+prost = "0.14"
 protox = "0.9"
 tonic-prost-build = "0.14"
 

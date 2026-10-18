@@ -1,0 +1,144 @@
+// The Agent Firewall API (AgentSecOps phase 4): any agent platform, or a
+// sidecar in front of one, uses nexc as its policy and trace service. Served
+// by the backend on `NEXC_GRPC_ADDR`; every call carries an agent's API token
+// as `authorization: Bearer <token>`. The agent is one of the workspace's,
+// with runtime `external`: it appears in the registry, the trace and the
+// audit like a native one.
+syntax = "proto3";
+
+package nexc.firewall.v1;
+
+import "google/protobuf/struct.proto";
+
+service AgentFirewall {
+  // May the agent do this? Decided in-process from the agent's resolved
+  // policy, recorded as a `policy` span and signed.
+  rpc AuthorizeAction(AuthorizeRequest) returns (AuthorizeReply);
+  // The spans of one run of the external agent, chained and verifiable like
+  // a native run's. The first message opens the run; the stream's end seals it.
+  rpc ReportSpan(stream SpanReport) returns (ReportSummary);
+  // Recomputes a run's chain.
+  rpc VerifyTrace(VerifyRequest) returns (VerifyReply);
+  // The agent's ID card.
+  rpc GetAgentCard(AgentCardRequest) returns (AgentCardReply);
+}
+
+message AuthorizeRequest {
+  // The acting principal: the agent's own, or a sub-agent under it (`{principal}/…`).
+  string principal = 1;
+  // `tool_call` | `egress` | `spawn` | `model` | `data_read`.
+  string action = 2;
+  // The tool, the host, the sub-agent's role, the model, or the data label.
+  string subject = 3;
+  // Classifications of the data the action is about.
+  repeated string labels = 4;
+  // `run_id` (a run opened with ReportSpan, else the agent's session run),
+  // `depth` and `children` for a spawn.
+  google.protobuf.Struct context = 5;
+}
+
+message PolicyVersions {
+  int32 workspace = 1;
+  int32 team = 2;
+  int32 agent = 3;
+}
+
+message AuthorizeReply {
+  // `allow` | `deny` | `require_approval` | `alert`.
+  string decision = 1;
+  string rule = 2;
+  string reason = 3;
+  PolicyVersions policy_versions = 4;
+  // The `policy` span that recorded the decision, and the run it is in.
+  string span_id = 5;
+  string run_id = 6;
+  // RFC 3339, UTC.
+  string decided_at = 7;
+  // The bytes that were signed: canonical JSON of principal, action, subject,
+  // labels, decision, rule, policy versions, span id, run id and decided_at.
+  bytes signed = 8;
+  // Ed25519 signature of `signed` by the backend's firewall key.
+  bytes signature = 9;
+  // The key to verify with (raw 32 bytes); also on GET /admin/infrastructure.
+  bytes public_key = 10;
+}
+
+message SpanReport {
+  oneof report {
+    RunStart start = 1;
+    Span span = 2;
+    RunFinish finish = 3;
+  }
+}
+
+message RunStart {
+  // The agent platform's own id of the run, kept on the run's node.
+  string external_run_id = 1;
+  string title = 2;
+}
+
+message RunFinish {
+  // `succeeded` | `failed` | `cancelled`; succeeded when absent.
+  string status = 1;
+  string output = 2;
+}
+
+// As the runtime's span (CONTRACT §8).
+message Span {
+  string id = 1;
+  string parent_id = 2;
+  string kind = 3;
+  string name = 4;
+  string agent = 5;
+  string started_at = 6;
+  string ended_at = 7;
+  string status = 8;
+  google.protobuf.Struct attributes = 9;
+}
+
+message ReportSummary {
+  string run_id = 1;
+  uint64 spans = 2;
+  // Hex SHA-256 the run was sealed with.
+  string trace_hash = 3;
+  uint32 policy_mismatches = 4;
+}
+
+message VerifyRequest {
+  string run_id = 1;
+}
+
+message VerifyReply {
+  bool ok = 1;
+  int64 spans = 2;
+  string hash = 3;
+  string sealed_hash = 4;
+  string broken_span_id = 5;
+  int32 broken_seq = 6;
+  string broken_reason = 7;
+}
+
+message AgentCardRequest {
+  // The agent's principal, or empty for the caller's own agent.
+  string principal = 1;
+}
+
+message AgentCardReply {
+  string id = 1;
+  string principal = 2;
+  string name = 3;
+  string role = 4;
+  string purpose = 5;
+  string status = 6;
+  string runtime = 7;
+  string workspace_id = 8;
+  string owner = 9;
+  string team = 10;
+  int64 budget_tokens = 11;
+  int64 budget_left = 12;
+  int32 policy_version = 13;
+  PolicyVersions policy_versions = 14;
+  double risk_score = 15;
+  repeated string risk_reasons = 16;
+  google.protobuf.Struct capabilities = 17;
+}
