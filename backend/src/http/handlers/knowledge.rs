@@ -6,7 +6,6 @@ use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::StatusCode;
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
@@ -15,10 +14,7 @@ use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::audit::AuditAction;
 use crate::domain::capabilities::DataLabel;
-use crate::domain::knowledge::{
-    DOCUMENT_MAX_BYTES, DOCUMENT_NAME_MAX, DOCUMENTS_MAX, Document, KnowledgeSettings, Passage,
-    Topic,
-};
+use crate::domain::knowledge::{DOCUMENT_NAME_MAX, Document, KnowledgeSettings, Passage, Topic};
 use crate::domain::settings::key_hint;
 use crate::domain::validation::{FieldErrors, Validate};
 use crate::domain::workspace::{Workspace, WorkspaceAction};
@@ -118,47 +114,13 @@ pub async fn upload(
     if name.is_empty() || name.chars().count() > DOCUMENT_NAME_MAX {
         return Err(AppError::field("name", "must be 1 to 255 characters"));
     }
-    if body.is_empty() {
-        return Err(AppError::Unprocessable("the file is empty".into()));
-    }
-    if body.len() > DOCUMENT_MAX_BYTES {
-        return Err(AppError::Unprocessable(
-            "a document is at most 50 MiB".into(),
-        ));
-    }
-    let sha256 = hex::encode(Sha256::digest(&body));
-    if let Some(existing) = repo::knowledge::find_by_hash(&state.db, wid, &sha256).await? {
-        return Ok((StatusCode::OK, Json(existing)));
-    }
-    if repo::knowledge::count(&state.db, wid).await? >= DOCUMENTS_MAX {
-        return Err(AppError::Unprocessable(format!(
-            "a workspace holds at most {DOCUMENTS_MAX} documents"
-        )));
-    }
-    // The file is on disk before the row that makes a worker look for it.
-    let id = Uuid::now_v7();
-    // Made at start, and again here: a folder that went missing since must not stop uploads.
-    let dir = state.settings.documents_dir();
-    let path = dir.join(id.to_string());
-    let stored = async {
-        tokio::fs::create_dir_all(&dir).await?;
-        tokio::fs::write(&path, &body).await
+    let (document, created) = knowledge::store_document(&state, wid, &name, &body, auth.id).await?;
+    let status = if created {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
     };
-    stored
-        .await
-        .map_err(|err| anyhow::anyhow!("cannot store the upload: {err}"))?;
-    let size = i64::try_from(body.len()).unwrap_or(i64::MAX);
-    match repo::knowledge::insert(&state.db, id, wid, &name, size, &sha256, auth.id).await? {
-        Some(document) => Ok((StatusCode::CREATED, Json(document))),
-        None => {
-            // Someone sent the same file at the same moment; theirs stands.
-            let _ = tokio::fs::remove_file(&path).await;
-            let existing = repo::knowledge::find_by_hash(&state.db, wid, &sha256)
-                .await
-                .or_not_found("document")?;
-            Ok((StatusCode::OK, Json(existing)))
-        }
-    }
+    Ok((status, Json(document)))
 }
 
 /// One document.

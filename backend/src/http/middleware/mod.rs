@@ -133,8 +133,12 @@ pub async fn limit_body(req: Request, next: Next) -> Response {
     let upload = req.method() == Method::POST
         && path.starts_with("/api/v1/workspaces/")
         && path.ends_with("/documents");
+    // An A2A task carries its files inline (base64), so its request is larger than a JSON body.
+    let a2a_task = req.method() == Method::POST && path.starts_with("/a2a/agents/");
     let limit = if upload {
         DOCUMENT_MAX_BYTES + crate::http::UPLOAD_SLACK
+    } else if a2a_task {
+        crate::http::handlers::a2a::RPC_BODY_LIMIT
     } else {
         crate::app::router::BODY_LIMIT
     };

@@ -131,6 +131,9 @@ pub struct Metrics {
     pub gateway_calls: LabeledCounter,
     /// Alert deliveries attempted, by destination kind and outcome (`delivered`, `retry`, `failed`).
     pub alert_deliveries: LabeledCounter,
+    /// A2A tasks exchanged, by direction (`inbound`, `outbound`) and outcome
+    /// (`accepted`, `refused`, `completed`, `failed`).
+    pub a2a_tasks: LabeledCounter,
 }
 
 impl Default for Metrics {
@@ -154,6 +157,7 @@ impl Default for Metrics {
             firewall_decisions: LabeledCounter::default(),
             gateway_calls: LabeledCounter::default(),
             alert_deliveries: LabeledCounter::default(),
+            a2a_tasks: LabeledCounter::default(),
         }
     }
 }
@@ -318,6 +322,13 @@ impl Metrics {
         );
         self.alert_deliveries
             .render(&mut out, "nexc_alert_deliveries_total");
+        header(
+            &mut out,
+            "nexc_a2a_tasks_total",
+            "counter",
+            "A2A tasks exchanged, by direction and outcome.",
+        );
+        self.a2a_tasks.render(&mut out, "nexc_a2a_tasks_total");
         out
     }
 }

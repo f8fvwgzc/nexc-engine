@@ -281,6 +281,7 @@ pub async fn instantiate(
         team_id: req.team_id,
         purpose: template.purpose.clone(),
         capabilities,
+        a2a_exposed: false,
     };
     let mut tx = state.db.begin().await?;
     let agent = repo::agents::create(&mut *tx, auth.id, workspace, &fields).await?;

@@ -18,18 +18,19 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::config::Secret;
+use crate::domain::AppError;
 use crate::domain::capabilities::DataLabel;
 use crate::domain::knowledge::{
-    BUILTIN_EMBED_MODEL, Block, BlockKind, Chunk, Document, DocumentStatus, KnowledgeSettings,
-    Parsed, Passage, Topic, chunk,
+    BUILTIN_EMBED_MODEL, Block, BlockKind, Chunk, DOCUMENT_MAX_BYTES, DOCUMENTS_MAX, Document,
+    DocumentStatus, KnowledgeSettings, Parsed, Passage, Topic, chunk,
 };
 use crate::domain::settings::{ConfigScope, LlmProviderKind};
 use crate::domain::topics as cluster;
 use crate::domain::usage::{UsageEvent, UsagePurpose};
 use crate::llm::embeddings::{self, EmbedTarget};
 use crate::memory::any_term_query_without;
-use crate::repo;
 use crate::repo::knowledge::{Candidate, NewTopic};
+use crate::repo::{self, OrNotFound};
 
 /// Documents ingested at the same time by one instance.
 const CONCURRENT_DOCUMENTS: i64 = 3;
@@ -368,6 +369,72 @@ async fn ingest(state: &AppState, document: &Document) -> anyhow::Result<()> {
         tracing::warn!(document = %document.id, error = %err, "cannot place passages in topics");
     }
     Ok(())
+}
+
+/// Adds a file to a workspace's knowledge base: the bytes on disk, then the
+/// row a worker parses, splits and embeds. The same bytes are stored once:
+/// the document they already are comes back with `false`. 422 for an empty
+/// or oversized file, or a workspace at its limit.
+pub async fn store_document(
+    state: &AppState,
+    workspace_id: Uuid,
+    name: &str,
+    body: &[u8],
+    uploaded_by: Uuid,
+) -> Result<(Document, bool), AppError> {
+    use sha2::{Digest, Sha256};
+
+    if body.is_empty() {
+        return Err(AppError::Unprocessable("the file is empty".into()));
+    }
+    if body.len() > DOCUMENT_MAX_BYTES {
+        return Err(AppError::Unprocessable(
+            "a document is at most 50 MiB".into(),
+        ));
+    }
+    let sha256 = hex::encode(Sha256::digest(body));
+    if let Some(existing) = repo::knowledge::find_by_hash(&state.db, workspace_id, &sha256).await? {
+        return Ok((existing, false));
+    }
+    if repo::knowledge::count(&state.db, workspace_id).await? >= DOCUMENTS_MAX {
+        return Err(AppError::Unprocessable(format!(
+            "a workspace holds at most {DOCUMENTS_MAX} documents"
+        )));
+    }
+    // The file is on disk before the row that makes a worker look for it.
+    let id = Uuid::now_v7();
+    // Made at start, and again here: a folder that went missing since must not stop uploads.
+    let dir = state.settings.documents_dir();
+    let path = dir.join(id.to_string());
+    let stored = async {
+        tokio::fs::create_dir_all(&dir).await?;
+        tokio::fs::write(&path, body).await
+    };
+    stored
+        .await
+        .map_err(|err| anyhow::anyhow!("cannot store the upload: {err}"))?;
+    let size = i64::try_from(body.len()).unwrap_or(i64::MAX);
+    match repo::knowledge::insert(
+        &state.db,
+        id,
+        workspace_id,
+        name,
+        size,
+        &sha256,
+        uploaded_by,
+    )
+    .await?
+    {
+        Some(document) => Ok((document, true)),
+        None => {
+            // Someone sent the same file at the same moment; theirs stands.
+            let _ = tokio::fs::remove_file(&path).await;
+            let existing = repo::knowledge::find_by_hash(&state.db, workspace_id, &sha256)
+                .await
+                .or_not_found("document")?;
+            Ok((existing, false))
+        }
+    }
 }
 
 /// One round of the ingestion worker: requeue stalled documents, then take

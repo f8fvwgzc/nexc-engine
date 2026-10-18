@@ -60,6 +60,7 @@ pub const UPLOAD_SLACK: usize = 64 * 1024;
         (name = "audit", description = "Ask the audit: questions about what agents did, answered from onto-intelli's facts"),
         (name = "admin", description = "The platform console: every workspace and account, for platform administrators only"),
         (name = "secops", description = "The AgentSecOps console: the workspace's agents, runs, denials, approvals, alerts and risk on one screen"),
+        (name = "a2a", description = "The A2A adapter: exposed agents' cards and JSON-RPC endpoint, registered counterparts, inbound tasks"),
     )
 )]
 pub struct ApiDoc;
@@ -231,6 +232,7 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(agent_templates::instantiate))
         .routes(routes!(agents::tokens, agents::issue_token))
         .routes(routes!(agents::revoke_token))
+        .routes(routes!(a2a::tasks))
         .routes(routes!(mcp_servers::list, mcp_servers::create))
         .routes(routes!(mcp_servers::get, mcp_servers::delete))
         .routes(routes!(mcp_servers::check))
@@ -263,11 +265,17 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(realtime::websocket))
 }
 
-/// Every documented route: `/api/v1/*` plus `/metrics`.
+/// Every documented route: `/api/v1/*`, `/metrics`, and the A2A surface at
+/// the root (the well-known card and the JSON-RPC endpoint live where the
+/// protocol expects them, outside the console's API).
 pub fn api_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::with_openapi(ApiDoc::openapi())
         .nest("/api/v1", v1_routes())
         .routes(routes!(health::metrics))
+        .routes(routes!(a2a::well_known))
+        .routes(routes!(a2a::card))
+        .routes(routes!(a2a::rpc).layer(DefaultBodyLimit::max(a2a::RPC_BODY_LIMIT)))
+        .routes(routes!(a2a::artifact))
 }
 
 /// The OpenAPI document (also served at `/api/openapi.json`).
@@ -319,6 +327,11 @@ mod tests {
             "/api/v1/workspaces/{wid}/mcp-servers/{sid}/check",
             "/api/v1/agents/{id}/tokens",
             "/api/v1/agents/{id}/tokens/{tid}",
+            "/api/v1/agents/{id}/a2a/tasks",
+            "/.well-known/agent.json",
+            "/a2a/agents/{principal}/card",
+            "/a2a/agents/{principal}",
+            "/a2a/tasks/{tid}/artifacts/{aid}",
             "/metrics",
         ] {
             assert!(paths.contains_key(p), "missing {p}");

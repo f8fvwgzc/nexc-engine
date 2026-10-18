@@ -60,6 +60,7 @@ macro_rules! team_visible {
     };
 }
 
+pub mod a2a;
 pub mod account_events;
 pub mod agent_evaluations;
 pub mod agent_tokens;

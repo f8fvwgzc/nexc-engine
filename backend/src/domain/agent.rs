@@ -112,6 +112,9 @@ pub struct Agent {
     pub risk_reasons: Vec<String>,
     #[schema(required = true)]
     pub risk_updated_at: Option<DateTime<Utc>>,
+    /// Whether the agent is published as an A2A agent: its card is served
+    /// and registered counterparts may send it tasks (admins set it; audited).
+    pub a2a_exposed: bool,
 }
 
 impl Agent {

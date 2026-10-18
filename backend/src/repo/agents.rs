@@ -43,6 +43,7 @@ impl FromRow<'_, PgRow> for Agent {
             )
             .unwrap_or_default(),
             risk_updated_at: row.try_get("risk_updated_at")?,
+            a2a_exposed: row.try_get("a2a_exposed")?,
         })
     }
 }
@@ -81,6 +82,8 @@ pub struct AgentFields {
     pub team_id: Option<Uuid>,
     pub purpose: String,
     pub capabilities: Capabilities,
+    /// Whether the agent is published as an A2A agent.
+    pub a2a_exposed: bool,
 }
 
 impl AgentFields {
@@ -100,6 +103,7 @@ impl AgentFields {
             team_id: agent.team_id,
             purpose: agent.purpose.clone(),
             capabilities: agent.capabilities.clone(),
+            a2a_exposed: agent.a2a_exposed,
         }
     }
 }
@@ -165,8 +169,8 @@ pub async fn create(
     sqlx::query_as(
         "INSERT INTO agents (id, owner_id, name, role, title, model, system_prompt, reports_to, budget_tokens,
                              runtime, status, workspace_id, principal_id, owner_user_id, team_id, purpose,
-                             capabilities)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING *",
+                             capabilities, a2a_exposed)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING *",
     )
     .bind(Uuid::now_v7())
     .bind(owner_id)
@@ -185,6 +189,7 @@ pub async fn create(
     .bind(f.team_id)
     .bind(&f.purpose)
     .bind(capabilities)
+    .bind(f.a2a_exposed)
     .fetch_one(db)
     .await
 }
@@ -204,7 +209,7 @@ pub async fn update(
                 principal_id = 'agent://' || workspace_id::text || '/' || $3,
                 owner_user_id = $12, team_id = $13, purpose = $14,
                 policy_version = policy_version + CASE WHEN capabilities = $15::jsonb THEN 0 ELSE 1 END,
-                capabilities = $15
+                capabilities = $15, a2a_exposed = $16
          WHERE workspace_id = $1 AND id = $2 RETURNING *",
     )
     .bind(workspace_id)
@@ -222,6 +227,7 @@ pub async fn update(
     .bind(f.team_id)
     .bind(&f.purpose)
     .bind(capabilities)
+    .bind(f.a2a_exposed)
     .fetch_optional(db)
     .await
 }

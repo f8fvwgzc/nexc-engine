@@ -44,6 +44,11 @@ pub enum Action<'a> {
         topic: Option<Uuid>,
         namespace: Option<MemoryScope>,
     },
+    /// Exchange a task with the A2A counterpart named `name` at `depth`
+    /// hops into a chain (an inbound task sits at the hops before it, an
+    /// outbound call one deeper); the counterpart list and the delegation
+    /// depth decide, as for a sub-agent.
+    Counterpart { name: &'a str, depth: u8 },
 }
 
 impl Action<'_> {
@@ -55,13 +60,17 @@ impl Action<'_> {
             Action::Model(_) => "model",
             Action::Egress(_) => "egress",
             Action::Read { .. } => "data_read",
+            Action::Counterpart { .. } => "counterpart",
         }
     }
 
     /// What the action was about: the tool, the role, the model, the host.
     pub fn subject(&self) -> String {
         match self {
-            Action::Tool(name) | Action::Model(name) | Action::Egress(name) => (*name).to_owned(),
+            Action::Tool(name)
+            | Action::Model(name)
+            | Action::Egress(name)
+            | Action::Counterpart { name, .. } => (*name).to_owned(),
             Action::Spawn { role, .. } => (*role).to_owned(),
             Action::Read { label, .. } => label.as_str().to_owned(),
         }
@@ -255,6 +264,28 @@ pub fn decide(caps: &Capabilities, action: &Action<'_>) -> Decision {
                 );
             }
             Decision::allow("data", format!("{label} data is within clearance"))
+        }
+        Action::Counterpart { name, depth } => {
+            let limits = caps.delegation;
+            if *depth > limits.max_depth {
+                return Decision::deny(
+                    "delegation.max_depth",
+                    format!(
+                        "A2A hop {depth} exceeds the delegation depth of {}",
+                        limits.max_depth
+                    ),
+                );
+            }
+            match &caps.counterparts {
+                Some(names) if !names.iter().any(|n| n == name) => Decision::deny(
+                    "counterparts",
+                    format!("A2A counterpart {name} is not in the allow-list"),
+                ),
+                _ => Decision::allow(
+                    "counterparts",
+                    format!("may exchange tasks with {name} at hop {depth}"),
+                ),
+            }
         }
     }
 }
@@ -511,7 +542,9 @@ pub fn decide_with(
             }
             decide(caps, action)
         }
-        Action::Spawn { .. } | Action::Read { .. } => decide(caps, action),
+        Action::Spawn { .. } | Action::Read { .. } | Action::Counterpart { .. } => {
+            decide(caps, action)
+        }
     }
 }
 
@@ -662,6 +695,30 @@ mod tests {
             }
             .subject(),
             "qa"
+        );
+        // A2A counterparts are decided like sub-agents: the list, then the depth.
+        assert_eq!(
+            deny(Action::Counterpart {
+                name: "partner",
+                depth: 0
+            }),
+            "counterparts"
+        );
+        assert_eq!(
+            deny(Action::Counterpart {
+                name: "researcher",
+                depth: 2
+            }),
+            "delegation.max_depth"
+        );
+        let hop = Action::Counterpart {
+            name: "researcher",
+            depth: 1,
+        };
+        assert!(decide(&caps, &hop).allowed);
+        assert_eq!(
+            (hop.kind(), hop.subject().as_str()),
+            ("counterpart", "researcher")
         );
     }
 

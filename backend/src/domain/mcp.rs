@@ -158,13 +158,17 @@ pub fn split_tool_name(name: &str) -> Option<(&str, &str)> {
 
 /// Whether `name` may stand in a tool list of the capabilities or a policy:
 /// a plain tool name (`write_file`, `fetch_url`), a gateway tool
-/// (`mcp:<server>/<tool>`) or every tool of a server (`mcp:<server>/*`).
+/// (`mcp:<server>/<tool>`), every tool of a server (`mcp:<server>/*`) or an
+/// A2A counterpart (`a2a:<name>`).
 pub fn is_tool_entry(name: &str) -> bool {
     fn plain(name: &str) -> bool {
         !name.is_empty()
             && name
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b'.')
+    }
+    if let Some(counterpart) = name.strip_prefix(super::a2a::TOOL_PREFIX) {
+        return is_valid_name(counterpart);
     }
     match name.strip_prefix(TOOL_PREFIX) {
         None => plain(name),
@@ -304,6 +308,11 @@ mod tests {
         assert!(!is_valid_name("My Server"));
         assert!(is_tool_entry("write_file") && is_tool_entry("fetch_url"));
         assert!(is_tool_entry("mcp:github/search") && is_tool_entry("mcp:github/*"));
+        assert!(
+            is_tool_entry("a2a:partner")
+                && !is_tool_entry("a2a:Bad Name")
+                && !is_tool_entry("a2a:")
+        );
         assert!(!is_tool_entry("mcp:github") && !is_tool_entry("mcp:Git Hub/x"));
         assert!(!is_tool_entry("write file") && !is_tool_entry(""));
         assert!(!is_valid_name(&"a".repeat(65)));

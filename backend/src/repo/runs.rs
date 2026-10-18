@@ -229,6 +229,23 @@ pub async fn claim_next(
     .await
 }
 
+/// Claims one queued run for `instance` by id (a run this instance will
+/// execute itself rather than leave to a dispatcher), marking it running.
+pub async fn claim(
+    db: impl PgExecutor<'_>,
+    instance: Uuid,
+    run_id: Uuid,
+) -> Result<Option<RunRow>, sqlx::Error> {
+    sqlx::query_as(
+        "UPDATE runs SET status = 'running', claimed_by = $1, started_at = now(), heartbeat_at = now()
+         WHERE id = $2 AND status = 'queued' RETURNING *",
+    )
+    .bind(instance)
+    .bind(run_id)
+    .fetch_optional(db)
+    .await
+}
+
 /// Refreshes the heartbeat of every run executed by `instance`.
 pub async fn heartbeat(db: impl PgExecutor<'_>, instance: Uuid) -> Result<(), sqlx::Error> {
     sqlx::query(
@@ -269,6 +286,22 @@ pub async fn close_unfinished_nodes(
     .bind(status.as_str())
     .fetch_all(db)
     .await
+}
+
+/// Records why a node of a run ended (a node closed before it was started).
+pub async fn set_node_error(
+    db: impl PgExecutor<'_>,
+    run_id: Uuid,
+    node_id: Uuid,
+    error: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE node_runs SET error = $3 WHERE run_id = $1 AND node_id = $2")
+        .bind(run_id)
+        .bind(node_id)
+        .bind(error)
+        .execute(db)
+        .await?;
+    Ok(())
 }
 
 /// Counts one more action of the run that its policy did not allow.

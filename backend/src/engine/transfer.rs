@@ -148,6 +148,14 @@ const TABLES: &[Table] = &[
     table("labels", IN_WORKSPACE, false),
     table("projects", IN_WORKSPACE, false),
     table("agents", IN_WORKSPACE, false),
+    Table {
+        name: "a2a_counterparts",
+        belongs: IN_WORKSPACE,
+        page: Page::Whole,
+        // The header sent to the remote agent is sealed with this server's master key; it is
+        // entered again on the target, as the counterpart's inbound tokens are issued again.
+        overlay: Some(r#"{"auth_header": null}"#),
+    },
     // The policy history and what each agent usually does travel with the agents.
     table("policies", IN_WORKSPACE, true),
     table(
@@ -174,6 +182,8 @@ const TABLES: &[Table] = &[
         overlay: None,
     },
     table("artifacts", OF_ITS_RUNS, true),
+    // The tasks received over A2A refer to their runs and to the agents.
+    table("a2a_tasks", IN_WORKSPACE, true),
     // The trace travels as it was chained: its hashes still verify on the target.
     table("agent_spans", OF_ITS_RUNS, true),
     // Decisions and alerts refer to runs, and the inbox refers to them: in that order.

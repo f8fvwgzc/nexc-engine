@@ -9,6 +9,50 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A2A adapter, inbound (`docs/CONTRACT.md` §10): an admin publishes a workspace agent over the
+  Agent-to-Agent protocol (`PATCH /agents/{id}` `{a2a_exposed: true}`, workspace admins, not an
+  `external` agent, audited as `agent_a2a_changed`). Its agent card is served to anyone at
+  `GET /.well-known/agent.json?agent={principal}` and `GET /a2a/agents/{principal}/card` (the
+  principal percent-encoded, or the id; an agent that is not exposed is not found): the name,
+  the purpose as the description, the JSON-RPC endpoint under `NEXC_PUBLIC_URL`, the workspace
+  as the provider, `streaming: true`, bearer agent API tokens as the authentication, `text` and
+  `file` as input and output modes, and skills from the role template (with its competency
+  questions as examples) and from every tool of the resolved capabilities. `POST
+  /a2a/agents/{principal}` takes A2A JSON-RPC from a registered counterpart presenting the
+  agent API token issued to its principal: `tasks/send` (answered once the run ended, or after
+  25 s with the task still working), `tasks/sendSubscribe` (status and artifact events as SSE),
+  `tasks/get`, `tasks/cancel`, `tasks/resubscribe`; task ids are UUID v7 (minted when the
+  caller sends none). A task is a one-node run of the exposed agent in a managed graph of its
+  own (`graphs.a2a_agent_id`, the agent pinned to every node): the message's text parts are the
+  node's content, file parts become documents of the knowledge base (the documents' default
+  label) that the node is told about, and the run's output and artifacts come back as A2A
+  artifacts (the answer as text, each file inline up to 4 MiB, else by a URI the caller fetches
+  with its token at `GET /a2a/tasks/{tid}/artifacts/{aid}`; a file the DLP classifier kept in
+  is not given out). The run is executed by the instance that took the task
+  (`scheduler::execute_claimed`) and its trace opens with the inbound call as a `tool_call`
+  span named `a2a:<counterpart>` marked `inbound: true` (the caller's principal, the task id,
+  the hop and the chain, a digest of the message) and the firewall's decision as a `policy`
+  span (`action: counterpart`, `firewall: true`). A counterpart the agent's `counterparts`
+  allow-list does not name, a hop past the delegation depth or a loop (the chain already names
+  the agent) is refused: the task is recorded, its run fails at once with the `policy` span's
+  denial, and the task is `failed` with the reason. A missing or wrong token answers 401, a
+  token of an agent that is no counterpart or is out of service 403, an agent that is not
+  exposed or not in the caller's workspace 404, each as a JSON-RPC error (`-32010`, `-32011`,
+  `-32012`). `GET /agents/{id}/a2a/tasks` lists an agent's inbound tasks for the console
+  (`A2aTask`: who called, the run, the hop, the chain, the refusal). The policy engine gains
+  the action `counterpart` (the `counterparts` list and `delegation.max_depth` decide it as for
+  a sub-agent), tool lists accept `a2a:<name>` entries, and the metric
+  `nexc_a2a_tasks_total{direction, outcome}` counts tasks. In Docker and Kubernetes the
+  frontend's nginx, the ingress and the Helm chart proxy `/a2a/` and `/.well-known/agent.json`
+  to the backend as they do `/api/` (the Vite dev server too). A workspace transfer copies the
+  counterparts without the header sent to them and the inbound tasks with their runs; the
+  counterparts' inbound tokens are issued again on the target, as every external agent's are.
+  Tests (`backend/tests/a2a.rs`): the
+  card at both addresses and nowhere for an agent not exposed, a member refused and an admin
+  audited; a counterpart's task runs the Analyst and gets the `.docx` back with the trace
+  opening on the inbound call and the admission; streaming, files as documents, cancellation;
+  wrong, missing, revoked, foreign and non-counterpart tokens refused with 401, 403 and 404, a
+  counterpart off the list refused on the record; the worst-case suite reads the new routes.
 - Alert routing: a workspace's alerts and approvals reach the outside. Admins register
   **alert destinations** (Settings → Alert destinations, `GET/POST
   /workspaces/{wid}/alert-destinations`, `GET/PATCH/DELETE …/{id}`, `POST …/{id}/test`, `GET

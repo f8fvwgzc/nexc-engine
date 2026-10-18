@@ -297,15 +297,46 @@ impl AgentRuntime for Stub {
                 }
                 return;
             }
+            if title.contains("DOCX") {
+                // A document is asked for: one make_docx call, the file, the answer.
+                send(runtime_event::Event::Span(span(
+                    "tool_call",
+                    "make_docx",
+                    &agent,
+                    &turn_id,
+                    json!({"tool": "make_docx", "args_sha256": "cd".repeat(32), "args_bytes": 40,
+                        "result_bytes": 7, "is_error": false, "duration_ns": 2000}),
+                )))
+                .await;
+                send(runtime_event::Event::Artifact(pb::Artifact {
+                    path: "report.docx".into(),
+                    mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        .into(),
+                    content: b"PK demo".to_vec(),
+                }))
+                .await;
+                send(runtime_event::Event::Result(pb::Result {
+                    output: format!("[runtime] wrote report.docx for: {title}"),
+                    tokens_in: 10,
+                    tokens_out: 5,
+                    tokens_cached: 0,
+                }))
+                .await;
+                return;
+            }
             if let Some(tool) = title.strip_prefix("TOOL ") {
                 let tool = tool.trim().to_owned();
-                let arguments: Value = serde_json::from_str(
-                    &req.task
-                        .as_ref()
-                        .map(|t| t.content.clone())
-                        .unwrap_or_default(),
-                )
-                .unwrap_or_else(|_| json!({}));
+                // The arguments are the content as JSON, or the JSON object it ends with.
+                let content = req
+                    .task
+                    .as_ref()
+                    .map(|t| t.content.clone())
+                    .unwrap_or_default();
+                let arguments: Value = serde_json::from_str(&content)
+                    .or_else(|_| {
+                        serde_json::from_str(content.find('{').map_or("", |at| &content[at..]))
+                    })
+                    .unwrap_or_else(|_| json!({}));
                 let request_id = Uuid::now_v7().to_string();
                 send(runtime_event::Event::ToolRequest(pb::ToolRequest {
                     request_id: request_id.clone(),

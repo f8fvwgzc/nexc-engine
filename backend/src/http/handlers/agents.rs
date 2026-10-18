@@ -82,6 +82,9 @@ pub struct UpdateAgent {
     pub team_id: Option<Option<Uuid>>,
     /// Replaces the whole document; raises the policy version when it differs.
     pub capabilities: Option<Capabilities>,
+    /// Publishes the agent as an A2A agent, or withdraws it (workspace admins;
+    /// audited as `agent_a2a_changed`; not for an `external` agent).
+    pub a2a_exposed: Option<bool>,
 }
 
 fn check_name(errors: &mut FieldErrors, name: &str) {
@@ -226,6 +229,15 @@ async fn workspace_of_agent(
             AppError::NotFound(_) => AppError::NotFound("agent"),
             other => other,
         })
+}
+
+/// The workspace of agent `id`, when the caller may read its agents.
+pub(crate) async fn readable_agent(
+    state: &AppState,
+    auth: AuthUser,
+    id: Uuid,
+) -> Result<Uuid, AppError> {
+    workspace_of_agent(state, auth, id, Access::Read).await
 }
 
 /// Validates `reports_to`: an agent of the same workspace, not itself, no cycle.
@@ -381,6 +393,7 @@ pub async fn create(
         team_id: req.team_id,
         purpose: req.purpose.trim().to_owned(),
         capabilities: req.capabilities.unwrap_or_default(),
+        a2a_exposed: false,
     };
     check_manager(&state, workspace, None, fields.reports_to).await?;
     check_owner_and_team(&state, workspace, fields.owner_user_id, fields.team_id).await?;
@@ -418,6 +431,26 @@ pub async fn update(
         .capabilities
         .as_ref()
         .is_some_and(|c| *c != current.capabilities);
+    // Publishing an agent over A2A is an admin's decision, and only for an agent that runs here.
+    let exposure_changed = req.a2a_exposed.is_some_and(|e| e != current.a2a_exposed);
+    if exposure_changed {
+        workspace_for(&state, auth, Some(workspace), Access::Admin)
+            .await
+            .map_err(|err| match err {
+                AppError::Forbidden(_) => AppError::Forbidden(
+                    "only a workspace admin publishes an agent over A2A or withdraws it".into(),
+                ),
+                other => other,
+            })?;
+        if req.a2a_exposed == Some(true)
+            && req.runtime.unwrap_or(current.runtime) == AgentRuntime::External
+        {
+            return Err(AppError::field(
+                "a2a_exposed",
+                "an external agent runs elsewhere and cannot take A2A tasks here",
+            ));
+        }
+    }
     let fields = AgentFields {
         name: req.name.map_or(current.name, |n| n.trim().to_owned()),
         role: req.role.map_or(current.role, |r| r.trim().to_owned()),
@@ -432,6 +465,7 @@ pub async fn update(
         team_id: req.team_id.unwrap_or(current.team_id),
         purpose: req.purpose.map_or(current.purpose, |p| p.trim().to_owned()),
         capabilities: req.capabilities.unwrap_or(current.capabilities),
+        a2a_exposed: req.a2a_exposed.unwrap_or(current.a2a_exposed),
     };
     check_manager(&state, workspace, Some(id), fields.reports_to).await?;
     check_owner_and_team(&state, workspace, fields.owner_user_id, fields.team_id).await?;
@@ -446,6 +480,21 @@ pub async fn update(
             AuditAction::PolicyChanged,
             Subject::Text(&agent.principal_id),
             &format!("policy version {}", agent.policy_version),
+        )
+        .await;
+    }
+    if exposure_changed {
+        audit(
+            &state,
+            workspace,
+            auth.id,
+            AuditAction::AgentA2aChanged,
+            Subject::Text(&agent.principal_id),
+            if agent.a2a_exposed {
+                "published as an A2A agent"
+            } else {
+                "withdrawn from A2A"
+            },
         )
         .await;
     }

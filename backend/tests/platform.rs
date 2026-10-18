@@ -117,7 +117,9 @@ async fn the_platform_and_the_workspaces_are_separate_apis(pool: PgPool) {
         ];
         let stream =
             path.ends_with("/events") && path.contains("/graphs/") || path.ends_with("/ws");
-        if open.iter().any(|p| path.starts_with(p)) || stream || path == "/metrics" {
+        // The A2A surface is for agents, not accounts: public cards, agent API tokens.
+        let a2a = path.starts_with("/a2a/") || path.starts_with("/.well-known/");
+        if open.iter().any(|p| path.starts_with(p)) || stream || a2a || path == "/metrics" {
             continue;
         }
         // Path parameters become an id; the member row above makes the real workspace reachable.

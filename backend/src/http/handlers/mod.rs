@@ -1,6 +1,7 @@
 //! Request handlers, one module per resource. Every handler is annotated
 //! with `#[utoipa::path]` and every DTO derives `ToSchema`.
 
+pub mod a2a;
 pub mod account;
 pub mod agent_templates;
 pub mod agents;

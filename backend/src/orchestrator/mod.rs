@@ -42,6 +42,7 @@ pub async fn seed_default_org(
             team_id: None,
             purpose: seed.purpose.into(),
             capabilities: Capabilities::default(),
+            a2a_exposed: false,
         };
         let agent = repo::agents::create(&mut *conn, owner, workspace, &fields).await?;
         ids.insert(seed.role, agent.id);

@@ -4,6 +4,7 @@
 //! §4); field names and enum spellings must not change without updating it.
 #![forbid(unsafe_code)]
 
+pub mod a2a;
 pub mod account;
 pub mod agent;
 pub mod agent_template;

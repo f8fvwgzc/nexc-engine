@@ -198,6 +198,20 @@ pub async fn reap_orphans(state: &AppState) -> anyhow::Result<()> {
 }
 
 async fn execute_run(state: AppState, row: RunRow) {
+    execute_claimed(state, row, Vec::new(), None).await;
+}
+
+/// Executes a run this instance claimed (`repo::runs::claim`): the A2A
+/// adapter runs an inbound task this way, with `opening` spans chained
+/// before anything else (who called, the decision that admitted it) and,
+/// when the firewall refused the task, `refusal` failing every node at once
+/// so the run is on the record without the agent being started.
+pub async fn execute_claimed(
+    state: AppState,
+    row: RunRow,
+    opening: Vec<SpanDraft>,
+    refusal: Option<String>,
+) {
     let token = state.engine.register_run(row.id);
     let started = Instant::now();
     if let Ok(run) = load_run(&state, row.id).await {
@@ -207,13 +221,21 @@ async fn execute_run(state: AppState, row: RunRow) {
     }
     // Every span of the run goes through one chain, in order of receipt.
     let sink = trace::start(state.clone(), row.id, row.graph_id);
-    let outcome = Execution::prepare(&state, &row, token.clone(), sink.handle()).await;
-    let statuses = match outcome {
-        Ok(execution) => execution.drive().await,
-        Err(err) => {
-            tracing::error!(run_id = %row.id, error = %err, "run preparation failed");
-            Vec::new()
+    for span in opening {
+        sink.handle().emit(span);
+    }
+    let statuses = match refusal {
+        Some(reason) => {
+            fail_all_nodes(&state, &row, &reason).await;
+            vec![NodeStatus::Failed]
         }
+        None => match Execution::prepare(&state, &row, token.clone(), sink.handle()).await {
+            Ok(execution) => execution.drive().await,
+            Err(err) => {
+                tracing::error!(run_id = %row.id, error = %err, "run preparation failed");
+                Vec::new()
+            }
+        },
     };
     let cancelled = token.is_cancelled();
     let status = if statuses.is_empty() {
@@ -228,6 +250,40 @@ async fn execute_run(state: AppState, row: RunRow) {
     state.metrics.runs.add(&[("status", status.as_str())], 1);
     state.metrics.run_duration.observe(started.elapsed());
     state.engine.unregister_run(row.id);
+}
+
+/// Fails every node of a run before any is started, with `reason` (a task
+/// the firewall refused).
+async fn fail_all_nodes(state: &AppState, row: &RunRow, reason: &str) {
+    let nodes =
+        match repo::runs::close_unfinished_nodes(&state.db, row.id, NodeStatus::Failed).await {
+            Ok(nodes) => nodes,
+            Err(err) => {
+                tracing::error!(run_id = %row.id, error = %err, "refused run's nodes not closed");
+                return;
+            }
+        };
+    for node_id in nodes {
+        if let Err(err) = repo::runs::set_node_error(&state.db, row.id, node_id, reason).await {
+            tracing::error!(run_id = %row.id, error = %err, "refused run's node reason not recorded");
+        }
+        if let Err(err) =
+            repo::nodes::set_status(&state.db, node_id, NodeStatus::Failed, None).await
+        {
+            tracing::error!(run_id = %row.id, error = %err, "refused run's node status not recorded");
+        }
+        state.hub.publish(
+            row.graph_id,
+            SseEvent::NodeStatus(NodeStatusEvent {
+                run_id: row.id,
+                node_id,
+                status: NodeStatus::Failed,
+                attempt: 0,
+                error: Some(reason.to_owned()),
+                cached: false,
+            }),
+        );
+    }
 }
 
 /// Closes the run: leftover nodes, the final status, the seal of its trace
@@ -318,6 +374,9 @@ struct RunData {
     edges: Vec<GraphEdge>,
     /// The run's trace chain.
     trace: TraceHandle,
+    /// The agent every node runs as, when the graph is an exposed agent's
+    /// A2A graph (its tasks are its own, whatever role the node names).
+    pinned_agent: Option<Uuid>,
 }
 
 impl RunData {
@@ -397,6 +456,7 @@ impl Execution {
         // The workspace level governs the whole run; each node records every level.
         let versions = policies::versions_of(&policies::levels_for(&policies, None, None));
         repo::runs::set_policy_versions(&state.db, row.id, &versions).await?;
+        let pinned_agent = repo::a2a::pinned_agent_of_graph(&state.db, row.graph_id).await?;
         let data = RunData {
             run_id: row.id,
             graph_id: row.graph_id,
@@ -411,6 +471,7 @@ impl Execution {
             ontology: graph.ontology,
             edges,
             trace,
+            pinned_agent,
         };
         Ok(Execution {
             state: state.clone(),
@@ -823,7 +884,12 @@ impl NodeTask {
     ) -> anyhow::Result<Self> {
         let began = Utc::now();
         let hash = content_hash(&data, &node, &upstream);
-        let agent = orchestrator::assign(&state, data.workspace_id, &node, &data.ontology).await?;
+        let agent = match (data.pinned_agent, data.workspace_id) {
+            (Some(pinned), Some(workspace)) => {
+                repo::agents::find(&state.db, workspace, pinned).await?
+            }
+            _ => orchestrator::assign(&state, data.workspace_id, &node, &data.ontology).await?,
+        };
         let query = format!("{} {}", node.title, node.content);
         let recalled = match data.workspace_id {
             Some(workspace) => memory::retrieve(

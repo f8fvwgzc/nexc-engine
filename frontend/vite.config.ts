@@ -79,6 +79,15 @@ export default defineConfig({
         changeOrigin: true,
         ws: true,
       },
+      // The A2A surface lives at the root, where the protocol expects it (CONTRACT §10).
+      '/a2a': {
+        target: process.env.NEXC_API_URL ?? 'http://localhost:8080',
+        changeOrigin: true,
+      },
+      '/.well-known/agent.json': {
+        target: process.env.NEXC_API_URL ?? 'http://localhost:8080',
+        changeOrigin: true,
+      },
     },
   },
   preview: { port: 4173 },

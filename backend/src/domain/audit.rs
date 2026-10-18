@@ -58,6 +58,11 @@ string_enum!(
         /// An API token was issued to an external agent (subject: the principal; detail: the prefix).
         AgentTokenIssued => "agent_token_issued",
         AgentTokenRevoked => "agent_token_revoked",
+        /// An agent was published as an A2A agent, or withdrawn (subject: the principal).
+        AgentA2aChanged => "agent_a2a_changed",
+        /// An A2A counterpart was registered or removed (subject: `a2a:<name>`).
+        A2aCounterpartAdded => "a2a_counterpart_added",
+        A2aCounterpartRemoved => "a2a_counterpart_removed",
     }
 );
 
