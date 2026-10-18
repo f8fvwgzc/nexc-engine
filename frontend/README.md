@@ -136,6 +136,9 @@ interactive elements that overlap, or a serious or critical axe violation (light
 px); each page's skeleton (requests left pending) and error state (requests answered 500) get the
 same layout and axe checks at 375 and 1280 px. The main pages are compared with the baselines in
 `e2e/__screenshots__` (light; 1% of pixels may differ past a small colour distance).
+`behaviour.spec.ts` checks what pages do over time: the Runs page following a run to its end,
+**Try again** on a page that failed to load, data kept on screen when a background refetch
+fails, a filter that matches nothing, and the unread count in the tablet's icon rail.
 
 The baselines are rendered on Linux, in the Playwright image CI runs: `make e2e-ui` runs the
 suite there (Docker), `make e2e-ui-update` re-renders the baselines after a deliberate change.

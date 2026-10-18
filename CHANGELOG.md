@@ -24,6 +24,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   state to the same layout and axe checks at 375 and 1280 px; ten main pages (Graphs, Runs, a run,
   Agents, AgentSecOps, Sessions, Inbox, Issues, Projects, Members) are compared with screenshot
   baselines at the three widths (`frontend/e2e/__screenshots__`, light, 1% of pixels may differ).
+  `behaviour.spec.ts` checks what pages do over time: the Runs page following a run to its end,
+  **Try again** on a page that failed to load, data kept on screen when a background refetch
+  fails, a filter that matches nothing, and the inbox's unread count at 768 and 1280 px.
   The baselines are rendered in the Playwright image (`mcr.microsoft.com/playwright`, the
   version of `@playwright/test`), which the new CI job **Frontend UI** runs and `make e2e-ui`
   runs locally through Docker (`scripts/e2e-ui.sh`; `make e2e-ui-update` re-renders the
