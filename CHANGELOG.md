@@ -85,7 +85,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   on across the takeover and resumes with the decision carried to its new request; a cancel of a
   sub-agent recorded while nobody held the run is delivered by the new holder to the sub-agent of
   the same name in the new attempt; an instance that stops renewing (`TestApp::stop_renewing`)
-  notices the takeover and stops its copy without writing.
+  notices the takeover and stops its copy without writing, the chain verifying with no span
+  missing (the live former holder racing the new one; `TestApp::crash` stops the runs with the
+  process, as a crash does).
 - Graceful hand-off on shutdown (`docs/HA.md`, shutting down; `docs/CONTRACT.md` §5): on SIGTERM
   a backend replica drains instead of cancelling its runs. `/readyz` answers 503 (`draining`),
   its dispatcher claims nothing more, every run it executes stops, writes its trace and releases

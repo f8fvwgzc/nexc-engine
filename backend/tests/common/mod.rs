@@ -284,6 +284,13 @@ impl TestApp {
     /// are aborted and every run it executes stops at once without writing
     /// anything more, with no graceful shutdown. Its leases run out and a
     /// peer takes the runs over. Its HTTP router still answers.
+    ///
+    /// The runs stop with the rest because a dead process writes nothing
+    /// more: aborting only the dispatcher and the lease keeper would leave a
+    /// live former holder racing the new one, which is what a partition
+    /// looks like, not a crash. That case has its own tests: an instance
+    /// that keeps executing while it no longer renews
+    /// ([`TestApp::stop_renewing`]) and a resurrected lease writing late.
     pub fn crash(&self) {
         for worker in &self.workers {
             worker.abort();

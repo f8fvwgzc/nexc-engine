@@ -901,7 +901,13 @@ async fn a_holder_cut_off_from_its_lease_stops_by_itself(pool: PgPool) {
             .all(|(e, d)| !(e == "node.status" && d["status"] == "succeeded")),
         "A announced no success"
     );
-    assert_eq!(verified(&b, &token, &rid).await["ok"], true);
+    // The chain verifies with no span missing: what A chained before it stopped, then B's.
+    let verification = verified(&b, &token, &rid).await;
+    assert_eq!(verification["ok"], true, "{verification}");
+    let spans = spans_of(&b, &token, &rid).await;
+    let mut seqs: Vec<i64> = spans.iter().map(|s| s["seq"].as_i64().unwrap()).collect();
+    seqs.sort_unstable();
+    assert_eq!(seqs, (0..spans.len() as i64).collect::<Vec<_>>());
 }
 
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
