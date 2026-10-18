@@ -31,6 +31,7 @@ use crate::domain::alert::AlertKind;
 use crate::domain::audit::AuditAction;
 use crate::domain::capabilities::{Capabilities, DataLabel};
 use crate::domain::context;
+use crate::domain::evidence::{self, Given};
 use crate::domain::graph::{Executor, GraphEdge, GraphNode, NodeStatus};
 use crate::domain::guardrails::Guardrails;
 use crate::domain::injection::{self, InjectionFinding};
@@ -978,15 +979,28 @@ impl NodeTask {
             .collect();
         labels_given.sort_by_key(|l| l.rank());
         labels_given.dedup();
+        // Every piece of context carries the id the model is told to cite it by.
         let memories = recalled
             .into_iter()
-            .map(|m| data.policy.scrub(m.content))
+            .map(|m| evidence::memory_line(m.id, &data.policy.scrub(m.content)))
             .collect();
         let chunk_ids: Vec<Uuid> = passages.iter().map(|p| p.chunk_id).collect();
         let documents: Vec<String> = passages
             .into_iter()
-            .map(|p| data.policy.scrub(p.text))
+            .map(|p| {
+                format!(
+                    "{}\n{}",
+                    evidence::document_head(p.chunk_id, &p.citation),
+                    data.policy.scrub(p.content)
+                )
+            })
             .collect();
+        let given = Given {
+            documents: chunk_ids.clone(),
+            memories: memory_ids.clone(),
+            nodes: upstream_ids.clone(),
+            facts: Vec::new(),
+        };
         let principal = agent
             .as_ref()
             .map_or_else(|| SYSTEM_PRINCIPAL.to_owned(), |a| a.principal_id.clone());
@@ -1161,6 +1175,7 @@ impl NodeTask {
                 "document_chunk_ids": chunk_ids,
                 "memory_ids": memory_ids,
                 "upstream_node_ids": upstream_ids,
+                "citation_ids": given.keys(),
                 "documents": chunk_ids.len(),
                 "memories": memory_ids.len(),
                 "chars_saved": context_saved,
@@ -1181,6 +1196,7 @@ impl NodeTask {
             upstream: upstream_outputs,
             memories,
             documents,
+            given,
             agent,
             capabilities,
             policy_version,

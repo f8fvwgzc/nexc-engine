@@ -193,7 +193,10 @@ async def _run(
         title=request.task.title,
         content=request.task.content,
         goal=request.context.goal,
-        upstream=[Upstream(u.title or u.node_id, u.output) for u in request.context.upstream],
+        upstream=[
+            Upstream(title=u.title or u.node_id, output=u.output, node_id=u.node_id)
+            for u in request.context.upstream
+        ],
         memories=request.context.memories,
         documents=request.context.documents,
     )

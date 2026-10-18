@@ -600,17 +600,26 @@ async fn a_restricted_document_never_reaches_an_internal_agent(pool: PgPool) {
     let request = seen.lock().unwrap().last().unwrap().clone();
     let documents = request["context"]["documents"].as_array().unwrap();
     assert!(!documents.is_empty(), "{request}");
-    assert!(documents[0].as_str().unwrap().starts_with("[handbook.md"));
+    // Headed by its citation id and its source: `[doc:<chunk id>] handbook.md …`.
+    let head = documents[0].as_str().unwrap();
+    assert!(head.starts_with("[doc:"), "{head}");
+    assert!(head.contains("] handbook.md"), "{head}");
     let spans = spans_of(&app, &owner, &rid).await;
     assert!(!spans.iter().any(|s| s["kind"] == "policy"), "{spans:?}");
     let read = spans.iter().find(|s| s["kind"] == "data_read").unwrap();
-    assert_eq!(
-        read["attributes"]["document_chunk_ids"]
-            .as_array()
-            .unwrap()
-            .len(),
-        documents.len()
-    );
+    let chunk_ids = read["attributes"]["document_chunk_ids"].as_array().unwrap();
+    assert_eq!(chunk_ids.len(), documents.len());
+    // The ids the model was told to cite are the ids it was given (documents first).
+    let cited: Vec<&str> = read["attributes"]["citation_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .filter(|id| id.starts_with("doc:"))
+        .collect();
+    assert_eq!(cited.len(), chunk_ids.len());
+    assert_eq!(cited[0], format!("doc:{}", chunk_ids[0].as_str().unwrap()));
+    assert!(head.starts_with(&format!("[{}] ", cited[0])), "{head}");
     // Back to internal, with the agent's clearance back to the default: withheld again.
     call(
         &app,

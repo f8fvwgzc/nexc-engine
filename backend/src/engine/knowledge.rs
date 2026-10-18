@@ -766,8 +766,8 @@ pub async fn context(
 ) -> Vec<String> {
     context_passages(state, workspace, user, query, purpose)
         .await
-        .into_iter()
-        .map(|p| p.text)
+        .iter()
+        .map(ContextPassage::text)
         .collect()
 }
 
@@ -780,8 +780,27 @@ pub struct ContextPassage {
     pub topic_id: Option<Uuid>,
     /// The stricter of the document's and the topic's classification.
     pub label: DataLabel,
-    /// The passage headed by its citation.
-    pub text: String,
+    /// Where a reader finds the passage: `customs.pdf, p. 17 › Exemptions`.
+    pub citation: String,
+    /// The passage itself, within the budget.
+    pub content: String,
+}
+
+impl ContextPassage {
+    /// The passage headed by its source in brackets (the planner's form).
+    pub fn text(&self) -> String {
+        format!("[{}]\n{}", self.citation, self.content)
+    }
+
+    /// The passage headed by its citation id and its source, `[doc:<chunk
+    /// id>] <source>` on the first line: what a node is given and told to cite.
+    pub fn cited_text(&self) -> String {
+        format!(
+            "{}\n{}",
+            crate::domain::evidence::document_head(self.chunk_id, &self.citation),
+            self.content
+        )
+    }
 }
 
 /// The passages to put before a model for `query`, each with its chunk id
@@ -831,7 +850,8 @@ pub async fn context_passages(
             document_id: passage.document_id,
             topic_id: passage.topic_id,
             label: passage.effective_label(),
-            text: format!("[{}]\n{}", passage.citation(), content),
+            citation: passage.citation(),
+            content,
         });
     }
     out

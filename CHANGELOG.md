@@ -9,6 +9,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Evidence ids in every node's context (`docs/AGENTSECOPS.md` §2, evidence-bound answers;
+  `docs/CONTRACT.md` §4 and §8): every piece of context a node is given carries a stable
+  citation id the model is told to cite it by. A document passage is headed by
+  `[doc:<chunk id>] <source>`, a memory by `[mem:<memory id>]`, an upstream result's heading
+  ends with `[node:<node id>]` (the runtime renders them as the `id` attribute of its
+  `<document>`, `<memory>` and `<upstream_output>` tags), and `[fact:<id>]` is reserved for
+  ontology facts. Both prompt builders (the built-in executor's and the runtime's) tell the
+  model to cite the id in brackets after each claim that rests on it, that several ids may
+  share one bracket, and to end a statement of its own with `[assumption]`. The node's
+  `data_read` span lists the ids it was told to cite (`citation_ids`), beside the chunk,
+  memory and node ids it already listed. Tests: the ids are rendered in both prompts and never
+  leak into the upstream titles the demo provider reads back (`backend/src/domain/prompt.rs`,
+  `agent-runtime/tests/test_prompts.py`).
 - A2A adapter, the console: the agent card gets an **A2A** tab with the switch that publishes
   the agent (admins; disabled for an external agent, with the reason), the addresses of its card,
   its well-known card and its JSON-RPC endpoint under the console's origin with a copy each, and

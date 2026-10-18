@@ -502,7 +502,7 @@ interface Span {
   prev_hash: string; // hex
   hash: string; // hex
 }
-// data_read (backend, before a node runs): attributes {document_chunk_ids, memory_ids, upstream_node_ids, documents, memories, chars_saved}
+// data_read (backend, before a node runs): attributes {document_chunk_ids, memory_ids, upstream_node_ids, citation_ids, documents, memories, chars_saved}; `citation_ids` are the ids the model was told to cite, `doc:<chunk id>`, `mem:<id>`, `node:<id>` (and `fact:<id>` once a node is given ontology facts), in that order
 // llm_call (built-in executor): attributes {provider, model, tokens_in, tokens_out, tokens_cached, stop_reason, duration_ns}
 // policy (backend): attributes {decision: allow|deny|mismatch, rule, reason, action, policy_version, …}: the model allow-list before dispatch (name: the model), what the context builder withheld (name "context": withheld_document_chunk_ids, withheld_memory_ids, withheld_by_labels|topics|namespaces), a quarantine (rule "quarantine"), and every re-check disagreement (name "policy_mismatch": span_id, principal)
 // llm_call, tool_call, spawn, policy (agent runtime): see §8
@@ -1210,8 +1210,8 @@ waiting call its decision (below). Request of `/v1/execute`:
   "context": {
     "goal": "…",
     "upstream": [{ "node_id": "…", "title": "…", "output": "…" }],
-    "memories": ["…"],
-    "documents": ["[report.pdf, p. 17]\n…"],
+    "memories": ["[mem:0199…] …"],
+    "documents": ["[doc:0199…] report.pdf, p. 17\n…"],
     "labels": ["internal"]
   },
   "llm": {
@@ -1223,6 +1223,17 @@ waiting call its decision (below). Request of `/v1/execute`:
   "limits": { "max_turns": 12, "timeout_s": 600, "allow_code_exec": false }
 }
 ```
+
+**Citation ids.** Every piece of `context` carries the id the model is told to cite it by
+(`docs/AGENTSECOPS.md` §2, evidence-bound answers): each document passage starts with
+`[doc:<chunk id>] <source>` on a line of its own, each memory with `[mem:<memory id>]`, and an
+upstream output is cited as `[node:<node_id>]`. The runtime renders them as `<document id="doc:…"
+source="…">`, `<memory id="mem:…">` and `<upstream_output title="…" id="node:…">` and tells the
+model to cite the id after each claim that rests on it (several ids may share one bracket), and
+to end a claim of its own with `[assumption]`. The same ids are listed on the node's `data_read`
+span (`citation_ids`, §4) and are what the backend's verifier checks an output's citations
+against. A passage headed by its source alone in brackets (an older backend) still renders with
+its `source`.
 
 **The per-run agent token.** `token` is an HS256 JWT the backend signs with `NEXC_AGENT_TOKEN_KEY`
 (derived from `NEXC_RUNTIME_TOKEN` as SHA-256(`nexc-agent-token-v1:` + token) when unset; the
