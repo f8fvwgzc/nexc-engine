@@ -2,7 +2,7 @@
 
 # nexc-engine
 
-**Sketch your goal as a graph of ideas. An LLM turns it into a plan. A team of agents executes it and hands you real deliverables.**
+**The Enterprise Business Executor: hand an issue to agents, watch them do the work, and prove what they did.**
 
 [![CI](https://github.com/f8fvwgzc/nexc-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/f8fvwgzc/nexc-engine/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/f8fvwgzc/nexc-engine/actions/workflows/codeql.yml/badge.svg)](https://github.com/f8fvwgzc/nexc-engine/actions/workflows/codeql.yml)
@@ -19,25 +19,34 @@
 [Docs](https://f8fvwgzc.github.io/nexc-engine/) ·
 [Contributing](CONTRIBUTING.md)
 
-<img src="docs/media/hero.png" alt="nexc-engine: an Obsidian-like node graph whose nodes are planned by an LLM and executed by agents" width="900">
+<img src="docs/media/hero.png" alt="nexc-engine: the plan agents made for an issue, as a graph of steps they execute" width="900">
 
 </div>
 
 ---
 
 <!-- #region intro -->
-nexc-engine is a self-hosted, visual **LLM graph-engineering** platform. You think in an
-Obsidian-like canvas of notes and links; nexc turns that canvas into an executable plan:
+nexc-engine is a self-hosted **business executor**: a work tracker where AI agents do the work
+and every step they take is on the record. Work arrives as issues, in teams, projects and
+sub-issues like Linear. You hand an issue to agents and nexc does the rest:
 
-1. **Sketch** – drop topics, tasks and questions on a canvas. `[[wikilinks]]` and similarity
-   detection suggest the dependencies for you.
-2. **Refine** – ask the LLM to turn the sketch into a concrete plan. Proposed nodes and edges stream
-   in live; you review and apply them.
-3. **Execute** – the scheduler runs the graph as a DAG. Each node is handled by a direct LLM call,
-   by an agent "born" for that role in the Python runtime (it can spawn its own sub-agents), or by
-   [texc-symphony](https://github.com/f8fvwgzc/texc-symphony) for real coding work.
-4. **Collect** – outputs flow downstream as context, and every node can produce artifacts: Word
-   documents, code, research notes, downloadable as a zip.
+1. **Hand it over** – press **Hand to agents** on an issue. An LLM plans it as a graph of
+   steps, and you see the plan before anything runs.
+2. **Watch it run** – the steps run as a DAG. Each one is a direct model call, an agent "born"
+   for its role (it can spawn its own sub-agents), or
+   [texc-symphony](https://github.com/f8fvwgzc/texc-symphony) for real coding work. The issue
+   shows every step live: its status, what it streams and the files it makes.
+3. **Review the result** – when the run ends, its deliverable and files land on the issue's
+   timeline, a successful run moves the issue to **In Review**, and the people on the issue find
+   it in their inbox. A failed run says which step failed and why.
+4. **Prove what happened** – every agent is a principal with scopes and a signed token, every
+   action is a span on a hash chain, policies only narrow, risky calls wait for a person, and the
+   **Trust** page answers "what did this agent touch, and who allowed it?"
+
+Agents spend tokens carefully, always: a step reads only the passages of earlier output that
+matter to it, a tool loop reads its history back from the prompt cache and is billed at
+cache-read prices, noisy tool output is compacted before the model reads it, and steps whose
+inputs did not change are not run again.
 
 No API key? Demo mode runs the entire product offline with a deterministic provider, so you can
 explore everything before you plug in Claude or a local model.
@@ -53,9 +62,9 @@ git clone https://github.com/f8fvwgzc/nexc-engine.git && cd nexc-engine
 make init && docker compose up -d
 ```
 
-Open **http://localhost:8080**, create an account, pick a starter template and press **Plan**, then
-**Run**. `make init` generates every
-secret and selects **demo mode** (no API key needed). `docker compose up` pulls the release images
+Open **http://localhost:8080** and create an account. Open **Issues**, file an issue, press
+**Hand to agents**, then **Apply plan and run**, and watch the steps on the issue. `make init`
+generates every secret and selects **demo mode** (no API key needed). `docker compose up` pulls the release images
 or, before the first release or for local changes, builds them from source (`make docker-up` always
 rebuilds).
 
@@ -79,16 +88,16 @@ environment.
 | **Agents org chart with token budgets**                                                                 | **Landing page**                                                                                                       |
 | <img src="docs/media/agents.png" alt="Paperclip-style org chart of agents with budgets">                | <img src="docs/media/landing.png" alt="Public landing page">                                                           |
 
-## AgentSecOps
+## Trust
 
 <!-- #region agentsecops -->
-nexc-engine is also an AgentSecOps platform in the shape of SoftBank's AgentSecOps PF: every
+Trust is built in, on the AgentSecOps model: every
 agent is a principal with scopes and a signed per-run token, every action is a span on a hash
 chain, policies are versioned data that only narrow, approvals land in the inbox, DLP and a
 behaviour baseline defend, and the audit is asked through an ontology. The roadmap and the
 design are in [`docs/AGENTSECOPS.md`](docs/AGENTSECOPS.md).
 
-The **AgentSecOps** page (`/app/secops`) is the one screen a CISO wants to see: the agents
+The **Trust** page (`/app/secops`) is the one screen a CISO wants to see: the agents
 with their risk, a live feed of spans and alerts, approvals and alerts decided in place, risk
 over the last fourteen days, the resolved policy of any agent with a diff between versions,
 the audit's questions, and a trace explorer across every run.
@@ -133,6 +142,10 @@ default), readable by the run's owner and the workspace's admins and audited whe
 <!-- #region features -->
 |                                 |                                                                                                                                                                                                                                                      |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Issues handed to agents**     | A Linear-style tracker (teams, projects, cycles, sub-issues, an inbox) where one button hands an issue to agents: they plan it as steps, run them and report back on the issue.                                                                     |
+| **Agent work, live**            | The issue shows its plan as a trace of steps over SSE: status, streamed output, logs and files, built on the AI Elements patterns of shadcn/ui. Each sub-issue shows where its own latest run stands.                                               |
+| **Run reports**                 | A finished run writes its deliverable onto the issue's timeline, moves a successful issue to In Review and tells the assignee, the creator and whoever ran it; exactly once, even when another replica took the run over.                          |
+| **Token efficiency, always on** | Upstream output is fitted to each step by relevance, tool loops are prompt-cached and priced at each model's cache-read rate, tool results are compacted (colour codes, repeats, the middle of huge outputs), and unchanged steps hit a result cache. |
 | **Visual graph editor**         | Obsidian-like canvas with typed nodes, drag-and-drop, `[[wikilink]]` auto-edges, live multi-user presence over WebSocket.                                                                                                                            |
 | **Ontology per graph**          | Node types and relation types are data, not code: each graph owns its vocabulary, the planner extends it for the goal's domain, every edge states why it exists, and only relations marked _blocking_ order execution.                               |
 | **LLM plan refinement**         | One click turns a rough sketch into a structured plan; proposed nodes and edges stream over SSE and are applied atomically.                                                                                                                          |
@@ -402,7 +415,7 @@ for details – they all evolve quickly):
 
 |                                                       | Core idea                                                              | Plans its own graph with an LLM | Agents with budgets that spawn sub-agents | Produces files (docx, code) as artifacts | Stack               |
 | ----------------------------------------------------- | ---------------------------------------------------------------------- | :-----------------------------: | :---------------------------------------: | :--------------------------------------: | ------------------- |
-| **nexc-engine**                                       | Knowledge-graph canvas → LLM plan → DAG of agents                      |               yes               |                    yes                    |                   yes                    | Rust, React, Python |
+| **nexc-engine**                                       | Issue → LLM plan → DAG of agents → report, on the record               |               yes               |                    yes                    |                   yes                    | Rust, React, Python |
 | [n8n](https://n8n.io)                                 | General workflow automation with hundreds of integrations and AI nodes |                –                |                     –                     |             via integrations             | TypeScript          |
 | [Langflow](https://www.langflow.org)                  | Visual builder for LLM flows and agents                                |                –                |                     –                     |              via components              | Python              |
 | [Flowise](https://flowiseai.com)                      | Visual builder for LLM apps and agent flows                            |                –                |                     –                     |              via components              | TypeScript          |

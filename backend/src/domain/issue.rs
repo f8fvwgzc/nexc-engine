@@ -182,6 +182,8 @@ string_enum!(
         Title => "title",
         /// The due date was set, moved or removed.
         Due => "due",
+        /// A run of the issue's graph finished: its result, with the run it came from.
+        Run => "run",
     }
 );
 
@@ -206,6 +208,9 @@ pub struct IssueEvent {
     /// When a comment was last edited.
     #[schema(required = true)]
     pub edited_at: Option<DateTime<Utc>>,
+    /// The run a `run` entry reports; `null` for other entries and once the run is deleted.
+    #[schema(required = true)]
+    pub run_id: Option<Uuid>,
 }
 
 /// A change to record in an issue's timeline.
@@ -274,6 +279,8 @@ string_enum!(
         Approval => "approval",
         /// Something about an agent needs a look (a DLP finding, a risk score, an injection).
         Alert => "alert",
+        /// A run that executes the issue finished; its result is on the issue.
+        Run => "run",
     }
 );
 
@@ -337,6 +344,68 @@ pub struct Notification {
     pub read_at: Option<DateTime<Utc>>,
 }
 
+/// Most characters of a run's result an issue's timeline keeps; the run
+/// itself keeps everything, and the entry links to it.
+pub const RUN_REPORT_MAX_CHARS: usize = 6_000;
+
+/// What one node of a finished run left: its output, or why it failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeOutcome {
+    pub title: String,
+    pub text: String,
+}
+
+/// The body of the `run` entry a finished run writes on its issue: what the
+/// last nodes of the graph produced (the deliverable, not every step on the
+/// way), then what failed. One result stands alone; several are headed by
+/// their node. Cut to [`RUN_REPORT_MAX_CHARS`] with a marker that says how
+/// much the run holds.
+pub fn run_report(results: &[NodeOutcome], failures: &[NodeOutcome]) -> String {
+    let mut out = String::new();
+    let results: Vec<&NodeOutcome> = results
+        .iter()
+        .filter(|r| !r.text.trim().is_empty())
+        .collect();
+    match results.as_slice() {
+        [] => {}
+        [only] => out.push_str(only.text.trim()),
+        many => {
+            for (i, r) in many.iter().enumerate() {
+                if i > 0 {
+                    out.push_str("\n\n");
+                }
+                out.push_str(&format!("### {}\n\n{}", r.title.trim(), r.text.trim()));
+            }
+        }
+    }
+    for f in failures {
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
+        let why = f.text.trim();
+        let why = if why.is_empty() {
+            "no reason was given"
+        } else {
+            why
+        };
+        out.push_str(&format!("**{}** failed: {}", f.title.trim(), why));
+    }
+    let total = out.chars().count();
+    if total <= RUN_REPORT_MAX_CHARS {
+        return out;
+    }
+    let marker = format!("\n\n[… the run holds {total} characters; open it for the rest]");
+    let keep = RUN_REPORT_MAX_CHARS.saturating_sub(marker.chars().count());
+    let mut cut: String = out.chars().take(keep).collect();
+    // End on a whole line when one is near, rather than mid-word.
+    if let Some(at) = cut.rfind('\n').filter(|&at| at > keep / 2) {
+        cut.truncate(at);
+    }
+    cut.truncate(cut.trim_end().len());
+    cut.push_str(&marker);
+    cut
+}
+
 /// `#rrggbb`.
 pub fn is_hex_color(s: &str) -> bool {
     s.len() == 7 && s.starts_with('#') && s[1..].chars().all(|c| c.is_ascii_hexdigit())
@@ -345,6 +414,38 @@ pub fn is_hex_color(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_run_report_carries_the_deliverable_and_what_failed() {
+        let node = |title: &str, text: &str| NodeOutcome {
+            title: title.into(),
+            text: text.into(),
+        };
+        // One result stands alone.
+        assert_eq!(
+            run_report(&[node("Draft", "  The report.  ")], &[]),
+            "The report."
+        );
+        // Several are headed by their node; empty outputs are left out.
+        assert_eq!(
+            run_report(&[node("A", "one"), node("B", " "), node("C", "two")], &[]),
+            "### A\n\none\n\n### C\n\ntwo"
+        );
+        // Failures follow, with a reason even when none was recorded.
+        assert_eq!(
+            run_report(&[], &[node("Fetch", "timed out"), node("Parse", "")]),
+            "**Fetch** failed: timed out\n\n**Parse** failed: no reason was given"
+        );
+        // A long result is cut on a line, with a marker that says how much the run holds.
+        let long = "line of the result\n".repeat(1_000);
+        let cut = run_report(&[node("Draft", &long)], &[]);
+        assert!(cut.chars().count() <= RUN_REPORT_MAX_CHARS, "{}", cut.len());
+        assert!(cut.ends_with("open it for the rest]"));
+        assert!(
+            cut.contains("line of the result\n\n[…"),
+            "cut on a whole line"
+        );
+    }
 
     #[test]
     fn the_starter_workflow_covers_every_category_once_it_matters() {

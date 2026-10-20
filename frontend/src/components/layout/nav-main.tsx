@@ -1,6 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
+import { ChevronRightIcon } from 'lucide-react';
+import { useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   SidebarGroup,
   SidebarGroupLabel,
@@ -14,7 +17,7 @@ import { teamsQuery } from '@/features/workspaces/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { cn } from '@/lib/utils';
 
-import { BUILD_ITEMS, WORK_ITEMS, type NavItem } from './nav-items';
+import { MORE_ITEMS, PRIMARY_ITEMS, type NavItem } from './nav-items';
 
 /** Compact rows: 28px tall, 13px text. */
 const ROW = 'h-7 text-[13px]';
@@ -121,13 +124,42 @@ function NavTeams() {
   );
 }
 
+/**
+ * The views behind the issues, folded away until wanted. Open on its own while one of them is the
+ * page, so the reader always sees where they are.
+ */
+function NavMore() {
+  const { pathname } = useLocation();
+  const here = MORE_ITEMS.some((item) =>
+    item.end
+      ? pathname === item.to || pathname.startsWith('/app/graphs')
+      : pathname.startsWith(item.to),
+  );
+  const [open, setOpen] = useState(here);
+  return (
+    <Collapsible open={open || here} onOpenChange={setOpen}>
+      <SidebarGroup className="py-1">
+        <SidebarGroupLabel asChild className="h-7">
+          <CollapsibleTrigger className="group/more flex w-full items-center gap-1">
+            More
+            <ChevronRightIcon className="size-3.5 transition-transform group-data-[state=open]/more:rotate-90" />
+          </CollapsibleTrigger>
+        </SidebarGroupLabel>
+      </SidebarGroup>
+      <CollapsibleContent>
+        <NavSection items={MORE_ITEMS} />
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 export function NavMain() {
   const unread = useUnread();
   return (
     <>
-      <NavSection items={WORK_ITEMS} badges={{ '/app/inbox': unread }} />
+      <NavSection items={PRIMARY_ITEMS} badges={{ '/app/inbox': unread }} />
       <NavTeams />
-      <NavSection label="Build" items={BUILD_ITEMS} />
+      <NavMore />
     </>
   );
 }

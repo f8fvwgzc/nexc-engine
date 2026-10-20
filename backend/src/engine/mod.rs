@@ -14,6 +14,7 @@ pub mod deps;
 pub mod editor;
 pub mod executor;
 pub mod guardrails;
+pub mod issue_report;
 pub mod json_stream;
 pub mod knowledge;
 pub mod lease;

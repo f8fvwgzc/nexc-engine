@@ -9,7 +9,6 @@ import {
   PlusIcon,
   Trash2Icon,
   UsersIcon,
-  WorkflowIcon,
 } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
@@ -44,7 +43,6 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import {
   createIssue,
-  createIssueGraph,
   cyclesQuery,
   deleteIssue,
   issueQuery,
@@ -55,6 +53,7 @@ import {
   updateIssue,
 } from '@/features/issues/api';
 import { dueLabel, localToday } from '@/features/issues/due';
+import { IssueRun } from '@/features/issues/issue-run';
 import { IssueTimeline } from '@/features/issues/issue-timeline';
 import { LabelPicker } from '@/features/issues/label-picker';
 import { SubIssues } from '@/features/issues/sub-issues';
@@ -196,7 +195,7 @@ function NewIssueDialog({
           <Textarea
             value={description}
             rows={5}
-            placeholder="What needs to happen, and why (optional). This becomes the goal when the issue is planned as a graph."
+            placeholder="What needs to happen, and why (optional). Agents work from it when the issue is handed to them."
             aria-label="Description"
             onChange={(e) => setDescription(e.target.value)}
           />
@@ -260,14 +259,6 @@ function IssueDialog({
     mutationFn: (body: Partial<IssueInput>) => updateIssue(issue.id, body),
     onSuccess: refresh,
   });
-  const plan = useMutation({
-    mutationFn: () => createIssueGraph(issue.id),
-    meta: { successMessage: 'Graph created for this issue' },
-    onSuccess: (linked) => {
-      void refresh();
-      if (linked.graph_id) void navigate(`/app/graphs/${linked.graph_id}`);
-    },
-  });
   const remove = useMutation({
     mutationFn: () => deleteIssue(issue.id),
     meta: { successMessage: 'Issue deleted' },
@@ -314,7 +305,7 @@ function IssueDialog({
           <DialogDescription className="sr-only">
             {issue.title}, updated {formatRelative(issue.updated_at)}
           </DialogDescription>
-          {issue.graph_id ? (
+          {issue.graph_id && (
             <Button
               variant="outline"
               size="sm"
@@ -322,16 +313,6 @@ function IssueDialog({
             >
               <NetworkIcon />
               Open graph
-            </Button>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={plan.isPending}
-              onClick={() => plan.mutate()}
-            >
-              <WorkflowIcon />
-              Plan as graph
             </Button>
           )}
           <IconButton
@@ -360,16 +341,17 @@ function IssueDialog({
               value={description}
               rows={5}
               aria-label="Description"
-              placeholder="Add a description. It becomes the goal when the issue is planned as a graph."
+              placeholder="Add a description. Agents work from it when the issue is handed to them."
               className="resize-none border-0 bg-transparent px-0 shadow-none focus-visible:ring-0 dark:bg-transparent"
               onChange={(e) => setDescription(e.target.value)}
               onBlur={commitText}
             />
-            {(save.error ?? plan.error) && (
+            {save.error && (
               <p role="alert" className="text-sm text-destructive">
-                {errorMessage(save.error ?? plan.error)}
+                {errorMessage(save.error)}
               </p>
             )}
+            <IssueRun issue={issue} />
             <SubIssues workspace={workspace} issue={issue} onOpen={onOpen} />
             <IssueTimeline
               issue={issue}
@@ -863,7 +845,7 @@ export function IssueExplorer({
       {!project && !person && (
         <PageHeader
           title="Issues"
-          description={`Work tracked in ${workspace.name}. Open an issue to plan and run it as a graph.`}
+          description={`Work tracked in ${workspace.name}. Open an issue and hand it to agents.`}
           actions={newIssueButton}
         />
       )}

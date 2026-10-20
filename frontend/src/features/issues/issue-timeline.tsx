@@ -12,6 +12,7 @@ import type { Issue, IssueEvent } from '@/schemas/issue';
 import { useAuthStore } from '@/stores/auth-store';
 
 import { createComment, deleteComment, issueEventsQuery, updateComment } from './api';
+import { RunReport } from './issue-run';
 
 /** What a change entry says after the actor's name. */
 function changeText(event: IssueEvent): string {
@@ -31,6 +32,8 @@ function changeText(event: IssueEvent): string {
       return from ? `moved the due date from ${from} to ${to}` : `set the due date to ${to}`;
     case 'comment':
       return 'commented';
+    case 'run':
+      return to === 'succeeded' ? 'finished the work' : 'ran the work';
   }
 }
 
@@ -134,8 +137,8 @@ function Comment({
 }
 
 /**
- * The comments on an issue and the history of its state, priority, assignee and title, oldest
- * first, with a box to add a comment.
+ * The comments on an issue, the history of its state, priority, assignee and title, and what
+ * its runs reported, oldest first, with a box to add a comment.
  */
 export function IssueTimeline({ issue, canModerate }: { issue: Issue; canModerate: boolean }) {
   const queryClient = useQueryClient();
@@ -143,6 +146,9 @@ export function IssueTimeline({ issue, canModerate }: { issue: Issue; canModerat
   const [body, setBody] = useState('');
   const { data: events, isPending, error } = useQuery(issueEventsQuery(issue.id));
   const reload = () => void queryClient.invalidateQueries({ queryKey: qk.issues.events(issue.id) });
+  // A change nobody made in the same moment a run reported is the run's: it moved the issue.
+  const reported = new Set((events ?? []).filter((e) => e.kind === 'run').map((e) => e.created_at));
+  const byAgents = (event: IssueEvent) => event.actor === null && reported.has(event.created_at);
   const add = useMutation({
     mutationFn: () => createComment(issue.id, body.trim()),
     meta: { errorToast: false },
@@ -172,7 +178,9 @@ export function IssueTimeline({ issue, canModerate }: { issue: Issue; canModerat
             </li>
           )}
           {events.map((event) =>
-            event.kind === 'comment' ? (
+            event.kind === 'run' ? (
+              <RunReport key={event.id} event={event} />
+            ) : event.kind === 'comment' ? (
               <Comment
                 key={event.id}
                 event={event}
@@ -183,10 +191,10 @@ export function IssueTimeline({ issue, canModerate }: { issue: Issue; canModerat
               />
             ) : (
               <li key={event.id} className="flex items-center gap-2 px-3 text-[13px]">
-                <PersonGlyph name={event.actor?.name} />
+                <PersonGlyph name={event.actor?.name ?? (byAgents(event) ? 'Agents' : undefined)} />
                 <span className="min-w-0 truncate text-muted-foreground">
                   <span className="font-medium text-foreground">
-                    {event.actor?.name ?? 'Someone who left'}
+                    {event.actor?.name ?? (byAgents(event) ? 'Agents' : 'Someone who left')}
                   </span>{' '}
                   {changeText(event)}
                 </span>

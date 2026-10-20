@@ -668,6 +668,185 @@ async fn an_issue_can_be_planned_and_run_as_a_graph(pool: PgPool) {
     assert_eq!(issue["graph_id"], Value::Null);
 }
 
+/// Files an issue as the owner and gives it a graph the member runs: a
+/// research step feeding a draft, or a step that fails. Returns the issue
+/// path, the graph id and the issue as filed.
+async fn issue_with_graph(
+    app: &TestApp,
+    w: &World,
+    title: &str,
+    step: &str,
+) -> (String, String, Value) {
+    let join = format!("{}/teams/{}/members/{}", w.ws, w.eng, w.member_id);
+    call(app, Method::PUT, &join, &w.owner, Some(json!({}))).await;
+    let issues = format!("{}/teams/{}/issues", w.ws, w.eng);
+    let (_, issue) = call(
+        app,
+        Method::POST,
+        &issues,
+        &w.owner,
+        Some(json!({"title": title})),
+    )
+    .await;
+    let path = format!("/issues/{}", issue["id"].as_str().unwrap());
+    let (status, linked) = call(app, Method::POST, &format!("{path}/graph"), &w.member, None).await;
+    assert_eq!(status, StatusCode::OK, "{linked}");
+    let gid = linked["graph_id"].as_str().unwrap().to_owned();
+    let research = app
+        .node(
+            &w.member,
+            &gid,
+            json!({"title": "Research", "kind": "research"}),
+        )
+        .await;
+    let last = app
+        .node(&w.member, &gid, json!({"title": step, "kind": "document"}))
+        .await;
+    app.edge(&w.member, &gid, &research, &last).await;
+    (path, gid, issue)
+}
+
+/// Runs the graph as the member and waits for it to finish; returns the run.
+async fn run_graph(app: &TestApp, w: &World, gid: &str) -> Value {
+    let mut rx = app.events(gid);
+    let r = app
+        .request(
+            Method::POST,
+            &format!("/api/v1/graphs/{gid}/runs"),
+            Some(&w.member),
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::ACCEPTED, "{}", r.body);
+    let events = common::collect_until(&mut rx, "run.finished").await;
+    events.last().unwrap().1["run"].clone()
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_finished_run_reports_back_on_its_issue(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let w = world(&app).await;
+    let (path, gid, filed) = issue_with_graph(&app, &w, "Write the gold note", "Draft").await;
+    let run = run_graph(&app, &w, &gid).await;
+    assert_eq!(run["status"], "succeeded");
+
+    // The deliverable (the last step, not the research on the way) is on the timeline with
+    // the run it came from, and the issue waits for review, moved by nobody.
+    let (_, events) = call(&app, Method::GET, &format!("{path}/events"), &w.owner, None).await;
+    let events = events.as_array().unwrap();
+    let report = events
+        .iter()
+        .find(|e| e["kind"] == "run")
+        .expect("a run entry");
+    assert_eq!(
+        (
+            report["run_id"].as_str(),
+            report["to"].as_str(),
+            report["body"].as_str(),
+            &report["actor"]
+        ),
+        (
+            run["id"].as_str(),
+            Some("succeeded"),
+            Some("Result of Draft (after: Research)"),
+            &Value::Null
+        )
+    );
+    let moved = events
+        .iter()
+        .find(|e| e["kind"] == "state")
+        .expect("a state change");
+    assert_eq!(
+        (
+            moved["from"].as_str(),
+            moved["to"].as_str(),
+            &moved["actor"]
+        ),
+        (
+            filed["state"]["name"].as_str(),
+            Some("In Review"),
+            &Value::Null
+        )
+    );
+    let (_, issue) = call(&app, Method::GET, &path, &w.owner, None).await;
+    assert_eq!(issue["state"]["name"], "In Review");
+
+    // The creator hears of it, and so does the member who started the run.
+    let inbox = format!("{}/inbox", w.ws);
+    for token in [&w.owner, &w.member] {
+        let (_, list) = call(&app, Method::GET, &inbox, token, None).await;
+        let kinds: Vec<&str> = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|n| n["kind"].as_str().unwrap())
+            .collect();
+        assert!(kinds.contains(&"run"), "{kinds:?}");
+        let entry = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|n| n["kind"] == "run")
+            .unwrap();
+        assert_eq!(entry["issue"]["identifier"], filed["identifier"]);
+    }
+
+    // A second run reports again; an issue someone closed in the meantime stays closed.
+    let states = format!("{}/teams/{}/states", w.ws, w.eng);
+    let (_, list) = call(&app, Method::GET, &states, &w.owner, None).await;
+    let done = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["category"] == "completed")
+        .unwrap();
+    let (status, _) = call(
+        &app,
+        Method::PATCH,
+        &path,
+        &w.owner,
+        Some(json!({"state_id": done["id"]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    run_graph(&app, &w, &gid).await;
+    let (_, issue) = call(&app, Method::GET, &path, &w.owner, None).await;
+    assert_eq!(issue["state"]["category"], "completed");
+    let (_, events) = call(&app, Method::GET, &format!("{path}/events"), &w.owner, None).await;
+    let runs = events
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["kind"] == "run")
+        .count();
+    assert_eq!(runs, 2);
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_failed_run_reports_why_and_leaves_the_issue_where_it_was(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let w = world(&app).await;
+    let (path, gid, filed) = issue_with_graph(&app, &w, "Fetch the rates", "FAIL to fetch").await;
+    let run = run_graph(&app, &w, &gid).await;
+    assert_eq!(run["status"], "failed");
+
+    let (_, events) = call(&app, Method::GET, &format!("{path}/events"), &w.owner, None).await;
+    let events = events.as_array().unwrap();
+    let report = events
+        .iter()
+        .find(|e| e["kind"] == "run")
+        .expect("a run entry");
+    assert_eq!(report["to"], "failed");
+    let body = report["body"].as_str().unwrap();
+    assert!(body.contains("**FAIL to fetch** failed:"), "{body}");
+    assert!(
+        events.iter().all(|e| e["kind"] != "state"),
+        "a failed run moves nothing"
+    );
+    let (_, issue) = call(&app, Method::GET, &path, &w.owner, None).await;
+    assert_eq!(issue["state"]["name"], filed["state"]["name"]);
+}
+
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
 async fn the_assistant_files_issues_with_the_callers_rights(pool: PgPool) {
     let app = TestApp::new(pool, &[]).await;

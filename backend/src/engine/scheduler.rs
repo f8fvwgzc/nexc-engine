@@ -699,7 +699,12 @@ async fn finish_run(
         hash.as_ref().map(|h| h.as_slice()),
     )
     .await?;
+    // The issues the graph executes get the result once, under the run's fence.
+    let issues = super::issue_report::report(&mut tx, &row).await?;
     tx.commit().await?;
+    if !issues.is_empty() {
+        tracing::info!(%run_id, issues = issues.len(), "run reported to its issues");
+    }
     if let Some(hash) = hash {
         seal_audit(state, &row, hash, sealed.spans).await;
     }

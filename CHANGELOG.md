@@ -9,6 +9,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A finished run reports back on the issues its graph executes (`docs/CONTRACT.md` §5, issue
+  timeline): a `run` entry on the timeline with the run's id, its status and its result (the
+  output of the steps nothing else waited for, then what failed and why, cut at 6,000 characters
+  with a marker), a move to the team's last `started` state ("In Review" in the starter workflow)
+  when the run succeeded and the issue is still open, recorded as a change nobody made, and a
+  `run` entry in the inbox of the assignee, the creator and whoever started the run. It is written
+  in the transaction that finishes the run, fenced on the run's lease, so a replica that lost the
+  run cannot report it twice (migration `20261006000090_issue_run_reports`, which also indexes
+  `issues.graph_id`).
+- Agent work on the issue, live: the issue shows its graph's plan as a trace of steps over the
+  graph's SSE stream (status, streamed output, logs and files per step), with **Hand to agents**
+  (gives the issue a graph and asks for a plan), **Apply plan and run**, **Run again** and
+  **Stop**; the run's report on the timeline shows the deliverable and its files; each sub-issue
+  shows where its latest run stands. Built on the Trace and Code Block components of shadcn/ui,
+  which its AI Elements patterns (Plan, Task, Tool) are made of.
+- Tool results are compacted before they reach the model (`agent-runtime/src/nexc_runtime/compact.py`):
+  terminal colour codes, trailing spaces, runs of blank lines and repeated lines go, and a result
+  over 24,000 characters keeps its head and tail. File reads are left exactly as they are. A saving
+  of 1,000 characters or more is mentioned in the node's log.
+
 - High availability of runs, failure modes first (`docs/HA.md`): what happens, how it is
   detected, how the run recovers and the RTO and RPO targets when a replica crashes while a node
   runs or waits for an approval, when a replica loses PostgreSQL, when the agent runtime crashes,
@@ -1369,6 +1389,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Agent turns on the Anthropic API were booked at the full input price: the runtime counted the
+  turn's cache reads in its input but did not report them as cached. They are now reported, and
+  the tool loop's system prompt and tools have a cache breakpoint of their own.
+- Cache reads are priced at each model's own rate (Claude Opus 5.5 and Claude Sonnet 5.5 at $0.20
+  per million tokens, Claude Fable 5.1 at $0.25) instead of a tenth of the input price for all,
+  and Claude Haiku 5.5, Claude Sonnet 5.5 and the Opus 4 and Sonnet 4 families have prices: Haiku
+  5.5 runs cost nothing in the usage ledger before.
+
 - `make db-up` on a machine whose `.env` names the repo's own pgvector image
   (`NEXC_DB_IMAGE=nexc-postgres-pgvector:17`, built once from
   `deploy/postgres/pgvector.Dockerfile`) failed with docker's "pull access denied" (exit 125)
@@ -1399,6 +1427,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   broke generating the client types; a test now checks that every reference resolves.
 
 ### Changed
+
+- The product leads with the issue: the sidebar has four places (Inbox, Issues, Agents, Trust)
+  and folds the rest under **More**; the AgentSecOps console is called **Trust**; the README and
+  the documentation site describe nexc-engine as the Enterprise Business Executor. The issue
+  dialog's **Plan as graph** button, which left the issue for the canvas, gave way to **Hand to
+  agents** on the issue itself.
 
 - UI pass, shared pieces (`frontend/src/components/custom-ui`): `PageContainer` gives every page
   one of three widths (`default` for the app, `wide` for the consoles, `narrow` for settings and

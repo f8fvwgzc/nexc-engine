@@ -11,10 +11,11 @@ import type { Issue } from '@/schemas/issue';
 import type { Workspace } from '@/schemas/workspace';
 
 import { createIssue, issuesQuery } from './api';
+import { SubIssueRun } from './issue-run';
 
 /**
- * The parts an issue is split into, with how many are closed, and a field to add one. A new part
- * is filed with the same team as the issue.
+ * The parts an issue is split into, with how many are closed, where the agents' latest run of
+ * each stands, and a field to add one. A new part is filed with the same team as the issue.
  */
 export function SubIssues({
   workspace,
@@ -80,6 +81,7 @@ export function SubIssues({
                   {part.identifier}
                 </span>
                 <span className="min-w-0 flex-1 truncate">{part.title}</span>
+                {part.graph_id && <SubIssueRun graphId={part.graph_id} />}
                 <PersonGlyph name={part.assignee?.name} />
               </button>
             </li>

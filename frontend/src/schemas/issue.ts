@@ -69,6 +69,8 @@ export const issueEventKindSchema = z.enum([
   'assignee',
   'title',
   'due',
+  /** A run of the issue's graph finished; `to` is its status, `body` its result. */
+  'run',
 ]);
 
 /** One entry of an issue's timeline: a comment, or a change to the issue. */
@@ -83,13 +85,15 @@ export const issueEventSchema = z.object({
   to: z.string().nullable(),
   created_at: timestampSchema,
   edited_at: timestampSchema.nullable(),
+  /** The run a `run` entry reports; null for other entries and once the run is deleted. */
+  run_id: idSchema.nullable(),
 });
 export type IssueEvent = z.infer<typeof issueEventSchema>;
 
 /** One entry of the caller's inbox. */
 export const notificationSchema = z.object({
   id: idSchema,
-  kind: z.enum(['assigned', 'comment', 'state', 'due', 'approval', 'alert']),
+  kind: z.enum(['assigned', 'comment', 'state', 'due', 'approval', 'alert', 'run']),
   /** The issue; null for approvals and alerts. */
   issue: z.object({ id: idSchema, identifier: z.string(), title: z.string() }).nullable(),
   /** The tool call to decide (`approval`). */

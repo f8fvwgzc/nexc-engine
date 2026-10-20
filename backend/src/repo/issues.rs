@@ -10,10 +10,11 @@ use uuid::Uuid;
 use super::enum_col;
 use crate::domain::cycle::CycleRef;
 use crate::domain::issue::{
-    Issue, IssueChange, IssueEvent, IssuePerson, IssueRef, IssueState, Label, Notification,
-    NotificationAlert, NotificationApproval, NotificationIssue, NotificationKind, Project,
-    STARTER_STATES, StateCategory, SubIssueCount,
+    Issue, IssueChange, IssueEvent, IssuePerson, IssueRef, IssueState, Label, NodeOutcome,
+    Notification, NotificationAlert, NotificationApproval, NotificationIssue, NotificationKind,
+    Project, RUN_REPORT_MAX_CHARS, STARTER_STATES, StateCategory, SubIssueCount,
 };
+use crate::domain::run::RunStatus;
 
 impl FromRow<'_, PgRow> for IssueState {
     fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
@@ -651,6 +652,7 @@ impl FromRow<'_, PgRow> for IssueEvent {
             to: row.try_get("to_value")?,
             created_at: row.try_get("created_at")?,
             edited_at: row.try_get("edited_at")?,
+            run_id: row.try_get("run_id")?,
         })
     }
 }
@@ -659,7 +661,7 @@ macro_rules! event_select {
     ($tail:literal) => {
         concat!(
             "SELECT e.id, e.issue_id, e.kind, e.actor_id, u.name AS actor_name, e.body,
-                    e.from_value, e.to_value, e.created_at, e.edited_at
+                    e.from_value, e.to_value, e.created_at, e.edited_at, e.run_id
              FROM issue_events e LEFT JOIN users u ON u.id = e.actor_id
              WHERE ",
             $tail
@@ -757,6 +759,142 @@ pub async fn record_changes(
         .await?;
     }
     Ok(())
+}
+
+/// Whether any issue hands its work to the graph.
+pub async fn any_of_graph(db: impl PgExecutor<'_>, graph_id: Uuid) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM issues WHERE graph_id = $1)")
+        .bind(graph_id)
+        .fetch_one(db)
+        .await
+}
+
+/// What a finished run tells the issues its graph executes.
+#[derive(Debug, Clone)]
+pub struct RunReport<'a> {
+    pub run_id: Uuid,
+    pub graph_id: Uuid,
+    /// Who started the run; they hear about it too.
+    pub owner_id: Uuid,
+    pub status: RunStatus,
+    /// The entry's text ([`crate::domain::issue::run_report`]).
+    pub body: &'a str,
+}
+
+/// What a finished run's nodes left, read for its report: the outputs of
+/// the nodes nothing else in the run waited for (the deliverables), in run
+/// order, and the nodes that failed with their error.
+pub async fn run_outcomes(
+    db: &mut PgConnection,
+    run_id: Uuid,
+) -> Result<(Vec<NodeOutcome>, Vec<NodeOutcome>), sqlx::Error> {
+    let rows: Vec<(String, String, bool)> = sqlx::query_as(
+        "SELECT n.title,
+                CASE WHEN nr.status = 'failed' THEN COALESCE(nr.error, '') ELSE COALESCE(left(nr.output, $2), '') END,
+                nr.status = 'failed'
+         FROM node_runs nr JOIN nodes n ON n.id = nr.node_id
+         WHERE nr.run_id = $1
+           AND (nr.status = 'failed'
+                OR (nr.status = 'succeeded' AND NOT EXISTS (
+                    SELECT 1 FROM edges e JOIN node_runs d ON d.run_id = nr.run_id AND d.node_id = e.target
+                    WHERE e.source = nr.node_id AND e.blocking)))
+         ORDER BY nr.position",
+    )
+    .bind(run_id)
+    // Enough for the report to tell when it was cut, without reading whole documents.
+    .bind((RUN_REPORT_MAX_CHARS * 2) as i32)
+    .fetch_all(&mut *db)
+    .await?;
+    let (failed, done): (Vec<_>, Vec<_>) = rows.into_iter().partition(|(_, _, failed)| *failed);
+    let outcome = |(title, text, _): (String, String, bool)| NodeOutcome { title, text };
+    Ok((
+        done.into_iter().map(outcome).collect(),
+        failed.into_iter().map(outcome).collect(),
+    ))
+}
+
+/// Writes a finished run onto every issue its graph executes, in the run's
+/// own (fenced) transaction so it happens once: a `run` entry in the
+/// timeline with the run's id and status; when the run succeeded and the
+/// issue is still open, a move to the team's review state (its last
+/// `started` state, "In Review" in the starter workflow), recorded as a
+/// state change nobody made; and an inbox entry for the assignee, the
+/// creator and whoever started the run. Returns the issues reported to.
+pub async fn report_run(
+    db: &mut PgConnection,
+    report: &RunReport<'_>,
+) -> Result<Vec<Uuid>, sqlx::Error> {
+    let issues: Vec<(Uuid, Uuid, String, String)> = sqlx::query_as(
+        "SELECT i.id, i.team_id, s.name, s.category
+         FROM issues i JOIN issue_states s ON s.id = i.state_id
+         WHERE i.graph_id = $1
+         ORDER BY i.id
+         FOR UPDATE OF i",
+    )
+    .bind(report.graph_id)
+    .fetch_all(&mut *db)
+    .await?;
+    let mut reported = Vec::with_capacity(issues.len());
+    for (issue_id, team_id, state_name, category) in issues {
+        sqlx::query(
+            "INSERT INTO issue_events (id, issue_id, actor_id, kind, body, to_value, run_id)
+             VALUES ($1, $2, NULL, 'run', $3, $4, $5)",
+        )
+        .bind(Uuid::now_v7())
+        .bind(issue_id)
+        .bind(report.body)
+        .bind(report.status.as_str())
+        .bind(report.run_id)
+        .execute(&mut *db)
+        .await?;
+        let open = !matches!(category.as_str(), "completed" | "canceled");
+        if report.status == RunStatus::Succeeded && open {
+            let review: Option<(Uuid, String)> = sqlx::query_as(
+                "SELECT id, name FROM issue_states WHERE team_id = $1 AND category = 'started'
+                 ORDER BY position DESC, name DESC LIMIT 1",
+            )
+            .bind(team_id)
+            .fetch_optional(&mut *db)
+            .await?;
+            if let Some((review_id, review_name)) = review.filter(|(_, name)| *name != state_name) {
+                sqlx::query("UPDATE issues SET state_id = $2 WHERE id = $1")
+                    .bind(issue_id)
+                    .bind(review_id)
+                    .execute(&mut *db)
+                    .await?;
+                sqlx::query(
+                    "INSERT INTO issue_events (id, issue_id, actor_id, kind, from_value, to_value)
+                     VALUES ($1, $2, NULL, 'state', $3, $4)",
+                )
+                .bind(Uuid::now_v7())
+                .bind(issue_id)
+                .bind(&state_name)
+                .bind(&review_name)
+                .execute(&mut *db)
+                .await?;
+            }
+        }
+        sqlx::query("UPDATE issues SET updated_at = now() WHERE id = $1")
+            .bind(issue_id)
+            .execute(&mut *db)
+            .await?;
+        sqlx::query(
+            "INSERT INTO notifications (id, user_id, workspace_id, issue_id, actor_id, kind)
+             SELECT gen_random_uuid(), r.user_id, i.workspace_id, i.id, NULL, 'run'
+             FROM issues i
+             CROSS JOIN LATERAL (
+                 SELECT DISTINCT x AS user_id FROM unnest(ARRAY[i.assignee_id, i.creator_id, $2]) x
+                 WHERE x IS NOT NULL) r
+             JOIN workspace_members wm ON wm.workspace_id = i.workspace_id AND wm.user_id = r.user_id
+             WHERE i.id = $1",
+        )
+        .bind(issue_id)
+        .bind(report.owner_id)
+        .execute(&mut *db)
+        .await?;
+        reported.push(issue_id);
+    }
+    Ok(reported)
 }
 
 // ---------- inbox ----------

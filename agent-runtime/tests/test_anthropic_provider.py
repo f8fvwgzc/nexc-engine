@@ -18,7 +18,11 @@ def _sse(events: list[tuple[str, dict[str, Any]]]) -> bytes:
     return "".join(f"event: {name}\ndata: {json.dumps(data)}\n\n" for name, data in events).encode()
 
 
-def _message_stream(content_events: list[tuple[str, dict[str, Any]]], stop: str) -> bytes:
+def _message_stream(
+    content_events: list[tuple[str, dict[str, Any]]],
+    stop: str,
+    usage: dict[str, int] | None = None,
+) -> bytes:
     start = {
         "type": "message_start",
         "message": {
@@ -29,7 +33,7 @@ def _message_stream(content_events: list[tuple[str, dict[str, Any]]], stop: str)
             "content": [],
             "stop_reason": None,
             "stop_sequence": None,
-            "usage": {"input_tokens": 50, "output_tokens": 1},
+            "usage": usage or {"input_tokens": 50, "output_tokens": 1},
         },
     }
     delta = {
@@ -136,6 +140,9 @@ async def test_stream_turn_with_tool_use_and_request_shape() -> None:
     assert body["tools"][0]["strict"] is True
     assert body["tools"][0]["eager_input_streaming"] is True
     assert body["cache_control"] == {"type": "ephemeral"}, "the tool loop caches its history"
+    assert body["system"] == [
+        {"type": "text", "text": "system prompt", "cache_control": {"type": "ephemeral"}}
+    ], "the fixed prefix has a breakpoint of its own"
     for forbidden in ("temperature", "top_p", "budget_tokens"):
         assert forbidden not in body
     assert conversation.messages[-1]["role"] == "assistant"
@@ -146,6 +153,25 @@ async def test_stream_turn_with_tool_use_and_request_shape() -> None:
     last = conversation.messages[-1]
     assert last["role"] == "user" and len(last["content"]) == 2  # one message for all results
     assert last["content"][1]["is_error"] is True
+
+
+async def test_cache_reads_are_reported_apart_from_fresh_input() -> None:
+    usage = {
+        "input_tokens": 40,
+        "cache_creation_input_tokens": 60,
+        "cache_read_input_tokens": 900,
+        "output_tokens": 1,
+    }
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        body = _message_stream([], "end_turn", usage)
+        return httpx2.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    provider = _provider(handler)
+    turn = await provider.next_turn(provider.new_conversation("s", "p"), TOOLS, max_tokens=1024)
+    await provider.aclose()
+    # The whole prompt counts against budgets; the reads are priced as reads.
+    assert (turn.input_tokens, turn.cached_tokens) == (1000, 900)
 
 
 async def test_refusal_stop_reason_surfaces_category() -> None:

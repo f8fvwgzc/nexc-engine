@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..approvals import ApprovalRegistry, ApprovalTimeout
+from ..compact import EXACT_TOOLS, compact
 from ..config import Settings
 from ..control import RunControl
 from ..evidence import Sources
@@ -28,6 +29,9 @@ log = logging.getLogger(__name__)
 
 MAX_OUTPUT_TOKENS = 64_000
 MIN_OUTPUT_TOKENS = 1_024
+#: Compaction that saves at least this many characters is mentioned in the node's log.
+COMPACT_LOG_MIN_CHARS = 1_000
+
 TRUNCATED_TOOL_INPUT = (
     "Not executed: your response hit the output token limit, so this tool input was truncated. "
     "Retry with smaller pieces (for example split a large file into several files)."
@@ -319,6 +323,16 @@ class Agent:
         except OSError as exc:
             log.warning("tool %s raised %s", call.name, type(exc).__name__)
             return ToolResult(call.id, f"{call.name} failed: {exc.strerror or exc}", is_error=True)
+        if call.name not in EXACT_TOOLS:
+            compacted = compact(output)
+            saved = len(output) - len(compacted)
+            if saved >= COMPACT_LOG_MIN_CHARS:
+                self.scope.events.log(
+                    "info",
+                    f"{self.record.name}: {call.name} result compacted from {len(output):,} "
+                    f"to {len(compacted):,} characters",
+                )
+            output = compacted
         return ToolResult(call.id, await self._screen_result(call.name, output))
 
     async def _screen_result(self, tool: str, output: str) -> str:

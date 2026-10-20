@@ -19072,7 +19072,8 @@
           "from",
           "to",
           "created_at",
-          "edited_at"
+          "edited_at",
+          "run_id"
         ],
         "properties": {
           "actor": {
@@ -19120,6 +19121,14 @@
           "kind": {
             "$ref": "#/components/schemas/IssueEventKind"
           },
+          "run_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The run a `run` entry reports; `null` for other entries and once the run is deleted."
+          },
           "to": {
             "type": [
               "string",
@@ -19138,7 +19147,8 @@
           "priority",
           "assignee",
           "title",
-          "due"
+          "due",
+          "run"
         ]
       },
       "IssuePerson": {
@@ -20827,7 +20837,8 @@
           "state",
           "due",
           "approval",
-          "alert"
+          "alert",
+          "run"
         ]
       },
       "Ontology": {

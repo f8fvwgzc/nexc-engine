@@ -34,22 +34,25 @@ export interface NavItem {
   adminOnly?: boolean;
 }
 
-/** What the workspace is working on. */
-export const WORK_ITEMS: NavItem[] = [
+/**
+ * The four places a workspace lives in: what needs you, the issues agents work on, the agents
+ * themselves, and the proof of what they did.
+ */
+export const PRIMARY_ITEMS: NavItem[] = [
   { title: 'Inbox', to: '/app/inbox', icon: InboxIcon },
-  { title: 'My issues', to: '/app/my-issues', icon: CircleUserIcon },
   { title: 'Issues', to: '/app/issues', icon: CircleDotIcon },
-  { title: 'Projects', to: '/app/projects', icon: FolderKanbanIcon },
-  { title: 'Conversations', to: '/app/conversations', icon: MessagesSquareIcon },
+  { title: 'Agents', to: '/app/agents', icon: BotIcon },
+  { title: 'Trust', to: '/app/secops', icon: ShieldCheckIcon },
 ];
 
-/** Where work is planned and executed by agents. */
-export const BUILD_ITEMS: NavItem[] = [
+/** Everything else, one click away under "More": the views behind the issues. */
+export const MORE_ITEMS: NavItem[] = [
+  { title: 'My issues', to: '/app/my-issues', icon: CircleUserIcon },
+  { title: 'Projects', to: '/app/projects', icon: FolderKanbanIcon },
+  { title: 'Conversations', to: '/app/conversations', icon: MessagesSquareIcon },
   { title: 'Graphs', to: '/app', icon: NetworkIcon, end: true },
   { title: 'Runs', to: '/app/runs', icon: PlayIcon },
   { title: 'Sessions', to: '/app/sessions', icon: ListTreeIcon },
-  { title: 'Agents', to: '/app/agents', icon: BotIcon },
-  { title: 'AgentSecOps', to: '/app/secops', icon: ShieldCheckIcon },
 ];
 
 /** Every page, for the command palette. */
@@ -62,7 +65,7 @@ export const NAV_ITEMS: NavItem[] = [
   { title: 'Graphs', to: '/app', icon: NetworkIcon, end: true },
   { title: 'Runs', to: '/app/runs', icon: PlayIcon },
   { title: 'Agents', to: '/app/agents', icon: BotIcon },
-  { title: 'AgentSecOps', to: '/app/secops', icon: ShieldCheckIcon },
+  { title: 'Trust', to: '/app/secops', icon: ShieldCheckIcon },
   { title: 'Memory', to: '/app/settings/memory', icon: BrainIcon },
   { title: 'Teams', to: '/app/settings/teams', icon: UsersRoundIcon },
   { title: 'Members', to: '/app/settings/members', icon: UsersIcon },

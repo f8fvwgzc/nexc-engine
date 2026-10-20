@@ -78,7 +78,7 @@ export const routes: RouteObject[] = [
                 ),
               },
               { path: 'agents', ...page(routeModules.agents, crumbs({ label: 'Agents' })) },
-              { path: 'secops', ...page(routeModules.secops, crumbs({ label: 'AgentSecOps' })) },
+              { path: 'secops', ...page(routeModules.secops, crumbs({ label: 'Trust' })) },
               { path: 'sessions', ...page(routeModules.sessions, crumbs({ label: 'Sessions' })) },
               {
                 path: 'sessions/:runId',

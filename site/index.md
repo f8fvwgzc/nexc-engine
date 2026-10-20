@@ -5,8 +5,8 @@ titleTemplate: Documentation
 
 hero:
   name: nexc-engine
-  text: Sketch a goal as a graph. Plan it with an LLM. Run it with agents you can audit.
-  tagline: A self-hosted graph-engineering platform with AgentSecOps built in. Every agent is a principal, every action is a span on a hash chain, every policy is versioned data.
+  text: The Enterprise Business Executor. Hand an issue to agents, watch them do the work, prove what they did.
+  tagline: A self-hosted work tracker where agents plan and run each issue and report back on it. Every agent is a principal, every action is a span on a hash chain, every policy is versioned data.
   actions:
     - theme: brand
       text: Try it in 60 seconds
@@ -23,7 +23,7 @@ features:
     details: Install with Docker Compose in a minute. Explore the whole product in demo mode without an API key, then plug in Claude, the Claude Code CLI or a local model.
     link: /start/
     linkText: Start
-  - title: Secure it
+  - title: Trust it
     details: Agent identity, versioned policies that only narrow, a tamper-evident trace, the tools gateway, the Agent Firewall API and A2A on the firewall.
     link: /secops/
     linkText: AgentSecOps

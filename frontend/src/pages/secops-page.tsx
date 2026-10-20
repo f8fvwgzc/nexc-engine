@@ -142,9 +142,9 @@ export default function SecopsPage() {
   const { current } = useCurrentWorkspace();
   return (
     <PageContainer width="wide">
-      <Seo title="AgentSecOps" noIndex />
+      <Seo title="Trust" noIndex />
       <PageHeader
-        title="AgentSecOps"
+        title="Trust"
         description={
           current
             ? `Every agent of ${current.name}, what it did, what was refused, who approved what and how far each strays from its usual self: one screen, live.`

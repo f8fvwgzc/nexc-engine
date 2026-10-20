@@ -44,13 +44,22 @@ import { SEVERITY_META } from '@/schemas/policy';
 import type { Workspace } from '@/schemas/workspace';
 
 /** What the actor did to the issue. */
-const VERB: Record<'assigned' | 'comment' | 'state' | 'due', string> = {
+const VERB: Record<'assigned' | 'comment' | 'state' | 'due' | 'run', string> = {
   assigned: 'assigned you',
   comment: 'commented on',
   state: 'moved',
   // Nobody did this one: the day arrived.
   due: 'is due:',
+  // Agents did this one: a run of the issue's graph finished and its result is on the issue.
+  run: 'finished work on',
 };
+
+/** Who an issue entry names: nobody for a reminder, the agents for a run, else the actor. */
+function entryActor(n: Notification): string {
+  if (n.kind === 'due') return 'Your issue';
+  if (n.kind === 'run') return 'Agents';
+  return n.actor?.name ?? 'Someone who left';
+}
 
 const ROW =
   'flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] transition-colors outline-none hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset';
@@ -70,16 +79,15 @@ function IssueEntry({ n, onOpen }: { n: Notification; onOpen: (n: Notification) 
   return (
     <button type="button" onClick={() => onOpen(n)} className={ROW}>
       <Unread read={read} />
-      <PersonGlyph name={n.kind === 'due' ? 'Reminder' : n.actor?.name} />
+      <PersonGlyph
+        name={n.kind === 'due' ? 'Reminder' : n.kind === 'run' ? 'Agents' : n.actor?.name}
+      />
       <span
         className={`min-w-0 flex-1 truncate ${read ? 'text-muted-foreground' : ''}`}
         title={`${n.issue.identifier} ${n.issue.title}`}
       >
-        <span className="font-medium">
-          {n.kind === 'due' ? 'Your issue' : (n.actor?.name ?? 'Someone who left')}
-        </span>{' '}
-        {VERB[n.kind]} <span className="font-mono text-xs">{n.issue.identifier}</span>{' '}
-        {n.issue.title}
+        <span className="font-medium">{entryActor(n)}</span> {VERB[n.kind]}{' '}
+        <span className="font-mono text-xs">{n.issue.identifier}</span> {n.issue.title}
       </span>
       <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
         {formatRelative(n.created_at)}

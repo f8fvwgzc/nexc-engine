@@ -167,6 +167,13 @@ class AnthropicProvider:
             # previous ones from cache. A single call without tools has nothing to re-read and
             # would only pay the cache-write premium.
             kwargs["cache_control"] = {"type": "ephemeral"}
+            # The tools and the system prompt never change within a loop: a breakpoint of their
+            # own keeps them a cache hit even when a turn appends more blocks than the moving
+            # breakpoint looks back over.
+            cached_system = {"type": "ephemeral"}
+            kwargs["system"] = [
+                {"type": "text", "text": conversation.system, "cache_control": cached_system}
+            ]
         if supports_adaptive_thinking(self.model):
             kwargs["thinking"] = {"type": "adaptive"}
         if self.model in FALLBACK_MODELS:
@@ -192,11 +199,8 @@ class AnthropicProvider:
             if b.get("type") == "tool_use"
         ]
         usage = message.usage
-        input_tokens = (
-            usage.input_tokens
-            + (usage.cache_creation_input_tokens or 0)
-            + (usage.cache_read_input_tokens or 0)
-        )
+        cached = usage.cache_read_input_tokens or 0
+        input_tokens = usage.input_tokens + (usage.cache_creation_input_tokens or 0) + cached
         stop, detail = _stop_kind(message)
         return Turn(
             text=text,
@@ -204,6 +208,8 @@ class AnthropicProvider:
             stop=stop,
             input_tokens=input_tokens,
             output_tokens=usage.output_tokens,
+            # Reported so the ledger prices them as cache reads, not as fresh input.
+            cached_tokens=cached,
             detail=detail,
         )
 
