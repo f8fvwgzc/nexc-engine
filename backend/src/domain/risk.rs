@@ -1,14 +1,17 @@
 //! Behaviour baselines and risk scores. Per agent, a rolling baseline of what
 //! one of its runs usually looks like (tool calls per turn, tokens per turn,
-//! distinct tools, distinct hosts, spawns, denials, bytes out), updated when a
-//! run finishes; the risk of the latest run is the capped sum of how many
-//! standard deviations each feature strayed, explained in words. A MinHash of
-//! the run's tool sequence says how unlike every earlier run it looked. Pure
-//! functions, no IO.
+//! distinct tools, distinct hosts, spawns, denials, bytes out, outbound
+//! calls), updated when a run finishes; the risk of the latest run is the
+//! capped sum of how many standard deviations each feature strayed,
+//! explained in words. A MinHash of the run's tool sequence says how unlike
+//! every earlier run it looked. While a run is still under way, its live
+//! score ([`score_live`]) watches the counts that only grow, span by span.
+//! Pure functions, no IO.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use utoipa::ToSchema;
 
 use super::trace::{Span, SpanKind};
@@ -30,7 +33,7 @@ const NOVEL_BELOW: f64 = 0.2;
 const NEAR_ZERO: f64 = 0.05;
 
 /// The features of one run, in the order they are reported.
-pub const FEATURES: [&str; 7] = [
+pub const FEATURES: [&str; 8] = [
     "tool_calls_per_turn",
     "tokens_per_turn",
     "distinct_tools",
@@ -38,6 +41,19 @@ pub const FEATURES: [&str; 7] = [
     "spawns",
     "denials",
     "bytes_out",
+    "egress_calls",
+];
+
+/// The features the live score watches: counts that only grow as a run
+/// goes on, so a partial run never scores above what it will score at its
+/// end. (Per-turn ratios rise and fall; novelty needs the whole sequence.)
+pub const LIVE_FEATURES: [&str; 6] = [
+    "distinct_tools",
+    "distinct_hosts",
+    "spawns",
+    "denials",
+    "bytes_out",
+    "egress_calls",
 ];
 
 /// What one run of an agent looked like.
@@ -51,6 +67,10 @@ pub struct RunFeatures {
     pub spawns: f64,
     pub denials: f64,
     pub bytes_out: f64,
+    /// Calls out of the platform: tool calls naming an `egress_host`,
+    /// `egress` spans, and egress an external agent was allowed.
+    #[serde(default)]
+    pub egress_calls: f64,
     /// The tools called, in order, as one line (`write_file read_file make_docx`).
     #[serde(skip)]
     pub tool_sequence: String,
@@ -70,68 +90,118 @@ impl RunFeatures {
             "spawns" => self.spawns,
             "denials" => self.denials,
             "bytes_out" => self.bytes_out,
+            "egress_calls" => self.egress_calls,
             _ => 0.0,
         }
     }
 }
 
-/// The features of a run from the spans of one agent in it (`bytes_out`
-/// comes from the artifacts and the egress payloads, passed in).
-pub fn features(spans: &[Span], bytes_out: i64) -> RunFeatures {
-    let mut f = RunFeatures::default();
-    let mut tool_calls = 0.0;
-    let mut tokens = 0.0;
-    let mut sequence: Vec<&str> = Vec::new();
-    for span in spans {
-        let attrs = &span.attributes;
-        match span.kind {
+/// Spans folded into a run's features one at a time: the end-of-run score
+/// and the live score count the same way.
+#[derive(Debug, Clone, Default)]
+pub struct Fold {
+    features: RunFeatures,
+    tool_calls: f64,
+    tokens: f64,
+    /// Bytes the spans say went out (`payload_bytes`).
+    payload_bytes: i64,
+}
+
+impl Fold {
+    /// Folds one span in; whether a count the live score watches moved.
+    pub fn push(&mut self, kind: SpanKind, name: &str, attrs: &Value) -> bool {
+        let f = &mut self.features;
+        let text = |key: &str| attrs.get(key).and_then(Value::as_str);
+        let mut moved = false;
+        if let Some(bytes) = attrs
+            .get("payload_bytes")
+            .and_then(Value::as_i64)
+            .filter(|b| *b > 0)
+        {
+            self.payload_bytes = self.payload_bytes.saturating_add(bytes);
+            moved = true;
+        }
+        match kind {
             SpanKind::LlmCall => {
                 f.turns += 1.0;
-                tokens += attrs
-                    .get("tokens_in")
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.0)
-                    + attrs
-                        .get("tokens_out")
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(0.0);
+                let tokens = |key: &str| attrs.get(key).and_then(Value::as_f64).unwrap_or(0.0);
+                self.tokens += tokens("tokens_in") + tokens("tokens_out");
             }
             SpanKind::ToolCall => {
-                tool_calls += 1.0;
-                let tool = attrs
-                    .get("tool")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(&span.name);
-                f.tools.insert(tool.to_owned());
-                sequence.push(tool);
-                if let Some(host) = attrs.get("egress_host").and_then(|v| v.as_str()) {
+                self.tool_calls += 1.0;
+                let tool = text("tool").unwrap_or(name);
+                moved |= f.tools.insert(tool.to_owned());
+                if !f.tool_sequence.is_empty() {
+                    f.tool_sequence.push(' ');
+                }
+                f.tool_sequence.push_str(tool);
+                if let Some(host) = text("egress_host") {
                     f.hosts.insert(host.to_ascii_lowercase());
+                    f.egress_calls += 1.0;
+                    moved = true;
                 }
             }
             SpanKind::Egress => {
-                f.hosts.insert(span.name.to_ascii_lowercase());
+                f.hosts.insert(name.to_ascii_lowercase());
+                f.egress_calls += 1.0;
+                moved = true;
             }
-            SpanKind::Spawn => f.spawns += 1.0,
-            SpanKind::Policy => {
+            SpanKind::Spawn => {
+                f.spawns += 1.0;
+                moved = true;
+            }
+            SpanKind::Policy => match text("decision") {
                 // A refusal, or a refusal the runtime did not make itself (a mismatch).
-                if matches!(
-                    attrs.get("decision").and_then(|v| v.as_str()),
-                    Some("deny" | "mismatch")
-                ) {
+                Some("deny" | "mismatch") => {
                     f.denials += 1.0;
+                    moved = true;
                 }
-            }
+                // What an external agent was allowed to do is what it said it is about to
+                // do: the firewall's decisions are all nexc sees of an agent that reports
+                // no spans. (An agent that asks and then reports counts the egress twice,
+                // the same way in every run, so its baseline absorbs it.)
+                Some("allow" | "alert") if attrs.get("firewall") == Some(&Value::Bool(true)) => {
+                    match (text("action"), text("subject")) {
+                        (Some("egress"), Some(host)) => {
+                            f.hosts.insert(host.to_ascii_lowercase());
+                            f.egress_calls += 1.0;
+                            moved = true;
+                        }
+                        (Some("tool_call"), Some(tool)) => {
+                            moved |= f.tools.insert(tool.to_owned());
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            },
             SpanKind::DataRead | SpanKind::Approval => {}
         }
+        moved
     }
-    let turns = f.turns.max(1.0);
-    f.tool_calls_per_turn = tool_calls / turns;
-    f.tokens_per_turn = tokens / turns;
-    f.distinct_tools = f.tools.len() as f64;
-    f.distinct_hosts = f.hosts.len() as f64;
-    f.bytes_out = bytes_out.max(0) as f64;
-    f.tool_sequence = sequence.join(" ");
-    f
+
+    /// The features so far; `bytes_out` is the payloads seen plus
+    /// `artifact_bytes` (the files the run delivered).
+    pub fn features(&self, artifact_bytes: i64) -> RunFeatures {
+        let mut f = self.features.clone();
+        let turns = f.turns.max(1.0);
+        f.tool_calls_per_turn = self.tool_calls / turns;
+        f.tokens_per_turn = self.tokens / turns;
+        f.distinct_tools = f.tools.len() as f64;
+        f.distinct_hosts = f.hosts.len() as f64;
+        f.bytes_out = self.payload_bytes.saturating_add(artifact_bytes).max(0) as f64;
+        f
+    }
+}
+
+/// The features of a run from the spans of one agent in it; `bytes_out`
+/// adds `artifact_bytes` (the files it delivered) to the egress payloads.
+pub fn features(spans: &[Span], artifact_bytes: i64) -> RunFeatures {
+    let mut fold = Fold::default();
+    for span in spans {
+        fold.push(span.kind, &span.name, &span.attributes);
+    }
+    fold.features(artifact_bytes)
 }
 
 /// The running statistics of one feature (Welford).
@@ -140,6 +210,10 @@ pub struct Moments {
     pub mean: f64,
     /// Sum of squared deviations from the mean.
     pub m2: f64,
+    /// Runs this feature was learned from; 0 in a baseline saved before
+    /// features kept their own count, when every feature learned every run.
+    #[serde(default)]
+    pub n: i32,
 }
 
 impl Moments {
@@ -198,6 +272,7 @@ fn words(name: &str) -> &'static str {
         "spawns" => "sub-agents",
         "denials" => "policy denials",
         "bytes_out" => "bytes out",
+        "egress_calls" => "outbound calls",
         _ => "",
     }
 }
@@ -214,18 +289,35 @@ fn ratio(value: f64, mean: f64) -> String {
 /// Scores `run` against `baseline` (before the run is folded in) and says
 /// how unlike every earlier run its tool sequence looked.
 pub fn score(baseline: &Baseline, run: &RunFeatures) -> Risk {
-    let signature = kernel::minhash(&run.tool_sequence);
-    let closest = baseline
-        .signatures
-        .iter()
-        .filter_map(|s| <&[u64; kernel::MINHASH_K]>::try_from(s.as_slice()).ok())
-        .map(|s| kernel::jaccard(s, &signature))
-        .fold(None, |best: Option<f64>, j| {
-            Some(best.map_or(j, |b| b.max(j)))
-        });
-    let novelty = match closest {
-        Some(j) if !run.tool_sequence.is_empty() => 1.0 - j,
-        _ => 0.0,
+    score_with(baseline, run, &FEATURES, true)
+}
+
+/// Scores a run still under way: the counts that only grow
+/// ([`LIVE_FEATURES`]), the hosts and tools it never used before, no
+/// novelty. Every part only grows as spans arrive, so the live score of a
+/// partial run never exceeds the score the same spans get when the run ends:
+/// a run it stops is one the end-of-run score would have flagged too.
+pub fn score_live(baseline: &Baseline, run: &RunFeatures) -> Risk {
+    score_with(baseline, run, &LIVE_FEATURES, false)
+}
+
+fn score_with(baseline: &Baseline, run: &RunFeatures, features: &[&str], novelty: bool) -> Risk {
+    let novelty = if novelty {
+        let signature = kernel::minhash(&run.tool_sequence);
+        let closest = baseline
+            .signatures
+            .iter()
+            .filter_map(|s| <&[u64; kernel::MINHASH_K]>::try_from(s.as_slice()).ok())
+            .map(|s| kernel::jaccard(s, &signature))
+            .fold(None, |best: Option<f64>, j| {
+                Some(best.map_or(j, |b| b.max(j)))
+            });
+        match closest {
+            Some(j) if !run.tool_sequence.is_empty() => 1.0 - j,
+            _ => 0.0,
+        }
+    } else {
+        0.0
     };
     let mut risk = Risk {
         novelty,
@@ -234,12 +326,22 @@ pub fn score(baseline: &Baseline, run: &RunFeatures) -> Risk {
     if baseline.runs < MIN_RUNS {
         return risk;
     }
-    let n = f64::from(baseline.runs);
     let mut total = 0.0;
-    for name in FEATURES {
+    for &name in features {
+        // A feature the baseline has not learned often enough yet says nothing.
+        let Some(moments) = baseline.features.get(name).copied() else {
+            continue;
+        };
+        let learned = if moments.n == 0 {
+            baseline.runs
+        } else {
+            moments.n
+        };
+        if learned < MIN_RUNS {
+            continue;
+        }
         let value = run.get(name);
-        let moments = baseline.features.get(name).copied().unwrap_or_default();
-        let sd = moments.stddev(n);
+        let sd = moments.stddev(f64::from(learned));
         // Features that never varied: anything new is a full cap away.
         let z = if sd < f64::EPSILON {
             if (value - moments.mean).abs() < f64::EPSILON {
@@ -305,13 +407,19 @@ pub fn score(baseline: &Baseline, run: &RunFeatures) -> Risk {
 impl Baseline {
     /// Folds a finished run in.
     pub fn learn(&mut self, run: &RunFeatures) {
+        let before = self.runs;
         self.runs += 1;
-        let n = f64::from(self.runs);
         for name in FEATURES {
-            self.features
-                .entry(name.to_owned())
-                .or_default()
-                .push(n, run.get(name));
+            let known = self.features.contains_key(name);
+            let moments = self.features.entry(name.to_owned()).or_default();
+            // A feature saved without its own count learned every run so far.
+            let n = if moments.n == 0 && known {
+                before
+            } else {
+                moments.n
+            } + 1;
+            moments.n = n;
+            moments.push(f64::from(n), run.get(name));
         }
         let signature: Signature = kernel::minhash(&run.tool_sequence);
         self.signatures.push(signature.to_vec());
@@ -321,6 +429,24 @@ impl Baseline {
         }
         self.hosts.extend(run.hosts.iter().cloned());
         self.tools.extend(run.tools.iter().cloned());
+    }
+}
+
+/// Which of an agent's baselines a run is scored against and learned into:
+/// its runs, or the decision sessions of an external agent (a window of
+/// firewall decisions, not a run: the two are not compared with each other).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    Runs,
+    Sessions,
+}
+
+impl Scope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Scope::Runs => "runs",
+            Scope::Sessions => "sessions",
+        }
     }
 }
 
@@ -486,5 +612,128 @@ mod tests {
         let roundtrip: Baseline =
             serde_json::from_value(serde_json::to_value(&baseline).unwrap()).unwrap();
         assert_eq!(roundtrip, baseline);
+    }
+
+    #[test]
+    fn the_live_score_watches_growing_counts_and_never_exceeds_the_final_one() {
+        let mut baseline = Baseline::default();
+        for bytes in [900, 1000, 1100, 1000, 950] {
+            let mut spans = usual(&["api.partner.example"]);
+            spans.push(span(
+                SpanKind::ToolCall,
+                "http_post",
+                json!({"tool": "http_post", "egress_host": "api.partner.example", "payload_bytes": bytes}),
+            ));
+            baseline.learn(&features(&spans, 0));
+        }
+        // A run that starts like the usual ones scores nothing as its spans arrive.
+        let mut fold = Fold::default();
+        for s in usual(&["api.partner.example"]) {
+            fold.push(s.kind, &s.name, &s.attributes);
+            assert_eq!(score_live(&baseline, &fold.features(0)).score, 0.0);
+        }
+        // Then it sends a lot, to hosts it never called: the live score climbs.
+        let mut scores = Vec::new();
+        for i in 0..6 {
+            let host = format!("drop{i}.evil.example");
+            let moved = fold.push(
+                SpanKind::ToolCall,
+                "http_post",
+                &json!({"tool": "http_post", "egress_host": host, "payload_bytes": 50_000}),
+            );
+            assert!(moved, "an egress moves a watched count");
+            scores.push(score_live(&baseline, &fold.features(0)).score);
+        }
+        assert!(scores.windows(2).all(|w| w[0] <= w[1]), "{scores:?}");
+        let live = score_live(&baseline, &fold.features(0));
+        assert!(live.score >= 7.0, "{live:?}");
+        let text = live.reasons.join("; ");
+        assert!(text.contains("hosts it never called"), "{text}");
+        assert!(text.contains("its usual outbound calls"), "{text}");
+        assert!(text.contains("its usual bytes out"), "{text}");
+        assert_eq!(live.novelty, 0.0, "the live score has no novelty");
+        // The same spans scored when the run ends score at least as high.
+        let end = score(&baseline, &fold.features(0));
+        assert!(end.score >= live.score, "{end:?} vs {live:?}");
+        // A model turn moves nothing the live score watches.
+        assert!(!fold.push(SpanKind::LlmCall, "m", &json!({"tokens_in": 5})));
+    }
+
+    #[test]
+    fn firewall_decisions_count_what_an_external_agent_was_allowed_to_do() {
+        let decided = |action: &str, subject: &str, decision: &str| {
+            span(
+                SpanKind::Policy,
+                subject,
+                json!({"decision": decision, "action": action, "subject": subject, "firewall": true}),
+            )
+        };
+        let f = features(
+            &[
+                decided("egress", "API.Partner.example", "allow"),
+                decided("egress", "api.partner.example", "alert"),
+                decided("tool_call", "send_parcel", "allow"),
+                decided("egress", "evil.example", "deny"),
+                decided("tool_call", "wire_money", "require_approval"),
+                // A native runtime's own decision says nothing about hosts.
+                span(
+                    SpanKind::Policy,
+                    "x",
+                    json!({"decision": "allow", "action": "egress", "subject": "native.example"}),
+                ),
+            ],
+            0,
+        );
+        assert_eq!(f.egress_calls, 2.0);
+        assert_eq!(f.distinct_hosts, 1.0);
+        assert!(f.hosts.contains("api.partner.example"));
+        assert_eq!(f.distinct_tools, 1.0);
+        assert_eq!(f.denials, 1.0);
+        assert_eq!(f.tool_sequence, "", "decisions are not calls");
+    }
+
+    #[test]
+    fn a_baseline_saved_before_a_feature_existed_learns_it_before_scoring_it() {
+        // Saved by an earlier version: no per-feature count, no `egress_calls`.
+        let legacy: Baseline = serde_json::from_value(json!({
+            "runs": 5,
+            "features": {
+                "tool_calls_per_turn": {"mean": 1.0, "m2": 0.0},
+                "tokens_per_turn": {"mean": 135.0, "m2": 0.0},
+                "distinct_tools": {"mean": 2.0, "m2": 0.0},
+                "distinct_hosts": {"mean": 1.0, "m2": 0.0},
+                "spawns": {"mean": 0.0, "m2": 0.0},
+                "denials": {"mean": 0.0, "m2": 0.0},
+                "bytes_out": {"mean": 1000.0, "m2": 0.0}
+            },
+            "hosts": ["known.example"],
+            "tools": ["write_file", "finish"]
+        }))
+        .unwrap();
+        let run = features(&usual(&[]), 1000);
+        assert_eq!(score(&legacy, &run).score, 0.0);
+        let mut spans = usual(&[]);
+        spans.push(span(SpanKind::Egress, "known.example", json!({})));
+        let mut baseline = legacy.clone();
+        // One outbound call where the old baseline knew nothing of them: not scored yet.
+        let risk = score(&baseline, &features(&spans, 1000));
+        assert!(!risk.z.contains_key("egress_calls"), "{risk:?}");
+        assert_eq!(risk.score, 0.0, "{risk:?}");
+        // The legacy features keep their count; the new one starts at one.
+        baseline.learn(&run);
+        assert_eq!(baseline.runs, 6);
+        assert_eq!(baseline.features["bytes_out"].n, 6);
+        assert_eq!(baseline.features["egress_calls"].n, 1);
+        for _ in 0..2 {
+            baseline.learn(&run);
+        }
+        let risk = score(&baseline, &features(&spans, 1000));
+        assert_eq!(risk.z["egress_calls"], Z_CAP, "{risk:?}");
+        assert!(
+            risk.reasons
+                .iter()
+                .any(|r| r.contains("1 outbound calls where it usually has none")),
+            "{risk:?}"
+        );
     }
 }

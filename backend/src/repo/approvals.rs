@@ -197,6 +197,54 @@ pub async fn set_decision_span(
     Ok(())
 }
 
+/// Notes the `approval` span that recorded the decision unless one is noted
+/// already; the span id on the record either way. Whoever notes it first
+/// (the instance holding the external agent's run, or the one answering
+/// its `AwaitApproval`) names the span every signed copy of the decision
+/// points at.
+pub async fn claim_decision_span(
+    db: impl PgExecutor<'_>,
+    id: Uuid,
+    span_id: Uuid,
+) -> Result<Option<Uuid>, sqlx::Error> {
+    sqlx::query_scalar(
+        "UPDATE approvals SET decision_span_id = COALESCE(decision_span_id, $2)
+         WHERE id = $1 AND status <> 'pending' RETURNING decision_span_id",
+    )
+    .bind(id)
+    .bind(span_id)
+    .fetch_optional(db)
+    .await
+    .map(Option::flatten)
+}
+
+/// Uses an approval granted to `agent_id` for `tool` on the reported call
+/// `span_id`: once, and only with the same arguments when the approval names
+/// their digest. Whether it was granted and is now used.
+pub async fn consume(
+    db: impl PgExecutor<'_>,
+    id: Uuid,
+    agent_id: Uuid,
+    tool: &str,
+    args_sha256: Option<&str>,
+    span_id: Uuid,
+) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query(
+        "UPDATE approvals SET consumed_span_id = $5
+         WHERE id = $1 AND agent_id = $2 AND tool = $3 AND status = 'approved'
+           AND consumed_span_id IS NULL
+           AND (args_sha256 IS NULL OR args_sha256 = $4::text)",
+    )
+    .bind(id)
+    .bind(agent_id)
+    .bind(tool)
+    .bind(args_sha256)
+    .bind(span_id)
+    .execute(db)
+    .await?;
+    Ok(done.rows_affected() == 1)
+}
+
 /// Approvals of a workspace, newest first; `status` narrows the list.
 pub async fn list(
     db: impl PgExecutor<'_>,

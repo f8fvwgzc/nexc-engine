@@ -6,10 +6,23 @@
 //! and recorded as `policy` spans; the runs it reports are chained and
 //! sealed like native ones; its card is the registry's. Reflection and
 //! `grpc.health.v1` are served beside it.
+//!
+//! Every run of an external agent (a reported run, or the session its
+//! decisions go to) is scored like a native one when it closes, against the
+//! same kind of baseline, with the same alerts and quarantine; while it is
+//! open it is scored live, span by span ([`live`]), and stopped mid-run
+//! when it crosses the quarantine threshold. A `require_approval` decision
+//! is an approval of the approvals engine the agent awaits ([`approvals`]).
 #![forbid(unsafe_code)]
 
+mod approvals;
+pub mod live;
+
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use chrono::{SecondsFormat, Utc};
@@ -28,7 +41,8 @@ use crate::domain::agent::{Agent, AgentStatus};
 use crate::domain::audit::AuditAction;
 use crate::domain::capabilities::DataLabel;
 use crate::domain::memory::MemoryScope;
-use crate::domain::policy::{self, Action, Decision, PolicyVersions};
+use crate::domain::policy::{self, Action, Decision, Effect, PolicyVersions};
+use crate::domain::risk::Scope;
 use crate::domain::run::RunStatus;
 use crate::domain::trace::{self as trace_domain, SpanDraft, SpanKind, SpanStatus};
 use crate::engine::executor::agent::{Progress, recheck_with, span_from_wire};
@@ -45,6 +59,15 @@ use crate::security::api_token;
 
 /// A decisions session is sealed after this long without a call.
 pub const SESSION_IDLE: Duration = Duration::from_secs(600);
+/// A decisions session is sealed after this long, or this many decisions,
+/// even when busy (once no approval asked in it is still watched): each is
+/// a window its agent's session baseline compares with the earlier ones.
+pub const SESSION_WINDOW: Duration = Duration::from_secs(15 * 60);
+pub const SESSION_DECISIONS_MAX: usize = 1_000;
+/// How often a reported run looks whether its agent was quarantined or
+/// paused on another instance (here, the quarantine stops it at once), and
+/// takes up the policy in force.
+const STATUS_EVERY: Duration = Duration::from_secs(2);
 /// Spans accepted on one reported run.
 const SPANS_PER_RUN_MAX: usize = 20_000;
 /// Longest string taken from a request.
@@ -71,39 +94,91 @@ impl Caller {
 }
 
 /// An open run of an external agent on this instance: the session its
-/// decisions go to, or a run being reported.
+/// decisions go to (scope `sessions`), or a run being reported (`runs`).
 pub struct OpenRun {
     pub run_id: Uuid,
     pub node_id: Uuid,
     pub graph_id: Uuid,
+    /// Who answers for the run: the owner of the agent's graph.
+    pub owner: Uuid,
+    agent_id: Uuid,
+    scope: Scope,
     handle: TraceHandle,
     sink: Mutex<Option<TraceSink>>,
     last_used: Mutex<Instant>,
+    opened: Instant,
+    /// Decisions recorded in the run.
+    decisions: AtomicUsize,
+    /// Cancelled when the run must stop (its agent was quarantined) or closed.
+    stop: CancellationToken,
+    live: StdMutex<live::Live>,
+    /// Held while the run is contained, so it is not sealed before the record is.
+    containment: Arc<Mutex<Option<live::Contained>>>,
+    /// Approvals asked for in the run that are still watched.
+    pending: AtomicUsize,
+    /// Approvals whose decision the run's trace records.
+    settled: StdMutex<HashSet<Uuid>>,
 }
 
-/// The decisions sessions open on this instance, by agent.
+impl OpenRun {
+    async fn touch(&self) {
+        *self.last_used.lock().await = Instant::now();
+    }
+
+    /// Folds a span into the run's live score: the crossing, if this span
+    /// took it over the quarantine threshold.
+    fn observe(
+        &self,
+        id: Uuid,
+        kind: SpanKind,
+        name: &str,
+        attrs: &Value,
+    ) -> Option<live::Crossing> {
+        self.live
+            .lock()
+            .expect("live risk")
+            .observe(id, kind, name, attrs)
+    }
+
+    /// A session that has run its window and may be sealed for a new one.
+    fn window_over(&self) -> bool {
+        self.scope == Scope::Sessions
+            && self.pending.load(Ordering::SeqCst) == 0
+            && (self.opened.elapsed() >= SESSION_WINDOW
+                || self.decisions.load(Ordering::SeqCst) >= SESSION_DECISIONS_MAX)
+    }
+}
+
+/// The runs of external agents open on this instance: decisions sessions
+/// by agent, reported runs under a key of their own.
 #[derive(Default)]
 pub struct Sessions {
     open: DashMap<Uuid, Arc<OpenRun>>,
 }
 
 impl Sessions {
-    /// Seals the sessions idle for `idle` or more; returns how many.
+    /// Seals the decisions sessions idle for `idle` or more (not those an
+    /// approval asked in is still watched for); with `idle` zero, every open
+    /// run (shutdown). Returns how many.
     pub async fn seal_idle(&self, state: &AppState, idle: Duration) -> usize {
+        let all = idle.is_zero();
         let stale: Vec<(Uuid, Arc<OpenRun>)> = self
             .open
             .iter()
             .filter(|e| {
-                e.value()
-                    .last_used
-                    .try_lock()
-                    .is_ok_and(|at| at.elapsed() >= idle)
+                let run = e.value();
+                all || (run.scope == Scope::Sessions
+                    && run.pending.load(Ordering::SeqCst) == 0
+                    && run
+                        .last_used
+                        .try_lock()
+                        .is_ok_and(|at| at.elapsed() >= idle))
             })
             .map(|e| (*e.key(), e.value().clone()))
             .collect();
         let mut sealed = 0;
-        for (agent, run) in stale {
-            self.open.remove(&agent);
+        for (key, run) in stale {
+            self.open.remove_if(&key, |_, open| Arc::ptr_eq(open, &run));
             close_run(state, &run, RunStatus::Succeeded, None).await;
             sealed += 1;
         }
@@ -114,14 +189,30 @@ impl Sessions {
     pub async fn seal_all(&self, state: &AppState) {
         self.seal_idle(state, Duration::ZERO).await;
     }
+
+    /// The open run `run_id`, if it is open here.
+    fn by_run(&self, run_id: Uuid) -> Option<Arc<OpenRun>> {
+        self.open
+            .iter()
+            .find(|e| e.value().run_id == run_id)
+            .map(|e| e.value().clone())
+    }
+
+    /// Forgets `run` (closed).
+    fn forget(&self, run: &Arc<OpenRun>) {
+        self.open.retain(|_, open| !Arc::ptr_eq(open, run));
+    }
 }
 
-/// Opens a run of an external agent in its managed graph.
+/// Opens a run of an external agent in its managed graph, its live score
+/// against the agent's baseline of `scope`. Until it closes, a quarantine
+/// of the agent here cancels it.
 async fn open_run(
     state: &AppState,
     caller: &Caller,
     title: &str,
     external_run_id: &str,
+    scope: Scope,
 ) -> anyhow::Result<Arc<OpenRun>> {
     let mut tx = state.db.begin().await?;
     let (graph_id, owner) = repo::external_runs::ensure_graph(
@@ -143,6 +234,9 @@ async fn open_run(
     .await?;
     repo::runs::set_policy_versions(&mut *tx, run_id, &caller.versions).await?;
     tx.commit().await?;
+    let baseline = repo::baselines::find(&state.db, caller.agent.id, scope)
+        .await?
+        .unwrap_or_default();
     // An external agent's session is no claimed run: nothing takes it over, nothing is fenced.
     let sink = trace::start(
         state.clone(),
@@ -152,6 +246,10 @@ async fn open_run(
         trace::Tail::GENESIS,
     );
     let handle = sink.handle();
+    let stop = CancellationToken::new();
+    state
+        .engine
+        .agent_started(caller.agent.id, node_id, stop.clone());
     if let Ok(run) = scheduler::load_run(state, run_id).await {
         state.hub.publish(graph_id, SseEvent::RunStarted { run });
     }
@@ -159,20 +257,46 @@ async fn open_run(
         run_id,
         node_id,
         graph_id,
+        owner,
+        agent_id: caller.agent.id,
+        scope,
         handle,
         sink: Mutex::new(Some(sink)),
         last_used: Mutex::new(Instant::now()),
+        opened: Instant::now(),
+        decisions: AtomicUsize::new(0),
+        stop,
+        live: StdMutex::new(live::Live::new(scope, baseline, caller.resolved.clone())),
+        containment: Arc::new(Mutex::new(None)),
+        pending: AtomicUsize::new(0),
+        settled: StdMutex::new(HashSet::new()),
     }))
 }
 
-/// Seals a run's trace and closes it; returns the seal, once.
+/// Seals a run's trace and closes it; returns the seal, once. Decisions on
+/// its approvals are recorded first; then it is scored and learned into its
+/// agent's baseline like a native run, unless it was contained mid-run (it
+/// was scored live, and a run that went rogue is not what the agent usually
+/// does).
 async fn close_run(
     state: &AppState,
     run: &OpenRun,
     status: RunStatus,
     output: Option<&str>,
 ) -> Option<trace::Sealed> {
-    let sink = run.sink.lock().await.take()?;
+    // A containment under way finishes (and is recorded) before the seal.
+    let contained = run.containment.lock().await.clone();
+    let tripped = run.live.lock().expect("live risk").tripped();
+    let mut slot = run.sink.lock().await;
+    if slot.is_none() {
+        return None;
+    }
+    // Stopped (not finished): its agent was quarantined.
+    approvals::close_out(state, run, run.stop.is_cancelled()).await;
+    let sink = slot.take()?;
+    drop(slot);
+    run.stop.cancel();
+    state.engine.agent_finished(run.agent_id, run.node_id);
     let sealed = sink.seal().await;
     let hash = sealed.hash;
     if let Err(err) = repo::external_runs::close_run(
@@ -187,8 +311,17 @@ async fn close_run(
     {
         tracing::error!(run_id = %run.run_id, error = %err, "external run not closed");
     }
-    if let (Some(hash), Ok(Some(row))) = (hash, repo::runs::find_row(&state.db, run.run_id).await) {
-        scheduler::seal_audit(state, &row, hash, sealed.spans).await;
+    if let Ok(Some(row)) = repo::runs::find_row(&state.db, run.run_id).await {
+        if let Some(hash) = hash {
+            scheduler::seal_audit(state, &row, hash, sealed.spans).await;
+        }
+        if contained.is_none() && !tripped {
+            let assessed = crate::engine::risk::assess_in(state, &row, run.scope).await;
+            if assessed.alerts > 0 || assessed.quarantined > 0 {
+                tracing::info!(run_id = %run.run_id, alerts = assessed.alerts,
+                    quarantined = assessed.quarantined, "external run assessed");
+            }
+        }
     }
     if let Ok(loaded) = scheduler::load_run(state, run.run_id).await {
         state
@@ -257,22 +390,155 @@ impl FirewallService {
         })
     }
 
-    /// The agent's decisions session on this instance, opened on demand.
+    /// The agent's decisions session on this instance, opened on demand;
+    /// one that ran its window is sealed (and scored) and a new one opened.
     async fn session(&self, caller: &Caller) -> Result<Arc<OpenRun>, Status> {
-        if let Some(open) = self.sessions.open.get(&caller.agent.id) {
-            *open.last_used.lock().await = Instant::now();
-            return Ok(open.clone());
+        let current = self
+            .sessions
+            .open
+            .get(&caller.agent.id)
+            .map(|e| e.value().clone());
+        if let Some(open) = current {
+            if !open.window_over() && !open.stop.is_cancelled() {
+                open.touch().await;
+                return Ok(open);
+            }
+            self.sessions
+                .open
+                .remove_if(&caller.agent.id, |_, run| Arc::ptr_eq(run, &open));
+            let state = self.state.clone();
+            tokio::spawn(async move {
+                close_run(&state, &open, RunStatus::Succeeded, None).await;
+            });
         }
         let run = open_run(
             &self.state,
             caller,
             "Firewall decisions",
             &format!("session-{}", Uuid::now_v7()),
+            Scope::Sessions,
         )
         .await
         .map_err(|e| internal(anyhow::anyhow!("{e}")))?;
-        self.sessions.open.insert(caller.agent.id, run.clone());
+        // Two first calls at once: one session stays, the other is sealed empty.
+        let kept = self
+            .sessions
+            .open
+            .entry(caller.agent.id)
+            .or_insert_with(|| run.clone())
+            .clone();
+        if !Arc::ptr_eq(&kept, &run) {
+            close_run(&self.state, &run, RunStatus::Succeeded, None).await;
+            kept.touch().await;
+            return Ok(kept);
+        }
+        // A quarantine of the agent here stops the session at once.
+        let (state, watched) = (self.state.clone(), run.clone());
+        tokio::spawn(async move {
+            watched.stop.cancelled().await;
+            // A containment closes the session itself, with its reason.
+            let tripped = watched.live.lock().expect("live risk").tripped();
+            if !tripped && watched.sink.lock().await.is_some() {
+                state.firewall_sessions.forget(&watched);
+                close_run(
+                    &state,
+                    &watched,
+                    RunStatus::Cancelled,
+                    Some("the agent was quarantined"),
+                )
+                .await;
+            }
+        });
         Ok(run)
+    }
+
+    /// Contains `run` (its live score crossed the threshold): the agent is
+    /// quarantined, the run recorded and closed as cancelled.
+    async fn contain(
+        &self,
+        caller: &Caller,
+        run: &Arc<OpenRun>,
+        crossing: live::Crossing,
+    ) -> live::Contained {
+        let slot = match run.containment.clone().try_lock_owned() {
+            Ok(slot) => slot,
+            Err(_) => run.containment.clone().lock_owned().await,
+        };
+        let contained = live::contain(&self.state, caller, run, crossing, slot).await;
+        if run.scope == Scope::Sessions {
+            self.sessions.forget(run);
+            close_run(
+                &self.state,
+                run,
+                RunStatus::Cancelled,
+                Some(&format!("quarantined mid-run: {}", contained.reason)),
+            )
+            .await;
+        }
+        contained
+    }
+}
+
+impl FirewallService {
+    /// A reported run looks again at its agent: quarantined elsewhere, the
+    /// run stops; else it takes up the policy in force.
+    async fn look_again(&self, caller: &Caller, run: &OpenRun) {
+        match repo::agents::find(&self.state.db, caller.workspace_id, caller.agent.id).await {
+            Ok(Some(agent)) if agent.status == AgentStatus::Quarantined => run.stop.cancel(),
+            Ok(Some(agent)) => {
+                if let Ok(effective) = self
+                    .state
+                    .caches
+                    .resolved(&self.state.db, caller.workspace_id, &agent)
+                    .await
+                {
+                    run.live
+                        .lock()
+                        .expect("live risk")
+                        .refresh(effective.resolved.clone());
+                }
+            }
+            Ok(None) => run.stop.cancel(),
+            Err(err) => tracing::debug!(run_id = %run.run_id, error = %err, "agent not looked at"),
+        }
+    }
+
+    /// A reported call of a held tool that names the approval it ran under
+    /// uses it (once, by this agent, for this tool and these arguments): the
+    /// re-check then takes it as granted. Named again, it grants nothing.
+    async fn grant_reported(&self, caller: &Caller, progress: &Progress, draft: &SpanDraft) {
+        if draft.kind != SpanKind::ToolCall {
+            return;
+        }
+        let attrs = &draft.attributes;
+        let Some(id) = attrs
+            .get("approval_id")
+            .and_then(Value::as_str)
+            .and_then(|id| id.parse::<Uuid>().ok())
+        else {
+            return;
+        };
+        let tool = attrs
+            .get("tool")
+            .and_then(Value::as_str)
+            .unwrap_or(&draft.name);
+        if !matches!(
+            caller.decide(&[], &Action::Tool(tool)).effect,
+            Effect::RequireApproval { .. }
+        ) {
+            return;
+        }
+        let digest = attrs.get("args_sha256").and_then(Value::as_str);
+        match repo::approvals::consume(&self.state.db, id, caller.agent.id, tool, digest, draft.id)
+            .await
+        {
+            Ok(true) => progress.grant(id),
+            Ok(false) => progress.revoke(id),
+            Err(err) => {
+                progress.revoke(id);
+                tracing::warn!(approval = %id, error = %err, "approval not used");
+            }
+        }
     }
 }
 
@@ -326,27 +592,36 @@ pub struct Signed<'a> {
     pub run_id: Uuid,
     /// RFC 3339, UTC, microseconds.
     pub decided_at: &'a str,
+    /// The approval the decision asks for (`require_approval`) or settles
+    /// (the final decision `AwaitApproval` hands out).
+    pub approval_id: Option<Uuid>,
 }
 
 impl Signed<'_> {
-    /// The bytes the signature covers: canonical JSON of what was asked,
-    /// what was decided, under which policy versions, where it is recorded
-    /// and when.
+    /// The bytes the signature covers: canonical JSON (keys sorted) of what
+    /// was asked, what was decided, under which policy versions, where it is
+    /// recorded and when, and the approval it is about, if any.
     pub fn bytes(&self) -> Vec<u8> {
-        serde_json::to_vec(&json!({
-            "action": self.action,
-            "decided_at": self.decided_at,
-            "decision": self.decision.verdict(),
-            "labels": self.labels,
-            "policy_versions": self.versions,
-            "principal": self.principal,
-            "reason": self.decision.reason,
-            "rule": self.decision.rule,
-            "run_id": self.run_id,
-            "span_id": self.span_id,
-            "subject": self.subject,
-        }))
-        .expect("a decision serialises")
+        let mut map = serde_json::Map::new();
+        map.insert("action".into(), json!(self.action));
+        if let Some(approval) = self.approval_id {
+            map.insert("approval_id".into(), json!(approval));
+        }
+        for (key, value) in [
+            ("decided_at", json!(self.decided_at)),
+            ("decision", json!(self.decision.verdict())),
+            ("labels", json!(self.labels)),
+            ("policy_versions", json!(self.versions)),
+            ("principal", json!(self.principal)),
+            ("reason", json!(self.decision.reason)),
+            ("rule", json!(self.decision.rule)),
+            ("run_id", json!(self.run_id)),
+            ("span_id", json!(self.span_id)),
+            ("subject", json!(self.subject)),
+        ] {
+            map.insert(key.into(), value);
+        }
+        serde_json::to_vec(&Value::Object(map)).expect("a decision serialises")
     }
 }
 
@@ -413,28 +688,85 @@ impl AgentFirewall for FirewallService {
         if subject.is_empty() {
             return Err(Status::invalid_argument("the subject is empty"));
         }
-        let decision = caller.decide(&labels, &action);
+        let args_sha256 = match context.get("args_sha256").and_then(Value::as_str) {
+            Some(digest)
+                if digest.len() == 64
+                    && digest
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) =>
+            {
+                Some(digest.to_owned())
+            }
+            Some(_) => {
+                return Err(Status::invalid_argument(
+                    "args_sha256 is the lower-case hex SHA-256 of the arguments",
+                ));
+            }
+            None => None,
+        };
+        let mut decision = caller.decide(&labels, &action);
         // The run the decision is recorded in: one the agent reported, else its session.
-        let run = match context
+        let run = context
             .get("run_id")
             .and_then(Value::as_str)
             .and_then(|r| r.parse::<Uuid>().ok())
-        {
-            Some(run_id) => self
-                .sessions
-                .open
-                .iter()
-                .find(|e| e.value().run_id == run_id)
-                .map(|e| e.value().clone()),
-            None => None,
-        };
+            .and_then(|run_id| self.sessions.by_run(run_id))
+            .filter(|run| run.agent_id == caller.agent.id);
         let run = match run {
             Some(run) => run,
             None => self.session(&caller).await?,
         };
+        run.decisions.fetch_add(1, Ordering::SeqCst);
+        // The agent is being stopped here (quarantined while this call was under way).
+        if run.stop.is_cancelled() && decision.verdict() != "deny" {
+            decision = Decision::deny("quarantine", "the agent is quarantined");
+        }
+        let span_id = Uuid::now_v7();
+        // The live score takes the decision in before it is handed out, under the policy in
+        // force now: the one that takes the agent over the quarantine threshold is refused.
+        run.live
+            .lock()
+            .expect("live risk")
+            .refresh(caller.resolved.clone());
+        let crossing = run.observe(
+            span_id,
+            SpanKind::Policy,
+            &subject,
+            &json!({"decision": decision.verdict(), "action": req.action,
+                "subject": subject, "firewall": true}),
+        );
+        if let Some(crossing) = &crossing {
+            decision = Decision::deny(
+                live::RULE,
+                format!(
+                    "live risk score {:.1} over {:.1} ({}); the agent is quarantined",
+                    crossing.risk.score,
+                    crossing.threshold,
+                    crossing.reasons()
+                ),
+            );
+        }
+        // Held for a human: an approval of the approvals engine, to await.
+        let approval = match (&decision.effect, &action) {
+            (Effect::RequireApproval { .. }, Action::Tool(tool)) => {
+                approvals::open(
+                    &self.state,
+                    approvals::Asked {
+                        caller: &caller,
+                        run: &run,
+                        principal: &principal,
+                        span_id,
+                        tool,
+                        args_sha256: args_sha256.as_deref(),
+                        decision: &decision,
+                    },
+                )
+                .await
+            }
+            _ => None,
+        };
         let now = Utc::now();
         let decided_at = now.to_rfc3339_opts(SecondsFormat::Micros, true);
-        let span_id = Uuid::now_v7();
         let signed = Signed {
             principal: &principal,
             action: &req.action,
@@ -445,6 +777,7 @@ impl AgentFirewall for FirewallService {
             span_id,
             run_id: run.run_id,
             decided_at: &decided_at,
+            approval_id: approval.as_ref().map(|a| a.id),
         }
         .bytes();
         let signature = self.state.firewall_signer.sign(&signed);
@@ -474,12 +807,17 @@ impl AgentFirewall for FirewallService {
                 "policy_versions": caller.versions,
                 "firewall": true,
                 "signature": hex::encode(&signature),
+                "approval_id": approval.as_ref().map(|a| a.id),
+                "args_sha256": args_sha256,
             }),
         });
         self.state
             .metrics
             .firewall_decisions
             .add(&[("decision", decision.verdict())], 1);
+        if let Some(crossing) = crossing {
+            self.contain(&caller, &run, crossing).await;
+        }
         Ok(Response::new(pb::AuthorizeReply {
             decision: decision.verdict().into(),
             rule: decision.rule.into(),
@@ -491,7 +829,30 @@ impl AgentFirewall for FirewallService {
             signed,
             signature,
             public_key: self.state.firewall_signer.public_key().to_vec(),
+            approval_id: approval
+                .as_ref()
+                .map(|a| a.id.to_string())
+                .unwrap_or_default(),
+            approval_expires_at: approval
+                .as_ref()
+                .map(|a| a.expires_at.to_rfc3339_opts(SecondsFormat::Micros, true))
+                .unwrap_or_default(),
         }))
+    }
+
+    async fn await_approval(
+        &self,
+        request: Request<pb::AwaitApprovalRequest>,
+    ) -> Result<Response<pb::ApprovalReply>, Status> {
+        let caller = self.authenticate(request.metadata()).await?;
+        let req = request.into_inner();
+        let id: Uuid = req
+            .approval_id
+            .parse()
+            .map_err(|_| Status::invalid_argument("approval_id is not a UUID"))?;
+        let wait = Duration::from_millis(u64::from(req.wait_ms));
+        let reply = approvals::await_reply(&self.state, &self.sessions, &caller, id, wait).await?;
+        Ok(Response::new(reply))
     }
 
     async fn report_span(
@@ -520,6 +881,7 @@ impl AgentFirewall for FirewallService {
             &caller,
             &title,
             &bounded(&start.external_run_id),
+            Scope::Runs,
         )
         .await
         .map_err(internal)?;
@@ -529,9 +891,23 @@ impl AgentFirewall for FirewallService {
         let mut mismatches = 0u32;
         let mut status = RunStatus::Succeeded;
         let mut output: Option<String> = None;
+        let mut contained: Option<live::Contained> = None;
         let own = caller.agent.principal_id.clone();
         let decide = |action: &Action<'_>| caller.decide(&[], action);
-        while let Some(next) = stream.next().await {
+        let mut look =
+            tokio::time::interval_at(tokio::time::Instant::now() + STATUS_EVERY, STATUS_EVERY);
+        look.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            let next = tokio::select! {
+                biased;
+                () = run.stop.cancelled() => break,
+                _ = look.tick() => {
+                    self.look_again(&caller, &run).await;
+                    continue;
+                }
+                next = stream.next() => next,
+            };
+            let Some(next) = next else { break };
             let report = match next {
                 Ok(report) => report,
                 Err(err) => {
@@ -557,13 +933,27 @@ impl AgentFirewall for FirewallService {
                     ) {
                         Ok(draft) => {
                             spans += 1;
+                            self.grant_reported(&caller, &progress, &draft).await;
                             let mismatch = recheck_with(&decide, &own, &mut progress, &draft);
                             let span_id = draft.id;
+                            let mut crossing =
+                                run.observe(span_id, draft.kind, &draft.name, &draft.attributes);
                             run.handle.emit(draft);
                             if let Some((rule, detail)) = mismatch {
                                 mismatches += 1;
-                                record_mismatch(&self.state, &caller, &run, span_id, rule, detail)
-                                    .await;
+                                let tripped = record_mismatch(
+                                    &self.state,
+                                    &caller,
+                                    &run,
+                                    span_id,
+                                    rule,
+                                    detail,
+                                )
+                                .await;
+                                crossing = crossing.or(tripped);
+                            }
+                            if let Some(crossing) = crossing {
+                                contained = Some(self.contain(&caller, &run, crossing).await);
                             }
                         }
                         Err(warning) => tracing::debug!(%warning, "external span ignored"),
@@ -583,7 +973,18 @@ impl AgentFirewall for FirewallService {
                 Some(pb::span_report::Report::Start(_)) | None => {}
             }
         }
-        self.sessions.open.retain(|_, r| !Arc::ptr_eq(r, &run));
+        // Stopped before its end: its agent was quarantined (by this run's live score, or
+        // anywhere else) while it was open.
+        let quarantined = run.stop.is_cancelled();
+        if quarantined {
+            status = RunStatus::Cancelled;
+            output = Some(match &contained {
+                Some(contained) => format!("quarantined mid-run: {}", contained.reason),
+                None => "the agent was quarantined while the run was open".to_owned(),
+            });
+        }
+        self.sessions.forget(&run);
+        let risk_score = run.live.lock().expect("live risk").score();
         let sealed = close_run(&self.state, &run, status, output.as_deref())
             .await
             .unwrap_or(trace::Sealed {
@@ -595,6 +996,11 @@ impl AgentFirewall for FirewallService {
             spans: sealed.spans.max(0) as u64,
             trace_hash: sealed.hash.map(hex::encode).unwrap_or_default(),
             policy_mismatches: mismatches,
+            status: status.as_str().into(),
+            quarantined,
+            risk_score: contained.as_ref().map_or(risk_score, |c| c.score),
+            time_to_contain_ms: contained.as_ref().map_or(0, |c| c.time_to_contain_ms),
+            reason: contained.map(|c| c.reason).unwrap_or_default(),
         }))
     }
 
@@ -722,7 +1128,8 @@ fn span_to_wire(span: pb::Span) -> serde_json::Map<String, Value> {
 }
 
 /// An external agent reported what its policy does not allow: a `policy`
-/// span of the run, a count on it, an audit entry.
+/// span of the run, a count on it, an audit entry. The live score counts it
+/// as a denial: the crossing, if that took it over the threshold.
 async fn record_mismatch(
     state: &AppState,
     caller: &Caller,
@@ -730,10 +1137,23 @@ async fn record_mismatch(
     span_id: Uuid,
     rule: &'static str,
     detail: String,
-) {
+) -> Option<live::Crossing> {
     let now = Utc::now();
+    let id = Uuid::now_v7();
+    let attributes = json!({
+        "decision": "mismatch",
+        "rule": rule,
+        "reason": detail,
+        "action": "recheck",
+        "span_id": span_id,
+        "principal": caller.agent.principal_id,
+        "policy_version": caller.agent.policy_version,
+        "policy_versions": caller.versions,
+        "firewall": true,
+    });
+    let crossing = run.observe(id, SpanKind::Policy, "policy_mismatch", &attributes);
     run.handle.emit(SpanDraft {
-        id: Uuid::now_v7(),
+        id,
         node_id: run.node_id,
         agent_id: Some(caller.agent.id),
         principal: caller.agent.principal_id.clone(),
@@ -743,17 +1163,7 @@ async fn record_mismatch(
         started_at: now,
         ended_at: Some(now),
         status: SpanStatus::Error,
-        attributes: json!({
-            "decision": "mismatch",
-            "rule": rule,
-            "reason": detail,
-            "action": "recheck",
-            "span_id": span_id,
-            "principal": caller.agent.principal_id,
-            "policy_version": caller.agent.policy_version,
-            "policy_versions": caller.versions,
-            "firewall": true,
-        }),
+        attributes,
     });
     state.metrics.policy_mismatches.add(1);
     if let Err(err) = repo::runs::add_policy_mismatch(&state.db, run.run_id).await {
@@ -772,6 +1182,7 @@ async fn record_mismatch(
     {
         tracing::error!(run_id = %run.run_id, error = %err, "policy mismatch not audited");
     }
+    crossing
 }
 
 /// A running firewall server.
@@ -908,6 +1319,7 @@ mod tests {
             span_id: span,
             run_id: run,
             decided_at: "2026-10-18T12:00:00.000000Z",
+            approval_id: None,
         }
         .bytes();
         let text = String::from_utf8(bytes).unwrap();

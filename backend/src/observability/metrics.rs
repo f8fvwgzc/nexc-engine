@@ -172,6 +172,9 @@ pub struct Metrics {
     pub onto_asks: LabeledCounter,
     /// Decisions the Agent Firewall API handed out, by verdict.
     pub firewall_decisions: LabeledCounter,
+    /// From the first anomalous span of an external run to the run stopped
+    /// by its live risk score.
+    pub firewall_contained: Histogram,
     /// Gateway calls performed, by tool kind (`fetch_url`, `mcp`) and outcome.
     pub gateway_calls: LabeledCounter,
     /// Alert deliveries attempted, by destination kind and outcome (`delivered`, `retry`, `failed`).
@@ -210,6 +213,7 @@ impl Default for Metrics {
             span_fanout: Histogram::new(&SPAN_BUCKETS),
             onto_asks: LabeledCounter::default(),
             firewall_decisions: LabeledCounter::default(),
+            firewall_contained: Histogram::new(&LATENCY_BUCKETS),
             gateway_calls: LabeledCounter::default(),
             alert_deliveries: LabeledCounter::default(),
             a2a_tasks: LabeledCounter::default(),
@@ -384,6 +388,14 @@ impl Metrics {
         );
         self.firewall_decisions
             .render(&mut out, "nexc_firewall_decisions_total");
+        header(
+            &mut out,
+            "nexc_firewall_time_to_contain_seconds",
+            "histogram",
+            "From the first anomalous span of an external run to the run stopped by its live risk score.",
+        );
+        self.firewall_contained
+            .render(&mut out, "nexc_firewall_time_to_contain_seconds");
         header(
             &mut out,
             "nexc_gateway_calls_total",

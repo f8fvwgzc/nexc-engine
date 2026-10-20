@@ -263,6 +263,17 @@ impl Progress {
         }
     }
 
+    /// Takes approval `id` as granted for the rest of the attempt (the Agent
+    /// Firewall API grants the approvals an external agent's report uses).
+    pub fn grant(&self, id: Uuid) {
+        self.granted.lock().expect("granted set").insert(id);
+    }
+
+    /// Takes approval `id` back: it grants nothing more in the attempt.
+    pub fn revoke(&self, id: Uuid) {
+        self.granted.lock().expect("granted set").remove(&id);
+    }
+
     /// Keeps a Markdown artifact's text for the verifier (bounded).
     fn keep_markdown(&mut self, path: &str, mime: Option<&str>, bytes: &[u8]) {
         let markdown = mime.is_some_and(|m| m.starts_with("text/markdown"))

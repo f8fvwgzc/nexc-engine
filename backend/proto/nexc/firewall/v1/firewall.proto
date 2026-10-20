@@ -14,6 +14,12 @@ service AgentFirewall {
   // May the agent do this? Decided in-process from the agent's resolved
   // policy, recorded as a `policy` span and signed.
   rpc AuthorizeAction(AuthorizeRequest) returns (AuthorizeReply);
+  // The decision on an approval AuthorizeAction asked for (a
+  // `require_approval` reply names its `approval_id`): at once when
+  // `wait_ms` is 0 (a poll), else once someone decided or the request
+  // expired, waiting up to `wait_ms`. The final decision is signed like
+  // every other one.
+  rpc AwaitApproval(AwaitApprovalRequest) returns (ApprovalReply);
   // The spans of one run of the external agent, chained and verifiable like
   // a native run's. The first message opens the run; the stream's end seals it.
   rpc ReportSpan(stream SpanReport) returns (ReportSummary);
@@ -33,7 +39,8 @@ message AuthorizeRequest {
   // Classifications of the data the action is about.
   repeated string labels = 4;
   // `run_id` (a run opened with ReportSpan, else the agent's session run),
-  // `depth` and `children` for a spawn.
+  // `depth` and `children` for a spawn, `args_sha256` (hex SHA-256 of a
+  // tool call's arguments: an approval then lets only those arguments go).
   google.protobuf.Struct context = 5;
 }
 
@@ -61,6 +68,34 @@ message AuthorizeReply {
   bytes signature = 9;
   // The key to verify with (raw 32 bytes); also on GET /admin/infrastructure.
   bytes public_key = 10;
+  // On `require_approval`: the approval the action waits for (await it with
+  // AwaitApproval) and when it expires (RFC 3339, UTC). On the final
+  // decision AwaitApproval returns: the approval it answers.
+  string approval_id = 11;
+  string approval_expires_at = 12;
+}
+
+message AwaitApprovalRequest {
+  string approval_id = 1;
+  // How long to wait for a decision, in milliseconds: 0 answers at once;
+  // at most 60000.
+  uint32 wait_ms = 2;
+}
+
+message ApprovalReply {
+  string approval_id = 1;
+  // `pending` | `approved` | `denied` | `expired`.
+  string status = 2;
+  // Who decided and what they said (empty while pending, or when it expired).
+  string decided_by = 3;
+  string reason = 4;
+  // RFC 3339, UTC.
+  string expires_at = 5;
+  // Once it is no longer pending: the final decision, `allow` (approved) or
+  // `deny` (denied, expired), signed like every other decision; its
+  // `span_id` is the `approval` span that records it, its signed bytes name
+  // the `approval_id`. Unset while pending.
+  AuthorizeReply decision = 6;
 }
 
 message SpanReport {
@@ -102,6 +137,19 @@ message ReportSummary {
   // Hex SHA-256 the run was sealed with.
   string trace_hash = 3;
   uint32 policy_mismatches = 4;
+  // How the run was closed: `succeeded` | `failed` | `cancelled`.
+  string status = 5;
+  // The run's live risk score crossed the policy's `quarantine_risk_score`:
+  // the agent was quarantined and the run cancelled before its end (spans
+  // sent after that are not taken).
+  bool quarantined = 6;
+  // The run's live risk score when it was closed.
+  double risk_score = 7;
+  // When quarantined: from the first span that raised the live score to the
+  // run cancelled, in milliseconds.
+  uint64 time_to_contain_ms = 8;
+  // When quarantined: why, in words.
+  string reason = 9;
 }
 
 message VerifyRequest {
