@@ -55,12 +55,16 @@ message AuthorizeReply {
   // RFC 3339, UTC.
   string decided_at = 7;
   // The bytes that were signed: canonical JSON of principal, action, subject,
-  // labels, decision, rule, policy versions, span id, run id and decided_at.
+  // labels, decision, rule, policy versions, span id, run id, decided_at and kid.
   bytes signed = 8;
   // Ed25519 signature of `signed` by the backend's firewall key.
   bytes signature = 9;
   // The key to verify with (raw 32 bytes); also on GET /admin/infrastructure.
   bytes public_key = 10;
+  // The key's id (its RFC 7638 thumbprint): the key is published under it, with the keys it
+  // replaced, at GET /.well-known/jwks.json, so a decision still verifies after a rotation.
+  // Also inside `signed`.
+  string kid = 11;
 }
 
 message SpanReport {

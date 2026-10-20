@@ -320,7 +320,7 @@ pub async fn sample_shared(
          FROM memories m
          JOIN graphs g ON g.id = m.graph_id
          LEFT JOIN teams t ON t.id = g.team_id
-         WHERE m.workspace_id = $1 AND (t.id IS NULL OR NOT t.private)
+         WHERE m.workspace_id = $1 AND g.deleted_at IS NULL AND (t.id IS NULL OR NOT t.private)
          ORDER BY md5(m.id::text) LIMIT $2",
     )
     .bind(workspace_id)

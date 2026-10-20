@@ -78,7 +78,8 @@ macro_rules! workspace_rows {
                         AS member_count,
                     (SELECT count(*) FROM teams t WHERE t.workspace_id = w.id) AS team_count,
                     (SELECT count(*) FROM issues i WHERE i.workspace_id = w.id) AS issue_count,
-                    (SELECT count(*) FROM graphs g WHERE g.workspace_id = w.id) AS graph_count,
+                    (SELECT count(*) FROM graphs g WHERE g.workspace_id = w.id AND g.deleted_at IS NULL)
+                        AS graph_count,
                     w.created_at
              FROM workspaces w
              LEFT JOIN LATERAL (

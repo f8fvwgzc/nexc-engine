@@ -487,6 +487,23 @@ async fn a_twelve_turn_agent_run_produces_a_verifiable_chain(pool: PgPool) {
     let _ = &t.gid;
 }
 
+/// Runs `sql` on span `id` as the tables' owner would to get past the
+/// append-only guard: with the trigger off, in one transaction (the
+/// statement's lock keeps other sessions from ever seeing it off).
+async fn tamper(pool: &PgPool, sql: &'static str, id: Uuid) {
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query("ALTER TABLE agent_spans DISABLE TRIGGER agent_spans_append_only")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query(sql).bind(id).execute(&mut *tx).await.unwrap();
+    sqlx::query("ALTER TABLE agent_spans ENABLE TRIGGER agent_spans_append_only")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+}
+
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
 async fn a_changed_row_is_named_by_verify(pool: PgPool) {
     let t = traced_run(pool.clone(), "Research").await;
@@ -495,12 +512,15 @@ async fn a_changed_row_is_named_by_verify(pool: PgPool) {
     let victim = stored.iter().find(|s| s["name"] == "write_file").unwrap();
     let victim_id: Uuid = victim["id"].as_str().unwrap().parse().unwrap();
 
-    // Flip one byte of the stored span: one character of its name.
-    sqlx::query("UPDATE agent_spans SET name = 'write_filf' WHERE id = $1")
-        .bind(victim_id)
-        .execute(&pool)
-        .await
-        .unwrap();
+    // Spans refuse to change (migration 20261020000203); whoever owns the tables can drop the
+    // guard, and the chain still shows what they did. Flip one byte of the stored span: one
+    // character of its name.
+    tamper(
+        &pool,
+        "UPDATE agent_spans SET name = 'write_filf' WHERE id = $1",
+        victim_id,
+    )
+    .await;
     let (_, verified) = get(app, token, &format!("/runs/{rid}/trace/verify")).await;
     assert_eq!(verified["ok"], false);
     assert_eq!(verified["broken"]["span_id"], victim["id"]);
@@ -513,33 +533,27 @@ async fn a_changed_row_is_named_by_verify(pool: PgPool) {
     );
 
     // Put it back; then change an attribute instead, then forge a matching hash.
-    sqlx::query("UPDATE agent_spans SET name = 'write_file' WHERE id = $1")
-        .bind(victim_id)
-        .execute(&pool)
-        .await
-        .unwrap();
+    tamper(
+        &pool,
+        "UPDATE agent_spans SET name = 'write_file' WHERE id = $1",
+        victim_id,
+    )
+    .await;
     let (_, verified) = get(app, token, &format!("/runs/{rid}/trace/verify")).await;
     assert_eq!(verified["ok"], true, "restored: {verified}");
-    sqlx::query("UPDATE agent_spans SET attributes = jsonb_set(attributes, '{result_bytes}', '25') WHERE id = $1")
-        .bind(victim_id)
-        .execute(&pool)
-        .await
-        .unwrap();
+    tamper(&pool, "UPDATE agent_spans SET attributes = jsonb_set(attributes, '{result_bytes}', '25') WHERE id = $1", victim_id).await;
     let (_, verified) = get(app, token, &format!("/runs/{rid}/trace/verify")).await;
     assert_eq!(verified["broken"]["span_id"], victim["id"]);
 
     // Removing the last span leaves a chain that holds but no longer ends at the seal.
-    sqlx::query("UPDATE agent_spans SET attributes = jsonb_set(attributes, '{result_bytes}', '24') WHERE id = $1")
-        .bind(victim_id)
-        .execute(&pool)
-        .await
-        .unwrap();
+    tamper(&pool, "UPDATE agent_spans SET attributes = jsonb_set(attributes, '{result_bytes}', '24') WHERE id = $1", victim_id).await;
     let last = stored.iter().max_by_key(|s| s["seq"].as_i64()).unwrap();
-    sqlx::query("DELETE FROM agent_spans WHERE id = $1")
-        .bind(last["id"].as_str().unwrap().parse::<Uuid>().unwrap())
-        .execute(&pool)
-        .await
-        .unwrap();
+    tamper(
+        &pool,
+        "DELETE FROM agent_spans WHERE id = $1",
+        last["id"].as_str().unwrap().parse::<Uuid>().unwrap(),
+    )
+    .await;
     let (_, verified) = get(app, token, &format!("/runs/{rid}/trace/verify")).await;
     assert_eq!(verified["ok"], false);
     assert!(

@@ -175,20 +175,35 @@ async fn close_run(
     let sink = run.sink.lock().await.take()?;
     let sealed = sink.seal().await;
     let hash = sealed.hash;
-    if let Err(err) = repo::external_runs::close_run(
-        &state.db,
-        run.run_id,
-        run.node_id,
-        status,
-        output,
-        hash.as_ref().map(|h| h.as_slice()),
-    )
-    .await
-    {
-        tracing::error!(run_id = %run.run_id, error = %err, "external run not closed");
+    let seal = hash.map(|h| {
+        crate::domain::seal::SignedSeal::sign(
+            state.signing_keys.current(),
+            run.run_id,
+            sealed.spans,
+            &h,
+        )
+    });
+    // The run is closed and its seal on record in one transaction.
+    let closed = async {
+        let mut tx = state.db.begin().await?;
+        repo::external_runs::close_run(
+            &mut tx,
+            run.run_id,
+            run.node_id,
+            status,
+            output,
+            hash.as_ref().map(|h| h.as_slice()),
+            seal.as_ref(),
+        )
+        .await?;
+        if let (Some(hash), Some(row)) = (hash, repo::runs::find_row(&mut *tx, run.run_id).await?) {
+            scheduler::seal_audit(&mut tx, &row, hash, sealed.spans).await?;
+        }
+        tx.commit().await
     }
-    if let (Some(hash), Ok(Some(row))) = (hash, repo::runs::find_row(&state.db, run.run_id).await) {
-        scheduler::seal_audit(state, &row, hash, sealed.spans).await;
+    .await;
+    if let Err(err) = closed {
+        tracing::error!(run_id = %run.run_id, error = %err, "external run not closed");
     }
     if let Ok(loaded) = scheduler::load_run(state, run.run_id).await {
         state
@@ -326,17 +341,20 @@ pub struct Signed<'a> {
     pub run_id: Uuid,
     /// RFC 3339, UTC, microseconds.
     pub decided_at: &'a str,
+    /// The id of the key that signs (`/.well-known/jwks.json`).
+    pub kid: &'a str,
 }
 
 impl Signed<'_> {
     /// The bytes the signature covers: canonical JSON of what was asked,
-    /// what was decided, under which policy versions, where it is recorded
-    /// and when.
+    /// what was decided, under which policy versions, where it is recorded,
+    /// when, and by which key.
     pub fn bytes(&self) -> Vec<u8> {
         serde_json::to_vec(&json!({
             "action": self.action,
             "decided_at": self.decided_at,
             "decision": self.decision.verdict(),
+            "kid": self.kid,
             "labels": self.labels,
             "policy_versions": self.versions,
             "principal": self.principal,
@@ -445,6 +463,7 @@ impl AgentFirewall for FirewallService {
             span_id,
             run_id: run.run_id,
             decided_at: &decided_at,
+            kid: self.state.firewall_signer.kid(),
         }
         .bytes();
         let signature = self.state.firewall_signer.sign(&signed);
@@ -474,6 +493,7 @@ impl AgentFirewall for FirewallService {
                 "policy_versions": caller.versions,
                 "firewall": true,
                 "signature": hex::encode(&signature),
+                "kid": self.state.firewall_signer.kid(),
             }),
         });
         self.state
@@ -491,6 +511,7 @@ impl AgentFirewall for FirewallService {
             signed,
             signature,
             public_key: self.state.firewall_signer.public_key().to_vec(),
+            kid: self.state.firewall_signer.kid().to_owned(),
         }))
     }
 
@@ -628,6 +649,13 @@ impl AgentFirewall for FirewallService {
         let verified = tokio::task::spawn_blocking(move || trace_domain::verify(&spans, sealed))
             .await
             .map_err(internal)?;
+        // The signed seal is checked as GET /runs/{rid}/trace/verify checks it.
+        let seal = row.seal.as_ref().map(|seal| {
+            let key = self.state.signing_keys.public_key(&seal.kid);
+            seal.check(row.id, verified.chain(), key.as_ref())
+        });
+        let verified = verified.with_seal(seal);
+        let seal_reason = verified.seal.as_ref().and_then(|s| s.reason.clone());
         let broken = verified.broken.as_ref();
         Ok(Response::new(pb::VerifyReply {
             ok: verified.ok,
@@ -636,7 +664,10 @@ impl AgentFirewall for FirewallService {
             sealed_hash: verified.sealed_hash.unwrap_or_default(),
             broken_span_id: broken.map(|b| b.span_id.to_string()).unwrap_or_default(),
             broken_seq: broken.map_or(0, |b| b.seq),
-            broken_reason: broken.map(|b| b.reason.clone()).unwrap_or_default(),
+            broken_reason: broken
+                .map(|b| b.reason.clone())
+                .or(seal_reason)
+                .unwrap_or_default(),
         }))
     }
 
@@ -872,6 +903,8 @@ pub struct FirewallStatus {
     pub addr: Option<String>,
     /// Hex of the Ed25519 public key decisions are signed with.
     pub public_key: String,
+    /// Its id, as published at `/.well-known/jwks.json`.
+    pub kid: String,
     /// Decisions sessions open on this instance.
     pub open_sessions: usize,
 }
@@ -881,6 +914,7 @@ pub fn status(state: &AppState) -> FirewallStatus {
         enabled: state.settings.grpc_addr.is_some(),
         addr: state.settings.grpc_addr.map(|a| a.to_string()),
         public_key: hex::encode(state.firewall_signer.public_key()),
+        kid: state.firewall_signer.kid().to_owned(),
         open_sessions: state.firewall_sessions.open.len(),
     }
 }
@@ -908,10 +942,15 @@ mod tests {
             span_id: span,
             run_id: run,
             decided_at: "2026-10-18T12:00:00.000000Z",
+            kid: "kid-1",
         }
         .bytes();
         let text = String::from_utf8(bytes).unwrap();
         assert!(text.starts_with("{\"action\":\"egress\""));
+        assert!(
+            text.contains("\"decision\":\"deny\",\"kid\":\"kid-1\""),
+            "{text}"
+        );
         assert!(text.contains("\"decision\":\"deny\""));
         assert!(text.contains(&span.to_string()) && text.contains(&run.to_string()));
         assert!(text.contains("\"workspace\":2"));

@@ -60,7 +60,8 @@ pub async fn list(
     auth: AuthUser,
     Path(rid): Path<Uuid>,
 ) -> Result<Json<Vec<Artifact>>, AppError> {
-    repo::runs::find_owned(&state.db, auth.id, rid)
+    // A deleted graph's runs keep their files, readable as evidence until the purge.
+    repo::runs::find_evidence(&state.db, auth.id, rid)
         .await
         .or_not_found("run")?;
     let stored = repo::artifacts::list_stored(&state.db, rid).await?;
@@ -82,7 +83,8 @@ pub async fn zip(
     auth: AuthUser,
     Path(rid): Path<Uuid>,
 ) -> Result<Response, AppError> {
-    repo::runs::find_owned(&state.db, auth.id, rid)
+    // A deleted graph's runs keep their files, readable as evidence until the purge.
+    repo::runs::find_evidence(&state.db, auth.id, rid)
         .await
         .or_not_found("run")?;
     // Quarantined files stay out of the archive until an admin releases them.
@@ -137,7 +139,7 @@ pub async fn download(
     auth: AuthUser,
     Path(aid): Path<Uuid>,
 ) -> Result<Response, AppError> {
-    let stored = repo::artifacts::find_owned(&state.db, auth.id, aid)
+    let stored = repo::artifacts::find_readable(&state.db, auth.id, aid)
         .await
         .or_not_found("artifact")?;
     let artifact: Artifact = stored.artifact.clone().into();

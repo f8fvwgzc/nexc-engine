@@ -17,7 +17,7 @@ LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a;
         backup backup-check restore prove prove-trace prove-identity prove-audit prove-policy prove-agentsecops prove-gateway prove-api test-worst-case \
         build test test-backend test-frontend test-runtime test-onto-live e2e-ui e2e-ui-update lint fmt check \
         docker-build docker-up docker-down docker-logs demo demo-onto demo-secops seed-demo \
-        minikube-up minikube-down k8s-render openapi proto-runtime doctor clean \
+        minikube-up minikube-down k8s-render openapi proto-runtime doctor clean verify-bundle \
         docs docs-build docs-dev
 
 help: ## Show this help
@@ -127,6 +127,11 @@ seed-demo: ## Fill the running app with a demo workspace, five accounts and thei
 
 prove: ## Run real issues through plan, agents and result with the configured model: make prove ISSUES="ENG-7 DES-2" (needs NEXC_PROVE_EMAIL/PASSWORD)
 	@python3 scripts/prove-loop.py $(ISSUES)
+
+verify-bundle: ## Check a run's evidence bundle offline, no database: make verify-bundle BUNDLE=run-<id>.evidence.json KEYS=jwks.json (or KEY=<public key>)
+	@[ -n "$(BUNDLE)" ] || { echo "usage: make verify-bundle BUNDLE=<file> KEYS=<jwks.json> | KEY=<public key>"; exit 2; }
+	@$(CARGO) run --quiet --locked --manifest-path $(BACKEND_MANIFEST) --bin nexc-verify -- \
+	  "$(BUNDLE)" $(if $(KEYS),--keys "$(KEYS)") $(if $(KEY),--key "$(KEY)")
 
 prove-trace: ## Span emit -> fan-out, durable write and verify latency for a 10,000-span run (needs PostgreSQL: make db-up)
 	@$(LOAD_ENV) export DATABASE_URL="$${DATABASE_URL:-$$NEXC_DATABASE_URL}"; \

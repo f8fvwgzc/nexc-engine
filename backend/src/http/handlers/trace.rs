@@ -38,7 +38,8 @@ pub async fn trace(
     Path(rid): Path<Uuid>,
     Query(query): Query<TraceQuery>,
 ) -> Result<Json<TracePage>, AppError> {
-    repo::runs::find_owned(&state.db, auth.id, rid)
+    // A deleted graph's runs keep their trace for those who could open the graph.
+    repo::runs::find_evidence(&state.db, auth.id, rid)
         .await
         .or_not_found("run")?;
     let limit = query
@@ -57,7 +58,9 @@ pub async fn trace(
 }
 
 /// Recomputes the run's hash chain from the stored spans and compares it
-/// with what is stored and with the hash sealed when the run finished.
+/// with what is stored and with the hash sealed when the run finished, and
+/// checks the seal's signature with the key published under its `kid`. A
+/// deleted graph's runs verify as before.
 #[utoipa::path(get, path = "/runs/{rid}/trace/verify", tag = "runs", security(("bearer" = [])),
     params(("rid" = Uuid, Path, description = "Run id")),
     responses((status = 200, body = TraceVerification), (status = 404, body = Problem)))]
@@ -66,17 +69,29 @@ pub async fn verify(
     auth: AuthUser,
     Path(rid): Path<Uuid>,
 ) -> Result<Json<TraceVerification>, AppError> {
-    let row = repo::runs::find_owned(&state.db, auth.id, rid)
+    let (row, _) = repo::runs::find_evidence(&state.db, auth.id, rid)
         .await
         .or_not_found("run")?;
+    Ok(Json(verify_run(&state, &row).await?))
+}
+
+/// The verification of a run's stored chain and its signed seal.
+pub async fn verify_run(
+    state: &AppState,
+    row: &repo::runs::RunRow,
+) -> Result<TraceVerification, AppError> {
     let sealed: Option<[u8; 32]> = row
         .trace_hash
         .as_deref()
         .and_then(|bytes| bytes.try_into().ok());
-    let spans = repo::spans::chain(&state.db, rid).await?;
+    let spans = repo::spans::chain(&state.db, row.id).await?;
     // Hashing a long chain is CPU work: keep it off the request threads.
     let verified = tokio::task::spawn_blocking(move || trace::verify(&spans, sealed))
         .await
         .map_err(|err| AppError::Internal(err.into()))?;
-    Ok(Json(verified))
+    let seal = row.seal.as_ref().map(|seal| {
+        let key = state.signing_keys.public_key(&seal.kid);
+        seal.check(row.id, verified.chain(), key.as_ref())
+    });
+    Ok(verified.with_seal(seal))
 }

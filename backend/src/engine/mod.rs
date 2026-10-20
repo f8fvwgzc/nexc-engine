@@ -12,6 +12,7 @@ pub mod credentials;
 pub mod defend;
 pub mod deps;
 pub mod editor;
+pub mod evidence;
 pub mod executor;
 pub mod guardrails;
 pub mod issue_report;

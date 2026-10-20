@@ -1,5 +1,6 @@
 //! What spans said, when a workspace records it (`span_payloads`): written
-//! sealed, read by span, deleted past the workspace's retention.
+//! sealed, read by span, deleted past the workspace's retention
+//! (`repo::evidence::purge_payloads`).
 
 use chrono::{DateTime, Utc};
 use sqlx::postgres::PgRow;
@@ -7,6 +8,7 @@ use sqlx::{FromRow, PgExecutor, Row};
 use uuid::Uuid;
 
 use super::enum_col;
+use crate::domain::bundle::PayloadMeta;
 use crate::domain::recording::PayloadKind;
 
 /// A payload as stored: sealed content.
@@ -91,19 +93,30 @@ pub async fn count_for_run(
     .await
 }
 
-/// Deletes every payload older than its workspace's `recording.retention_days`
-/// (30 when the workspace set none); how many went.
-pub async fn purge_expired(db: impl PgExecutor<'_>) -> Result<u64, sqlx::Error> {
-    let done = sqlx::query(
-        "DELETE FROM span_payloads p
-         USING runs r
-         JOIN graphs g ON g.id = r.graph_id
-         LEFT JOIN workspace_guardrails wg ON wg.workspace_id = g.workspace_id
-         WHERE p.run_id = r.id
-           AND p.created_at < now() - make_interval(days =>
-               COALESCE((wg.config->'recording'->>'retention_days')::int, 30))",
+/// What was recorded of a run's spans, without the content: for its evidence bundle.
+pub async fn meta_for_run(
+    db: impl PgExecutor<'_>,
+    run_id: Uuid,
+) -> Result<Vec<PayloadMeta>, sqlx::Error> {
+    let rows: Vec<(Uuid, String, i32, i32, DateTime<Utc>)> = sqlx::query_as(
+        "SELECT span_id, kind, size, redactions, created_at FROM span_payloads
+         WHERE run_id = $1 ORDER BY span_id, kind",
     )
-    .execute(db)
+    .bind(run_id)
+    .fetch_all(db)
     .await?;
-    Ok(done.rows_affected())
+    rows.into_iter()
+        .map(|(span_id, kind, size, redactions, created_at)| {
+            Ok(PayloadMeta {
+                span_id,
+                kind: kind.parse().map_err(|_| sqlx::Error::ColumnDecode {
+                    index: "kind".into(),
+                    source: format!("unknown payload kind `{kind}`").into(),
+                })?,
+                size: size.into(),
+                redactions: redactions.into(),
+                created_at,
+            })
+        })
+        .collect()
 }

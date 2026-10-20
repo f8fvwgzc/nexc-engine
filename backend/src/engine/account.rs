@@ -215,7 +215,8 @@ pub async fn erase(state: &AppState, user: Uuid) -> Result<(), AppError> {
     .into_iter()
     .partition(|(_, members)| *members == 1);
     for (workspace, _) in &alone {
-        workspaces::erase(state, *workspace).await?;
+        let how = "erased with the account of its only member";
+        workspaces::erase(state, *workspace, user, how).await?;
     }
     // Graphs from before workspaces existed are the account's alone; their artifacts are on disk.
     let runs: Vec<Uuid> = sqlx::query_scalar(
@@ -227,6 +228,11 @@ pub async fn erase(state: &AppState, user: Uuid) -> Result<(), AppError> {
     .await?;
 
     let mut tx = state.db.begin().await?;
+    // The account's graphs from before workspaces existed go with it, evidence and all (a
+    // purge path); its name leaves the audit logs, whose chains keep its digests (the one
+    // change an audit entry allows).
+    repo::evidence::allow_purge(&mut tx).await?;
+    repo::evidence::allow_redact(&mut tx).await?;
     for statement in [
         "UPDATE issues SET assignee_id = NULL WHERE assignee_id = $1",
         "UPDATE projects SET lead_id = NULL WHERE lead_id = $1",
@@ -269,8 +275,8 @@ pub async fn erase(state: &AppState, user: Uuid) -> Result<(), AppError> {
     // The logs keep what happened and when, and that one account did it; they stop saying who.
     let named = format!("{} <{}>", account.name, account.email);
     for statement in [
-        "UPDATE audit_log SET actor_name = $2 WHERE actor_id = $1",
-        "UPDATE audit_log SET subject = $2 WHERE subject = $3",
+        "UPDATE audit_log SET actor_name = $2, salt = NULL WHERE actor_id = $1",
+        "UPDATE audit_log SET subject = $2, salt = NULL WHERE subject = $3",
         "UPDATE platform_events SET actor_name = $2 WHERE actor_id = $1",
         "UPDATE platform_events SET subject = 'account ' || $1::text WHERE subject = $3",
     ] {

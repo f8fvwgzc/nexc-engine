@@ -47,7 +47,7 @@ pub async fn tree(
     auth: AuthUser,
     Path(rid): Path<Uuid>,
 ) -> Result<Json<Session>, AppError> {
-    repo::runs::find_owned(&state.db, auth.id, rid)
+    repo::runs::find_evidence(&state.db, auth.id, rid)
         .await?
         .ok_or(AppError::NotFound("run"))?;
     let run = repo::sessions::run_facts(&state.db, rid)

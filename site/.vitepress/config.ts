@@ -80,6 +80,7 @@ export default defineConfig({
           { text: 'Assessment and target architecture', link: '/secops/assessment' },
           { text: 'Identity', link: '/secops/identity' },
           { text: 'Trace', link: '/secops/trace' },
+          { text: 'Evidence that survives', link: '/secops/evidence' },
           { text: 'Policy and defend', link: '/secops/policy' },
           { text: 'Ask the audit', link: '/secops/audit' },
           { text: 'Tools gateway', link: '/secops/gateway' },

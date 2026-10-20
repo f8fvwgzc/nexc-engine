@@ -3,5 +3,11 @@
   "spans": 8,
   "hash": "0909090909090909090909090909090909090909090909090909090909090909",
   "sealed_hash": "0909090909090909090909090909090909090909090909090909090909090909",
-  "broken": null
+  "broken": null,
+  "seal": {
+    "ok": true,
+    "kid": "kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k",
+    "sealed_at": "2026-10-17T09:12:41.508000Z",
+    "reason": null
+  }
 }

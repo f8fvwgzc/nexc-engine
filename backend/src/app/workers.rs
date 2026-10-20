@@ -125,9 +125,9 @@ async fn housekeeping(state: &AppState) -> anyhow::Result<()> {
     repo::outbox::purge(&state.db).await?;
     repo::idempotency::purge_expired(&state.db).await?;
     repo::plans::fail_stale(&state.db).await?;
-    let purged = repo::span_payloads::purge_expired(&state.db).await?;
-    if purged > 0 {
-        tracing::info!(purged, "recorded payloads past their retention deleted");
+    // A purge that fails is tried again on the next tick; the rest of the housekeeping goes on.
+    if let Err(err) = crate::engine::evidence::purge_expired(state).await {
+        tracing::warn!(error = %err, "the retention purge did not finish");
     }
     export::purge_when_off(state).await?;
     state

@@ -102,9 +102,15 @@ pub struct Settings {
     pub metrics_token: Option<Secret<String>>,
     /// Where the Agent Firewall API listens (`0.0.0.0:50052`); unset keeps it off.
     pub grpc_addr: Option<SocketAddr>,
-    /// Ed25519 seed the firewall signs decisions with: `NEXC_FIREWALL_SIGNING_KEY`,
-    /// or derived from the master key when unset.
+    /// Ed25519 seed nexc signs with (firewall decisions, run seals, evidence bundles):
+    /// `NEXC_SIGNING_KEY` (or the older `NEXC_FIREWALL_SIGNING_KEY`), or derived from the
+    /// master key when neither is set.
     pub firewall_signing_key: Secret<[u8; 32]>,
+    /// Whether that seed was derived from the master key: no key of its own is configured.
+    pub signing_key_derived: bool,
+    /// Public keys nexc signed with before a rotation (`NEXC_SIGNING_KEYS_RETIRED`), still
+    /// published at `/.well-known/jwks.json` so that what they signed verifies.
+    pub signing_keys_retired: Vec<[u8; 32]>,
     /// OTLP/gRPC endpoint the trace is exported to (`http://host:4317`); unset keeps it off.
     pub otlp_endpoint: Option<String>,
     /// Authenticated API requests one account may make per minute (burst a fifth of it).
@@ -267,6 +273,8 @@ impl Settings {
             metrics_token: r.optional("NEXC_METRICS_TOKEN").map(Secret::new),
             grpc_addr: r.grpc_addr(),
             firewall_signing_key: Secret::new(r.firewall_signing_key()),
+            signing_key_derived: r.signing_key_raw().is_none(),
+            signing_keys_retired: r.retired_signing_keys(),
             otlp_endpoint: r.optional("NEXC_OTLP_ENDPOINT"),
             api_calls_per_minute: r.parse("NEXC_API_CALLS_PER_MINUTE", 600),
             cache_ttl: Duration::from_secs(r.parse("NEXC_CACHE_TTL_SECS", 60)),
@@ -622,11 +630,45 @@ impl Reader<'_> {
         }
     }
 
-    /// The firewall's Ed25519 seed: `NEXC_FIREWALL_SIGNING_KEY` (base64 of 32
+    /// The signing key as configured: `NEXC_SIGNING_KEY`, else the name it had
+    /// when only the firewall signed (`NEXC_FIREWALL_SIGNING_KEY`).
+    fn signing_key_raw(&self) -> Option<String> {
+        self.optional("NEXC_SIGNING_KEY")
+            .or_else(|| self.optional("NEXC_FIREWALL_SIGNING_KEY"))
+    }
+
+    /// `NEXC_SIGNING_KEYS_RETIRED`: comma-separated public keys (base64 or hex
+    /// of 32 bytes) of the keys nexc signed with before.
+    fn retired_signing_keys(&mut self) -> Vec<[u8; 32]> {
+        let Some(raw) = self.optional("NEXC_SIGNING_KEYS_RETIRED") else {
+            return Vec::new();
+        };
+        let mut keys = Vec::new();
+        for item in raw.split(',').map(str::trim).filter(|k| !k.is_empty()) {
+            let decoded = hex::decode(item)
+                .ok()
+                .or_else(|| base64::engine::general_purpose::STANDARD.decode(item).ok())
+                .or_else(|| {
+                    base64::engine::general_purpose::URL_SAFE_NO_PAD
+                        .decode(item)
+                        .ok()
+                })
+                .and_then(|bytes| <[u8; 32]>::try_from(bytes.as_slice()).ok());
+            match decoded {
+                Some(key) => keys.push(key),
+                None => self.errors.push(format!(
+                    "NEXC_SIGNING_KEYS_RETIRED: `{item}` is not a 32-byte public key in hex or base64"
+                )),
+            }
+        }
+        keys
+    }
+
+    /// The Ed25519 seed nexc signs with: `NEXC_SIGNING_KEY` (base64 of 32
     /// bytes) when set, else derived from the master key, which only the
     /// backend holds. The master key itself never signs anything.
     fn firewall_signing_key(&mut self) -> [u8; 32] {
-        match self.optional("NEXC_FIREWALL_SIGNING_KEY") {
+        match self.signing_key_raw() {
             Some(raw) => {
                 let decoded = base64::engine::general_purpose::STANDARD
                     .decode(raw.as_bytes())
@@ -635,9 +677,8 @@ impl Reader<'_> {
                 match decoded {
                     Some(seed) => seed,
                     None => {
-                        self.errors.push(
-                            "NEXC_FIREWALL_SIGNING_KEY must be base64 of exactly 32 bytes".into(),
-                        );
+                        self.errors
+                            .push("NEXC_SIGNING_KEY must be base64 of exactly 32 bytes".into());
                         random_bytes::<32>()
                     }
                 }
@@ -790,6 +831,35 @@ mod tests {
         assert!(err.0[0].starts_with("NEXC_RUN_LEASE_SECS must be at least 10"));
         m.insert("NEXC_RUN_LEASE_SECS", "10".into());
         assert!(load(&m).is_ok());
+    }
+
+    #[test]
+    fn the_signing_key_has_a_new_name_and_retired_keys_are_listed() {
+        use base64::Engine as _;
+        let b64 = |byte: u8| base64::engine::general_purpose::STANDARD.encode([byte; 32]);
+        let m = base();
+        let s = load(&m).unwrap();
+        assert!(s.signing_key_derived && s.signing_keys_retired.is_empty());
+        let derived = *s.firewall_signing_key.expose();
+        let mut m = base();
+        m.insert("NEXC_FIREWALL_SIGNING_KEY", b64(1));
+        let old_name = load(&m).unwrap();
+        assert!(!old_name.signing_key_derived);
+        assert_ne!(*old_name.firewall_signing_key.expose(), derived);
+        m.insert("NEXC_SIGNING_KEY", b64(2));
+        let new_name = load(&m).unwrap();
+        assert_ne!(
+            new_name.firewall_signing_key.expose(),
+            old_name.firewall_signing_key.expose(),
+            "NEXC_SIGNING_KEY wins"
+        );
+        m.insert(
+            "NEXC_SIGNING_KEYS_RETIRED",
+            format!("{}, {}", "ab".repeat(32), b64(3)),
+        );
+        assert_eq!(load(&m).unwrap().signing_keys_retired.len(), 2);
+        m.insert("NEXC_SIGNING_KEYS_RETIRED", "short".into());
+        assert!(load(&m).is_err());
     }
 
     #[test]

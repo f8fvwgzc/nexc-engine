@@ -606,9 +606,7 @@ async fn payloads_past_the_retention_are_deleted(pool: PgPool) {
     assert_eq!(count().await, 2);
     // Fresh rows stay; a row older than the retention goes; a longer retention keeps it.
     assert_eq!(
-        nexc::repo::span_payloads::purge_expired(&pool)
-            .await
-            .unwrap(),
+        nexc::repo::evidence::purge_payloads(&pool).await.unwrap(),
         0
     );
     sqlx::query("UPDATE span_payloads SET created_at = now() - interval '40 days' WHERE run_id = $1 AND kind = 'prompt'")
@@ -624,9 +622,7 @@ async fn payloads_past_the_retention_are_deleted(pool: PgPool) {
     )
     .await;
     assert_eq!(
-        nexc::repo::span_payloads::purge_expired(&pool)
-            .await
-            .unwrap(),
+        nexc::repo::evidence::purge_payloads(&pool).await.unwrap(),
         0
     );
     assert_eq!(count().await, 2);
@@ -638,9 +634,7 @@ async fn payloads_past_the_retention_are_deleted(pool: PgPool) {
     )
     .await;
     assert_eq!(
-        nexc::repo::span_payloads::purge_expired(&pool)
-            .await
-            .unwrap(),
+        nexc::repo::evidence::purge_payloads(&pool).await.unwrap(),
         1
     );
     assert_eq!(count().await, 1);
@@ -658,9 +652,7 @@ async fn payloads_past_the_retention_are_deleted(pool: PgPool) {
     .await
     .unwrap();
     assert_eq!(
-        nexc::repo::span_payloads::purge_expired(&pool)
-            .await
-            .unwrap(),
+        nexc::repo::evidence::purge_payloads(&pool).await.unwrap(),
         1
     );
     assert_eq!(count().await, 0);

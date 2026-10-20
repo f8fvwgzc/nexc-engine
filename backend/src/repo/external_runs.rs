@@ -3,10 +3,10 @@
 //! session its decisions are recorded in, is a run of that graph with one
 //! node, so the trace, the audit and the console treat it like any other.
 
-use sqlx::PgExecutor;
 use uuid::Uuid;
 
 use crate::domain::run::RunStatus;
+use crate::domain::seal::SignedSeal;
 
 /// The managed graph of an external agent, created on first use. The owner
 /// is the person answerable for the agent (its creator when that account
@@ -18,7 +18,7 @@ pub async fn ensure_graph(
     agent_name: &str,
 ) -> Result<(Uuid, Uuid), sqlx::Error> {
     if let Some(found) = sqlx::query_as::<_, (Uuid, Uuid)>(
-        "SELECT id, owner_id FROM graphs WHERE external_agent_id = $1",
+        "SELECT id, owner_id FROM graphs WHERE external_agent_id = $1 AND deleted_at IS NULL",
     )
     .bind(agent_id)
     .fetch_optional(&mut *conn)
@@ -92,14 +92,16 @@ pub async fn open_run(
     Ok((run_id, node_id))
 }
 
-/// Closes an external run: the node, its run and the seal of its trace.
+/// Closes an external run: the node, its run and the seal of its trace,
+/// signed (`seal`) when there is one.
 pub async fn close_run(
-    db: impl PgExecutor<'_> + Copy,
+    db: &mut sqlx::PgConnection,
     run_id: Uuid,
     node_id: Uuid,
     status: RunStatus,
     output: Option<&str>,
     trace_hash: Option<&[u8]>,
+    seal: Option<&SignedSeal>,
 ) -> Result<(), sqlx::Error> {
     let node_status = match status {
         RunStatus::Succeeded => "succeeded",
@@ -113,19 +115,26 @@ pub async fn close_run(
     .bind(node_id)
     .bind(node_status)
     .bind(output)
-    .execute(db)
+    .execute(&mut *db)
     .await?;
     sqlx::query("UPDATE nodes SET status = $2, output = $3, updated_at = now() WHERE id = $1")
         .bind(node_id)
         .bind(node_status)
         .bind(output)
-        .execute(db)
+        .execute(&mut *db)
         .await?;
-    sqlx::query("UPDATE runs SET status = $2, finished_at = now(), trace_hash = $3 WHERE id = $1")
-        .bind(run_id)
-        .bind(status.as_str())
-        .bind(trace_hash)
-        .execute(db)
-        .await?;
+    sqlx::query(
+        "UPDATE runs SET status = $2, finished_at = now(), trace_hash = $3,
+                         seal_signed = $4, seal_signature = $5, seal_kid = $6
+         WHERE id = $1",
+    )
+    .bind(run_id)
+    .bind(status.as_str())
+    .bind(trace_hash)
+    .bind(seal.map(|s| s.signed.as_slice()))
+    .bind(seal.map(|s| s.signature.as_slice()))
+    .bind(seal.map(|s| s.kid.as_str()))
+    .execute(&mut *db)
+    .await?;
     Ok(())
 }

@@ -206,8 +206,9 @@ Five rules the design follows:
   gRPC messages once phase 4 lands. The backend's `handle_line` persists and fans them out as a
   `trace.span` SSE event, so the console shows them live.
 - **Hash chain per run.** `hash = SHA256(prev_hash || canonical_json(span))` using the C kernel.
-  The run's final hash is written to `audit_log` and shown on the run. A verify endpoint recomputes
-  the chain and reports the first broken link.
+  The run's final hash is written to `audit_log` and shown on the run, and signed with a published
+  key (§12). A verify endpoint recomputes the chain, checks the seal and reports the first broken
+  link. Spans are append-only in the database, and deleting a graph keeps its runs' traces (§12).
 - **Usage joins the trace.** `llm_usage` gains `agent_id`, `node_id`, `span_id`, so cost is
   attributable per agent, per tool, per policy.
 - **Views.** Run trace waterfall (node → agent → turn → tool), agent activity timeline, workspace
@@ -467,3 +468,137 @@ In SoftBank's terms: the agent card is the ID card shown outward, the counterpar
 the visitor's badge, the firewall decides at the door, and the trace keeps the visit on record.
 
 <!-- #endregion a2a -->
+---
+
+## 12. Evidence that survives
+
+<!-- #region evidence -->
+_Added 2026-10-20 after a review of the trust layer against SoftBank's public AgentSecOps
+material._ The trace spine (§4.2) made every run a hash chain, but four things let that evidence
+be lost or doubted: deleting a graph cascaded through its runs to every span, payload and seal, and
+nothing recorded it; nothing in the database stopped a span or an audit entry from being changed or
+removed; the audit log itself was not chained; and the firewall's signing key had no id, no rotation
+and no published home, while run seals were not signed at all. This section is what closed them.
+
+**Deleting a graph archives it.** `DELETE /graphs/{gid}` sets `graphs.deleted_at` and `deleted_by`
+instead of removing the row. The graph leaves every list and every graph endpoint (the
+`graph_access!` predicate every reader goes through skips it), its queued runs are cancelled and its
+running ones asked to stop (a run that changes hands afterwards ends cancelled), its issues stop
+pointing at it, and onto-intelli's map drops it and its runs. Its runs, their spans, their signed
+seals, their payloads' metadata and their artifacts stay, and the run, its trace and its
+verification, its sessions, its artifacts and its payloads, its evidence bundle and
+`GET /graphs/{gid}/runs` still answer for whoever could open the graph. A `graph_deleted` entry
+names who deleted it. Removing an agent archives its managed graph the same way (the agent row is
+locked first, so a managed graph created meanwhile cannot be cascaded away). We weighed three ways
+to keep the evidence:
+
+- *Refuse the delete while sealed runs inside retention exist.* Spans have no retention of their
+  own (only recorded payloads do), so a graph that ever ran could never be deleted, and a person who
+  wants a graph gone would learn about evidence retention from a 409.
+- *Detach the runs* (`runs.graph_id` set to null). Every reader of a run assumes its graph; more
+  than a hundred call sites would change, and the node rows the spans name would go with the graph,
+  so a kept trace would point at nodes nobody can read.
+- *Archive the graph* (chosen). Nothing the evidence refers to moves: the graph row, its nodes and
+  its runs stay as they were, so a trace reads and verifies exactly as before, and access stays what
+  it was (whoever could open the graph). The cost is one predicate: every reader of graphs skips
+  archived ones, and the evidence endpoints use `graph_access_any!`, which does not. A team keeps
+  its archived graphs until they are purged, so it cannot be deleted before then.
+
+**The retention purge is the way evidence leaves.** The housekeeping worker removes recorded
+payloads once they are older than the workspace's `recording.retention_days` (as before, now a day
+at a time, so the log gets one entry a day) and, under the same setting but never sooner than 30
+days, an archived graph once it was deleted and its runs last ended or stirred that long ago, with
+its runs, spans, payloads and artifacts. Each removal writes `evidence_purged` to the workspace's
+audit log in the transaction that deletes. Shortening the retention is itself on the log
+(`guardrails_changed`), so a short retention followed by a deletion leaves three chained entries
+behind it. Two other paths remove evidence, both by erasing everything around it: erasing a whole
+workspace (its owner, a platform administrator, or the erasure of its only member's account),
+recorded in the platform log as `workspace_deleted` with the runs, spans and audit entries erased
+and the audit chain's last hash, written in the transaction that erases it since the workspace's
+own log goes with it; and an erased account's graphs from before workspaces existed.
+
+**Append-only in the database.** Triggers refuse any `UPDATE`, `DELETE` or `TRUNCATE` of
+`agent_spans` and `audit_log`, and any change to a sealed run's `trace_hash` and seal (SQLSTATE
+42501), so a bug or a statement that did not opt in cannot rewrite evidence. The purge paths run in
+a transaction that first names itself:
+`SELECT set_config('nexc.evidence_purge', pg_current_xact_id()::text, true)`; a value left on a
+role, a database or a connection string matches no transaction and opens nothing. The one change an
+audit entry allows is the erasure of an account's name (`nexc.evidence_redact`): the name becomes
+`Deleted account`, its salt goes and nothing chained moves. A transaction setting was chosen over a
+dedicated database role because a role needs `CREATEROLE` at migration time, which managed databases
+often withhold. Neither stops the tables' owner, who can drop a trigger (the tests do, and watch
+verification catch the edit).
+
+**The audit log is a hash chain per workspace.** The database chains every entry as it is written, in
+a `BEFORE INSERT` trigger under a lock on the workspace's chain head (`audit_chain_heads`), so no
+writer can skip it and concurrent writers cannot fork it:
+`hash = SHA-256("nexc-audit-v1" || prev_hash || workspace_id || seq || id || created_at || actor_id ||
+actor_digest || action || subject_digest || detail)`, with the byte layout in `docs/CONTRACT.md` §4.
+Names enter as salted digests (`SHA-256(salt || name)`), so erasing an account takes its name out of
+the log without breaking the chain, and a known name can no longer be tested against the digest.
+`GET /workspaces/{wid}/audit/verify` recomputes the chain in Rust from the first entry to the head
+recorded when the check began: it names the first changed entry, counts the erased ones, and shows a
+removed tail, because the chain then ends short of its head; a head lost to a partial restore is
+taken up again from the last entry. A workspace transfer copies the log in chain order, so the
+target computes the same hashes, and refuses to finish when it does not: a chain changed or cut on
+the source cannot arrive whole. What the chain cannot show is a rewrite by someone who recomputes
+every later hash and the head as well: the database's owner can. Against that, only what left the
+database before helps: evidence bundles already exported, and the anchoring sketched below.
+
+**Seals are signed, and keys have ids.** When a run ends, the backend signs the canonical statement
+`{"kid", "run_id", "sealed_at", "spans", "trace_hash", "type": "nexc.run_seal.v1"}` with its Ed25519
+key and keeps the statement, the signature and the key id on the run (`runs.seal_*`); the
+`trace_sealed` entry names the key. The key id is the RFC 7638 thumbprint of the public key, so an id
+cannot name another key. `GET /.well-known/jwks.json` publishes the current key and the retired ones
+(`NEXC_SIGNING_KEYS_RETIRED`), each under its id. Firewall decisions carry the `kid` too, in the reply
+and inside the signed bytes. A new install gets a key of its own (`nexc init`, `scripts/init-env.sh`);
+an existing one keeps the key it had, derived from `NEXC_MASTER_KEY`, and production warns about that
+at start. To rotate: read the current public key from the key set, set a new `NEXC_SIGNING_KEY`, and
+add the old public key to `NEXC_SIGNING_KEYS_RETIRED`; what the old key signed still verifies by its
+id. Restart every replica at once (until they all run the new key, the old ones do not know its id).
+At start the backend warns about seals signed by a key it no longer publishes, and refuses to start
+when a retired entry is a private seed of a key that signed (it would be published). Keep the key
+with the backups: a restore on a new host with a new key leaves every seal unverifiable unless the
+old public key is retired there. After a workspace transfer, add the source's public key to the
+target's retired keys. A retired key keeps verifying what it signed; if one leaks, take it out of the
+set, and what it signed has to be exported again under the current key.
+
+**Evidence bundles verify offline.** `GET /runs/{rid}/evidence` (workspace owners and admins who
+could open the graph, archived graphs included) exports every span in chain order, the signed seal,
+the payloads' metadata, the workspace's audit entries about the run and its graph as chained (past
+10,000, the seal's, the deletion's and the newest), and an attestation: the backend's signature over
+a manifest of each audit entry's hash and digest (names and salt included), how many entries were
+about the run, the chain's last hash, the seal's signature and a digest of the run and payload
+metadata. The export is an `evidence_exported` entry, written first, so the bundle carries its own
+export. `trace_sealed` is written in the transaction that seals the run, so every sealed run has it.
+`nexc-verify <bundle> --keys jwks.json` (or `make verify-bundle BUNDLE=… KEYS=…`; the backend image
+ships it) checks it with the public keys alone, no database and no network: the chain recomputes from
+genesis to the sealed hash, the seal is signed by a published key and seals this chain, every audit
+entry hashes as stored and adjacent ones link, `trace_sealed` records this seal and the key the log
+says signed it (a stripped seal fails), a deleted graph's bundle carries its `graph_deleted` entry,
+and the attestation covers everything else. A span, seal or audit entry changed in a bundle, or one
+removed from it, fails it. A bundle shows what the database held when it was exported; it cannot
+show what was rewritten before.
+
+**Upgrading.** Migration `20261020000201` chains the existing audit log in one pass under a lock
+on `audit_log` (about 2.5 s per 100,000 entries on a laptop); for a large log, run `nexc migrate` before
+rolling the new version out. Replicas of the previous version fail on the new triggers when they
+delete a graph, an agent or a workspace, or erase an account: roll this release out with the
+`Recreate` strategy, or one replica at a time with those actions held. Going back means restoring
+the database from before the migration.
+
+**Design notes, not built.**
+
+- *External timestamps (RFC 3161).* Today the time of a seal is the backend's own word. A timestamp
+  authority's token over each seal statement (or over a daily Merkle root of seals and audit chain
+  heads, to keep requests few) would let a third party vouch that the evidence existed then, which
+  also bounds what a stolen signing key could backdate. The token would sit beside the seal
+  (`runs.seal_tst`) and travel in the bundle; `nexc-verify` would check it against the authority's
+  certificate. Open questions: which TSA, offline fallback, and the cost of one request per run.
+- *WORM export.* The database owner can still drop the triggers. Shipping each sealed run's bundle
+  and each day's audit chain head to object storage under a retention lock (S3 Object Lock in
+  compliance mode, or the equivalent) puts a copy beyond the operator's reach for the retention
+  period. The export worker would mirror the OTLP exporter (a cursor, batches, a status on
+  `/admin/infrastructure`); verification would compare the stored heads with the live chain.
+
+<!-- #endregion evidence -->

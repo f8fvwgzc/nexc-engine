@@ -25,8 +25,9 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,target=/src/target,sharing=locked \
-    cargo build --release --locked --bin nexc \
- && install -Dm755 target/release/nexc /out/nexc
+    cargo build --release --locked --bin nexc --bin nexc-verify \
+ && install -Dm755 target/release/nexc /out/nexc \
+ && install -Dm755 target/release/nexc-verify /out/nexc-verify
 
 # ---------------------------------------------------------------------------------------------
 FROM ${RUNTIME_IMAGE} AS runtime
@@ -46,6 +47,8 @@ RUN apt-get update \
  && install -d -o nexc -g nexc -m 0750 /data /data/symphony
 
 COPY --from=builder /out/nexc /usr/local/bin/nexc
+# The offline checker of evidence bundles (docs/AGENTSECOPS.md §12): no database, no network.
+COPY --from=builder /out/nexc-verify /usr/local/bin/nexc-verify
 
 ENV NEXC_ENV=production \
     NEXC_HOST=0.0.0.0 \

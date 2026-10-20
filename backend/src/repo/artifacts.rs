@@ -179,6 +179,27 @@ pub async fn release(
     Ok(row.map(Into::into))
 }
 
+/// One artifact, if `user` may read the evidence of its run: they may open
+/// its graph, deleted or not (a deleted graph's files stay until the purge).
+pub async fn find_readable(
+    db: impl PgExecutor<'_>,
+    user: Uuid,
+    id: Uuid,
+) -> Result<Option<StoredArtifact>, sqlx::Error> {
+    sqlx::query_as(concat!(
+        "SELECT ",
+        artifact_columns!(a),
+        ", a.storage_path
+         FROM artifacts a JOIN runs r ON r.id = a.run_id JOIN graphs g ON g.id = r.graph_id
+         WHERE a.id = $1 AND ",
+        graph_access_any!("g", "$2")
+    ))
+    .bind(id)
+    .bind(user)
+    .fetch_optional(db)
+    .await
+}
+
 /// One artifact, only if `owner_id` may work on the graph of its run.
 pub async fn find_owned(
     db: impl PgExecutor<'_>,

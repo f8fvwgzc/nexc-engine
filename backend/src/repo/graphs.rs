@@ -190,12 +190,19 @@ pub async fn adopt_orphans(db: impl PgExecutor<'_>) -> Result<u64, sqlx::Error> 
     Ok(done.rows_affected())
 }
 
-/// Number of graphs that belong to a team.
-pub async fn count_in_team(db: impl PgExecutor<'_>, team_id: Uuid) -> Result<i64, sqlx::Error> {
-    sqlx::query_scalar("SELECT count(*) FROM graphs WHERE team_id = $1")
-        .bind(team_id)
-        .fetch_one(db)
-        .await
+/// Graphs that belong to a team: live ones, and deleted ones, which keep
+/// their runs' evidence (and the team that may read it) until the retention purge.
+pub async fn count_in_team(
+    db: impl PgExecutor<'_>,
+    team_id: Uuid,
+) -> Result<(i64, i64), sqlx::Error> {
+    sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE deleted_at IS NULL), count(*) FILTER (WHERE deleted_at IS NOT NULL)
+         FROM graphs WHERE team_id = $1",
+    )
+    .bind(team_id)
+    .fetch_one(db)
+    .await
 }
 
 /// Summary of one graph (for realtime `graph.updated`).
@@ -248,21 +255,82 @@ pub async fn touch(db: impl PgExecutor<'_>, id: Uuid) -> Result<(), sqlx::Error>
     Ok(())
 }
 
-/// Deletes a graph (cascades to nodes, edges, plans, runs). Returns false if absent.
-pub async fn delete(
+/// Deletes a graph that `user` may work on by archiving it: it is marked
+/// deleted by `user`, every reader of graphs skips it from now on, and its
+/// runs with their evidence stay until the retention purge removes the graph
+/// for good (`repo::evidence`). Returns its name and workspace; `None` when
+/// absent or already deleted.
+pub async fn archive(
     db: impl PgExecutor<'_>,
-    owner_id: Uuid,
+    user: Uuid,
     id: Uuid,
-) -> Result<bool, sqlx::Error> {
-    let done = sqlx::query(concat!(
-        "DELETE FROM graphs WHERE id = $1 AND ",
-        graph_access!("graphs", "$2")
+) -> Result<Option<(String, Option<Uuid>)>, sqlx::Error> {
+    sqlx::query_as(concat!(
+        "UPDATE graphs SET deleted_at = now(), deleted_by = $2 WHERE id = $1 AND ",
+        graph_access!("graphs", "$2"),
+        " RETURNING name, workspace_id"
     ))
     .bind(id)
-    .bind(owner_id)
-    .execute(db)
+    .bind(user)
+    .fetch_optional(db)
+    .await
+}
+
+/// Archives the graphs an agent's work is recorded in (an external agent's
+/// or an exposed agent's managed graph) before the agent is removed, and
+/// unlinks them from it, so that removing the agent leaves its runs'
+/// evidence in place. Returns the graphs `(id, name, workspace)` archived now.
+pub async fn archive_managed_by(
+    conn: &mut sqlx::PgConnection,
+    agent_id: Uuid,
+    user: Uuid,
+) -> Result<Vec<(Uuid, String, Option<Uuid>)>, sqlx::Error> {
+    let archived = sqlx::query_as(
+        "UPDATE graphs SET deleted_at = now(), deleted_by = $2
+         WHERE (external_agent_id = $1 OR a2a_agent_id = $1) AND deleted_at IS NULL
+         RETURNING id, name, workspace_id",
+    )
+    .bind(agent_id)
+    .bind(user)
+    .fetch_all(&mut *conn)
     .await?;
-    Ok(done.rows_affected() == 1)
+    sqlx::query("UPDATE graphs SET external_agent_id = NULL WHERE external_agent_id = $1")
+        .bind(agent_id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("UPDATE graphs SET a2a_agent_id = NULL WHERE a2a_agent_id = $1")
+        .bind(agent_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(archived)
+}
+
+/// Whether the graph was deleted (archived); false when there is no such graph.
+pub async fn is_deleted(db: impl PgExecutor<'_>, id: Uuid) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM graphs WHERE id = $1 AND deleted_at IS NOT NULL)",
+    )
+    .bind(id)
+    .fetch_one(db)
+    .await
+}
+
+/// Whether `user` may read the evidence of the graph's runs: they may open
+/// the graph, deleted or not (`graph_access_any!`).
+pub async fn evidence_readable(
+    db: impl PgExecutor<'_>,
+    user: Uuid,
+    id: Uuid,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(concat!(
+        "SELECT EXISTS (SELECT 1 FROM graphs WHERE id = $1 AND ",
+        graph_access_any!("graphs", "$2"),
+        ")"
+    ))
+    .bind(id)
+    .bind(user)
+    .fetch_one(db)
+    .await
 }
 
 /// The workspace a graph belongs to (no access check; engine use only).

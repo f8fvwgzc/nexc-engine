@@ -100,6 +100,7 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
         tracing::info!("document vector search is off: the database has no pgvector extension");
     }
     bootstrap_admin(&state).await?;
+    crate::engine::evidence::check_signing_keys(&state).await?;
     if let Some(oidc) = state
         .settings
         .oidc

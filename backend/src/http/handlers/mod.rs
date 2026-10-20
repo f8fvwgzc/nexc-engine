@@ -14,6 +14,7 @@ pub mod audit;
 pub mod auth;
 pub mod cycles;
 pub mod edges;
+pub mod evidence;
 pub mod exports;
 pub mod graphs;
 pub mod health;

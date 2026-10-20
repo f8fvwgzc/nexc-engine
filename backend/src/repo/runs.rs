@@ -16,11 +16,27 @@ use crate::domain::capabilities::DataLabel;
 use crate::domain::graph::{Executor, NodeStatus};
 use crate::domain::policy::PolicyVersions;
 use crate::domain::run::{NodeRun, OUTPUT_PREVIEW_CHARS, Run, RunStatus};
+use crate::domain::seal::SignedSeal;
 
 /// Reads a `jsonb` column holding [`PolicyVersions`]; anything odd reads as none.
 fn versions_col(row: &PgRow, col: &str) -> Result<PolicyVersions, sqlx::Error> {
     let raw: serde_json::Value = row.try_get(col)?;
     Ok(serde_json::from_value(raw).unwrap_or_default())
+}
+
+/// Reads the signed seal of a run row, when it has one.
+fn seal_cols(row: &PgRow) -> Result<Option<SignedSeal>, sqlx::Error> {
+    let signed: Option<Vec<u8>> = row.try_get("seal_signed")?;
+    let signature: Option<Vec<u8>> = row.try_get("seal_signature")?;
+    let kid: Option<String> = row.try_get("seal_kid")?;
+    Ok(match (signed, signature, kid) {
+        (Some(signed), Some(signature), Some(kid)) => Some(SignedSeal {
+            signed,
+            signature,
+            kid,
+        }),
+        _ => None,
+    })
 }
 
 /// A run row without its node results.
@@ -40,6 +56,8 @@ pub struct RunRow {
     pub created_at: DateTime<Utc>,
     /// The final hash of the run's trace chain, once sealed.
     pub trace_hash: Option<Vec<u8>>,
+    /// The signed seal of the chain; `None` while it runs and for runs sealed unsigned.
+    pub seal: Option<SignedSeal>,
     pub policy_mismatches: i32,
     pub policy_versions: PolicyVersions,
     /// The instance holding the run's lease (the one executing it).
@@ -64,6 +82,7 @@ impl RunRow {
             finished_at: self.finished_at,
             created_at: self.created_at,
             trace_hash: self.trace_hash.as_deref().map(hex::encode),
+            seal_kid: self.seal.map(|s| s.kid),
             policy_mismatches: self.policy_mismatches,
             policy_versions: self.policy_versions,
             node_runs,
@@ -87,6 +106,7 @@ impl FromRow<'_, PgRow> for RunRow {
             finished_at: row.try_get("finished_at")?,
             created_at: row.try_get("created_at")?,
             trace_hash: row.try_get("trace_hash")?,
+            seal: seal_cols(row)?,
             policy_mismatches: row.try_get("policy_mismatches")?,
             policy_versions: versions_col(row, "policy_versions")?,
             claimed_by: row.try_get("claimed_by")?,
@@ -200,6 +220,87 @@ pub async fn find_owned(
     .await
 }
 
+/// Loads a run whose evidence `user` may read: a run of a graph they may
+/// open, whether the graph is deleted or not (`graph_access_any!`), with the
+/// graph's name, workspace and when it was deleted.
+pub async fn find_evidence(
+    db: impl PgExecutor<'_>,
+    user: Uuid,
+    id: Uuid,
+) -> Result<Option<(RunRow, EvidenceGraph)>, sqlx::Error> {
+    let row = sqlx::query(concat!(
+        "SELECT r.*, g.name AS graph_name, g.workspace_id AS graph_workspace_id,
+                g.deleted_at AS graph_deleted_at
+         FROM runs r JOIN graphs g ON g.id = r.graph_id
+         WHERE r.id = $1 AND ",
+        graph_access_any!("g", "$2")
+    ))
+    .bind(id)
+    .bind(user)
+    .fetch_optional(db)
+    .await?;
+    row.map(|row| {
+        Ok((
+            RunRow::from_row(&row)?,
+            EvidenceGraph {
+                name: row.try_get("graph_name")?,
+                workspace_id: row.try_get("graph_workspace_id")?,
+                deleted_at: row.try_get("graph_deleted_at")?,
+            },
+        ))
+    })
+    .transpose()
+}
+
+/// The graph a run's evidence belongs to.
+#[derive(Debug, Clone)]
+pub struct EvidenceGraph {
+    pub name: String,
+    pub workspace_id: Option<Uuid>,
+    /// When the graph was deleted (archived); its runs' evidence stays until the retention purge.
+    pub deleted_at: Option<DateTime<Utc>>,
+}
+
+/// Stops the runs of a graph being deleted: queued ones are cancelled at
+/// once (their unfinished node results with them), running ones are asked
+/// to stop like `POST /runs/{id}/cancel` asks. Returns the ids of the runs
+/// that were running, for the instance executing them to be told.
+pub async fn stop_for_deleted_graph(
+    conn: &mut sqlx::PgConnection,
+    graph_id: Uuid,
+) -> Result<Vec<Uuid>, sqlx::Error> {
+    let queued: Vec<Uuid> = sqlx::query_scalar(
+        "UPDATE runs SET status = 'cancelled', cancel_requested = true, finished_at = now()
+         WHERE graph_id = $1 AND status = 'queued' RETURNING id",
+    )
+    .bind(graph_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    for run in queued {
+        close_unfinished_nodes(&mut *conn, run, NodeStatus::Cancelled).await?;
+    }
+    sqlx::query_scalar(
+        "UPDATE runs SET cancel_requested = true
+         WHERE graph_id = $1 AND status = 'running' RETURNING id",
+    )
+    .bind(graph_id)
+    .fetch_all(&mut *conn)
+    .await
+}
+
+/// How many runs a graph has, and how many of them are sealed.
+pub async fn count_sealed(
+    db: impl PgExecutor<'_>,
+    graph_id: Uuid,
+) -> Result<(i64, i64), sqlx::Error> {
+    sqlx::query_as(
+        "SELECT count(*), count(*) FILTER (WHERE trace_hash IS NOT NULL) FROM runs WHERE graph_id = $1",
+    )
+    .bind(graph_id)
+    .fetch_one(db)
+    .await
+}
+
 /// Node results of a run in submission order.
 pub async fn node_runs(db: impl PgExecutor<'_>, run_id: Uuid) -> Result<Vec<NodeRun>, sqlx::Error> {
     sqlx::query_as(
@@ -213,7 +314,9 @@ pub async fn node_runs(db: impl PgExecutor<'_>, run_id: Uuid) -> Result<Vec<Node
     .await
 }
 
-/// Runs of a graph, newest first, with their node results.
+/// Runs of a graph, newest first, with their node results. The caller has
+/// checked that the graph may be opened (a deleted graph's runs are listed
+/// for those who may read their evidence).
 pub async fn list_for_graph(
     conn: &mut sqlx::PgConnection,
     graph_id: Uuid,
@@ -610,19 +713,26 @@ pub async fn request_cancel(
     .await
 }
 
-/// Sets the final status of a run and seals its trace with `trace_hash`.
+/// Sets the final status of a run and seals its trace with `trace_hash`,
+/// signed (`seal`) when there is one.
 pub async fn finish(
     db: impl PgExecutor<'_>,
     id: Uuid,
     status: RunStatus,
     trace_hash: Option<&[u8]>,
+    seal: Option<&SignedSeal>,
 ) -> Result<RunRow, sqlx::Error> {
     sqlx::query_as(
-        "UPDATE runs SET status = $2, finished_at = now(), trace_hash = $3 WHERE id = $1 RETURNING *",
+        "UPDATE runs SET status = $2, finished_at = now(), trace_hash = $3,
+                         seal_signed = $4, seal_signature = $5, seal_kid = $6
+         WHERE id = $1 RETURNING *",
     )
     .bind(id)
     .bind(status.as_str())
     .bind(trace_hash)
+    .bind(seal.map(|s| s.signed.as_slice()))
+    .bind(seal.map(|s| s.signature.as_slice()))
+    .bind(seal.map(|s| s.kid.as_str()))
     .fetch_one(db)
     .await
 }

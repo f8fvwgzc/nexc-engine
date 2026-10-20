@@ -16,8 +16,8 @@ use crate::domain::graph::MAX_NODES;
 use crate::domain::run::{Run, RunStatus};
 use crate::domain::trace::SpanKind;
 use crate::domain::validation::{FieldErrors, Validate, check_max_len};
+use crate::engine::commands;
 use crate::engine::scheduler::{self, RunOptions};
-use crate::engine::{commands, editor};
 use crate::http::extract::{AuthUser, Path, ValidatedJson};
 use crate::http::problem::Problem;
 use crate::repo::audit::Subject;
@@ -81,7 +81,9 @@ pub async fn create(
     ))
 }
 
-/// Runs of a graph, newest first (at most 100).
+/// Runs of a graph, newest first (at most 100). A deleted graph's runs are
+/// listed too, for those who could open it: their evidence is kept until the
+/// retention purge (`GET /runs/{rid}/evidence`).
 #[utoipa::path(get, path = "/graphs/{gid}/runs", tag = "runs", security(("bearer" = [])),
     params(("gid" = Uuid, Path, description = "Graph id")),
     responses((status = 200, body = [Run]), (status = 404, body = Problem)))]
@@ -90,7 +92,9 @@ pub async fn list(
     auth: AuthUser,
     Path(gid): Path<Uuid>,
 ) -> Result<Json<Vec<Run>>, AppError> {
-    editor::owned_graph(&state, auth.id, gid).await?;
+    if !repo::graphs::evidence_readable(&state.db, auth.id, gid).await? {
+        return Err(AppError::NotFound("graph"));
+    }
     let mut conn = state.db.acquire().await?;
     Ok(Json(repo::runs::list_for_graph(&mut conn, gid).await?))
 }
@@ -104,7 +108,8 @@ pub async fn get(
     auth: AuthUser,
     Path(rid): Path<Uuid>,
 ) -> Result<Json<Run>, AppError> {
-    repo::runs::find_owned(&state.db, auth.id, rid)
+    // A deleted graph's runs stay readable as evidence until the purge.
+    repo::runs::find_evidence(&state.db, auth.id, rid)
         .await
         .or_not_found("run")?;
     Ok(Json(scheduler::load_run(&state, rid).await?))

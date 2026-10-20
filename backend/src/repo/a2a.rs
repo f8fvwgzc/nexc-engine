@@ -194,6 +194,16 @@ pub async fn delete_counterpart(
     let Some(agent) = agent else {
         return Ok(false);
     };
+    // A counterpart records nothing in a graph of its own; should its principal have one,
+    // the runs there stay with their evidence.
+    sqlx::query(
+        "UPDATE graphs SET deleted_at = COALESCE(deleted_at, now()),
+                           external_agent_id = NULL, a2a_agent_id = NULL
+         WHERE external_agent_id = $1 OR a2a_agent_id = $1",
+    )
+    .bind(agent)
+    .execute(&mut *conn)
+    .await?;
     sqlx::query("DELETE FROM agents WHERE id = $1 AND workspace_id = $2")
         .bind(agent)
         .bind(workspace_id)
@@ -224,11 +234,12 @@ pub async fn ensure_graph(
     workspace_id: Uuid,
     agent_name: &str,
 ) -> Result<(Uuid, Uuid), sqlx::Error> {
-    if let Some(found) =
-        sqlx::query_as::<_, (Uuid, Uuid)>("SELECT id, owner_id FROM graphs WHERE a2a_agent_id = $1")
-            .bind(agent_id)
-            .fetch_optional(&mut *conn)
-            .await?
+    if let Some(found) = sqlx::query_as::<_, (Uuid, Uuid)>(
+        "SELECT id, owner_id FROM graphs WHERE a2a_agent_id = $1 AND deleted_at IS NULL",
+    )
+    .bind(agent_id)
+    .fetch_optional(&mut *conn)
+    .await?
     {
         return Ok(found);
     }

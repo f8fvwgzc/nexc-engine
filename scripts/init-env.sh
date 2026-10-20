@@ -20,9 +20,11 @@ fi
 
 command -v openssl >/dev/null 2>&1 || { echo "error: openssl is required" >&2; exit 1; }
 
+FRESH=0
 if [[ ! -f "$OUT" ]]; then
   cp "$TEMPLATE" "$OUT"
   echo "created $OUT from $TEMPLATE"
+  FRESH=1
 fi
 chmod 600 "$OUT"
 
@@ -58,6 +60,11 @@ fill NEXC_MASTER_KEY "$(openssl rand -base64 32)"
 fill NEXC_RUNTIME_TOKEN "$(openssl rand -hex 32)"
 fill NEXC_METRICS_TOKEN "$(openssl rand -hex 32)"
 fill NEXC_ONTO_TOKEN "$(openssl rand -hex 32)"
+# A new install gets a signing key of its own. An existing one keeps the key it signed with (derived
+# from NEXC_MASTER_KEY when none is set): a new key there is a rotation (docs/AGENTSECOPS.md §12).
+if [[ "$FRESH" == 1 ]]; then
+  fill NEXC_SIGNING_KEY "$(openssl rand -base64 32)"
+fi
 # Signs onto-intelli's browser sessions, the same on every onto-intelli replica (32+ characters).
 fill ONTO_SESSION_SECRET "$(openssl rand -hex 32)"
 # onto-intelli's own PostgreSQL login: never nexc's database credentials.

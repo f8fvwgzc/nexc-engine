@@ -44,4 +44,5 @@ if [ "${NEXC_BACKUP_COMPOSE:-}" = "1" ]; then
 else
   mkdir -p "${NEXC_DATA_DIR:-data}" && tar -xzf "$SOURCE/files.tar.gz" -C "${NEXC_DATA_DIR:-data}"
 fi
-echo "restored from $SOURCE; start the server with the same NEXC_MASTER_KEY, or stored AI keys cannot be read"
+echo "restored from $SOURCE; start the server with the same NEXC_MASTER_KEY, or stored AI keys cannot be read,"
+echo "and the same NEXC_SIGNING_KEY (or its public key in NEXC_SIGNING_KEYS_RETIRED), or run seals no longer verify"
