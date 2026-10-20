@@ -105,15 +105,19 @@ pub async fn insert(
     .await
 }
 
-/// The destinations of a workspace, by name.
+/// The destinations of a workspace, by name ignoring case. Compared byte by
+/// byte, so the order is the same whatever the database's collation.
 pub async fn list(
     db: impl PgExecutor<'_>,
     workspace_id: Uuid,
 ) -> Result<Vec<AlertDestinationRow>, sqlx::Error> {
-    sqlx::query_as("SELECT * FROM alert_destinations WHERE workspace_id = $1 ORDER BY name, id")
-        .bind(workspace_id)
-        .fetch_all(db)
-        .await
+    sqlx::query_as(concat!(
+        "SELECT * FROM alert_destinations WHERE workspace_id = $1 ",
+        r#"ORDER BY lower(name) COLLATE "C", name COLLATE "C", id"#
+    ))
+    .bind(workspace_id)
+    .fetch_all(db)
+    .await
 }
 
 /// One destination of a workspace.

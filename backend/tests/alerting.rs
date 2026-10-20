@@ -321,7 +321,7 @@ async fn destinations_are_registered_by_admins_and_checked(pool: PgPool) {
         .iter()
         .map(|d| d["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, ["SIEM", "ops"]);
+    assert_eq!(names, ["ops", "SIEM"]);
     let (status, one) = call(&app, Method::GET, &format!("{base}/{id}"), &owner, None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(one["name"], "SIEM");
