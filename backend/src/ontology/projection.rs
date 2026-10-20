@@ -553,12 +553,13 @@ pub async fn clear_retired(
     let mut budget = RETIRE_PER_PASS;
     for retired in repo::retired(&state.db, 20).await? {
         let service = Principal::service(prefix, retired.workspace_id);
+        let projected: HashSet<&str> = retired.entities.iter().map(String::as_str).collect();
         // The graphs first: deleting a graph's entity takes its vocabulary along.
         let mut entities: Vec<String> = retired
             .graphs
             .iter()
             .map(|g| graph_entity(*g))
-            .filter(|g| !retired.entities.contains(g))
+            .filter(|g| !projected.contains(g.as_str()))
             .chain(retired.entities.iter().cloned())
             .collect();
         entities.sort_by_key(|e| !e.starts_with("execution_graph:"));
@@ -587,16 +588,18 @@ pub async fn clear_retired(
                 super::tenant_of(retired.workspace_id)
             );
         } else {
-            let left: Vec<String> = entities[done..]
+            let rest: HashSet<&str> = entities[done..].iter().map(String::as_str).collect();
+            let left: Vec<String> = retired
+                .entities
                 .iter()
-                .filter(|e| retired.entities.contains(e))
+                .filter(|e| rest.contains(e.as_str()))
                 .cloned()
                 .collect();
             let graphs: Vec<Uuid> = retired
                 .graphs
                 .iter()
                 .copied()
-                .filter(|g| entities[done..].contains(&graph_entity(*g)))
+                .filter(|g| rest.contains(graph_entity(*g).as_str()))
                 .collect();
             repo::retire_progress(
                 &state.db,
