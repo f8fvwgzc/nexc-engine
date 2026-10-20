@@ -1895,45 +1895,63 @@ attributes bounded, every span re-decided and each disagreement a `policy_mismat
 the agent's own managed graph (`graphs.external_agent_id`, one node per external run).
 `VerifyTrace {run_id}` recomputes the chain as `GET /runs/{rid}/trace/verify` does;
 `GetAgentCard` answers the caller's own card. A decisions session is sealed after 10 minutes
-without a call (not while an approval asked in it is still watched), and after 15 minutes or
-1,000 decisions even when busy: each is a window of the agent's decisions.
+without a call and after 15 minutes even when busy: each is a window of the agent's decisions.
+An agent reports at most 16 runs at once on one instance (`RESOURCE_EXHAUSTED` beyond). A
+reported run whose stream goes away without `finish` is closed as `failed`; at shutdown an open
+reported run is closed where it stood and its stream answered `UNAVAILABLE` (try again). Neither
+is scored.
 
 *Scored like a native run.* Every external run is scored when it closes, against the agent's
-baseline (`agent_baselines`, scope `runs` for reported runs, `sessions` for decisions sessions,
+baseline (`agent_baselines` for reported runs, `agent_session_baselines` for decisions sessions,
 which are not compared with each other), and learned into it; the policy's `alerts` thresholds
 raise the same alerts and the same quarantine as for a native run. A firewall decision the
 agent was allowed counts as what it said it is about to do (an `egress` decision as an outbound
 call to that host, a `tool_call` decision as that tool); denials and mismatches count as
-denials. While a run is open it is also scored *live*, span by span and decision by decision,
-on the counts that only grow (outbound calls, hosts, bytes out from `payload_bytes`, denials,
-tools, sub-agents; never more than the same spans score when the run ends). When the live score
-reaches `alerts.quarantine_risk_score`, the agent is quarantined (alerts, audit entry `automatic,
-mid-run: live risk score …`), the decision that crossed it is answered `deny` with rule
-`alerts.quarantine_risk_score`, a `ReportSpan` stream is answered at once with `status
-cancelled`, `quarantined true` and `time_to_contain_ms` (from the first span that raised the
-score to the run stopped) and takes no more spans, and the run's trace ends with a `policy` span
-`live_risk` (`decision quarantine`, `risk_score`, `threshold`, `reasons`, `trigger_span_id`,
-`first_anomaly_span_id`, `time_to_contain_ms`, `detect_to_contain_ms`). A contained run is not
-learned into the baseline. A quarantine of the agent made anywhere stops its reported runs here
-within 2 s (at once on the same instance).
+denials; a reported `tool_call` naming an `egress_host` the policy denies is a mismatch. For
+every agent, native or external: a run whose score reaches `quarantine_risk_score` is not
+learned, one span's `payload_bytes` counts for at most 1 GiB, one run teaches its baseline at
+most 64 new hosts and 64 new tools, and two runs finishing at once learn one after the other.
+
+*Scored live.* While a run is open it is also scored span by span and decision by decision on
+the counts that only grow (outbound calls, hosts, bytes out from `payload_bytes`, denials,
+tools, sub-agents; never more than the same spans score when the run ends), once the baseline
+has learned 5 runs. When the live score reaches `alerts.quarantine_risk_score`, the agent is
+quarantined (alerts, audit entry `automatic, mid-run: live risk score …`); the decision that
+crossed it and every decision after it are answered `deny` (rule `alerts.quarantine_risk_score`,
+then `quarantine`); a `ReportSpan` stream is answered at once with `status cancelled`,
+`quarantined true`, `risk_score`, `reason` and `time_to_contain_ms` (from the first span that
+raised the score to the run stopped) and takes no more spans; and the run's trace ends with a
+`policy` span `live_risk` (`decision quarantine`, `risk_score`, `threshold`, `reasons`,
+`trigger_span_id`, `first_anomaly_span_id`, `time_to_contain_ms`, `detect_to_contain_ms`) that
+the alerts point at. A contained run is not learned. The containment finishes even when the
+caller goes away. A quarantine of the agent made anywhere stops its reported runs here within
+2 s (at once on the same instance); its decisions are refused at the next call.
 
 *Approvals.* A `require_approval` decision (a tool the policy's `require_approval` holds) is an
 approval of the approvals engine, as a native run's: a row of `approvals` (the run and node the
-decision is recorded in; `args_sha256` from `context.args_sha256`, 64 lower-case hex, when given),
-the approvers' inbox, the alert destinations; it is decided with `POST
-/approvals/{id}/approve|deny`. The reply names it (`approval_id`, `approval_expires_at`) and its
-signed bytes carry `approval_id`. `AwaitApproval {approval_id, wait_ms}` answers `{approval_id,
-status, decided_by, reason, expires_at, decision}` at once (`wait_ms` 0) or when it is decided or
-expires, waiting at most `min(wait_ms, 60000)` ms, on any instance; only the agent that asked sees
-it (`NOT_FOUND` otherwise). Once it is no longer pending, `decision` is the final decision,
-`allow` when approved and `deny` when denied or expired (rule `approvals.tools` or
-`approvals.labels`), signed like any other with `approval_id` in the signed bytes and empty
-labels; its `span_id` is the `approval` span that records it on the run (`firewall: true`, the
-signature), and every instance hands out the same bytes. A reported `tool_call` of a held tool
-whose attributes name an approved `approval_id` of the agent for that tool (and the same
-`args_sha256` when the approval has one) is not a mismatch, once: the approval is used
-(`approvals.consumed_span_id`), and named again it is a mismatch. When the agent is quarantined
-while an approval is pending, the approval expires.
+decision is recorded in; `args_sha256` from `context.args_sha256`, 64 lower-case hex, when
+given), the approvers' inbox, the alert destinations; it is decided with `POST
+/approvals/{id}/approve|deny`. The same request asked again while pending (same run, tool and
+digest) is answered by the same approval; an agent with 16 approvals pending is refused (`deny`,
+rule `approvals.pending`). The reply names the approval (`approval_id`, `approval_expires_at`),
+and its signed bytes carry `approval_id` and `args_sha256`. `AwaitApproval {approval_id,
+wait_ms}` answers `{approval_id, status, decided_by, reason, expires_at, decision}` at once
+(`wait_ms` 0) or when it is decided or expires, waiting at most `min(wait_ms, 60000)` ms, on any
+instance; at most 4 calls of one agent wait at once (`RESOURCE_EXHAUSTED`); only the agent that
+asked sees its own firewall approvals (`NOT_FOUND` otherwise, native approvals included). Once
+it is no longer pending, `decision` is the final decision: `allow` when approved before it
+expired, `deny` when denied, expired or approved too late (rule `approvals.tools` or
+`approvals.labels`), signed like any other with `approval_id` and `args_sha256` in the signed
+bytes and empty labels, the same bytes on every instance; an `allow` is not handed to an agent
+quarantined meanwhile (`PERMISSION_DENIED`). Its `span_id` is the `approval` span that records it
+(`firewall: true`, the signature, `request_run_id`) on the agent's run open on the instance that
+asked (the run that asked, else its current decisions session); when that instance is gone, an
+instance without the run signs it after 3 s with a span no trace records. A reported `tool_call`
+of a held tool whose attributes name an approval granted to the agent for that tool, before it
+expired (and with the same `args_sha256` when the approval has one), is not a mismatch, once:
+the approval is used (`approvals.consumed_span_id`), and named again it is a mismatch. Any
+quarantine of an agent, native or external, expires its pending approvals; firewall approvals
+past their time are expired by the maintenance worker whatever instance asked.
 
 <!-- #endregion firewall-wire -->
 <!-- #region otlp-wire -->

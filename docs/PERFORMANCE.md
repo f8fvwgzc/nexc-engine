@@ -1,8 +1,9 @@
 # Performance
 
 What the API costs per endpoint under load, how it is measured, and what the targets are. The
-security paths have their own tables (`make prove-agentsecops`: identity, policy, audit, trace
-and the gateway, recorded in `CHANGELOG.md`); this is the rest of the API.
+security paths have their own tables (`make prove-agentsecops`: identity, policy, audit, trace,
+the gateway and the firewall's live risk, recorded in `CHANGELOG.md`); this is the rest of the
+API.
 
 ## `make prove-api`
 

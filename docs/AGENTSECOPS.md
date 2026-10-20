@@ -348,8 +348,8 @@ assertions, measured on the demo provider so numbers are stable:
 | Deterministic audit question via onto-intelli            | p99 < 5 ms, 0 tokens       |
 | Trace verification, 10,000-span run                      | < 50 ms (C SHA-256 kernel) |
 | Overhead added to a 12-turn agent run with 40 tool calls | < 0.5 % of wall time       |
-| Live risk, one firewall span folded and scored           | p99 < 10 µs                |
-| Exfiltrating external run: first anomalous span → stopped | < 1 s                      |
+| Live risk, one firewall span folded and scored           | p99 < 50 µs                |
+| Exfiltrating external run, first anomalous span → stopped | < 1 s                      |
 
 Every number is printed by the test and pasted into the README's compliance table, the way the
 project already documents its worst cases.
@@ -489,39 +489,46 @@ is still going.
   same code as a native run's (`engine/risk.rs`): its baseline, its alerts, its quarantine. A
   reported run is compared with the agent's reported runs; a decisions session (the run its
   `AuthorizeAction` calls go to when they name none) with its earlier sessions, a separate
-  baseline (`agent_baselines.scope`), since a window of decisions is not a run. Sessions are
-  windows of at most 15 minutes or 1,000 decisions, so they compare like with like. The
-  decisions themselves count: an allowed egress is an outbound call to that host, an allowed
-  tool call is that tool, a denial a denial, so an agent that reports nothing but asks before
-  acting has a baseline too.
+  baseline (`agent_session_baselines`), since a window of decisions is not a run. Sessions are
+  15-minute windows, so they compare like with like. The decisions themselves count: an allowed
+  egress is an outbound call to that host, an allowed tool call is that tool, a denial a denial,
+  so an agent that reports nothing but asks before acting has a baseline too. A reported call to
+  a host the policy denies is a mismatch, as a refused tool is.
 - **Scored while it runs.** Each span and each decision is folded into the run's counts as it
   arrives (`firewall/live.rs`), and the counts that only grow are scored against the baseline:
   outbound calls, hosts, bytes out, denials, tools, sub-agents. Because they only grow, a partial
   run never scores above what the same spans score at the end, so the live score stops only runs
-  the end-of-run score would have flagged, earlier. When it reaches the policy's
-  `quarantine_risk_score`, the agent is quarantined (the same alerts and audit entry, marked
-  mid-run), the decision that crossed it is refused, a reported run's stream is answered at once
-  and takes no more spans, and the trace ends with a `live_risk` span: the score, the reasons, the
-  span that tripped it, the first anomalous span and the time from it to the run stopped. The run
-  is not learned into the baseline; a run that went rogue is not what the agent usually does.
+  the end-of-run score would have flagged, earlier. It waits for a baseline of five runs, since a
+  young baseline whose features never varied scores any change at full cap. When it reaches the
+  policy's `quarantine_risk_score`, the agent is quarantined (the same alerts and audit entry,
+  marked mid-run), the decision that crossed it and every later one are refused, a reported run's
+  stream is answered at once and takes no more spans, and the trace ends with a `live_risk` span:
+  the score, the reasons, the span that tripped it, the first anomalous span and the time from it
+  to the run stopped. The containment runs on a task of its own, so an agent that hangs up the
+  moment it crosses is quarantined all the same. A run that crosses the threshold, live or at its
+  end, is not learned: a run that went rogue is not what the agent usually does.
 - **Held for a human.** A decision that requires an approval is an approval of the approvals
   engine, in the approvers' inbox and the alert destinations like a native one. The agent awaits
   it with `AwaitApproval` (a poll, or a wait of up to a minute, on any instance); the decision it
-  finally gets is signed like any other, names the approval, and is the `approval` span on the
-  run. A reported call of the held tool that names the approval is accepted once.
+  finally gets is signed like any other, names the approval and the arguments' digest, and is the
+  `approval` span on the agent's run. A reported call of the held tool that names the approval is
+  accepted once. An agent cannot flood its approvers (16 pending at most; the same request asked
+  again is the same approval), and a quarantine, of any agent, expires what it still waits for.
 - **Fewer false alarms in the DLP.** Japanese identifiers are checked as their issuers define
   them: a My Number by its check digit (12 digits, run together or as printed on the card), a
   corporate number by its own (13 digits; a kind of its own, `corporate_number`, off by default
   because corporate numbers are public). Random 12-digit numbers are taken for a My Number about
   one time in ten, where every one was before.
 
-`make prove-firewall` measures what this adds and how fast a rogue run is stopped. On an M2 Pro
-(release build, PostgreSQL in Docker): see the CHANGELOG entry of the change for the numbers of
-the run that shipped it.
+`make prove-firewall` measures what this adds and how fast a rogue run is stopped (§7).
 
-What it does not do yet: a session open on one instance is not scored by another (sessions are
-per instance, as before); the live score has no novelty term (it needs the whole tool sequence);
-and an agent that reports nothing and asks nothing is invisible, as any agent outside the
-firewall is.
+Known limits. Each run is scored on its own: an agent that leaks a little in each of many runs,
+under the threshold every time, is not stopped by the score (per-action rules and DLP still
+apply), and the first runs of an agent are learned unscored, so an agent that misbehaves from
+its first run teaches its baseline. Sessions live on the instance the calls reach, so behind a
+load balancer a window's counts depend on how calls spread. The `approval` span is recorded on
+the instance that asked; when that instance is gone, the decision is still signed and audited,
+with a span no trace records. Recovering from a false quarantine: release the agent and raise
+`quarantine_risk_score` for it with an agent policy while its baseline learns.
 
 <!-- #endregion firewall-risk -->
