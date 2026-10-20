@@ -158,7 +158,10 @@ ontoIntelli:
   replicas: 1
   port: 50051
   database: onto
-  maxConnections: 10
+  # Its PostgreSQL pool, per replica. Each tenant it has open (one per nexc workspace) keeps one
+  # connection for its LISTEN as long as the pod runs: size it above the number of workspaces,
+  # and the chart's PostgreSQL (max_connections 100) above it plus the backend's pools.
+  maxConnections: 48
   requiredApprovals: 1
   # mock answers the audit offline; anthropic needs ANTHROPIC_API_KEY (anthropicApiKeyFromSecret).
   llmProvider: mock

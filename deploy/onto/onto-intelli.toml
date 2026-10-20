@@ -21,7 +21,12 @@ ingest_queue = 4096
 [engine.postgres]
 tenant = "default"
 schema_prefix = "onto_"
-max_connections = 10
+# Each tenant open in an `onto serve` process keeps one connection of this pool for its LISTEN, for
+# as long as the process runs, and nexc opens one tenant per workspace (its first export, read or
+# session): past `max_connections - 1` workspaces every call waits for a connection and times out.
+# Size it above the number of workspaces, with headroom, and the PostgreSQL server's own
+# max_connections above the sum over every onto serve replica (docs/ONTOLOGY.md §10).
+max_connections = 64
 connect_timeout_secs = 10
 
 [ontology]

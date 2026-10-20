@@ -328,6 +328,14 @@ onto-intelli expects.
   across replicas, `builtin:nexc-execution` plus `nexc-audit.toml` and `nexc-workspace.toml`, the
   governance of §2, the impersonating token, `[ui] embed_origins`). Several `onto serve` replicas can
   share the database; set the same `ONTO_SESSION_SECRET` on each.
+- **Connections**: every tenant an `onto serve` process has open keeps one connection of its pool
+  (`[engine.postgres] max_connections`) for its LISTEN, for as long as the process runs, and nexc
+  opens one tenant per workspace (the export backfills every workspace once). Past
+  `max_connections - 1` open tenants, every call waits for a connection and fails with `Timeout
+  expired` (503 `ontology unavailable` in nexc). `deploy/onto` ships 64 and the Helm chart 48
+  (`ontoIntelli.maxConnections`, next to the backend's pools on the chart's PostgreSQL): size it
+  above the number of workspaces, and the PostgreSQL server's `max_connections` above the sum over
+  every replica.
 - **Checking it**: Settings → Infrastructure says whether it answers. `nexc doctor` also mints a
   one-minute session for a throwaway principal with every role nexc asserts, in the default tenant
   (nothing is created): a token without `impersonate = true`, or whose `impersonate_roles` lack one,
