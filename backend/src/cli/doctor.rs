@@ -283,32 +283,41 @@ async fn check_ontology(r: &mut Report, settings: &Settings) {
         Ok(backend) => backend,
         Err(err) => return r.line(Level::Fail, "onto-intelli", err.to_string()),
     };
-    match tokio::time::timeout(Duration::from_secs(3), backend.health()).await {
-        Ok(Ok(health)) => r.line(
-            Level::Ok,
-            "onto-intelli",
-            format!(
-                "{url}: onto-intelli {} (revision {}, explains with {}{})",
-                health.version,
-                health.revision,
-                health.llm,
-                if health.llm_available {
-                    ""
-                } else {
-                    ", unavailable"
-                }
-            ),
-        ),
-        Ok(Err(err)) => return r.line(Level::Warn, "onto-intelli", format!("{url}: {err}")),
+    let answers = match tokio::time::timeout(Duration::from_secs(3), backend.health()).await {
+        Ok(Ok(health)) => {
+            r.line(
+                Level::Ok,
+                "onto-intelli",
+                format!(
+                    "{url}: onto-intelli {} (revision {}, explains with {}{})",
+                    health.version,
+                    health.revision,
+                    health.llm,
+                    if health.llm_available {
+                        ""
+                    } else {
+                        ", unavailable"
+                    }
+                ),
+            );
+            true
+        }
+        Ok(Err(err)) => {
+            r.line(Level::Warn, "onto-intelli", format!("{url}: {err}"));
+            false
+        }
         Err(_) => {
-            return r.line(
+            r.line(
                 Level::Warn,
                 "onto-intelli",
                 format!("{url}: no answer within 3 seconds"),
             );
+            false
         }
+    };
+    if answers {
+        check_onto_impersonation(r, &backend, settings).await;
     }
-    check_onto_impersonation(r, &backend, settings).await;
     check_onto_public_url(r, settings).await;
 }
 
