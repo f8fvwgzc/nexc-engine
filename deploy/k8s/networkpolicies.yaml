@@ -1,5 +1,5 @@
-# Zero-trust ingress inside the namespace. Enforced only by a CNI that implements
-# NetworkPolicy (scripts/minikube-up.sh starts minikube with --cni=calico).
+# Zero-trust ingress inside the namespace, and egress for the agent runtime. Enforced only by a CNI
+# that implements NetworkPolicy (scripts/minikube-up.sh starts minikube with --cni=calico).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -24,7 +24,8 @@ spec:
       ports:
         - { port: 8080, protocol: TCP }
 ---
-# backend: only from the frontend pods and the ingress controller.
+# backend: only from the frontend pods and the ingress controller, and from the agent runtime,
+# which fetches the public keys of its tokens (/api/v1/agent-tokens/jwks.json).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -37,6 +38,8 @@ spec:
     - from:
         - podSelector:
             matchLabels: { app.kubernetes.io/name: frontend }
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: agent-runtime }
         - namespaceSelector:
             matchLabels: { kubernetes.io/metadata.name: ingress-nginx }
       ports:
@@ -58,6 +61,82 @@ spec:
       ports:
         - { port: 8090, protocol: TCP }
         - { port: 8095, protocol: TCP }
+---
+# agent runtime, outbound: the backend (the agent-token keys), runtime-egress (the LLM endpoints
+# of NEXC_RUNTIME_EGRESS_ALLOW) and DNS. Nothing else: a compromised runtime cannot reach the
+# internet, the cloud metadata endpoint or other services in the cluster on its own.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: runtime-egress-only
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: agent-runtime }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: backend }
+      ports:
+        - { port: 8080, protocol: TCP }
+    - to:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: runtime-egress }
+      ports:
+        - { port: 3128, protocol: TCP }
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+---
+# runtime-egress: only from the agent runtime.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: runtime-egress-from-runtime
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: runtime-egress }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: agent-runtime }
+      ports:
+        - { port: 3128, protocol: TCP }
+---
+# runtime-egress, outbound: DNS and TLS to public addresses (its allow-list picks the hosts by
+# name). Private, link-local and metadata ranges are out of reach. A local provider in the
+# cluster or on a private network needs a rule of its own here, e.g.
+#   - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: llm } } }]
+#     ports: [{ port: 11434, protocol: TCP }]
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: runtime-egress-out
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: runtime-egress }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 100.64.0.0/10, 127.0.0.0/8]
+      ports:
+        - { port: 443, protocol: TCP }
 ---
 # The Agent Firewall API (NEXC_GRPC_ADDR, off by default) is service to service: when you
 # turn it on, add its port here for the namespaces of the agent platforms that call it, e.g.

@@ -158,7 +158,7 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn shutdown_signal() {
+pub(crate) async fn shutdown_signal() {
     let ctrl_c = async {
         let _ = tokio::signal::ctrl_c().await;
     };

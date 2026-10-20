@@ -1,4 +1,5 @@
-# Python agent runtime: internal only (the NetworkPolicy admits the backend alone).
+# Python agent runtime: internal only (the NetworkPolicy admits the backend alone, and lets it
+# reach only the backend, runtime-egress and DNS).
 apiVersion: v1
 kind: Service
 metadata:
@@ -58,14 +59,20 @@ spec:
           env:
             - name: NEXC_RUNTIME_TOKEN
               valueFrom: { secretKeyRef: { name: {{ include "nexc.secretName" . }}, key: NEXC_RUNTIME_TOKEN } }
-            # Signs the per-run agent tokens; derived from NEXC_RUNTIME_TOKEN on both sides when absent.
-            - name: NEXC_AGENT_TOKEN_KEY
-              valueFrom:
-                secretKeyRef: { name: {{ include "nexc.secretName" . }}, key: NEXC_AGENT_TOKEN_KEY, optional: true }
-            {{- range $key := list "NEXC_LLM_MODEL" "RUNTIME_HOST" "RUNTIME_PORT" "RUNTIME_GRPC_PORT" "RUNTIME_WORKSPACE" "RUNTIME_ALLOW_CODE_EXEC" "RUNTIME_LOG_LEVEL" }}
+            # The backend alone signs the per-run agent tokens (Ed25519): NEXC_AGENT_TOKEN_JWKS_URL
+            # is its key set, fetched by the key id a token names.
+            {{- range $key := list "NEXC_AGENT_TOKEN_JWKS_URL" "NEXC_LLM_MODEL" "RUNTIME_HOST" "RUNTIME_PORT" "RUNTIME_GRPC_PORT" "RUNTIME_WORKSPACE" "RUNTIME_ALLOW_CODE_EXEC" "RUNTIME_LOG_LEVEL" }}
             - name: {{ $key }}
               valueFrom: { configMapKeyRef: { name: nexc-config, key: {{ $key }} } }
             {{- end }}
+            # Out through runtime-egress alone (the NetworkPolicy allows nothing else but the
+            # backend and DNS); the backend is reached directly.
+            - name: HTTPS_PROXY
+              valueFrom: { configMapKeyRef: { name: nexc-config, key: RUNTIME_EGRESS_PROXY } }
+            - name: HTTP_PROXY
+              valueFrom: { configMapKeyRef: { name: nexc-config, key: RUNTIME_EGRESS_PROXY } }
+            - name: NO_PROXY
+              valueFrom: { configMapKeyRef: { name: nexc-config, key: RUNTIME_NO_PROXY } }
           livenessProbe:
             httpGet: { path: /healthz, port: http }
             periodSeconds: 15

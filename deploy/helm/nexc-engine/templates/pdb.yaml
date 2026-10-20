@@ -2,7 +2,7 @@
 # Voluntary disruptions (node drains) take at most `maxUnavailable` pods of each stateless tier
 # at once. A backend pod that is evicted drains: it fails readiness and hands its runs to its
 # peers before it exits (docs/HA.md).
-{{- range $name := list "backend" "agent-runtime" "frontend" }}
+{{- range $name := list "backend" "agent-runtime" "runtime-egress" "frontend" }}
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget

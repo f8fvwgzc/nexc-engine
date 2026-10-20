@@ -1,0 +1,71 @@
+# The agent runtime's way out (`nexc egress-proxy`, from the backend image, with no secrets): it
+# connects only to the hosts and ports of NEXC_RUNTIME_EGRESS_ALLOW (the LLM endpoints) and
+# answers 403 to anything else. The runtime's Egress NetworkPolicy lets it reach this proxy, the
+# backend and DNS, nothing more. It sees host names, never what is inside TLS: routing the LLM
+# traffic through the tools gateway is an open gap (docs/AGENTSECOPS.md).
+apiVersion: v1
+kind: Service
+metadata:
+  name: runtime-egress
+  labels: { app.kubernetes.io/name: runtime-egress }
+spec:
+  selector: { app.kubernetes.io/name: runtime-egress }
+  ports:
+    - name: proxy
+      port: 3128
+      targetPort: proxy
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runtime-egress
+  labels: { app.kubernetes.io/name: runtime-egress, app.kubernetes.io/component: agents }
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels: { app.kubernetes.io/name: runtime-egress }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: runtime-egress, app.kubernetes.io/component: agents }
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 10
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: runtime-egress
+          image: ghcr.io/f8fvwgzc/nexc-engine-backend
+          imagePullPolicy: IfNotPresent
+          args: ["egress-proxy"]
+          ports:
+            - name: proxy
+              containerPort: 3128
+          env:
+            - name: NEXC_EGRESS_LISTEN
+              value: "0.0.0.0:3128"
+            - name: NEXC_EGRESS_ALLOW
+              valueFrom: { configMapKeyRef: { name: nexc-config, key: NEXC_RUNTIME_EGRESS_ALLOW } }
+            - name: NEXC_LOG
+              valueFrom: { configMapKeyRef: { name: nexc-config, key: NEXC_LOG } }
+          livenessProbe:
+            httpGet: { path: /healthz, port: proxy }
+            periodSeconds: 15
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet: { path: /healthz, port: proxy }
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            requests: { cpu: 20m, memory: 32Mi }
+            limits: { cpu: 500m, memory: 128Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }

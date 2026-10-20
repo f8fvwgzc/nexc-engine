@@ -16,6 +16,10 @@ data:
   NEXC_RUNTIME_URL: http://agent-runtime:{{ .Values.runtime.httpPort }}
   NEXC_RUNTIME_PROTOCOL: {{ .Values.backend.runtimeProtocol | quote }}
   NEXC_RUNTIME_GRPC_URL: http://agent-runtime:{{ .Values.runtime.grpcPort }}
+  NEXC_AGENT_TOKEN_JWKS_URL: http://backend:8080/api/v1/agent-tokens/jwks.json
+  RUNTIME_EGRESS_PROXY: http://runtime-egress:3128
+  RUNTIME_NO_PROXY: backend,localhost,127.0.0.1
+  NEXC_RUNTIME_EGRESS_ALLOW: {{ .Values.runtime.egress.allow | quote }}
   NEXC_GATEWAY_CALLS_PER_MINUTE: {{ .Values.backend.gateway.callsPerMinute | quote }}
   NEXC_GATEWAY_TIMEOUT_SECS: {{ .Values.backend.gateway.timeoutSecs | quote }}
   NEXC_GATEWAY_MAX_RESPONSE_BYTES: {{ .Values.backend.gateway.maxResponseBytes | quote }}

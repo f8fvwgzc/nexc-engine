@@ -133,6 +133,16 @@ runtime:
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: "2", memory: 1Gi, ephemeral-storage: 2Gi }
+  # The runtime's only way out: runtime-egress (`nexc egress-proxy`, the backend image) lets
+  # through `allow` (host[:port], comma separated, 443 when no port is given, `*.example.com`
+  # for subdomains) and nothing else. A local provider needs its host:port here and a rule in
+  # networkPolicies.runtimeEgressExtra.
+  egress:
+    allow: api.anthropic.com:443,api.openai.com:443
+    replicas: 2
+    resources:
+      requests: { cpu: 20m, memory: 32Mi }
+      limits: { cpu: 500m, memory: 128Mi }
 
 frontend:
   resources:
@@ -232,7 +242,10 @@ secrets:
     NEXC_JWT_SECRET: ""
     NEXC_MASTER_KEY: ""
     NEXC_RUNTIME_TOKEN: ""
-    NEXC_AGENT_TOKEN_KEY: ""
+    # The Ed25519 seed (base64 of 32 bytes) the backend alone signs agent tokens with; derived
+    # from NEXC_MASTER_KEY when empty. Public keys that verify them too, during a rotation.
+    NEXC_AGENT_TOKEN_SIGNING_KEY: ""
+    NEXC_AGENT_TOKEN_VERIFY_KEYS: ""
     NEXC_METRICS_TOKEN: ""
     NEXC_FIREWALL_SIGNING_KEY: ""
     NEXC_ONTO_TOKEN: ""
@@ -263,6 +276,14 @@ networkPolicies:
   ingressNamespace: ingress-nginx
   # Namespaces whose pods may call the Agent Firewall API when `backend.grpcAddr` is set.
   firewallFrom: []
+  # The namespace and labels of the cluster DNS, which the runtime and runtime-egress may ask.
+  dnsNamespace: kube-system
+  dnsPodLabels: { k8s-app: kube-dns }
+  # More egress rules for runtime-egress, beyond DNS and TLS to public addresses: a local
+  # provider in the cluster or on a private network, e.g.
+  #   - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: llm } } }]
+  #     ports: [{ port: 11434, protocol: TCP }]
+  runtimeEgressExtra: []
 
 podDisruptionBudgets:
   enabled: true
