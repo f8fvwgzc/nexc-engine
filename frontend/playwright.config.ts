@@ -66,8 +66,10 @@ export default defineConfig({
     },
   ],
   webServer: {
-    // The production build, served as nginx would serve it (vite preview falls back to index.html).
+    // The production build, served as nginx would serve it (vite preview falls back to index.html
+    // and sends the same Content-Security-Policy, with the stand-in onto-intelli as frame-src).
     command: `pnpm exec vite build --logLevel warn && pnpm exec vite preview --port ${PORT} --strictPort`,
+    env: { NEXC_ONTO_PUBLIC_URL: 'http://onto.test' },
     url: `http://localhost:${PORT}`,
     reuseExistingServer: process.env.E2E_REUSE_SERVER === '1',
     timeout: 240_000,
