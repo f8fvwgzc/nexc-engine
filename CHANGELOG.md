@@ -41,7 +41,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `make prove-firewall` (part of `make prove-agentsecops`): one span folded and scored in process
   (asserted p99 < 50 µs, `NEXC_PROVE_LIVE_P99_US`), `AuthorizeAction` over gRPC with live risk off
   and on, the time to contain an exfiltrating external run (asserted < 1 s), and the DLP's false
-  positives on 100,000 random 12- and 13-digit numbers.
+  positives on 100,000 random 12- and 13-digit numbers. On an M2 Pro (release, PostgreSQL in
+  Docker, other builds running): a span scored p50 1.46 µs, p99 3.46 µs; `AuthorizeAction` p50
+  1,315 µs off and 1,287 µs on (the difference is noise); five exfiltrating runs contained mid-run,
+  p50 9 ms, max 14 ms from the first anomalous span; random 12-digit numbers taken for a My Number
+  10.1 % (100 % before), 13-digit for a corporate number 10.0 %.
 - DLP: the Japanese corporate number (houjin bangou, 13 digits with its official check digit) as
   the PII kind `corporate_number`, looked for only when a policy names it (it is public, and on
   every Japanese invoice); asked for, it is taken before a 13-digit card. The Swedish
