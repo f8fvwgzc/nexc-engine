@@ -68,7 +68,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   names its kinds and relations.
 - The Map page embeds onto-intelli's own UI (members and above): `POST
   /workspaces/{wid}/ontology/session` mints the member's own short-lived, read-only session
-  (`NEXC_ONTO_SESSION_TTL_SECS`) with the backend's token, which never reaches the browser, and the
+  (`NEXC_ONTO_SESSION_TTL_SECS`; the console renews it at three quarters of the lifetime its
+  `expires_at` gives, and on return to a tab that was away past that point) with the backend's
+  token, which never reaches the browser, and the
   page hands it to the frame by `postMessage` after `onto:ready`, to the frame's origin only
   (`NEXC_ONTO_PUBLIC_URL`). Issues, agents and runs link to themselves on the map
   (`#/entities/<id>`).
@@ -77,12 +79,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   member's assistant, an agent that never applies or approves; its reply links each proposal.
   Settings → Ontology (`GET /workspaces/{wid}/ontology`) lists the open proposals with a link to
   review each in onto-intelli, where approvers decide.
-- Running onto-intelli: `docker-compose.onto.yml` builds it from `../onto-intelli` (or pulls
-  `ONTO_IMAGE`) on PostgreSQL in its own database `onto` on nexc's server (with pgvector), published
-  for browsers on `ONTO_HTTP_PORT`; `make init` generates `ONTO_SESSION_SECRET`;
+- Running onto-intelli: `docker-compose.onto.yml` builds it from `../onto-intelli` (or pulls an
+  `ONTO_IMAGE` you built and pushed) on a PostgreSQL server of its own with pgvector
+  (`onto-postgres`, volume `onto-pgdata`, login `onto`), so nexc's PostgreSQL and its volume are
+  left as they are and onto-intelli holds no credential of nexc's database; published for browsers
+  on `ONTO_HTTP_PORT`; `make init` generates `ONTO_SESSION_SECRET` and `ONTO_POSTGRES_PASSWORD`;
   `deploy/onto/onto-intelli.toml` is multi-tenant with the impersonating token, the governance
   above, `builtin:nexc-execution` and `[ui] embed_origins`. The Helm chart gains an optional
-  onto-intelli Deployment and Service (`ontoIntelli.enabled`). `make dev` starts it from
+  onto-intelli Deployment and Service (`ontoIntelli.enabled`): its database is owned by its own
+  login `onto` on the chart's PostgreSQL, the image must be named (onto-intelli publishes none yet),
+  and browsers reach it at `ontoIntelli.ingress.host` or `backend.ontoPublicUrl` (the chart refuses
+  to render with neither). The console's Content-Security-Policy is now one header, sent by nginx
+  (and `vite preview`) with `frame-src` set to the origin of `NEXC_ONTO_PUBLIC_URL`, so the map's
+  frame loads; the build no longer carries a meta policy. `make dev` starts it from
   `../onto-intelli` when `NEXC_ONTO_MODE=service` and says how it runs otherwise.
   `make test-onto-live` runs `backend/tests/onto_live.rs` against a real `onto serve` on a
   throwaway PostgreSQL; CI runs the same flows against the in-memory stub, which now serves

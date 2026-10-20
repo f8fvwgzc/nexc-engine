@@ -187,13 +187,19 @@ cleared_at FROM onto_retired_tenants` lists the tenants to drop.
 **The Map page** (Settings → Workspace map, members and above) embeds onto-intelli's UI at
 `NEXC_ONTO_PUBLIC_URL/ui/`. The backend mints the member's own session with
 `POST /workspaces/{wid}/ontology/session`: a short-lived token (`NEXC_ONTO_SESSION_TTL_SECS`) for
-their principal in the workspace's tenant, read-only there (§2), which cannot impersonate anyone. The page loads the
+their principal in the workspace's tenant, read-only there (§2), which cannot impersonate anyone.
+The page renews it once three quarters of its lifetime are spent (from its `expires_at`, whatever
+the TTL), and at once on return to a tab that was hidden past that point. The page loads the
 frame, waits for `{type: "onto:ready"}` from the frame's origin and hands it
 `{type: "onto:session", token, tenant, workspace}` with `postMessage` to that origin only. The
 backend's own token never reaches a browser, and the session never travels in an address. Issues,
 agents and runs have an "On the map" link that opens `#/entities/<id>` in the same frame; Settings →
 Ontology opens `#/schema` and `#/proposals/<id>`. onto-intelli must list the console's origin in
-`[ui] embed_origins`.
+`[ui] embed_origins`, and the console must allow onto-intelli's: its Content-Security-Policy has
+`frame-src` set to the origin of `NEXC_ONTO_PUBLIC_URL` (the frontend container's nginx writes it at
+start, `frontend/docker-entrypoint.d/40-nexc-frame-src.sh`; `'none'` without one), never a wildcard.
+The console's build carries no policy of its own: nginx sends it, and `vite preview` sends the same
+(the UI suite checks that the frame loads under it).
 
 The day timeline (Settings → Activity) stays in nexc: it is activity, not ontology.
 
@@ -287,16 +293,28 @@ onto-intelli expects.
 
 - **Compose**: `make demo-onto`, or `docker compose -f docker-compose.yml -f docker-compose.onto.yml
   --profile onto up -d --build`. onto-intelli is built from `../onto-intelli` (or pulled as
-  `ONTO_IMAGE`), keeps its data in its own database `onto` on nexc's PostgreSQL server, which this
-  overlay runs with pgvector (onto-intelli needs 0.7+), and is published for browsers on
-  `ONTO_HTTP_PORT` (8081). `make init` generates `NEXC_ONTO_TOKEN` and `ONTO_SESSION_SECRET`.
-  Switching an existing installation from the Alpine PostgreSQL image: back up first, then run
-  `REINDEX DATABASE nexc` once the pgvector image runs (text indexes built under musl are not valid
-  under glibc), or start on a new volume and restore the backup.
-- **Helm**: `ontoIntelli.enabled=true` adds a Deployment and a Service (`onto-intelli:50051`), its
-  database on the chart's PostgreSQL (`images.postgres` must then have pgvector) or
-  `ONTO_DATABASE_URL` in the Secret, and `ontoIntelli.ingress.host` routes browsers to its UI; set
-  `backend.ontoPublicUrl` to that host. The Secret needs `NEXC_ONTO_TOKEN` and `ONTO_SESSION_SECRET`.
+  `ONTO_IMAGE`, an image you built and pushed: onto-intelli publishes none yet) and keeps its data on
+  a PostgreSQL server of its own, `onto-postgres` (`pgvector/pgvector:pg17`, which it needs, on the
+  volume `onto-pgdata`), as the login `onto` (`ONTO_POSTGRES_PASSWORD`). nexc's PostgreSQL, its
+  image and its volume stay as they are, so an installation started with `make demo` keeps its data,
+  and onto-intelli, which browsers reach, holds no credential of nexc's database. It is published for
+  browsers on `ONTO_HTTP_PORT` (8081), and the console's Content-Security-Policy lets it frame that
+  origin (`NEXC_ONTO_PUBLIC_URL`, given to the frontend container too). `make init` generates
+  `NEXC_ONTO_TOKEN`, `ONTO_SESSION_SECRET` and `ONTO_POSTGRES_PASSWORD`.
+- **Helm**: `ontoIntelli.enabled=true` adds a Deployment and a Service (`onto-intelli:50051`). Its
+  image must be named (`ontoIntelli.image.repository`): build it from `../onto-intelli` and push it to
+  your registry, since onto-intelli publishes none yet; the chart refuses to render without one. Its
+  data goes in its own database on the chart's PostgreSQL, owned by its own login `onto`
+  (`ONTO_POSTGRES_PASSWORD` in the Secret; an init container creates the role and the database and
+  pgvector as the superuser, and takes `CONNECT` on nexc's database from everyone else), so
+  `images.postgres` must then have pgvector (on a new installation; an existing Alpine volume moves
+  with `pg_dump` and `pg_restore`, never by pointing the new image at it). With
+  `postgres.enabled=false`, put `ONTO_DATABASE_URL` in the Secret. Browsers reach it at
+  `ontoIntelli.ingress.host` (https when `ingress.tls` lists it), or `backend.ontoPublicUrl`: one of
+  the two is required, since a browser cannot reach the Service, and it becomes both
+  `NEXC_ONTO_PUBLIC_URL` and the frontend's frame-src. `ontoIntelli.embedOrigins` defaults to the
+  console's ingress host. The Secret needs `NEXC_ONTO_TOKEN`, `ONTO_SESSION_SECRET` and
+  `ONTO_POSTGRES_PASSWORD`.
 - **`make dev`** starts `onto serve` from `../onto-intelli` (or `ONTO_DIR`) on `127.0.0.1:50051` when
   `NEXC_ONTO_MODE=service`, on the dev database (`NEXC_DB_IMAGE` with pgvector), with the dev web
   server's origin allowed to embed its UI; otherwise it says how it runs (`NEXC_ONTO_MODE=off`).

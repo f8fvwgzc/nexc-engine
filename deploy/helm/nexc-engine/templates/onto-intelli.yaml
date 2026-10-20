@@ -1,14 +1,20 @@
 {{- if .Values.ontoIntelli.enabled }}
 {{- $o := .Values.ontoIntelli }}
+{{- if not $o.image.repository }}
+{{- fail "ontoIntelli.image.repository is empty: onto-intelli publishes no image yet; build it from its repository (docker build -t <registry>/onto-intelli:<tag> ../onto-intelli), push it to your registry and name it here" }}
+{{- end }}
 {{- $origins := $o.embedOrigins }}
 {{- if not $origins }}
-{{- $origins = list (printf "http%s://%s" (ternary "s" "" (gt (len .Values.ingress.tls) 0)) .Values.ingress.host) }}
+{{- if not (and .Values.ingress.enabled .Values.ingress.host) }}
+{{- fail "ontoIntelli.embedOrigins is empty and there is no ingress.host to derive it from: list the console's origins (https://nexc.example.com)" }}
+{{- end }}
+{{- $origins = list (printf "http%s://%s" (ternary "s" "" (eq (include "nexc.tlsHost" (dict "host" .Values.ingress.host "root" .)) "true")) .Values.ingress.host) }}
 {{- end }}
 # onto-intelli: the one place the ontology lives (docs/ONTOLOGY.md). Every graph's node and
 # relation types, the workspace map (its UI, embedded by the console), the audit's facts and
 # the schema with its proposals; one tenant per nexc workspace, every call made as the member.
-# It keeps its data in PostgreSQL (database `ontoIntelli.database`, on the chart's PostgreSQL
-# unless ONTO_DATABASE_URL is in the Secret), which needs pgvector 0.7+.
+# It keeps its data in PostgreSQL (database `ontoIntelli.database`, owned by its own login `onto`,
+# on the chart's PostgreSQL unless ONTO_DATABASE_URL is in the Secret), which needs pgvector 0.7+.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -24,8 +30,8 @@ data:
     read_consistency = "strong"
     default_workspace = "nexc"
 
+    # The database is ONTO_DATABASE_URL (onto-intelli reads it from the environment).
     [engine.postgres]
-    url_env = "ONTO_DATABASE_URL"
     tenant = "default"
     schema_prefix = "onto_"
     max_connections = {{ $o.maxConnections }}
@@ -121,17 +127,28 @@ spec:
         {{- include "nexc.podSecurity" (dict "uid" 10001 "fsGroup" false) | nindent 8 }}
       {{- if .Values.postgres.enabled }}
       initContainers:
-        # Its own database on the chart's PostgreSQL, created once.
+        # Its own login and database on the chart's PostgreSQL: the role `onto` (password
+        # ONTO_POSTGRES_PASSWORD) owns the database and nothing else, nexc's database no longer
+        # admits every role, and pgvector is created by the superuser, once. onto-intelli, which
+        # browsers reach, never holds the superuser's password.
         - name: database
           image: {{ include "nexc.image" (dict "image" .Values.images.postgres "chart" .Chart) }}
           imagePullPolicy: {{ .Values.images.pullPolicy }}
           command:
             - sh
             - -c
-            - >-
-              until pg_isready -h postgres -U "$PGUSER" -d "$PGDATABASE"; do sleep 2; done;
-              psql -h postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '{{ $o.database }}'" | grep -q 1
-              || psql -h postgres -c 'CREATE DATABASE "{{ $o.database }}"'
+            - |
+              until pg_isready -h postgres -U "$PGUSER" -d "$PGDATABASE"; do sleep 2; done
+              psql -h postgres -v ON_ERROR_STOP=1 -v pw="$ONTO_POSTGRES_PASSWORD" \
+                -v db="{{ $o.database }}" -v nexc="$PGDATABASE" <<'SQL'
+              SELECT 'CREATE ROLE onto LOGIN' WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'onto') \gexec
+              SELECT format('ALTER ROLE onto LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD %L', :'pw') \gexec
+              SELECT format('CREATE DATABASE %I OWNER onto', :'db') WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'db') \gexec
+              SELECT format('ALTER DATABASE %I OWNER TO onto', :'db') \gexec
+              SELECT format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', :'nexc') \gexec
+              \c :db
+              CREATE EXTENSION IF NOT EXISTS vector;
+              SQL
           env:
             - name: PGUSER
               valueFrom: { secretKeyRef: { name: {{ include "nexc.secretName" . }}, key: POSTGRES_USER } }
@@ -139,12 +156,14 @@ spec:
               valueFrom: { secretKeyRef: { name: {{ include "nexc.secretName" . }}, key: POSTGRES_DB } }
             - name: PGPASSWORD
               valueFrom: { secretKeyRef: { name: {{ include "nexc.secretName" . }}, key: POSTGRES_PASSWORD } }
+            - name: ONTO_POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "nexc.secretName" . }}, key: ONTO_POSTGRES_PASSWORD } }
           securityContext:
             {{- include "nexc.containerSecurity" . | nindent 12 }}
       {{- end }}
       containers:
         - name: onto-intelli
-          image: {{ $o.image.repository }}:{{ $o.image.tag }}
+          image: {{ $o.image.repository }}:{{ $o.image.tag | default "latest" }}
           imagePullPolicy: {{ .Values.images.pullPolicy }}
           command: ["onto", "serve", "--config", "/etc/onto/onto-intelli.toml", "--listen", "0.0.0.0:{{ $o.port }}"]
           ports:
@@ -156,12 +175,10 @@ spec:
             - name: ONTO_SESSION_SECRET
               valueFrom: { secretKeyRef: { name: {{ include "nexc.secretName" . }}, key: ONTO_SESSION_SECRET } }
             {{- if .Values.postgres.enabled }}
-            - name: POSTGRES_USER
-              valueFrom: { secretKeyRef: { name: {{ include "nexc.secretName" . }}, key: POSTGRES_USER } }
-            - name: POSTGRES_PASSWORD
-              valueFrom: { secretKeyRef: { name: {{ include "nexc.secretName" . }}, key: POSTGRES_PASSWORD } }
+            - name: ONTO_POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "nexc.secretName" . }}, key: ONTO_POSTGRES_PASSWORD } }
             - name: ONTO_DATABASE_URL
-              value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/{{ $o.database }}"
+              value: "postgres://onto:$(ONTO_POSTGRES_PASSWORD)@postgres:5432/{{ $o.database }}"
             {{- else }}
             - name: ONTO_DATABASE_URL
               valueFrom: { secretKeyRef: { name: {{ include "nexc.secretName" . }}, key: ONTO_DATABASE_URL } }

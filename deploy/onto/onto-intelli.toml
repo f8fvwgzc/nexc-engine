@@ -7,8 +7,9 @@
 # the console is served from another origin than http://localhost:8080.
 
 [engine]
-# PostgreSQL in its own database (ONTO_DATABASE_URL) on nexc's PostgreSQL server, which needs
-# pgvector 0.7 or newer. One tenant per nexc workspace (x-onto-tenant: ws_<id>), one schema each.
+# PostgreSQL with pgvector 0.7 or newer, at ONTO_DATABASE_URL (onto-intelli reads it from the
+# environment): in Compose its own server `onto-postgres`, in Helm its own login and database on
+# the chart's PostgreSQL. One tenant per nexc workspace (x-onto-tenant: ws_<id>), one schema each.
 storage = "postgres"
 tenancy = "multi"
 # Read-your-writes across replicas: a vocabulary written through one is read back through any.
@@ -18,7 +19,6 @@ default_workspace = "nexc"
 ingest_queue = 4096
 
 [engine.postgres]
-url_env = "ONTO_DATABASE_URL"
 tenant = "default"
 schema_prefix = "onto_"
 max_connections = 10

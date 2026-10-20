@@ -170,8 +170,9 @@ questions from them as the member who asks. Set `NEXC_ONTO_URL` (its gRPC and HT
 `NEXC_ONTO_MODE=off` (the default without a URL) nothing is exported and the ask routes answer 503.
 
 - In Compose: `make demo-onto`, or `docker compose -f docker-compose.yml -f docker-compose.onto.yml
-  --profile onto up -d --build`, builds it from a checkout next to this repository, on PostgreSQL
-  with pgvector, and wires the backend to it; `deploy/onto/onto-intelli.toml` is its configuration
+  --profile onto up -d --build`, builds it from a checkout next to this repository, on a
+  PostgreSQL server of its own with pgvector (`onto-postgres`, volume `onto-pgdata`, login `onto`),
+  and wires the backend and the console's frame-src to it; `deploy/onto/onto-intelli.toml` is its configuration
   (tenants per workspace, the impersonating token, governance, the nexc-execution package, the
   audit's schema in `deploy/onto/nexc-audit.toml`, the workspace's in
   `deploy/onto/nexc-workspace.toml`, the mock model unless `ANTHROPIC_API_KEY` is set).

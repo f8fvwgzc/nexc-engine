@@ -253,8 +253,8 @@ Only nginx is published (`NEXC_HTTP_PORT`, default 8080). The backend, runtime a
 internal networks; every container runs as non-root with a read-only root filesystem,
 `cap_drop: ALL` and `no-new-privileges`. `make demo` forces demo mode regardless of `.env`.
 `make demo-onto` adds [onto-intelli](https://github.com/f8fvwgzc/onto-intelli) (built from a
-checkout next to this one, `docker-compose.onto.yml`, profile `onto`, on PostgreSQL with
-pgvector): the one place the ontology lives, with the workspace map it renders and the console
+checkout next to this one, `docker-compose.onto.yml`, profile `onto`, on a PostgreSQL server of
+its own with pgvector): the one place the ontology lives, with the workspace map it renders and the console
 embeds (`docs/ONTOLOGY.md`). It runs a demo graph and asks the six audit questions, printing mode,
 tokens and latency.
 

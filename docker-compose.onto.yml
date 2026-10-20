@@ -6,49 +6,47 @@
 #   # or: make demo-onto
 #
 # onto-intelli is built from the sibling checkout ../onto-intelli (clone
-# https://github.com/f8fvwgzc/onto-intelli next to this repository), or pulled as ONTO_IMAGE. It
-# keeps its data in a database of its own (ONTO_POSTGRES_DB, `onto`) on nexc's PostgreSQL server,
-# which therefore runs the pgvector image here (onto-intelli needs pgvector 0.7+). Moving an
-# existing installation from the Alpine image: back up first (make backup), then
-# `REINDEX DATABASE nexc` once the new image runs, or start on a new volume (docs/ONTOLOGY.md).
+# https://github.com/f8fvwgzc/onto-intelli next to this repository), or pulled as ONTO_IMAGE when
+# you built and pushed one (it publishes no image yet). It keeps its data on a PostgreSQL server of
+# its own, `onto-postgres` (pgvector/pgvector, which onto-intelli needs, on the volume
+# `onto-pgdata`), as the login `onto` (ONTO_POSTGRES_PASSWORD): nexc's PostgreSQL, its image and
+# its volume are left as they are, and onto-intelli, which browsers reach, holds no credential of
+# nexc's database.
 #
 # The backend presents NEXC_ONTO_TOKEN; browser sessions are signed with ONTO_SESSION_SECRET
-# (`make init` generates both). Browsers reach onto-intelli's UI on ONTO_HTTP_PORT (8081), which
-# the console embeds; deploy/onto/onto-intelli.toml lists the console's origin in [ui]
-# embed_origins.
+# (`make init` generates them and ONTO_POSTGRES_PASSWORD). Browsers reach onto-intelli's UI on
+# ONTO_HTTP_PORT (8081), which the console embeds (its frame-src allows NEXC_ONTO_PUBLIC_URL);
+# deploy/onto/onto-intelli.toml lists the console's origin in [ui] embed_origins.
 services:
-  postgres:
-    image: ${NEXC_POSTGRES_IMAGE:-pgvector/pgvector:pg17}
-    # The Debian-based pgvector image runs as postgres (uid 999).
-    user: "999:999"
-    tmpfs:
-      - /var/run/postgresql:uid=999,gid=999,mode=0775
-      - /tmp:uid=999,gid=999,mode=1777
-
-  # Creates onto-intelli's database once, then exits.
-  onto-db:
+  # onto-intelli's own PostgreSQL (pgvector), reached by onto-intelli only.
+  onto-postgres:
     profiles: [onto]
-    image: ${NEXC_POSTGRES_IMAGE:-pgvector/pgvector:pg17}
-    restart: "no"
+    image: ${ONTO_POSTGRES_IMAGE:-pgvector/pgvector:pg17}
+    restart: unless-stopped
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    init: true
+    # The Debian-based image's postgres user, so no capabilities are needed at all.
     user: "999:999"
     environment:
-      PGHOST: postgres
-      PGUSER: ${POSTGRES_USER:-nexc}
-      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is empty - run `make init`}
-      PGDATABASE: ${POSTGRES_DB:-nexc}
-      ONTO_DB: ${ONTO_POSTGRES_DB:-onto}
-    command:
-      - sh
-      - -c
-      - >-
-        psql -tAc "SELECT 1 FROM pg_database WHERE datname = '$$ONTO_DB'" | grep -q 1
-        || psql -c "CREATE DATABASE \"$$ONTO_DB\""
-    depends_on:
-      postgres: { condition: service_healthy }
-    networks: [data]
+      POSTGRES_USER: onto
+      POSTGRES_PASSWORD: ${ONTO_POSTGRES_PASSWORD:?ONTO_POSTGRES_PASSWORD is empty - run `make init`}
+      POSTGRES_DB: ${ONTO_POSTGRES_DB:-onto}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - onto-pgdata:/var/lib/postgresql/data
+    tmpfs:
+      - /var/run/postgresql:uid=999,gid=999,mode=0775
+      - /tmp:uid=999,gid=999,mode=1777
+    shm_size: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U onto -d \"$${POSTGRES_DB}\" -h 127.0.0.1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks: [onto-data]
 
   onto-intelli:
     profiles: [onto]
@@ -63,7 +61,7 @@ services:
     init: true
     environment:
       ONTO_CONFIG: /etc/onto/onto-intelli.toml
-      ONTO_DATABASE_URL: postgres://${POSTGRES_USER:-nexc}:${POSTGRES_PASSWORD}@postgres:5432/${ONTO_POSTGRES_DB:-onto}
+      ONTO_DATABASE_URL: postgres://onto:${ONTO_POSTGRES_PASSWORD}@onto-postgres:5432/${ONTO_POSTGRES_DB:-onto}
       NEXC_ONTO_TOKEN: ${NEXC_ONTO_TOKEN:?NEXC_ONTO_TOKEN is empty - run `make init`}
       ONTO_SESSION_SECRET: ${ONTO_SESSION_SECRET:?ONTO_SESSION_SECRET is empty - run `make init`}
       # Real explanations need a key; without one the mock provider answers offline.
@@ -84,12 +82,24 @@ services:
       retries: 12
       start_period: 20s
     depends_on:
-      postgres: { condition: service_healthy }
-      onto-db: { condition: service_completed_successfully }
-    networks: [agents, data, egress]
+      onto-postgres: { condition: service_healthy }
+    networks: [agents, onto-data, egress]
 
   backend:
     environment:
       NEXC_ONTO_MODE: service
       NEXC_ONTO_URL: ${NEXC_ONTO_URL:-http://onto-intelli:50051}
       NEXC_ONTO_PUBLIC_URL: ${NEXC_ONTO_PUBLIC_URL:-http://localhost:8081}
+
+  # The console's Content-Security-Policy lets it frame onto-intelli's UI from there.
+  frontend:
+    environment:
+      NEXC_ONTO_PUBLIC_URL: ${NEXC_ONTO_PUBLIC_URL:-http://localhost:8081}
+
+volumes:
+  onto-pgdata:
+
+networks:
+  # onto-intelli <-> its PostgreSQL only.
+  onto-data:
+    internal: true

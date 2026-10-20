@@ -69,8 +69,10 @@ backend:
   # (graphs keep the read-only starter vocabulary, no workspace map). Its token goes in the
   # Secret as NEXC_ONTO_TOKEN.
   ontoUrl: ""
-  # Where browsers reach onto-intelli's UI, which the console embeds as its workspace map, e.g.
-  # https://onto.nexc.example.com (ontoIntelli.ingress.host). Empty: ontoUrl.
+  # Where browsers reach onto-intelli's UI, which the console embeds as its workspace map (and
+  # frames: the frontend's Content-Security-Policy allows its origin), e.g.
+  # https://onto.nexc.example.com. Empty: ontoUrl, or ontoIntelli.ingress.host when onto-intelli
+  # is in the release.
   ontoPublicUrl: ""
   ontoWorkspacePrefix: nexc-
   # How long a graph's vocabulary is served from memory (0: every read asks onto-intelli).
@@ -139,16 +141,20 @@ frontend:
 
 # onto-intelli in the release (docs/ONTOLOGY.md): a Deployment and a Service on port `port`,
 # configured as nexc needs it (tenants per workspace, impersonation, governance, the UI's
-# embed_origins). It keeps its data in its own database on the chart's PostgreSQL, which then needs
-# pgvector 0.7+: set images.postgres to pgvector/pgvector:pg17 (a new volume: the Alpine image's
-# text indexes are not valid under Debian), or, with postgres.enabled=false, put ONTO_DATABASE_URL
-# in the Secret. The Secret also needs NEXC_ONTO_TOKEN and ONTO_SESSION_SECRET
-# (scripts/init-env.sh --k8s generates both).
+# embed_origins). It keeps its data in its own database on the chart's PostgreSQL, as its own
+# login `onto` (ONTO_POSTGRES_PASSWORD in the Secret), which then needs pgvector 0.7+: set
+# images.postgres to pgvector/pgvector:pg17 on a new installation (an existing Alpine volume moves
+# with pg_dump and pg_restore, never by pointing the new image at it), or, with
+# postgres.enabled=false, put ONTO_DATABASE_URL in the Secret. The Secret also needs
+# NEXC_ONTO_TOKEN and ONTO_SESSION_SECRET (scripts/init-env.sh --k8s generates all three).
 ontoIntelli:
   enabled: false
+  # onto-intelli publishes no image yet: build it from its repository (`docker build -t
+  # <registry>/onto-intelli:<tag> ../onto-intelli`), push it to your registry and name it here.
+  # The chart refuses to render with ontoIntelli.enabled and no repository.
   image:
-    repository: ghcr.io/f8fvwgzc/onto-intelli
-    tag: "0.2.0"
+    repository: ""
+    tag: ""
   replicas: 1
   port: 50051
   database: onto
@@ -157,10 +163,13 @@ ontoIntelli:
   # mock answers the audit offline; anthropic needs ANTHROPIC_API_KEY (anthropicApiKeyFromSecret).
   llmProvider: mock
   anthropicApiKeyFromSecret: false
-  # The console's origins, allowed to embed the UI and hand it a session. Empty: the ingress host.
+  # The console's origins, allowed to embed the UI and hand it a session. Empty: the ingress host
+  # (https when ingress.tls covers it); the chart refuses to render with neither.
   embedOrigins: []
-  # A host of its own on the ingress for browsers (the UI and its HTTP API); set
-  # backend.ontoPublicUrl to it. Empty: not routed.
+  # A host of its own on the ingress for browsers (the UI and its HTTP API). It is where browsers
+  # reach onto-intelli (NEXC_ONTO_PUBLIC_URL, https when ingress.tls lists it) unless
+  # backend.ontoPublicUrl says otherwise; with ontoIntelli.enabled one of the two is required,
+  # since browsers cannot reach the Service onto-intelli.
   ingress:
     host: ""
   resources:
@@ -225,6 +234,8 @@ secrets:
     NEXC_FIREWALL_SIGNING_KEY: ""
     NEXC_ONTO_TOKEN: ""
     ONTO_SESSION_SECRET: ""
+    # onto-intelli's own login on the chart's PostgreSQL (role `onto`, owning its database only).
+    ONTO_POSTGRES_PASSWORD: ""
     ANTHROPIC_API_KEY: ""
     NEXC_ADMIN_EMAIL: ""
     NEXC_ADMIN_PASSWORD: ""
