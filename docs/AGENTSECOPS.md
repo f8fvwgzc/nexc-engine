@@ -235,10 +235,11 @@ Five rules the design follows:
   classifier pass (pattern + small model, configurable) that flags instructions inside data and
   records a `policy` span with the finding. Blocking is a policy choice, not a default.
 - **Behaviour baseline and risk score.** Per agent, a rolling baseline from spans: tool calls per
-  turn, tokens per turn, distinct tools, distinct hosts, spawns, denials, bytes out. Score = capped
-  sum of z-scores, explained in words ("3× its usual egress, 2 new hosts"). Thresholds → `Alert`,
-  `Quarantine` (status flips, running nodes are cancelled, runs refused). MinHash over the tool
-  sequence of a run gives "this run looks unlike anything this agent did before".
+  turn, tokens per turn, distinct tools, distinct hosts, spawns, denials, bytes out, outbound
+  calls. Score = capped sum of z-scores, explained in words ("3× its usual egress, 2 new hosts").
+  Thresholds → `Alert`, `Quarantine` (status flips, running nodes are cancelled, runs refused).
+  MinHash over the tool sequence of a run gives "this run looks unlike anything this agent did
+  before". External agents are scored the same way, and live while their runs are open (§12).
 - **Kill switches.** Pause an agent, quarantine an agent, cancel a run, revoke a token (session
   epochs already do this for humans in seconds; the same gate works for agent principals).
 
@@ -325,9 +326,10 @@ All ids UUIDv7. Nothing here is updated after write except `agents` and `node_ru
    `Execute(stream RuntimeEvent) returns (stream BackendCommand)`. Spans, deltas, tokens and
    artifacts go up; `cancel`, `approval_granted`, `policy_update` come down. Rust side with
    `tonic`, Python side with `grpclib`. The NDJSON path stays as a fallback for one release.
-3. **gRPC Agent Firewall API (phase 4):** `AuthorizeAction`, `ReportSpan` (client-streaming),
-   `VerifyTrace`, `GetAgentCard`. Any external agent platform, or a sidecar in front of one, can
-   use nexc as its policy and trace service. Same principals, same policies.
+3. **gRPC Agent Firewall API (phase 4):** `AuthorizeAction`, `AwaitApproval`, `ReportSpan`
+   (client-streaming), `VerifyTrace`, `GetAgentCard`. Any external agent platform, or a sidecar
+   in front of one, can use nexc as its policy and trace service. Same principals, same
+   policies, same risk scores and approvals (§12).
 4. **onto-intelli:** `EventService/Ingest` for facts; `IntelliService/Ask` for the audit box.
 
 ---
@@ -346,6 +348,8 @@ assertions, measured on the demo provider so numbers are stable:
 | Deterministic audit question via onto-intelli            | p99 < 5 ms, 0 tokens       |
 | Trace verification, 10,000-span run                      | < 50 ms (C SHA-256 kernel) |
 | Overhead added to a 12-turn agent run with 40 tool calls | < 0.5 % of wall time       |
+| Live risk, one firewall span folded and scored           | p99 < 10 µs                |
+| Exfiltrating external run: first anomalous span → stopped | < 1 s                      |
 
 Every number is printed by the test and pasted into the README's compliance table, the way the
 project already documents its worst cases.
@@ -467,3 +471,57 @@ In SoftBank's terms: the agent card is the ID card shown outward, the counterpar
 the visitor's badge, the firewall decides at the door, and the trace keeps the visit on record.
 
 <!-- #endregion a2a -->
+
+---
+
+## 12. The firewall scored and held
+
+<!-- #region firewall-risk -->
+On 2026-10-20 a comparison with SoftBank's public AgentSecOps material and a skeptic's read of the
+code found the main Agent Firewall scenario weaker than the native one: an agent nexc does not
+host got signed decisions and a verifiable trace, but its runs were never scored (no baseline, no
+anomaly alert, no anomaly quarantine), `require_approval` led nowhere, and a run that went rogue
+part way through was stopped only by per-action rules. Each now works as it does for a native
+agent, and the firewall adds what an agent running elsewhere needs: a score taken while the run
+is still going.
+
+- **Scored when it closes.** Every run of an external agent is scored when it is sealed, by the
+  same code as a native run's (`engine/risk.rs`): its baseline, its alerts, its quarantine. A
+  reported run is compared with the agent's reported runs; a decisions session (the run its
+  `AuthorizeAction` calls go to when they name none) with its earlier sessions, a separate
+  baseline (`agent_baselines.scope`), since a window of decisions is not a run. Sessions are
+  windows of at most 15 minutes or 1,000 decisions, so they compare like with like. The
+  decisions themselves count: an allowed egress is an outbound call to that host, an allowed
+  tool call is that tool, a denial a denial, so an agent that reports nothing but asks before
+  acting has a baseline too.
+- **Scored while it runs.** Each span and each decision is folded into the run's counts as it
+  arrives (`firewall/live.rs`), and the counts that only grow are scored against the baseline:
+  outbound calls, hosts, bytes out, denials, tools, sub-agents. Because they only grow, a partial
+  run never scores above what the same spans score at the end, so the live score stops only runs
+  the end-of-run score would have flagged, earlier. When it reaches the policy's
+  `quarantine_risk_score`, the agent is quarantined (the same alerts and audit entry, marked
+  mid-run), the decision that crossed it is refused, a reported run's stream is answered at once
+  and takes no more spans, and the trace ends with a `live_risk` span: the score, the reasons, the
+  span that tripped it, the first anomalous span and the time from it to the run stopped. The run
+  is not learned into the baseline; a run that went rogue is not what the agent usually does.
+- **Held for a human.** A decision that requires an approval is an approval of the approvals
+  engine, in the approvers' inbox and the alert destinations like a native one. The agent awaits
+  it with `AwaitApproval` (a poll, or a wait of up to a minute, on any instance); the decision it
+  finally gets is signed like any other, names the approval, and is the `approval` span on the
+  run. A reported call of the held tool that names the approval is accepted once.
+- **Fewer false alarms in the DLP.** Japanese identifiers are checked as their issuers define
+  them: a My Number by its check digit (12 digits, run together or as printed on the card), a
+  corporate number by its own (13 digits; a kind of its own, `corporate_number`, off by default
+  because corporate numbers are public). Random 12-digit numbers are taken for a My Number about
+  one time in ten, where every one was before.
+
+`make prove-firewall` measures what this adds and how fast a rogue run is stopped. On an M2 Pro
+(release build, PostgreSQL in Docker): see the CHANGELOG entry of the change for the numbers of
+the run that shipped it.
+
+What it does not do yet: a session open on one instance is not scored by another (sessions are
+per instance, as before); the live score has no novelty term (it needs the whole tool sequence);
+and an agent that reports nothing and asks nothing is invisible, as any agent outside the
+firewall is.
+
+<!-- #endregion firewall-risk -->

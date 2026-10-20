@@ -1087,7 +1087,7 @@ interface SessionPage { sessions: SessionSummary[]; next: string | null }
 type PolicyScope = "workspace" | "team" | "agent";
 type RuleAction = "alert" | "deny";
 type Severity = "low" | "medium" | "high" | "critical";
-type PiiKind = "email" | "phone" | "card" | "national_id";
+type PiiKind = "email" | "phone" | "card" | "national_id" | "corporate_number"; // national_id: SSN, BSN (11-test), My Number (check digit; 12 digits run together or 4-4-4), personnummer; corporate_number: a Japanese houjin bangou (13 digits, check digit), not in the default kinds
 type InjectionAction = "flag" | "block";
 interface ListRule { allow: string[] | null; deny: string[] } // `allow: null` inherits
 interface TimeWindow { days: number[]; start: string; end: string } // ISO weekdays (1 = Monday), `HH:MM` UTC; an end before the start wraps midnight
@@ -1120,7 +1120,7 @@ interface PolicyDocument {
   };
   dlp: {
     secrets: RuleAction | null; // a credential in an artifact (default deny)
-    pii: { enabled: boolean | null; kinds: PiiKind[] | null; keywords: string[]; action: RuleAction | null }; // default on, every kind, alert
+    pii: { enabled: boolean | null; kinds: PiiKind[] | null; keywords: string[]; action: RuleAction | null }; // default on, every kind but corporate_number, alert
     labels: Partial<Record<DataLabel, { artifacts: boolean | null; egress_hosts: string[] | null }>>; // where content derived from a label may go (defaults: confidential stays an artifact and never leaves to a host; restricted leaves in no form)
   };
   injection: { action: InjectionAction | null; model_check: boolean | null }; // default flag, no model check
@@ -1885,14 +1885,55 @@ decides for its own agents and answers `{decision, rule, reason, policy_versions
 run_id, decided_at}` signed: `signed` is the canonical JSON of those fields with the principal,
 action, subject and labels, `signature` its Ed25519 signature and `public_key` the key
 (`NEXC_FIREWALL_SIGNING_KEY`, shown on `/admin/infrastructure`), so whoever holds the key can
-check a decision later. Every decision is a `policy` span on the agent's open run. `ReportSpan`
-(client streaming) takes `start {external_run_id, title}`, any number of `span`s and `finish
-{status, output}` and answers `{run_id, spans, trace_hash, policy_mismatches}`: the spans go into
-the chained trace exactly as a runtime's would (ids checked, kinds limited, attributes bounded,
-every span re-decided and each disagreement a `policy_mismatch`), in a run of the agent's own
-managed graph (`graphs.external_agent_id`, one node per external run). `VerifyTrace {run_id}`
-recomputes the chain as `GET /runs/{rid}/trace/verify` does; `GetAgentCard` answers the caller's
-own card. A run with no call for 10 minutes is sealed and finished.
+check a decision later. Every decision is a `policy` span on the agent's open run: the
+reported run `context.run_id` names when it is the caller's own and open on this instance, else
+the agent's decisions session. `ReportSpan` (client streaming) takes `start {external_run_id,
+title}`, any number of `span`s and `finish {status, output}` and answers `{run_id, spans,
+trace_hash, policy_mismatches, status, quarantined, risk_score, time_to_contain_ms, reason}`: the
+spans go into the chained trace exactly as a runtime's would (ids checked, kinds limited,
+attributes bounded, every span re-decided and each disagreement a `policy_mismatch`), in a run of
+the agent's own managed graph (`graphs.external_agent_id`, one node per external run).
+`VerifyTrace {run_id}` recomputes the chain as `GET /runs/{rid}/trace/verify` does;
+`GetAgentCard` answers the caller's own card. A decisions session is sealed after 10 minutes
+without a call (not while an approval asked in it is still watched), and after 15 minutes or
+1,000 decisions even when busy: each is a window of the agent's decisions.
+
+*Scored like a native run.* Every external run is scored when it closes, against the agent's
+baseline (`agent_baselines`, scope `runs` for reported runs, `sessions` for decisions sessions,
+which are not compared with each other), and learned into it; the policy's `alerts` thresholds
+raise the same alerts and the same quarantine as for a native run. A firewall decision the
+agent was allowed counts as what it said it is about to do (an `egress` decision as an outbound
+call to that host, a `tool_call` decision as that tool); denials and mismatches count as
+denials. While a run is open it is also scored *live*, span by span and decision by decision,
+on the counts that only grow (outbound calls, hosts, bytes out from `payload_bytes`, denials,
+tools, sub-agents; never more than the same spans score when the run ends). When the live score
+reaches `alerts.quarantine_risk_score`, the agent is quarantined (alerts, audit entry `automatic,
+mid-run: live risk score …`), the decision that crossed it is answered `deny` with rule
+`alerts.quarantine_risk_score`, a `ReportSpan` stream is answered at once with `status
+cancelled`, `quarantined true` and `time_to_contain_ms` (from the first span that raised the
+score to the run stopped) and takes no more spans, and the run's trace ends with a `policy` span
+`live_risk` (`decision quarantine`, `risk_score`, `threshold`, `reasons`, `trigger_span_id`,
+`first_anomaly_span_id`, `time_to_contain_ms`, `detect_to_contain_ms`). A contained run is not
+learned into the baseline. A quarantine of the agent made anywhere stops its reported runs here
+within 2 s (at once on the same instance).
+
+*Approvals.* A `require_approval` decision (a tool the policy's `require_approval` holds) is an
+approval of the approvals engine, as a native run's: a row of `approvals` (the run and node the
+decision is recorded in; `args_sha256` from `context.args_sha256`, 64 lower-case hex, when given),
+the approvers' inbox, the alert destinations; it is decided with `POST
+/approvals/{id}/approve|deny`. The reply names it (`approval_id`, `approval_expires_at`) and its
+signed bytes carry `approval_id`. `AwaitApproval {approval_id, wait_ms}` answers `{approval_id,
+status, decided_by, reason, expires_at, decision}` at once (`wait_ms` 0) or when it is decided or
+expires, waiting at most `min(wait_ms, 60000)` ms, on any instance; only the agent that asked sees
+it (`NOT_FOUND` otherwise). Once it is no longer pending, `decision` is the final decision,
+`allow` when approved and `deny` when denied or expired (rule `approvals.tools` or
+`approvals.labels`), signed like any other with `approval_id` in the signed bytes and empty
+labels; its `span_id` is the `approval` span that records it on the run (`firewall: true`, the
+signature), and every instance hands out the same bytes. A reported `tool_call` of a held tool
+whose attributes name an approved `approval_id` of the agent for that tool (and the same
+`args_sha256` when the approval has one) is not a mismatch, once: the approval is used
+(`approvals.consumed_span_id`), and named again it is a mismatch. When the agent is quarantined
+while an approval is pending, the approval expires.
 
 <!-- #endregion firewall-wire -->
 <!-- #region otlp-wire -->

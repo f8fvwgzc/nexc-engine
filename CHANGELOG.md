@@ -9,6 +9,41 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- The Agent Firewall scores the agents nexc does not host (`docs/CONTRACT.md` §8, firewall wire;
+  `docs/AGENTSECOPS.md` §12). Every external run closes scored like a native run, against the
+  agent's baseline, with the same `alerts` thresholds, alerts and quarantine: reported runs
+  against the `runs` baseline, decisions sessions (now windows of at most 15 minutes or 1,000
+  decisions) against a `sessions` baseline of their own, an allowed `egress` decision counting as
+  an outbound call and an allowed `tool_call` decision as that tool. A quarantined external agent
+  gets no decision at all (`PERMISSION_DENIED`), so no allow, and its open runs on the instance
+  stop at once (elsewhere within 2 s).
+- Live risk on the firewall (`backend/src/firewall/live.rs`): while an external run is open, every
+  span and decision is folded into its counts that only grow (outbound calls, hosts, bytes out,
+  denials, tools, sub-agents) and scored against the baseline (`risk::score_live`, never above
+  what the same spans score at the run's end). Reaching `alerts.quarantine_risk_score`
+  quarantines the agent mid-run: the decision that crossed it is a signed `deny` (rule
+  `alerts.quarantine_risk_score`), a `ReportSpan` stream is answered at once (`status cancelled`,
+  `quarantined`, `risk_score`, `time_to_contain_ms`, `reason`) and takes no more spans, the trace
+  ends with a `live_risk` policy span (score, reasons, the span that tripped it, the first
+  anomalous span, time to contain) the alerts point at, and the run is not learned into the
+  baseline. Metric `nexc_firewall_time_to_contain_seconds`.
+- Firewall approvals: a `require_approval` decision of `AuthorizeAction` is an approval of the
+  approvals engine (row, approvers' inbox, alert destinations, `POST /approvals/{id}/approve|deny`),
+  named in the reply (`approval_id`, `approval_expires_at`, and in the signed bytes). The new RPC
+  `AwaitApproval {approval_id, wait_ms}` polls it or waits up to 60 s on any instance and hands out
+  the final decision, `allow` or `deny`, signed like every other (`approval_id` in the signed
+  bytes, the same bytes on every instance) and recorded as an `approval` span. A reported call of
+  the held tool naming the approval is accepted once (`approvals.consumed_span_id`; with the same
+  `args_sha256` when the approval has one, which `context.args_sha256` sets).
+- `make prove-firewall` (part of `make prove-agentsecops`): one span folded and scored in process,
+  `AuthorizeAction` over gRPC with live risk off and on, the time to contain an exfiltrating
+  external run, and the DLP's false positives on 100,000 random 12- and 13-digit numbers.
+- DLP: the Japanese corporate number (houjin bangou, 13 digits with its official check digit) as
+  the PII kind `corporate_number`, looked for only when a policy names it (it is public, and on
+  every Japanese invoice).
+- Migration `20261020000300_firewall_risk_approvals`: `agent_baselines.scope` (`runs`,
+  `sessions`; primary key `(agent_id, scope)`) and `approvals.consumed_span_id`.
+
 - A finished run reports back on the issues its graph executes (`docs/CONTRACT.md` §5, issue
   timeline): a `run` entry on the timeline with the run's id, its status and its result (the
   output of the steps nothing else waited for, then what failed and why, cut at 6,000 characters
@@ -1481,6 +1516,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The DLP took every 12-digit number written without separators for a Japanese My Number. It now
+  checks the official check digit (Cabinet Order of the My Number Act, art. 8) and also takes the
+  number as the card prints it (`dddd dddd dddd`); random 12-digit numbers are taken about one
+  time in ten instead of every time (`make prove-firewall`).
+- The Agent Firewall sealed a reported run after 10 minutes as if it were an idle decisions
+  session while its stream was still open; only decisions sessions are sealed for idling now.
+- `AuthorizeAction` recorded a decision in any open run its `context.run_id` named, another
+  agent's included; it records it there only when the run is the caller's own.
+- Two first `AuthorizeAction` calls of an agent at once each opened a decisions session and one
+  was never sealed; the second is sealed at once and the first kept.
+
 - Agent turns on the Anthropic API were booked at the full input price: the runtime counted the
   turn's cache reads in its input but did not report them as cached. They are now reported, and
   the tool loop's system prompt and tools have a cache breakpoint of their own.
@@ -1519,6 +1565,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   broke generating the client types; a test now checks that every reference resolves.
 
 ### Changed
+
+- Behaviour baselines learn an eighth feature, `egress_calls` (outbound calls per run), and keep a
+  count per feature: a baseline saved before learns the new feature for three runs before it is
+  scored on it. Bytes out are counted from the spans' `payload_bytes` in one place, for the score
+  at the end of a run and the live one alike. The default PII kinds are every kind but
+  `corporate_number`.
 
 - The product leads with the issue: the sidebar has four places (Inbox, Issues, Agents, Trust)
   and folds the rest under **More**; the AgentSecOps console is called **Trust**; the README and
