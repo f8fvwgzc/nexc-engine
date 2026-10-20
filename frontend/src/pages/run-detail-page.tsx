@@ -100,7 +100,7 @@ function RunDetail({ runId }: { runId: string }) {
             <Button variant="outline" asChild>
               <Link to={`/app/graphs/${run.graph_id}`}>Open canvas</Link>
             </Button>
-            <OntologyLink entity={ontoEntity('run', run.id)} />
+            <OntologyLink entity={ontoEntity('run', run.id)} size="default" />
           </>
         }
       />
