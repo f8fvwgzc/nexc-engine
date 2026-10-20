@@ -587,12 +587,41 @@ pub async fn delete(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
     let workspace = workspace_of_agent(&state, auth, id, Access::Write).await?;
-    if repo::agents::delete(&state.db, workspace, id).await? {
-        state.caches.invalidate(Key::Agent(id));
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(AppError::NotFound("agent"))
+    let mut tx = state.db.begin().await?;
+    // Locked first: a managed graph the firewall or A2A creates meanwhile waits for this, then
+    // finds the agent gone, instead of being cascaded away with its runs.
+    sqlx::query("SELECT 1 FROM agents WHERE id = $1 FOR UPDATE")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    // The runs the agent's managed graph holds stay, with their evidence.
+    let archived = repo::graphs::archive_managed_by(&mut tx, id, auth.id).await?;
+    if !repo::agents::delete(&mut *tx, workspace, id).await? {
+        return Err(AppError::NotFound("agent"));
     }
+    let mut running = Vec::new();
+    for (gid, name, _) in &archived {
+        running.extend(repo::runs::stop_for_deleted_graph(&mut tx, *gid).await?);
+        let detail = format!(
+            "graph {gid}: deleted with its agent; its runs are kept with their evidence until the retention purge"
+        );
+        let subject = Subject::Text(name);
+        repo::audit::record(
+            &mut *tx,
+            workspace,
+            auth.id,
+            AuditAction::GraphDeleted,
+            subject,
+            &detail,
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    for run in running {
+        state.engine.cancel_local(run);
+    }
+    state.caches.invalidate(Key::Agent(id));
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // --- API tokens of external agents (the Agent Firewall API) ---------------------------------

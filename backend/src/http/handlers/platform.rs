@@ -248,7 +248,6 @@ pub async fn delete_workspace(
             "type the workspace's name exactly to delete it",
         ));
     }
-    crate::engine::workspaces::erase(&state, wid).await?;
     let owner = workspace.owner_email.as_deref().unwrap_or("nobody");
     let count = |n: i64, one: &str| format!("{n} {one}{}", if n == 1 { "" } else { "s" });
     let summary = format!(
@@ -257,14 +256,8 @@ pub async fn delete_workspace(
         count(workspace.issue_count, "issue"),
         count(workspace.graph_count, "graph"),
     );
-    log(
-        &state,
-        admin,
-        PlatformAction::WorkspaceDeleted,
-        &workspace.name,
-        &summary,
-    )
-    .await;
+    // The erasure writes the platform event itself, with the evidence it erased.
+    crate::engine::workspaces::erase(&state, wid, admin.id, &summary).await?;
     ensure_personal(&state).await?;
     Ok(StatusCode::NO_CONTENT)
 }

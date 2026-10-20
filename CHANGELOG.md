@@ -9,6 +9,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Evidence that survives (`docs/AGENTSECOPS.md` §12). Each workspace's audit log is a hash chain
+  the database writes itself (`seq`, `prev_hash`, `hash`, names as salted digests so an erased
+  account's name can still leave it), checked by `GET /workspaces/{wid}/audit/verify`, which also
+  shows a removed tail against the recorded head. Every run's seal is signed with Ed25519 as it
+  ends (`runs.seal_*`, `Run.seal_kid`) and checked by `GET /runs/{rid}/trace/verify` (`seal`). The
+  signing keys are published by key id (the RFC 7638 thumbprint) at `GET /.well-known/jwks.json`,
+  the current one and those it replaced (`NEXC_SIGNING_KEY`, `NEXC_SIGNING_KEYS_RETIRED`); a new
+  install gets a key of its own. `GET /runs/{rid}/evidence` exports a run's evidence bundle (spans,
+  signed seal, payload metadata, the audit entries about it, and a signed attestation over all of
+  it), and `nexc-verify` / `make verify-bundle` checks one offline with the public keys alone. New
+  audit actions `graph_deleted`, `evidence_purged` and `evidence_exported` (migrations
+  `20261020000200` to `20261020000203`). Upgrading: the audit log is chained in one pass under a
+  lock (about 2.5 s per 100,000 entries), and replicas of the previous version fail when they
+  delete a graph, an agent or a workspace once the new triggers exist, so roll out with
+  `Recreate` (or run `nexc migrate` first for a large log); `nexc-verify` ships in the backend image.
 - A finished run reports back on the issues its graph executes (`docs/CONTRACT.md` §5, issue
   timeline): a `run` entry on the timeline with the run's id, its status and its result (the
   output of the steps nothing else waited for, then what failed and why, cut at 6,000 characters
@@ -1481,6 +1496,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Deleting a graph erased the hash-chained trace of every run in it, with no record of the
+  deletion. A deleted graph is now archived: it leaves every list and endpoint, its queued runs are
+  cancelled and its running ones stopped, and its runs keep their spans, seals, payload metadata and
+  artifacts until the retention purge, which removes them under the workspace's
+  `recording.retention_days` (never sooner than 30 days) and writes `evidence_purged`; the deletion
+  is a `graph_deleted` entry naming who deleted it. Removing an agent archives its managed graph the
+  same way. The recorded-payload purge now runs a day at a time and is audited too.
+- Nothing kept a span or an audit entry from being changed or removed: the database now refuses any
+  `UPDATE`, `DELETE` or `TRUNCATE` of `agent_spans` and `audit_log`, and any change to a sealed
+  run's seal, outside the purge paths, which say so first (`nexc.evidence_purge`, and
+  `nexc.evidence_redact` for an erased account's name). Erasing a workspace is recorded in the
+  platform log with the evidence it erased.
 - Agent turns on the Anthropic API were booked at the full input price: the runtime counted the
   turn's cache reads in its input but did not report them as cached. They are now reported, and
   the tool loop's system prompt and tools have a cache breakpoint of their own.
@@ -1520,6 +1547,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Agent Firewall decisions carry the signing key's id: `AuthorizeReply.kid`, `kid` inside the
+  signed bytes and on the `policy` span, and `firewall.kid` on `/admin/infrastructure`. The signing
+  key is configured as `NEXC_SIGNING_KEY` (`NEXC_FIREWALL_SIGNING_KEY` is still read) and also signs
+  run seals and evidence bundles; a key derived from `NEXC_MASTER_KEY` is warned about in production.
 - The product leads with the issue: the sidebar has four places (Inbox, Issues, Agents, Trust)
   and folds the rest under **More**; the AgentSecOps console is called **Trust**; the README and
   the documentation site describe nexc-engine as the Enterprise Business Executor. The issue

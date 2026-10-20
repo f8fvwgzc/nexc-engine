@@ -1,5 +1,6 @@
 # http://nexc.local -> frontend (SPA); /api goes straight to the backend so SSE and WebSockets
-# skip a hop, and so do the A2A surface (/a2a, /.well-known/agent.json; CONTRACT §10).
+# skip a hop, and so do the A2A surface (/a2a, /.well-known/agent.json; CONTRACT §10) and the
+# signing keys (/.well-known/jwks.json).
 # /metrics is not routed at all.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -32,6 +33,10 @@ spec:
             backend:
               service: { name: backend, port: { name: http } }
           - path: /.well-known/agent.json
+            pathType: Exact
+            backend:
+              service: { name: backend, port: { name: http } }
+          - path: /.well-known/jwks.json
             pathType: Exact
             backend:
               service: { name: backend, port: { name: http } }

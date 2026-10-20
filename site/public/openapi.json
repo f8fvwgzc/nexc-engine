@@ -53,6 +53,26 @@
         }
       }
     },
+    "/.well-known/jwks.json": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "The public keys everything nexc signs verifies with, as a JWK set: the\ncurrent key and the keys it replaced, each under its `kid` (the RFC 7638\nthumbprint of the key). Public. Run seals, firewall decisions and\nevidence bundles name the key they are signed with.",
+        "operationId": "jwks",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Jwks"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/a2a/agents/{principal}": {
       "post": {
         "tags": [
@@ -3784,7 +3804,7 @@
         "tags": [
           "graphs"
         ],
-        "summary": "Deletes a graph with everything in it.",
+        "summary": "Deletes a graph. It is archived, not erased: it disappears from every list\nand can no longer be opened, run or changed; its queued runs are cancelled\nand its running ones asked to stop; and its runs, with their hash-chained\nspans, signed seals, payload metadata and artifacts, stay readable as\nevidence (`GET /runs/{rid}/trace/verify`, `GET /runs/{rid}/evidence`)\nuntil the retention purge removes the graph for good. The deletion is a\n`graph_deleted` entry in the workspace's audit log.",
         "operationId": "delete",
         "parameters": [
           {
@@ -3800,7 +3820,7 @@
         ],
         "responses": {
           "204": {
-            "description": "Deleted"
+            "description": "Deleted (archived with its runs' evidence)"
           },
           "404": {
             "content": {
@@ -4688,7 +4708,7 @@
         "tags": [
           "runs"
         ],
-        "summary": "Runs of a graph, newest first (at most 100).",
+        "summary": "Runs of a graph, newest first (at most 100). A deleted graph's runs are\nlisted too, for those who could open it: their evidence is kept until the\nretention purge (`GET /runs/{rid}/evidence`).",
         "operationId": "list",
         "parameters": [
           {
@@ -6218,6 +6238,62 @@
         ]
       }
     },
+    "/api/v1/runs/{rid}/evidence": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "A run's evidence bundle: every span in chain order, the signed seal, the\npayloads' metadata (never their content), the workspace's audit entries\nabout the run and its graph as chained, and the backend's signed\nattestation over all of it. `nexc-verify` (or `make verify-bundle`)\nchecks it with the keys of `/.well-known/jwks.json` alone. For workspace\nowners and admins (the readers of the audit log), deleted graphs' runs\nincluded; the export is itself an `evidence_exported` entry, carried by\nthe bundle.",
+        "operationId": "run_evidence",
+        "parameters": [
+          {
+            "name": "rid",
+            "in": "path",
+            "description": "Run id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The bundle, as an attachment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvidenceBundle"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/runs/{rid}/sessions": {
       "get": {
         "tags": [
@@ -6341,7 +6417,7 @@
         "tags": [
           "runs"
         ],
-        "summary": "Recomputes the run's hash chain from the stored spans and compares it\nwith what is stored and with the hash sealed when the run finished.",
+        "summary": "Recomputes the run's hash chain from the stored spans and compares it\nwith what is stored and with the hash sealed when the run finished, and\nchecks the seal's signature with the key published under its `kid`. A\ndeleted graph's runs verify as before.",
         "operationId": "verify",
         "parameters": [
           {
@@ -8616,6 +8692,61 @@
                   "items": {
                     "$ref": "#/components/schemas/CannedQuestion"
                   }
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/workspaces/{wid}/audit/verify": {
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Recomputes the workspace's audit chain from its first entry up to the\nhead recorded when the check began (owners and admins): every entry\nhashes as stored, links to the one before, carries names that match\ntheir digests (except names erased with their account), and the chain\nends at its recorded head, so a removed tail shows too.",
+        "operationId": "audit_verify",
+        "parameters": [
+          {
+            "name": "wid",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditVerification"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             }
@@ -16097,6 +16228,29 @@
           "assistant"
         ]
       },
+      "Attestation": {
+        "type": "object",
+        "description": "The backend's signature over a bundle's [`Manifest`].",
+        "required": [
+          "manifest",
+          "signature",
+          "kid"
+        ],
+        "properties": {
+          "kid": {
+            "type": "string"
+          },
+          "manifest": {
+            "type": "string",
+            "description": "The manifest exactly as signed (canonical JSON)."
+          },
+          "signature": {
+            "type": "string",
+            "description": "Hex Ed25519 signature of `manifest`."
+          }
+        },
+        "additionalProperties": false
+      },
       "AuditAction": {
         "type": "string",
         "description": "What an audit entry records.",
@@ -16140,7 +16294,10 @@
           "agent_token_revoked",
           "agent_a2a_changed",
           "a2a_counterpart_added",
-          "a2a_counterpart_removed"
+          "a2a_counterpart_removed",
+          "graph_deleted",
+          "evidence_purged",
+          "evidence_exported"
         ]
       },
       "AuditAnswer": {
@@ -16267,6 +16424,67 @@
           }
         }
       },
+      "AuditVerification": {
+        "type": "object",
+        "description": "Result of recomputing a workspace's audit chain.",
+        "required": [
+          "ok",
+          "entries",
+          "hash",
+          "head_seq",
+          "head_hash",
+          "redacted",
+          "broken"
+        ],
+        "properties": {
+          "broken": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/BrokenEntry",
+                "description": "The first entry that does not fit, when `ok` is false."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "entries": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Entries checked before the first break (all of them when `ok`)."
+          },
+          "hash": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Hex hash of the last entry that fits, `null` for an empty log."
+          },
+          "head_hash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "head_seq": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Position and hex hash of the chain's head as the database records it,\n`null` before the first entry."
+          },
+          "ok": {
+            "type": "boolean",
+            "description": "True when every entry hashes as stored, every link holds, every name\nthat still has its salt matches its digest, and the chain ends at its\nrecorded head."
+          },
+          "redacted": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Entries whose names were erased with their account: chained, but\ntheir names can no longer be checked."
+          }
+        }
+      },
       "AuthResponse": {
         "type": "object",
         "description": "Returned by register / login / refresh. The refresh token travels only in\nthe `nexc_refresh` HttpOnly cookie.",
@@ -16339,6 +16557,32 @@
           }
         }
       },
+      "BrokenEntry": {
+        "type": "object",
+        "description": "The first entry that does not fit a chain.",
+        "required": [
+          "entry_id",
+          "seq",
+          "reason"
+        ],
+        "properties": {
+          "entry_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "`null` when the chain ends short of its head."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "BrokenLink": {
         "type": "object",
         "description": "Why a chain does not verify.",
@@ -16361,6 +16605,102 @@
             "description": "The first span that does not fit the chain."
           }
         }
+      },
+      "BundleRun": {
+        "type": "object",
+        "description": "The run a bundle is about.",
+        "required": [
+          "id",
+          "graph_id",
+          "graph_name",
+          "graph_deleted_at",
+          "workspace_id",
+          "status",
+          "created_at",
+          "started_at",
+          "finished_at",
+          "trace_hash"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "graph_deleted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the graph was deleted; its runs' evidence stays until the retention purge."
+          },
+          "graph_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "graph_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunStatus"
+          },
+          "trace_hash": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Hex hash sealed when the run finished."
+          },
+          "workspace_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BundleSeal": {
+        "type": "object",
+        "description": "A run's seal as a bundle carries it.",
+        "required": [
+          "statement",
+          "signature",
+          "kid"
+        ],
+        "properties": {
+          "kid": {
+            "type": "string"
+          },
+          "signature": {
+            "type": "string",
+            "description": "Hex Ed25519 signature of `statement`."
+          },
+          "statement": {
+            "type": "string",
+            "description": "The seal statement exactly as signed (canonical JSON, `nexc.run_seal.v1`)."
+          }
+        },
+        "additionalProperties": false
       },
       "CancelAgentBody": {
         "type": "object",
@@ -16447,6 +16787,88 @@
               "type": "string"
             },
             "description": "Tools the agent may call; `null` allows every tool the runtime offers."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ChainedEntry": {
+        "type": "object",
+        "description": "One entry of a workspace's audit chain with every field its hash covers.",
+        "required": [
+          "id",
+          "workspace_id",
+          "seq",
+          "action",
+          "actor_id",
+          "actor_name",
+          "subject",
+          "detail",
+          "created_at",
+          "salt",
+          "actor_digest",
+          "subject_digest",
+          "prev_hash",
+          "hash"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "The action as stored (`AuditAction` spelling)."
+          },
+          "actor_digest": {
+            "type": "string",
+            "description": "Hex SHA-256 of the salt and `actor_name`, as written."
+          },
+          "actor_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "actor_name": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "hash": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "prev_hash": {
+            "type": "string",
+            "description": "Hex hash of the previous entry (zeros for the first)."
+          },
+          "salt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Hex of the 16-byte salt of the name digests; `null` once the names were erased."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Position in the workspace's chain, from 0."
+          },
+          "subject": {
+            "type": "string"
+          },
+          "subject_digest": {
+            "type": "string",
+            "description": "Hex SHA-256 of the salt and `subject`, as written."
+          },
+          "workspace_id": {
+            "type": "string",
+            "format": "uuid"
           }
         },
         "additionalProperties": false
@@ -17933,6 +18355,70 @@
           "reject"
         ]
       },
+      "EvidenceBundle": {
+        "type": "object",
+        "description": "A run's evidence, exported.",
+        "required": [
+          "format",
+          "exported_at",
+          "run",
+          "spans",
+          "payloads",
+          "seal",
+          "audit",
+          "attestation"
+        ],
+        "properties": {
+          "attestation": {
+            "$ref": "#/components/schemas/Attestation",
+            "description": "The backend's signature over the bundle's manifest."
+          },
+          "audit": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChainedEntry"
+            },
+            "description": "The workspace's audit entries about the run and its graph, as chained,\nin chain order."
+          },
+          "exported_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "format": {
+            "type": "string",
+            "description": "[`FORMAT`]: `nexc-evidence-bundle/v1`."
+          },
+          "payloads": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayloadMeta"
+            },
+            "description": "What was recorded of the spans (`span_payloads`), without the content."
+          },
+          "run": {
+            "$ref": "#/components/schemas/BundleRun"
+          },
+          "seal": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/BundleSeal",
+                "description": "The run's signed seal; `null` while it runs, for a run that traced\nnothing, and for runs sealed before seals were signed."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "spans": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Span"
+            },
+            "description": "Every span of the run, in chain order."
+          }
+        },
+        "additionalProperties": false
+      },
       "EvidenceCounts": {
         "type": "object",
         "description": "Outputs by evidence verdict (`docs/AGENTSECOPS.md` §2).",
@@ -18097,6 +18583,7 @@
           "enabled",
           "addr",
           "public_key",
+          "kid",
           "open_sessions"
         ],
         "properties": {
@@ -18108,6 +18595,10 @@
           },
           "enabled": {
             "type": "boolean"
+          },
+          "kid": {
+            "type": "string",
+            "description": "Its id, as published at `/.well-known/jwks.json`."
           },
           "open_sessions": {
             "type": "integer",
@@ -19246,6 +19737,63 @@
           }
         }
       },
+      "Jwk": {
+        "type": "object",
+        "description": "One public key as published (RFC 8037 OKP key in a JWK set), with its status.",
+        "required": [
+          "kty",
+          "crv",
+          "x",
+          "kid",
+          "alg",
+          "use",
+          "status"
+        ],
+        "properties": {
+          "alg": {
+            "type": "string",
+            "description": "`EdDSA`."
+          },
+          "crv": {
+            "type": "string",
+            "description": "`Ed25519`."
+          },
+          "kid": {
+            "type": "string",
+            "description": "The RFC 7638 thumbprint of the key."
+          },
+          "kty": {
+            "type": "string",
+            "description": "`OKP`."
+          },
+          "status": {
+            "$ref": "#/components/schemas/KeyStatus"
+          },
+          "use": {
+            "type": "string",
+            "description": "`sig`."
+          },
+          "x": {
+            "type": "string",
+            "description": "The raw 32-byte public key, base64url without padding."
+          }
+        }
+      },
+      "Jwks": {
+        "type": "object",
+        "description": "The keys nexc signs and has signed with (`GET /.well-known/jwks.json`).",
+        "required": [
+          "keys"
+        ],
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Jwk"
+            }
+          }
+        }
+      },
       "KeySource": {
         "type": "string",
         "description": "Where the effective API key comes from.",
@@ -19254,6 +19802,14 @@
           "workspace",
           "server",
           "none"
+        ]
+      },
+      "KeyStatus": {
+        "type": "string",
+        "description": "Whether a published key signs today or only verifies what it signed before.",
+        "enum": [
+          "current",
+          "retired"
         ]
       },
       "KnowledgeSettings": {
@@ -21003,6 +21559,40 @@
           "tool_output"
         ]
       },
+      "PayloadMeta": {
+        "type": "object",
+        "description": "One recorded payload of a span, without its content.",
+        "required": [
+          "span_id",
+          "kind",
+          "size",
+          "redactions",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PayloadKind"
+          },
+          "redactions": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes of the content as kept."
+          },
+          "span_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
       "PiiKind": {
         "type": "string",
         "description": "A shape of personal data the DLP classifier looks for.",
@@ -22319,6 +22909,7 @@
           "finished_at",
           "created_at",
           "trace_hash",
+          "seal_kid",
           "policy_mismatches",
           "policy_versions",
           "node_runs"
@@ -22361,6 +22952,13 @@
           "policy_versions": {
             "$ref": "#/components/schemas/PolicyVersions",
             "description": "The workspace policy version that governed the run (each node run has every level)."
+          },
+          "seal_kid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The key the seal is signed with (`/.well-known/jwks.json`); `null` while the run\nruns, when nothing was traced, and for runs sealed before seals were signed."
           },
           "started_at": {
             "type": [
@@ -22490,6 +23088,40 @@
           },
           "title": {
             "type": "string"
+          }
+        }
+      },
+      "SealVerification": {
+        "type": "object",
+        "description": "Whether a run's signed seal holds.",
+        "required": [
+          "ok",
+          "kid",
+          "sealed_at",
+          "reason"
+        ],
+        "properties": {
+          "kid": {
+            "type": "string",
+            "description": "The key the seal is signed with (`/.well-known/jwks.json`)."
+          },
+          "ok": {
+            "type": "boolean",
+            "description": "True when the signature verifies with the published key named by\n`kid` and the signed statement names this run and this chain."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it does not hold, when `ok` is false."
+          },
+          "sealed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When the run was sealed, as signed."
           }
         }
       },
@@ -23337,7 +23969,7 @@
       },
       "Span": {
         "type": "object",
-        "description": "One span of a run's trace, as stored and as served.",
+        "description": "One span of a run's trace, as stored and as served (and as an evidence\nbundle carries it, to be read back by the offline verifier).",
         "required": [
           "id",
           "run_id",
@@ -24155,7 +24787,8 @@
           "spans",
           "hash",
           "sealed_hash",
-          "broken"
+          "broken",
+          "seal"
         ],
         "properties": {
           "broken": {
@@ -24179,6 +24812,17 @@
           "ok": {
             "type": "boolean",
             "description": "True when every span hashes as stored, every link holds, and the\nsealed hash (if the run is finished) is the chain's last hash."
+          },
+          "seal": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SealVerification",
+                "description": "The check of the run's signed seal; `null` while it runs, when nothing\nwas traced, and for runs sealed before seals were signed."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "sealed_hash": {
             "type": [

@@ -3,14 +3,31 @@
 //! the owner's id so that other users' resources read as "not found".
 #![forbid(unsafe_code)]
 
-/// SQL predicate: user `$u` may work on the graph row aliased `$g`.
+/// SQL predicate: user `$u` may work on the graph row aliased `$g`: it is not
+/// deleted (archived graphs keep their runs' evidence, `graph_access_any!`),
+/// and `$u` may open it.
+macro_rules! graph_access {
+    ($g:literal, $u:literal) => {
+        concat!(
+            "(",
+            $g,
+            ".deleted_at IS NULL AND ",
+            graph_access_any!($g, $u),
+            ")"
+        )
+    };
+}
+
+/// SQL predicate: user `$u` may open the graph row aliased `$g`, deleted or
+/// not. Only the evidence of a deleted graph's runs is read this way: their
+/// traces, their verification and their evidence bundles.
 ///
 /// A graph of a team is open to that team's members; a graph that belongs to
 /// the workspace as a whole is open to every member but guests. This is the
 /// SQL form of `domain::workspace::TeamAccess::can_contribute` and of
 /// `WorkspaceRole::is_member`; `tests/workspaces.rs` holds the two together.
 /// Graphs that predate workspaces (no `workspace_id` yet) stay with their creator.
-macro_rules! graph_access {
+macro_rules! graph_access_any {
     ($g:literal, $u:literal) => {
         concat!(
             "((",
@@ -75,6 +92,7 @@ pub mod audit;
 pub mod baselines;
 pub mod cycles;
 pub mod edges;
+pub mod evidence;
 pub mod external_runs;
 pub mod graphs;
 pub mod idempotency;

@@ -56,6 +56,7 @@ use crate::domain::policy_document::{EvidenceAction, InjectionAction, Severity};
 use crate::domain::prompt::{AGENT_UPSTREAM_CHARS, UPSTREAM_CHARS, UpstreamOutput};
 use crate::domain::recording::Redaction;
 use crate::domain::run::{Run, RunStatus, final_status};
+use crate::domain::seal::SignedSeal;
 use crate::domain::settings::{ConfigScope, LlmProviderKind};
 use crate::domain::trace::{SYSTEM_PRINCIPAL, SpanDraft, SpanKind, SpanStatus};
 use crate::domain::usage::{UsageEvent, UsagePurpose};
@@ -585,6 +586,15 @@ async fn work(
         }
     };
     let resumed = resume.is_some();
+    // A graph deleted after the run was queued, or while it changed hands: the run stops as
+    // its deletion asked, cancelled rather than failed.
+    if repo::graphs::is_deleted(&state.db, row.graph_id)
+        .await
+        .unwrap_or(false)
+    {
+        token.cancel();
+        return vec![NodeStatus::Cancelled];
+    }
     match Execution::prepare(state, row, lease.clone(), token, trace, resumed).await {
         Ok(execution) => execution.drive(resume).await,
         Err(err) => {
@@ -687,6 +697,9 @@ async fn finish_run(
         NodeStatus::Skipped
     };
     let hash = sealed.hash;
+    // The seal is signed as the run ends (docs/AGENTSECOPS.md §12).
+    let seal =
+        hash.map(|h| SignedSeal::sign(state.signing_keys.current(), run_id, sealed.spans, &h));
     let mut tx = lease::begin_run_update(state, lease, "run status").await?;
     for node_id in repo::runs::close_unfinished_nodes(&mut *tx, run_id, leftover).await? {
         repo::nodes::set_status(&mut *tx, node_id, leftover, None).await?;
@@ -696,16 +709,18 @@ async fn finish_run(
         run_id,
         status,
         hash.as_ref().map(|h| h.as_slice()),
+        seal.as_ref(),
     )
     .await?;
     // The issues the graph executes get the result once, under the run's fence.
     let issues = super::issue_report::report(&mut tx, &row).await?;
+    // The seal is on record in the transaction that makes it: evidence bundles require it.
+    if let Some(hash) = hash {
+        seal_audit(&mut tx, &row, hash, sealed.spans).await?;
+    }
     tx.commit().await?;
     if !issues.is_empty() {
         tracing::info!(%run_id, issues = issues.len(), "run reported to its issues");
-    }
-    if let Some(hash) = hash {
-        seal_audit(state, &row, hash, sealed.spans).await;
     }
     // Every agent that worked is scored against what it usually does, and learns the run.
     let assessed = super::risk::assess(state, &row).await;
@@ -719,23 +734,25 @@ async fn finish_run(
     Ok(())
 }
 
-/// Writes the final hash of a run's trace chain to its workspace's audit
-/// log (`trace_sealed`, subject: the run id). A graph outside any workspace
-/// has no audit log; its seal lives on the run alone.
-pub async fn seal_audit(state: &AppState, row: &RunRow, hash: [u8; 32], spans: i64) {
-    let workspace = match repo::graphs::workspace_of(&state.db, row.graph_id).await {
-        Ok(workspace) => workspace,
-        Err(err) => {
-            tracing::error!(run_id = %row.id, error = %err, "cannot find the run's workspace");
-            None
-        }
+/// Writes the final hash of a run's trace chain, and the key its seal is
+/// signed with, to its workspace's audit log (`trace_sealed`, subject: the
+/// run id), in the transaction that seals the run. A graph outside any
+/// workspace has no audit log; its seal lives on the run alone.
+pub async fn seal_audit(
+    conn: &mut sqlx::PgConnection,
+    row: &RunRow,
+    hash: [u8; 32],
+    spans: i64,
+) -> Result<(), sqlx::Error> {
+    let Some(workspace) = repo::graphs::workspace_of(&mut *conn, row.graph_id).await? else {
+        return Ok(());
     };
-    let Some(workspace) = workspace else {
-        return;
-    };
-    let detail = format!("{spans} span(s), sha256 {}", hex::encode(hash));
-    if let Err(err) = repo::audit::record(
-        &state.db,
+    let mut detail = format!("{spans} span(s), sha256 {}", hex::encode(hash));
+    if let Some(seal) = &row.seal {
+        detail.push_str(&format!(", signed by {}", seal.kid));
+    }
+    repo::audit::record(
+        &mut *conn,
         workspace,
         row.owner_id,
         AuditAction::TraceSealed,
@@ -743,9 +760,6 @@ pub async fn seal_audit(state: &AppState, row: &RunRow, hash: [u8; 32], spans: i
         &detail,
     )
     .await
-    {
-        tracing::error!(run_id = %row.id, error = %err, "trace seal was not written to the audit log");
-    }
 }
 
 /// Shared, immutable data of one run execution.

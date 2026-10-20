@@ -212,7 +212,8 @@ async fn run_executes_the_dag_in_order(pool: PgPool) {
     assert_eq!(runs.body.as_array().unwrap().len(), 3);
     assert_eq!(runs.body[0]["id"], run["id"], "newest first");
 
-    // Deleting the graph removes its runs' files from disk, not only their rows.
+    // Deleting the graph keeps its runs' files with their evidence; the retention purge removes
+    // them from disk with their rows.
     let stored = app.state.settings.artifacts_dir().join(&rid);
     assert!(
         stored.exists(),
@@ -227,7 +228,24 @@ async fn run_executes_the_dag_in_order(pool: PgPool) {
         )
         .await;
     assert_eq!(deleted.status, StatusCode::NO_CONTENT);
-    assert!(!stored.exists(), "and gone with it");
+    assert!(stored.exists(), "kept with the deleted graph's evidence");
+    for sql in [
+        "UPDATE graphs SET deleted_at = now() - interval '31 days' WHERE id = $1::uuid",
+        "UPDATE runs SET finished_at = now() - interval '31 days' WHERE graph_id = $1::uuid",
+    ] {
+        sqlx::query(sql)
+            .bind(&gid)
+            .execute(&app.state.db)
+            .await
+            .unwrap();
+    }
+    nexc::engine::evidence::purge_expired(&app.state)
+        .await
+        .unwrap();
+    assert!(
+        !stored.exists(),
+        "and gone with it after the retention purge"
+    );
 }
 
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]

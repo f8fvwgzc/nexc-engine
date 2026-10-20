@@ -29,7 +29,7 @@ use crate::security::gate::SessionGate;
 use crate::security::jwt::JwtKeys;
 use crate::security::oidc::OidcClient;
 use crate::security::secret_box::SecretBox;
-use crate::security::signing::Signer;
+use crate::security::signing::{Keyring, Signer};
 
 /// Cheap to clone: every field is reference counted.
 #[derive(Clone)]
@@ -67,8 +67,11 @@ pub struct AppState {
     pub gateway_http: reqwest::Client,
     /// The MCP server registrations the gateway read lately.
     pub gateway_registry: Arc<crate::gateway::Registry>,
-    /// Signs the decisions the Agent Firewall API hands out.
+    /// Signs the decisions the Agent Firewall API hands out (the current key of `signing_keys`).
     pub firewall_signer: Arc<Signer>,
+    /// The key that signs run seals, firewall decisions and evidence bundles, and the
+    /// retired keys published beside it (`/.well-known/jwks.json`).
+    pub signing_keys: Arc<Keyring>,
     /// The external agents' decisions sessions open on this instance.
     pub firewall_sessions: Arc<crate::firewall::Sessions>,
     /// Hot reads kept in memory, dropped on write across replicas.
@@ -160,6 +163,14 @@ impl AppState {
             None => None,
         };
         let firewall_signer = Arc::new(Signer::from_seed(settings.firewall_signing_key.expose())?);
+        let signing_keys = Arc::new(Keyring::new(
+            firewall_signer.clone(),
+            settings.signing_keys_retired.clone(),
+        ));
+        if settings.signing_key_derived && settings.is_production() {
+            tracing::warn!(kid = %firewall_signer.kid(),
+                "the signing key is derived from NEXC_MASTER_KEY; set NEXC_SIGNING_KEY so that seals and decisions do not depend on the key that encrypts secrets");
+        }
         let oidc = match &settings.oidc {
             Some(oidc) => Some(Arc::new(OidcClient::new(
                 oidc.clone(),
@@ -178,6 +189,7 @@ impl AppState {
             gateway_http: crate::gateway::http_client()?,
             gateway_registry: Arc::default(),
             firewall_signer,
+            signing_keys,
             firewall_sessions: Arc::default(),
             jwt: Arc::new(JwtKeys::new(
                 settings.jwt_secret.expose(),

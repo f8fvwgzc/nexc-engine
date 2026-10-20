@@ -35,12 +35,12 @@ macro_rules! happenings {
          UNION ALL
          SELECT g.created_at, 'graph_created', u.name, 'graph', g.id, g.name, ''
          FROM graphs g LEFT JOIN users u ON u.id = g.owner_id
-         WHERE g.workspace_id = $1 AND g.created_at >= $2 AND g.created_at < $3
+         WHERE g.workspace_id = $1 AND g.deleted_at IS NULL AND g.created_at >= $2 AND g.created_at < $3
          UNION ALL
          SELECT COALESCE(r.finished_at, r.created_at), 'run_' || r.status, u.name, 'graph', g.id,
                 g.name, COALESCE(left(r.error, 200), '')
          FROM runs r JOIN graphs g ON g.id = r.graph_id LEFT JOIN users u ON u.id = r.owner_id
-         WHERE g.workspace_id = $1 AND COALESCE(r.finished_at, r.created_at) >= $2
+         WHERE g.workspace_id = $1 AND g.deleted_at IS NULL AND COALESCE(r.finished_at, r.created_at) >= $2
            AND COALESCE(r.finished_at, r.created_at) < $3
          UNION ALL
          SELECT d.created_at, 'document_added', u.name, 'document', d.id, d.name,
@@ -52,7 +52,7 @@ macro_rules! happenings {
          SELECT max(m.created_at), 'memories_learned', NULL, 'graph', g.id, g.name,
                 count(*) || ' learned'
          FROM memories m JOIN graphs g ON g.id = m.graph_id
-         WHERE m.workspace_id = $1 AND m.created_at >= $2 AND m.created_at < $3
+         WHERE m.workspace_id = $1 AND g.deleted_at IS NULL AND m.created_at >= $2 AND m.created_at < $3
          GROUP BY g.id, g.name, (m.created_at AT TIME ZONE 'UTC')::date"
     };
 }

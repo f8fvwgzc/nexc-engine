@@ -182,7 +182,7 @@ pub async fn graphs(
     sqlx::query_as(
         "SELECT g.id, g.name, g.team_id, g.owner_id, COALESCE(t.private, false) AS private
          FROM graphs g LEFT JOIN teams t ON t.id = g.team_id
-         WHERE g.workspace_id = $1 AND g.id = ANY($2)",
+         WHERE g.workspace_id = $1 AND g.id = ANY($2) AND g.deleted_at IS NULL",
     )
     .bind(workspace_id)
     .bind(ids)
@@ -233,7 +233,7 @@ pub async fn runs(
                 COALESCE(t.private, false) AS private
          FROM runs r JOIN graphs g ON g.id = r.graph_id
          LEFT JOIN teams t ON t.id = g.team_id
-         WHERE g.workspace_id = $1 AND r.id = ANY($2)",
+         WHERE g.workspace_id = $1 AND r.id = ANY($2) AND g.deleted_at IS NULL",
     )
     .bind(workspace_id)
     .bind(ids)
@@ -278,7 +278,7 @@ pub async fn ids(
             "SELECT id FROM issues WHERE workspace_id = $1 AND ($2::uuid IS NULL OR id > $2) ORDER BY id LIMIT $3"
         }
         "graph" => {
-            "SELECT id FROM graphs WHERE workspace_id = $1 AND ($2::uuid IS NULL OR id > $2) ORDER BY id LIMIT $3"
+            "SELECT id FROM graphs WHERE workspace_id = $1 AND deleted_at IS NULL AND ($2::uuid IS NULL OR id > $2) ORDER BY id LIMIT $3"
         }
         "document" => {
             "SELECT id FROM documents WHERE workspace_id = $1 AND ($2::uuid IS NULL OR id > $2) ORDER BY id LIMIT $3"
@@ -287,7 +287,7 @@ pub async fn ids(
             "SELECT user_id FROM workspace_members WHERE workspace_id = $1 AND ($2::uuid IS NULL OR user_id > $2) ORDER BY user_id LIMIT $3"
         }
         "run_started" => {
-            "SELECT r.id FROM runs r JOIN graphs g ON g.id = r.graph_id WHERE g.workspace_id = $1 AND ($2::uuid IS NULL OR r.id > $2) ORDER BY r.id LIMIT $3"
+            "SELECT r.id FROM runs r JOIN graphs g ON g.id = r.graph_id WHERE g.workspace_id = $1 AND g.deleted_at IS NULL AND ($2::uuid IS NULL OR r.id > $2) ORDER BY r.id LIMIT $3"
         }
         "agent" => {
             "SELECT id FROM agents WHERE workspace_id = $1 AND ($2::uuid IS NULL OR id > $2) ORDER BY id LIMIT $3"

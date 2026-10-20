@@ -211,26 +211,24 @@ pub async fn replace_ontology(
     ))
 }
 
-/// Deletes a graph with everything in it.
+/// Deletes a graph. It is archived, not erased: it disappears from every list
+/// and can no longer be opened, run or changed; its queued runs are cancelled
+/// and its running ones asked to stop; and its runs, with their hash-chained
+/// spans, signed seals, payload metadata and artifacts, stay readable as
+/// evidence (`GET /runs/{rid}/trace/verify`, `GET /runs/{rid}/evidence`)
+/// until the retention purge removes the graph for good. The deletion is a
+/// `graph_deleted` entry in the workspace's audit log.
 #[utoipa::path(delete, path = "/graphs/{gid}", tag = "graphs", security(("bearer" = [])),
     params(("gid" = Uuid, Path, description = "Graph id")),
-    responses((status = 204, description = "Deleted"), (status = 404, body = Problem)))]
+    responses((status = 204, description = "Deleted (archived with its runs' evidence)"),
+        (status = 404, body = Problem)))]
 pub async fn delete(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(gid): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
-    // Its runs' artifact files are on disk, outside what the database cascades to.
-    let runs: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM runs WHERE graph_id = $1")
-        .bind(gid)
-        .fetch_all(&state.db)
-        .await?;
-    if repo::graphs::delete(&state.db, auth.id, gid).await? {
-        crate::engine::artifacts::remove_runs(&state, &runs).await;
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(AppError::NotFound("graph"))
-    }
+    crate::engine::evidence::delete_graph(&state, auth.id, gid).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Dependency suggestions (similarity + BM25, near-duplicates skipped).

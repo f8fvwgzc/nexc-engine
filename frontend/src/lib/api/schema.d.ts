@@ -24,6 +24,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/.well-known/jwks.json": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The public keys everything nexc signs verifies with, as a JWK set: the
+         *     current key and the keys it replaced, each under its `kid` (the RFC 7638
+         *     thumbprint of the key). Public. Run seals, firewall decisions and
+         *     evidence bundles name the key they are signed with.
+         */
+        get: operations["jwks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/a2a/agents/{principal}": {
         parameters: {
             query?: never;
@@ -1152,7 +1174,15 @@ export interface paths {
         get: operations["get"];
         put?: never;
         post?: never;
-        /** Deletes a graph with everything in it. */
+        /**
+         * Deletes a graph. It is archived, not erased: it disappears from every list
+         *     and can no longer be opened, run or changed; its queued runs are cancelled
+         *     and its running ones asked to stop; and its runs, with their hash-chained
+         *     spans, signed seals, payload metadata and artifacts, stay readable as
+         *     evidence (`GET /runs/{rid}/trace/verify`, `GET /runs/{rid}/evidence`)
+         *     until the retention purge removes the graph for good. The deletion is a
+         *     `graph_deleted` entry in the workspace's audit log.
+         */
         delete: operations["delete"];
         options?: never;
         head?: never;
@@ -1344,7 +1374,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Runs of a graph, newest first (at most 100). */
+        /**
+         * Runs of a graph, newest first (at most 100). A deleted graph's runs are
+         *     listed too, for those who could open it: their evidence is kept until the
+         *     retention purge (`GET /runs/{rid}/evidence`).
+         */
         get: operations["list"];
         put?: never;
         /** Queues a run; progress streams over SSE (`run.*`, `node.*` events). */
@@ -1737,6 +1771,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runs/{rid}/evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A run's evidence bundle: every span in chain order, the signed seal, the
+         *     payloads' metadata (never their content), the workspace's audit entries
+         *     about the run and its graph as chained, and the backend's signed
+         *     attestation over all of it. `nexc-verify` (or `make verify-bundle`)
+         *     checks it with the keys of `/.well-known/jwks.json` alone. For workspace
+         *     owners and admins (the readers of the audit log), deleted graphs' runs
+         *     included; the export is itself an `evidence_exported` entry, carried by
+         *     the bundle.
+         */
+        get: operations["run_evidence"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs/{rid}/sessions": {
         parameters: {
             query?: never;
@@ -1784,7 +1844,9 @@ export interface paths {
         };
         /**
          * Recomputes the run's hash chain from the stored spans and compares it
-         *     with what is stored and with the hash sealed when the run finished.
+         *     with what is stored and with the hash sealed when the run finished, and
+         *     checks the seal's signature with the key published under its `kid`. A
+         *     deleted graph's runs verify as before.
          */
         get: operations["verify"];
         put?: never;
@@ -2278,6 +2340,29 @@ export interface paths {
          *     `{agent}` in a label are slots the asker fills.
          */
         get: operations["questions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/audit/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recomputes the workspace's audit chain from its first entry up to the
+         *     head recorded when the check began (owners and admins): every entry
+         *     hashes as stored, links to the one before, carries names that match
+         *     their digests (except names erased with their account), and the chain
+         *     ends at its recorded head, so a removed tail shows too.
+         */
+        get: operations["audit_verify"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4017,11 +4102,19 @@ export interface components {
          * @enum {string}
          */
         AssistantRole: "user" | "assistant";
+        /** @description The backend's signature over a bundle's [`Manifest`]. */
+        Attestation: {
+            kid: string;
+            /** @description The manifest exactly as signed (canonical JSON). */
+            manifest: string;
+            /** @description Hex Ed25519 signature of `manifest`. */
+            signature: string;
+        };
         /**
          * @description What an audit entry records.
          * @enum {string}
          */
-        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned" | "trace_sealed" | "policy_changed" | "policy_mismatch" | "agent_quarantined" | "agent_released" | "recording_changed" | "payload_viewed" | "agent_cancelled" | "approval_granted" | "approval_denied" | "artifact_quarantined" | "artifact_released" | "alert_raised" | "alert_destination_changed" | "classification_changed" | "mcp_server_added" | "mcp_server_removed" | "agent_token_issued" | "agent_token_revoked" | "agent_a2a_changed" | "a2a_counterpart_added" | "a2a_counterpart_removed";
+        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned" | "trace_sealed" | "policy_changed" | "policy_mismatch" | "agent_quarantined" | "agent_released" | "recording_changed" | "payload_viewed" | "agent_cancelled" | "approval_granted" | "approval_denied" | "artifact_quarantined" | "artifact_released" | "alert_raised" | "alert_destination_changed" | "classification_changed" | "mcp_server_added" | "mcp_server_removed" | "agent_token_issued" | "agent_token_revoked" | "agent_a2a_changed" | "a2a_counterpart_added" | "a2a_counterpart_removed" | "graph_deleted" | "evidence_purged" | "evidence_exported";
         /** @description An answer from the audit. */
         AuditAnswer: {
             answer: string;
@@ -4076,6 +4169,36 @@ export interface components {
             /** @description Where to open it in the console; `null` for things without a page. */
             link: string | null;
         };
+        /** @description Result of recomputing a workspace's audit chain. */
+        AuditVerification: {
+            broken: components["schemas"]["BrokenEntry"] | null;
+            /**
+             * Format: int64
+             * @description Entries checked before the first break (all of them when `ok`).
+             */
+            entries: number;
+            /** @description Hex hash of the last entry that fits, `null` for an empty log. */
+            hash: string | null;
+            head_hash: string | null;
+            /**
+             * Format: int64
+             * @description Position and hex hash of the chain's head as the database records it,
+             *     `null` before the first entry.
+             */
+            head_seq: number | null;
+            /**
+             * @description True when every entry hashes as stored, every link holds, every name
+             *     that still has its salt matches its digest, and the chain ends at its
+             *     recorded head.
+             */
+            ok: boolean;
+            /**
+             * Format: int64
+             * @description Entries whose names were erased with their account: chained, but
+             *     their names can no longer be checked.
+             */
+            redacted: number;
+        };
         /**
          * @description Returned by register / login / refresh. The refresh token travels only in
          *     the `nexc_refresh` HttpOnly cookie.
@@ -4102,6 +4225,17 @@ export interface components {
             llm: components["schemas"]["BackendHealth"];
             symphony: components["schemas"]["BackendHealth"];
         };
+        /** @description The first entry that does not fit a chain. */
+        BrokenEntry: {
+            /**
+             * Format: uuid
+             * @description `null` when the chain ends short of its head.
+             */
+            entry_id: string | null;
+            reason: string;
+            /** Format: int64 */
+            seq: number;
+        };
         /** @description Why a chain does not verify. */
         BrokenLink: {
             reason: string;
@@ -4112,6 +4246,38 @@ export interface components {
              * @description The first span that does not fit the chain.
              */
             span_id: string;
+        };
+        /** @description The run a bundle is about. */
+        BundleRun: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            finished_at: string | null;
+            /**
+             * Format: date-time
+             * @description When the graph was deleted; its runs' evidence stays until the retention purge.
+             */
+            graph_deleted_at: string | null;
+            /** Format: uuid */
+            graph_id: string;
+            graph_name: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            started_at: string | null;
+            status: components["schemas"]["RunStatus"];
+            /** @description Hex hash sealed when the run finished. */
+            trace_hash: string | null;
+            /** Format: uuid */
+            workspace_id: string | null;
+        };
+        /** @description A run's seal as a bundle carries it. */
+        BundleSeal: {
+            kid: string;
+            /** @description Hex Ed25519 signature of `statement`. */
+            signature: string;
+            /** @description The seal statement exactly as signed (canonical JSON, `nexc.run_seal.v1`). */
+            statement: string;
         };
         /** @description `POST /runs/{rid}/agents/{sid}/cancel` body. */
         CancelAgentBody: {
@@ -4146,6 +4312,36 @@ export interface components {
             models: string[] | null;
             /** @description Tools the agent may call; `null` allows every tool the runtime offers. */
             tools: string[] | null;
+        };
+        /** @description One entry of a workspace's audit chain with every field its hash covers. */
+        ChainedEntry: {
+            /** @description The action as stored (`AuditAction` spelling). */
+            action: string;
+            /** @description Hex SHA-256 of the salt and `actor_name`, as written. */
+            actor_digest: string;
+            /** Format: uuid */
+            actor_id: string | null;
+            actor_name: string;
+            /** Format: date-time */
+            created_at: string;
+            detail: string;
+            hash: string;
+            /** Format: uuid */
+            id: string;
+            /** @description Hex hash of the previous entry (zeros for the first). */
+            prev_hash: string;
+            /** @description Hex of the 16-byte salt of the name digests; `null` once the names were erased. */
+            salt: string | null;
+            /**
+             * Format: int64
+             * @description Position in the workspace's chain, from 0.
+             */
+            seq: number;
+            subject: string;
+            /** @description Hex SHA-256 of the salt and `subject`, as written. */
+            subject_digest: string;
+            /** Format: uuid */
+            workspace_id: string;
         };
         /** @description `POST /auth/password` body. */
         ChangePassword: {
@@ -4764,6 +4960,26 @@ export interface components {
          * @enum {string}
          */
         EvidenceAction: "mark" | "reject";
+        /** @description A run's evidence, exported. */
+        EvidenceBundle: {
+            /** @description The backend's signature over the bundle's manifest. */
+            attestation: components["schemas"]["Attestation"];
+            /**
+             * @description The workspace's audit entries about the run and its graph, as chained,
+             *     in chain order.
+             */
+            audit: components["schemas"]["ChainedEntry"][];
+            /** Format: date-time */
+            exported_at: string;
+            /** @description [`FORMAT`]: `nexc-evidence-bundle/v1`. */
+            format: string;
+            /** @description What was recorded of the spans (`span_payloads`), without the content. */
+            payloads: components["schemas"]["PayloadMeta"][];
+            run: components["schemas"]["BundleRun"];
+            seal: components["schemas"]["BundleSeal"] | null;
+            /** @description Every span of the run, in chain order. */
+            spans: components["schemas"]["Span"][];
+        };
         /** @description Outputs by evidence verdict (`docs/AGENTSECOPS.md` §2). */
         EvidenceCounts: {
             /** Format: int64 */
@@ -4846,6 +5062,8 @@ export interface components {
         FirewallStatus: {
             addr: string | null;
             enabled: boolean;
+            /** @description Its id, as published at `/.well-known/jwks.json`. */
+            kid: string;
             /** @description Decisions sessions open on this instance. */
             open_sessions: number;
             /** @description Hex of the Ed25519 public key decisions are signed with. */
@@ -5268,11 +5486,36 @@ export interface components {
              */
             token: string;
         };
+        /** @description One public key as published (RFC 8037 OKP key in a JWK set), with its status. */
+        Jwk: {
+            /** @description `EdDSA`. */
+            alg: string;
+            /** @description `Ed25519`. */
+            crv: string;
+            /** @description The RFC 7638 thumbprint of the key. */
+            kid: string;
+            /** @description `OKP`. */
+            kty: string;
+            status: components["schemas"]["KeyStatus"];
+            /** @description `sig`. */
+            use: string;
+            /** @description The raw 32-byte public key, base64url without padding. */
+            x: string;
+        };
+        /** @description The keys nexc signs and has signed with (`GET /.well-known/jwks.json`). */
+        Jwks: {
+            keys: components["schemas"]["Jwk"][];
+        };
         /**
          * @description Where the effective API key comes from.
          * @enum {string}
          */
         KeySource: "user" | "workspace" | "server" | "none";
+        /**
+         * @description Whether a published key signs today or only verifies what it signed before.
+         * @enum {string}
+         */
+        KeyStatus: "current" | "retired";
         /**
          * @description How a workspace embeds and uses its documents, as its members see it
          *     (the key is never returned, only a hint of it).
@@ -5918,6 +6161,21 @@ export interface components {
          * @enum {string}
          */
         PayloadKind: "prompt" | "completion" | "tool_input" | "tool_output";
+        /** @description One recorded payload of a span, without its content. */
+        PayloadMeta: {
+            /** Format: date-time */
+            created_at: string;
+            kind: components["schemas"]["PayloadKind"];
+            /** Format: int64 */
+            redactions: number;
+            /**
+             * Format: int64
+             * @description Bytes of the content as kept.
+             */
+            size: number;
+            /** Format: uuid */
+            span_id: string;
+        };
         /**
          * @description A shape of personal data the DLP classifier looks for.
          * @enum {string}
@@ -6492,6 +6750,11 @@ export interface components {
             policy_mismatches: number;
             /** @description The workspace policy version that governed the run (each node run has every level). */
             policy_versions: components["schemas"]["PolicyVersions"];
+            /**
+             * @description The key the seal is signed with (`/.well-known/jwks.json`); `null` while the run
+             *     runs, when nothing was traced, and for runs sealed before seals were signed.
+             */
+            seal_kid: string | null;
             /** Format: date-time */
             started_at: string | null;
             status: components["schemas"]["RunStatus"];
@@ -6545,6 +6808,20 @@ export interface components {
             review_url: string | null;
             status: components["schemas"]["ProposalStatus"];
             title: string;
+        };
+        /** @description Whether a run's signed seal holds. */
+        SealVerification: {
+            /** @description The key the seal is signed with (`/.well-known/jwks.json`). */
+            kid: string;
+            /**
+             * @description True when the signature verifies with the published key named by
+             *     `kid` and the signed statement names this run and this chain.
+             */
+            ok: boolean;
+            /** @description Why it does not hold, when `ok` is false. */
+            reason: string | null;
+            /** @description When the run was sealed, as signed. */
+            sealed_at: string | null;
         };
         /** @description One thing that matched a search. */
         SearchHit: {
@@ -6833,7 +7110,10 @@ export interface components {
             /** @description Whether the account has a password; one single sign-on created has none. */
             password: boolean;
         };
-        /** @description One span of a run's trace, as stored and as served. */
+        /**
+         * @description One span of a run's trace, as stored and as served (and as an evidence
+         *     bundle carries it, to be read back by the offline verifier).
+         */
         Span: {
             /** Format: uuid */
             agent_id: string | null;
@@ -7155,6 +7435,7 @@ export interface components {
              *     sealed hash (if the run is finished) is the chain's last hash.
              */
             ok: boolean;
+            seal: components["schemas"]["SealVerification"] | null;
             /** @description Hex hash written when the run finished, `null` while it runs or if nothing was traced. */
             sealed_hash: string | null;
             /**
@@ -7626,6 +7907,25 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    jwks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Jwks"];
                 };
             };
         };
@@ -10265,7 +10565,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Deleted */
+            /** @description Deleted (archived with its runs' evidence) */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -11841,6 +12141,45 @@ export interface operations {
             };
         };
     };
+    run_evidence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Run id */
+                rid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The bundle, as an attachment */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvidenceBundle"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     tree: {
         parameters: {
             query?: never;
@@ -13358,6 +13697,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CannedQuestion"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    audit_verify: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditVerification"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
                 };
             };
             404: {

@@ -230,10 +230,16 @@ pub const ENV_VARS: &[EnvVar] = &[
         "where the Agent Firewall API listens (host:port); empty keeps it off",
     ),
     var(
-        "NEXC_FIREWALL_SIGNING_KEY",
+        "NEXC_SIGNING_KEY",
         "",
         true,
-        "base64 of 32 bytes: the Ed25519 seed decisions are signed with (derived from NEXC_MASTER_KEY when unset)",
+        "base64 of 32 bytes: the Ed25519 seed run seals, firewall decisions and evidence bundles are signed with (NEXC_FIREWALL_SIGNING_KEY is read too; derived from NEXC_MASTER_KEY when neither is set)",
+    ),
+    var(
+        "NEXC_SIGNING_KEYS_RETIRED",
+        "",
+        false,
+        "comma-separated public keys (hex or base64) signed with before a rotation, still published at /.well-known/jwks.json",
     ),
     var(
         "NEXC_OTLP_ENDPOINT",

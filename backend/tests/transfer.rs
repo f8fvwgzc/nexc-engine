@@ -425,6 +425,10 @@ const NOT_COPIED: &[(&str, &str)] = &[
         "what this server's projection put into its onto-intelli; the target projects the workspace into its own",
     ),
     (
+        "audit_chain_heads",
+        "the head of the audit log's hash chain; the target's database writes its own as the entries arrive in chain order",
+    ),
+    (
         "sso_role_grants",
         "which roles this server's single sign-on group mapping gave; the target maps the groups of its own provider",
     ),

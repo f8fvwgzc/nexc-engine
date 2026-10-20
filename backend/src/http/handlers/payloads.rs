@@ -31,7 +31,7 @@ pub async fn payload(
     let span = repo::spans::find_any(&state.db, sid)
         .await?
         .ok_or(AppError::NotFound("span"))?;
-    let run = repo::runs::find_owned(&state.db, auth.id, span.run_id)
+    let (run, _) = repo::runs::find_evidence(&state.db, auth.id, span.run_id)
         .await?
         .ok_or(AppError::NotFound("span"))?;
     let workspace = repo::graphs::workspace_of(&state.db, run.graph_id).await?;

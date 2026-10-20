@@ -20,6 +20,7 @@
     "enabled": true,
     "addr": "0.0.0.0:50052",
     "public_key": "ed25519:Zm9vYmFyYmF6cXV4Zm9vYmFyYmF6cXV4Zm9vYmFyYmF6",
+    "kid": "kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k",
     "open_sessions": 3
   },
   "otlp": {

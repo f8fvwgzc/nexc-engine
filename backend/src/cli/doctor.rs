@@ -212,12 +212,13 @@ fn check_firewall(r: &mut Report, settings: &Settings) {
                 Level::Ok,
                 "firewall api",
                 format!(
-                    "{addr}: signs with Ed25519 key {}{}",
+                    "{addr}: signs with Ed25519 key {} (kid {}){}",
                     hex::encode(signer.public_key()),
-                    if std::env::var("NEXC_FIREWALL_SIGNING_KEY").is_ok_and(|k| !k.is_empty()) {
-                        ""
+                    signer.kid(),
+                    if settings.signing_key_derived {
+                        " (derived from NEXC_MASTER_KEY: set NEXC_SIGNING_KEY to keep them apart)"
                     } else {
-                        " (derived from NEXC_MASTER_KEY)"
+                        ""
                     }
                 ),
             ),

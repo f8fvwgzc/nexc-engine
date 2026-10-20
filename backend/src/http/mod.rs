@@ -134,6 +134,8 @@ fn v1_routes() -> OpenApiRouter<AppState> {
             workspaces::delete_assistant_conversation
         ))
         .routes(routes!(workspaces::audit_log))
+        .routes(routes!(evidence::audit_verify))
+        .routes(routes!(evidence::run_evidence))
         .routes(routes!(audit::ask))
         .routes(routes!(audit::ask_stream))
         .routes(routes!(audit::questions))
@@ -278,13 +280,15 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(realtime::websocket))
 }
 
-/// Every documented route: `/api/v1/*`, `/metrics`, and the A2A surface at
-/// the root (the well-known card and the JSON-RPC endpoint live where the
-/// protocol expects them, outside the console's API).
+/// Every documented route: `/api/v1/*`, `/metrics`, the signing keys at
+/// `/.well-known/jwks.json`, and the A2A surface at the root (the well-known
+/// card and the JSON-RPC endpoint live where the protocol expects them,
+/// outside the console's API).
 pub fn api_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::with_openapi(ApiDoc::openapi())
         .nest("/api/v1", v1_routes())
         .routes(routes!(health::metrics))
+        .routes(routes!(evidence::jwks))
         .routes(routes!(a2a::well_known))
         .routes(routes!(a2a::card))
         .routes(routes!(a2a::rpc).layer(DefaultBodyLimit::max(a2a::RPC_BODY_LIMIT)))
@@ -320,6 +324,9 @@ mod tests {
             "/api/v1/graphs/{gid}/events",
             "/api/v1/runs/{rid}/trace",
             "/api/v1/runs/{rid}/trace/verify",
+            "/api/v1/runs/{rid}/evidence",
+            "/api/v1/workspaces/{wid}/audit/verify",
+            "/.well-known/jwks.json",
             "/api/v1/runs/{rid}/sessions",
             "/api/v1/runs/{rid}/agents/{sid}/cancel",
             "/api/v1/spans/{sid}/payload",

@@ -9,6 +9,7 @@
   "finished_at": null,
   "created_at": "2026-10-14T11:09:00Z",
   "trace_hash": null,
+  "seal_kid": null,
   "policy_mismatches": 0,
   "policy_versions": {
     "workspace": 3,

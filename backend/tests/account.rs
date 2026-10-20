@@ -379,6 +379,17 @@ async fn a_person_gets_a_copy_of_their_data_and_deletes_their_account(pool: PgPo
     // The log keeps every entry and stops saying who the account was.
     assert!(audit.as_array().unwrap().len() >= 4, "{audit}");
     assert!(!audit.to_string().contains("leaver@example.com"), "{audit}");
+    // The names went with their salts; the chain they were written into still verifies.
+    let (_, chain) = call(
+        &app,
+        Method::GET,
+        &format!("{ws}/audit/verify"),
+        &owner,
+        None,
+    )
+    .await;
+    assert_eq!(chain["ok"], true, "{chain}");
+    assert!(chain["redacted"].as_i64().unwrap() >= 1, "{chain}");
     let gone = &audit[0];
     assert_eq!(
         (

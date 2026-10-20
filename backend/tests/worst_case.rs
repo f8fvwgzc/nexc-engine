@@ -39,6 +39,8 @@ const PUBLIC: &[&str] = &[
     // The A2A agent card is for anyone to read (an agent that is not exposed is not found).
     "/.well-known/agent.json",
     "/a2a/agents/{principal}/card",
+    // The public keys seals, decisions and evidence bundles verify with: public by design.
+    "/.well-known/jwks.json",
 ];
 
 struct Operation {

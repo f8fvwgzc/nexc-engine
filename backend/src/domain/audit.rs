@@ -70,6 +70,14 @@ string_enum!(
         /// An A2A counterpart was registered or removed (subject: `a2a:<name>`).
         A2aCounterpartAdded => "a2a_counterpart_added",
         A2aCounterpartRemoved => "a2a_counterpart_removed",
+        /// A graph was deleted: archived with its runs' evidence until the retention purge
+        /// (subject: the graph's name; detail: its id and the runs kept).
+        GraphDeleted => "graph_deleted",
+        /// The retention purge removed evidence: recorded payloads, or a deleted graph with
+        /// its runs, spans and payloads (subject: what; detail: how much and why).
+        EvidencePurged => "evidence_purged",
+        /// Someone exported a run's evidence bundle (subject: the run id; detail: the key).
+        EvidenceExported => "evidence_exported",
     }
 );
 

@@ -239,10 +239,16 @@ pub async fn delete(
 ) -> Result<StatusCode, AppError> {
     let (team, access) = visible_team(&state, auth, wid, tid).await?;
     require_manage(access)?;
-    let graphs = repo::graphs::count_in_team(&state.db, tid).await?;
+    let (graphs, deleted) = repo::graphs::count_in_team(&state.db, tid).await?;
     if graphs > 0 {
         return Err(AppError::Conflict(format!(
             "this team still has {graphs} graph(s); move or delete them first"
+        )));
+    }
+    if deleted > 0 {
+        return Err(AppError::Conflict(format!(
+            "this team's {deleted} deleted graph(s) keep their runs' evidence until the retention purge; \
+             the team can be deleted once it has removed them"
         )));
     }
     repo::teams::delete(&state.db, tid).await?;

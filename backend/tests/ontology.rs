@@ -1235,6 +1235,23 @@ async fn the_projection_follows_privacy_and_what_goes_with_its_parent(pool: PgPo
     assert!(entity(&graph).is_none() && entity(&run).is_none());
     assert!(stub.stored_vocabulary(&tenant, &gid).unwrap().is_empty());
 
+    // The deleted graph keeps its runs' evidence, and its team, until the retention purge.
+    let (status, _) = call(&app, Method::DELETE, &team_url, &w.owner, None).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    for sql in [
+        "UPDATE graphs SET deleted_at = now() - interval '31 days' WHERE id = $1::uuid",
+        "UPDATE runs SET finished_at = now() - interval '31 days' WHERE graph_id = $1::uuid",
+    ] {
+        sqlx::query(sql)
+            .bind(&gid)
+            .execute(&app.state.db)
+            .await
+            .unwrap();
+    }
+    nexc::engine::evidence::purge_expired(&app.state)
+        .await
+        .unwrap();
+
     // A deleted team takes its cycles along, and its members are no longer in it.
     let (status, _) = call(&app, Method::DELETE, &team_url, &w.owner, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT);

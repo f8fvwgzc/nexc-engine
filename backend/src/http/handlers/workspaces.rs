@@ -229,7 +229,7 @@ pub async fn delete(
             "this is your only workspace; create another one before deleting it".into(),
         ));
     }
-    engine::workspaces::erase(&state, wid).await?;
+    engine::workspaces::erase(&state, wid, auth.id, "deleted by an owner").await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

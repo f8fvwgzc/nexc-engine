@@ -9,7 +9,7 @@
 //! runtime, which is untrusted, only reports them.
 
 use chrono::{DateTime, SecondsFormat, Timelike, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -79,8 +79,9 @@ pub struct SpanDraft {
     pub attributes: Value,
 }
 
-/// One span of a run's trace, as stored and as served.
-#[derive(Debug, Clone, Serialize, ToSchema)]
+/// One span of a run's trace, as stored and as served (and as an evidence
+/// bundle carries it, to be read back by the offline verifier).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Span {
     pub id: Uuid,
     pub run_id: Uuid,
@@ -105,17 +106,13 @@ pub struct Span {
     /// Position in the run's chain (order of receipt).
     pub seq: i32,
     /// Hex SHA-256 of the previous span in the chain (zeros for the first).
-    #[serde(serialize_with = "hex_bytes")]
+    #[serde(with = "super::audit_chain::hex32")]
     #[schema(value_type = String)]
     pub prev_hash: [u8; 32],
     /// Hex SHA-256 of `prev_hash` and this span's canonical JSON.
-    #[serde(serialize_with = "hex_bytes")]
+    #[serde(with = "super::audit_chain::hex32")]
     #[schema(value_type = String)]
     pub hash: [u8; 32],
-}
-
-fn hex_bytes<S: serde::Serializer>(bytes: &[u8; 32], s: S) -> Result<S::Ok, S::Error> {
-    s.serialize_str(&hex::encode(bytes))
 }
 
 /// Timestamps are stored with microsecond precision (`timestamptz`); the
@@ -269,6 +266,27 @@ pub struct TraceVerification {
     /// The first span that does not fit, when `ok` is false.
     #[schema(required = true)]
     pub broken: Option<BrokenLink>,
+    /// The check of the run's signed seal; `null` while it runs, when nothing
+    /// was traced, and for runs sealed before seals were signed.
+    #[schema(required = true)]
+    pub seal: Option<super::seal::SealVerification>,
+}
+
+impl TraceVerification {
+    /// Adds the check of the run's signed seal: the trace verifies only when it holds too.
+    pub fn with_seal(mut self, seal: Option<super::seal::SealVerification>) -> Self {
+        if let Some(check) = &seal {
+            self.ok &= check.ok;
+        }
+        self.seal = seal;
+        self
+    }
+
+    /// The chain as recomputed (span count and last hash), when it holds.
+    pub fn chain(&self) -> Option<(i64, [u8; 32])> {
+        let hash = hex::decode(self.hash.as_deref()?).ok()?.try_into().ok()?;
+        (self.broken.is_none()).then_some((self.spans, hash))
+    }
 }
 
 /// Recomputes the chain over `spans` (in `seq` order) and compares it with
@@ -320,6 +338,7 @@ pub fn verify(spans: &[Span], sealed: Option<[u8; 32]>) -> TraceVerification {
         hash: last.map(hex::encode),
         sealed_hash: sealed.map(hex::encode),
         broken,
+        seal: None,
     }
 }
 

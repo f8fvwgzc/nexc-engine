@@ -52,6 +52,9 @@ config:
   NEXC_MAX_CONCURRENCY: "4"
   NEXC_MAX_ATTEMPTS: "3"
   NEXC_NODE_TIMEOUT_SECS: "600"
+  # Public keys (hex or base64, comma-separated) of signing keys rotated out, still published at
+  # /.well-known/jwks.json so what they signed verifies (docs/AGENTSECOPS.md §12).
+  NEXC_SIGNING_KEYS_RETIRED: ""
 
 backend:
   # The runtime wire: `grpc` (the default) or `ndjson` (kept for one release).
@@ -234,7 +237,9 @@ secrets:
     NEXC_RUNTIME_TOKEN: ""
     NEXC_AGENT_TOKEN_KEY: ""
     NEXC_METRICS_TOKEN: ""
-    NEXC_FIREWALL_SIGNING_KEY: ""
+    # Signs run seals, firewall decisions and evidence bundles (the older name
+    # NEXC_FIREWALL_SIGNING_KEY is still read); empty derives it from NEXC_MASTER_KEY.
+    NEXC_SIGNING_KEY: ""
     NEXC_ONTO_TOKEN: ""
     ONTO_SESSION_SECRET: ""
     # onto-intelli's own login on the chart's PostgreSQL (role `onto`, owning its database only).

@@ -58,6 +58,9 @@ enum Page {
     ById,
     /// By position in this order, for a large table without an `id`.
     ByOrder(&'static str),
+    /// By its chain position `seq` (0, 1, 2…), each batch starting where the
+    /// rows read so far end: the audit log, in chain order, from its index.
+    BySeq,
 }
 
 const fn table(name: &'static str, belongs: &'static str, paged: bool) -> Table {
@@ -85,6 +88,7 @@ const REFERENCED_USERS: &str = "t.id IN (
     UNION SELECT created_by FROM workspaces WHERE id = $1
     UNION SELECT invited_by FROM workspace_invites WHERE workspace_id = $1
     UNION SELECT owner_id FROM graphs WHERE workspace_id = $1
+    UNION SELECT deleted_by FROM graphs WHERE workspace_id = $1
     UNION SELECT owner_id FROM agents WHERE workspace_id = $1
     UNION SELECT owner_id FROM memories WHERE workspace_id = $1
     UNION SELECT uploaded_by FROM documents WHERE workspace_id = $1
@@ -211,7 +215,14 @@ const TABLES: &[Table] = &[
     table("document_chunks", IN_WORKSPACE, true),
     table("memory_topics", IN_WORKSPACE, false),
     table("memories", IN_WORKSPACE, true),
-    table("audit_log", IN_WORKSPACE, true),
+    // In chain order: the target's database chains the entries again as they arrive, and with
+    // the same ids, times and digests in the same order it computes the same hashes.
+    Table {
+        name: "audit_log",
+        belongs: IN_WORKSPACE,
+        page: Page::BySeq,
+        overlay: None,
+    },
     table("day_summaries", IN_WORKSPACE, false),
     table("llm_usage", IN_WORKSPACE, true),
     table("assistant_conversations", IN_WORKSPACE, true),
@@ -324,6 +335,10 @@ async fn copy_table(
         Page::ByOrder(order) => (
             "NULL::uuid",
             format!(" AND $2::uuid IS NULL ORDER BY {order} LIMIT $3 OFFSET $4"),
+        ),
+        Page::BySeq => (
+            "NULL::uuid",
+            " AND $2::uuid IS NULL AND t.seq >= $4 ORDER BY t.seq LIMIT $3".to_owned(),
         ),
     };
     let select = format!(
@@ -463,6 +478,21 @@ pub async fn copy_workspace(
             .await
             .map_err(|err| anyhow::anyhow!("copying {} failed: {err}", t.name))?;
         reports.push(report);
+    }
+    // The audit log arrives as the same chain: the target's database computed every hash again
+    // from what was copied, so an entry changed on this server, or one missing, ends it elsewhere.
+    if let Some((seq, hash)) = repo::audit::head(&mut *tx, workspace).await? {
+        let here: Option<Vec<u8>> =
+            sqlx::query_scalar("SELECT hash FROM audit_log WHERE workspace_id = $1 AND seq = $2")
+                .bind(workspace)
+                .bind(seq)
+                .fetch_optional(source)
+                .await?;
+        anyhow::ensure!(
+            here.as_deref() == Some(hash.as_slice()),
+            "the audit log did not arrive as the same chain (entry {seq} hashes differently there): \
+             its chain is broken here; GET /workspaces/{workspace}/audit/verify names where"
+        );
     }
     for (graph, vocabulary) in vocabularies {
         sqlx::query("UPDATE graphs SET ontology = $2 WHERE id = $1")

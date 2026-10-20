@@ -12,10 +12,17 @@ keywords = ["llm", "agents", "dag", "orchestration", "axum"]
 categories = ["web-programming::http-server", "command-line-utilities"]
 readme = "README.md"
 publish = false
+# `cargo run` is the backend; the offline bundle verifier is `--bin nexc-verify`.
+default-run = "nexc"
 
 [[bin]]
 name = "nexc"
 path = "src/main.rs"
+
+# Checks a run's evidence bundle offline, with the published public keys alone.
+[[bin]]
+name = "nexc-verify"
+path = "src/bin/nexc_verify.rs"
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

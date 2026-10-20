@@ -10,6 +10,7 @@
     "finished_at": null,
     "created_at": "2026-10-14T11:09:00Z",
     "trace_hash": null,
+    "seal_kid": null,
     "policy_mismatches": 0,
     "policy_versions": {
       "workspace": 3,
@@ -209,6 +210,7 @@
     "finished_at": "2026-10-14T09:18:00Z",
     "created_at": "2026-10-14T08:59:00Z",
     "trace_hash": "acacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacac",
+    "seal_kid": "kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k",
     "policy_mismatches": 2,
     "policy_versions": {
       "workspace": 3,
@@ -368,6 +370,7 @@
     "finished_at": "2026-10-12T12:18:00Z",
     "created_at": "2026-10-12T11:59:00Z",
     "trace_hash": "adadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadad",
+    "seal_kid": "kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k",
     "policy_mismatches": 0,
     "policy_versions": {
       "workspace": 3,
@@ -487,6 +490,7 @@
     "finished_at": "2026-10-09T12:18:00Z",
     "created_at": "2026-10-09T11:59:00Z",
     "trace_hash": "aeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeae",
+    "seal_kid": "kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k",
     "policy_mismatches": 0,
     "policy_versions": {
       "workspace": 3,
