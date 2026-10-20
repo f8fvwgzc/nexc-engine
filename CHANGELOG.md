@@ -30,7 +30,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   an in-process read-through cache (`NEXC_ONTO_VOCABULARY_TTL_SECS`, 30 s) that a change made
   through nexc replaces at once and drops on every replica. `PUT /graphs/{gid}/ontology` keeps
   nexc's rules (40 types, types in use, no blocking cycle) and plans and applies the change there
-  as the member; the planner's added types go the same way. A change made in onto-intelli itself
+  as the member. Applying a plan adds only its new types (`InitGraph`), to the vocabulary
+  onto-intelli holds once the graph is locked (read again, never from the cache), so what was
+  changed there or through the editor meanwhile stays. A change made in onto-intelli itself
   reaches nexc within the cache's lifetime: edges follow their relation's `blocking` flag (unless
   that would close a cycle) and canvases get `ontology.updated`. When onto-intelli is unreachable a
   kept vocabulary is served; without one, reads answer 503 and a run's node fails with a retryable

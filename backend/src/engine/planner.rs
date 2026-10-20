@@ -27,7 +27,7 @@ use crate::dsa::graph::Indexed;
 use crate::llm::pricing::cost_usd;
 use crate::llm::{JsonSchema, LlmEvent, LlmRequest, Message, StopReason, Usage};
 use crate::memory;
-use crate::ontology::vocabulary;
+use crate::ontology::vocabulary::{self, Actor};
 use crate::realtime::events::{SseEvent, WsMessage};
 use crate::repo::{self, OrNotFound, plans};
 
@@ -415,6 +415,11 @@ async fn stream_nodes(
 /// graph's vocabulary in onto-intelli (as `owner`; not while onto-intelli is
 /// off), upserts its nodes, replaces the graph's plan-origin edges and lays
 /// out new nodes by topological level.
+///
+/// The types are added to what onto-intelli holds once the graph's row is
+/// locked, read again then (never from the cache), and only the types the
+/// plan adds are written: a type added, changed or removed there or through
+/// the editor meanwhile stays as it is.
 pub async fn apply(
     state: &AppState,
     owner: Uuid,
@@ -422,7 +427,8 @@ pub async fn apply(
     plan_id: Uuid,
 ) -> Result<Graph, AppError> {
     let meta = editor::owned_graph(state, owner, graph_id).await?;
-    let mut ontology = Ontology::clone(&*editor::vocabulary_of(state, owner, &meta).await?);
+    // Read once before the lock: a graph onto-intelli does not hold yet is initialised here.
+    let known = editor::vocabulary_of(state, owner, &meta).await?;
     let mut tx = state.db.begin().await?;
     repo::graphs::lock(&mut *tx, owner, graph_id)
         .await
@@ -449,11 +455,20 @@ pub async fn apply(
         )));
     }
 
-    let ontology_changed = vocabulary::editable(state) && ontology.merge(&plan.ontology);
+    let graph = meta.vocabulary_ref();
+    let mut ontology = if vocabulary::editable_for(state, graph) {
+        Ontology::clone(&*vocabulary::fresh(state, graph, Actor::User(owner)).await?)
+    } else {
+        Ontology::clone(&known)
+    };
+    let added = if vocabulary::editable_for(state, graph) {
+        ontology.additions(&plan.ontology)
+    } else {
+        Ontology::default()
+    };
+    let ontology_changed = !added.is_empty();
     if ontology_changed {
-        ontology = Ontology::clone(
-            &*vocabulary::replace(state, meta.vocabulary_ref(), owner, &ontology).await?,
-        );
+        ontology = Ontology::clone(&*vocabulary::add(state, graph, owner, &added).await?);
     }
     let removed = repo::edges::delete_by_origin(&mut *tx, graph_id, EdgeOrigin::Plan).await?;
     let mut edges = repo::edges::list(&mut *tx, graph_id).await?;

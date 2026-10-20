@@ -224,14 +224,7 @@ async fn fetch(
     principal: &Principal,
     graph: GraphRef<'_>,
 ) -> Result<Ontology, OntoError> {
-    let key = graph_key(graph.id);
-    let found = match backend.vocabulary(principal, &key).await {
-        Err(OntoError::NotFound(_)) if principal.acts() => {
-            backend.vocabulary(&principal.as_service(), &key).await
-        }
-        found => found,
-    };
-    match found {
+    match read_as(backend, principal, graph).await {
         Err(OntoError::NotFound(_)) => {
             migrate::ensure(state, backend, graph)
                 .await
@@ -242,6 +235,62 @@ async fn fetch(
         }
         found => found,
     }
+}
+
+/// Reads the vocabulary as `principal`, or as the backend's own principal
+/// when onto-intelli does not show `principal` the graph (see [`fetch`]).
+async fn read_as(
+    backend: &dyn OntologyBackend,
+    principal: &Principal,
+    graph: GraphRef<'_>,
+) -> Result<Ontology, OntoError> {
+    let key = graph_key(graph.id);
+    match backend.vocabulary(principal, &key).await {
+        Err(OntoError::NotFound(_)) if principal.acts() => {
+            backend.vocabulary(&principal.as_service(), &key).await
+        }
+        found => found,
+    }
+}
+
+/// The vocabulary onto-intelli holds right now, never the cached one: what
+/// a read-modify-write starts from once it holds the graph's row lock. It
+/// neither initialises the graph nor touches the cache, so read the graph
+/// once (with [`of`]) before taking the lock.
+pub async fn fresh(
+    state: &AppState,
+    graph: GraphRef<'_>,
+    actor: Actor,
+) -> Result<Arc<Ontology>, VocabularyError> {
+    let (Some(backend), Some(workspace_id)) = (&state.ontology, graph.workspace_id) else {
+        return Ok(starter());
+    };
+    let principal = principal_of(state, workspace_id, actor).await?;
+    Ok(Arc::new(
+        read_as(backend.as_ref(), &principal, graph).await?,
+    ))
+}
+
+/// Adds types to `graph`'s vocabulary in onto-intelli as `user`, and only
+/// them: `InitGraph` upserts the types it is given and leaves every other
+/// type as it is, so what was added or changed there meanwhile stays. The
+/// cache entry is dropped here and on every other replica (the next read
+/// follows onto-intelli's vocabulary). Returns the whole vocabulary after.
+pub async fn add(
+    state: &AppState,
+    graph: GraphRef<'_>,
+    user: Uuid,
+    added: &Ontology,
+) -> Result<Arc<Ontology>, VocabularyError> {
+    let (Some(backend), Some(workspace_id)) = (&state.ontology, graph.workspace_id) else {
+        return Err(VocabularyError::ReadOnly);
+    };
+    let principal = principal_of(state, workspace_id, Actor::User(user)).await?;
+    let stored = backend
+        .init_graph(&principal, &graph_key(graph.id), graph.name, Some(added))
+        .await?;
+    state.caches.invalidate(Key::Vocabulary(graph.id));
+    Ok(Arc::new(stored))
 }
 
 /// Replaces `graph`'s vocabulary in onto-intelli as `user` (one atomic,
@@ -283,4 +332,10 @@ pub async fn replace(
 /// Whether vocabularies can be changed here (onto-intelli is configured).
 pub fn editable(state: &AppState) -> bool {
     state.ontology.is_some()
+}
+
+/// Whether `graph`'s vocabulary can be changed: onto-intelli is configured
+/// and the graph belongs to a workspace (one outside any keeps the starter).
+pub fn editable_for(state: &AppState, graph: GraphRef<'_>) -> bool {
+    editable(state) && graph.workspace_id.is_some()
 }

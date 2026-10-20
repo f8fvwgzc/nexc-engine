@@ -378,6 +378,9 @@ pub async fn replace_ontology(
     }
 
     let meta = owned_graph(state, owner, graph_id).await?;
+    // A graph onto-intelli does not hold yet is initialised on this read, before the row is
+    // locked (initialising records the graph, which waits for that lock).
+    vocabulary_of(state, owner, &meta).await?;
     let mut tx = state.db.begin().await?;
     repo::graphs::lock(&mut *tx, owner, graph_id)
         .await

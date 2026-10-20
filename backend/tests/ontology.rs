@@ -449,6 +449,80 @@ async fn a_private_teams_graph_keeps_its_own_types_whoever_reads_it(pool: PgPool
     assert_eq!(writes(), written);
 }
 
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_plan_adds_its_types_to_what_onto_intelli_holds_when_it_is_applied(pool: PgPool) {
+    let stub = Arc::new(StubOntology::new());
+    // The default cache lifetime: what the planner read may be up to 30 s old.
+    let app = TestApp::with_ontology(pool.clone(), &[], stub.clone()).await;
+    let w = world(&app).await;
+    let tenant = tenant_of(w.wid);
+    let (_, made) = graph(&app, &w, &w.owner, "Report").await;
+    let gid = made["id"].as_str().unwrap().to_owned();
+    app.node(&w.owner, &gid, json!({"title": "Idea"})).await;
+
+    // A plan that adds a type of its own.
+    let mut rx = app.events(&gid);
+    let (status, plan) = call(
+        &app,
+        Method::POST,
+        &format!("/graphs/{gid}/plan"),
+        &w.owner,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{plan}");
+    collect_until(&mut rx, "plan.ready").await;
+    let pid = plan["id"].as_str().unwrap();
+    sqlx::query("UPDATE plans SET ontology = $2 WHERE id = $1")
+        .bind(pid.parse::<Uuid>().unwrap())
+        .bind(json!({"node_types": [{"key": "review", "label": "Review", "stage": 3}]}))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Meanwhile, within the cache's lifetime, someone adds a type in onto-intelli and renames
+    // another; and a member removes one through the editor.
+    let mut edited = stub.stored_vocabulary(&tenant, &gid).unwrap();
+    edited.node_types.retain(|t| t.key != "research");
+    for t in &mut edited.node_types {
+        if t.key == "topic" {
+            t.label = "Theme".into();
+        }
+    }
+    let mut legal = edited.node_types[0].clone();
+    legal.key = "legal".into();
+    legal.label = "Legal".into();
+    edited.node_types.push(legal);
+    stub.put_vocabulary(&tenant, &gid, edited);
+
+    let (status, applied) = call(
+        &app,
+        Method::POST,
+        &format!("/graphs/{gid}/plans/{pid}/apply"),
+        &w.owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    // Only the plan's type was written, onto what onto-intelli held then.
+    let stored = stub.stored_vocabulary(&tenant, &gid).unwrap();
+    assert!(stored.node_type("review").is_some(), "{stored:?}");
+    assert!(stored.node_type("legal").is_some(), "added there meanwhile");
+    assert!(stored.node_type("research").is_none(), "removed meanwhile");
+    assert_eq!(stored.node_type("topic").unwrap().label, "Theme");
+    let added = stub.calls_to("init_graph").pop().unwrap();
+    assert_eq!(
+        added.id,
+        format!("user:{}", w.owner_id),
+        "written as the member"
+    );
+    // The canvas gets the vocabulary onto-intelli holds now.
+    assert_eq!(
+        keys(&applied["ontology"], "node_types"),
+        keys(&serde_json::to_value(&stored).unwrap(), "node_types")
+    );
+}
+
 async fn guest_id(app: &TestApp, w: &World) -> String {
     let (_, members) = call(
         app,

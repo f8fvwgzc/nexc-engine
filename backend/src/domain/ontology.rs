@@ -365,6 +365,30 @@ impl Ontology {
         before != (self.node_types.len(), self.relation_types.len())
     }
 
+    /// The types of `other` whose keys are not defined here, as many as
+    /// [`Ontology::merge`] would add (bounded by [`TYPES_MAX`]).
+    pub fn additions(&self, other: &Ontology) -> Ontology {
+        let mut merged = self.clone();
+        merged.merge(other);
+        Ontology {
+            node_types: merged
+                .node_types
+                .into_iter()
+                .filter(|t| self.node_type(&t.key).is_none())
+                .collect(),
+            relation_types: merged
+                .relation_types
+                .into_iter()
+                .filter(|t| self.relation_type(&t.key).is_none())
+                .collect(),
+        }
+    }
+
+    /// Whether it defines no type at all.
+    pub fn is_empty(&self) -> bool {
+        self.node_types.is_empty() && self.relation_types.is_empty()
+    }
+
     /// Declares a node type for `key` if none exists, deriving its label and
     /// colour from the key. Returns false when the ontology is full.
     pub fn ensure_node_type(&mut self, key: &str) -> bool {

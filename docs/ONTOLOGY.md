@@ -125,8 +125,11 @@ label, description, colour, icon, default role, default executor, stage, `produc
   not close a dependency cycle: 409), then plans the change against what onto-intelli holds and
   applies it there with `SetVocabulary` as the member, in one atomic, audited write, while the graph
   row is locked. The new vocabulary replaces the cache entry here, every other replica drops its
-  entry (`PostgreSQL NOTIFY`), and the graph's sockets get `ontology.updated`. The types a plan adds
-  are written the same way when the plan is applied.
+  entry (`PostgreSQL NOTIFY`), and the graph's sockets get `ontology.updated`.
+- **A plan's new types** are added when the plan is applied, as the member: to what onto-intelli
+  holds once the graph row is locked (read again then, never from the cache), and only them
+  (`InitGraph` upserts the types it is given and leaves every other one as it is). A type added,
+  changed or removed in onto-intelli or through the editor meanwhile stays as it is.
 - **Edits made in onto-intelli itself** (its UI, an approved proposal, an action) reach nexc within
   the cache's lifetime. Edges follow their relation's `blocking` flag, unless that would close a
   dependency cycle (the edges then keep theirs and the backend logs the conflict), and open canvases
