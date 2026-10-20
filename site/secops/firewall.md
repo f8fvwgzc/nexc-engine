@@ -4,6 +4,10 @@ This page describes the gRPC service that gives agents running on other platform
 
 <!--@include: ../../docs/CONTRACT.md#firewall-wire-->
 
+## Scored, contained and held
+
+<!--@include: ../../docs/AGENTSECOPS.md#firewall-risk-->
+
 ## Turning it on
 
 | Step                                       | How                                                                                                                                                                                                       |

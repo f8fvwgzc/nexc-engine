@@ -12,7 +12,7 @@ export type PolicyScope = z.infer<typeof policyScopeSchema>;
 export const ruleActionSchema = z.enum(['alert', 'deny']);
 export const severitySchema = z.enum(['low', 'medium', 'high', 'critical']);
 export type Severity = z.infer<typeof severitySchema>;
-export const PII_KINDS = ['email', 'phone', 'card', 'national_id'] as const;
+export const PII_KINDS = ['email', 'phone', 'card', 'national_id', 'corporate_number'] as const;
 export const piiKindSchema = z.enum(PII_KINDS);
 export const injectionActionSchema = z.enum(['flag', 'block']);
 /** What the evidence verifier does with an output that is not verified. */

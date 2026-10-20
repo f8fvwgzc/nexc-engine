@@ -21600,7 +21600,8 @@
           "email",
           "phone",
           "card",
-          "national_id"
+          "national_id",
+          "corporate_number"
         ]
       },
       "PiiRule": {

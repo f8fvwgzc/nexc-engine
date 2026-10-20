@@ -370,7 +370,7 @@ impl Default for PiiRules {
     fn default() -> Self {
         PiiRules {
             enabled: true,
-            kinds: PiiKind::ALL.to_vec(),
+            kinds: PiiKind::DEFAULT.to_vec(),
             keywords: Vec::new(),
             action: RuleAction::Alert,
         }

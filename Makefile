@@ -14,7 +14,7 @@ BACKEND_MANIFEST := backend/Cargo.toml
 LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a;
 
 .PHONY: help init setup dev dev-backend dev-frontend dev-runtime db-up db-down db-shell \
-        backup backup-check restore prove prove-trace prove-identity prove-audit prove-policy prove-agentsecops prove-gateway prove-api test-worst-case \
+        backup backup-check restore prove prove-trace prove-identity prove-audit prove-policy prove-agentsecops prove-gateway prove-firewall prove-api test-worst-case \
         build test test-backend test-frontend test-runtime test-onto-live e2e-ui e2e-ui-update lint fmt check \
         docker-build docker-up docker-down docker-logs demo demo-onto demo-secops seed-demo \
         minikube-up minikube-down k8s-render openapi proto-runtime doctor clean verify-bundle \
@@ -154,11 +154,16 @@ prove-policy: ## Policy resolution (target < 1 ms) and decisions under the resol
 	  | sed -n '/^prove-policy/,$$p' | grep -v '^test \|^$$\|test result'
 	cd agent-runtime && $(UV) run pytest -q -m prove -s tests/test_policy.py -k prove_policy 2>&1 | grep '^prove-policy'
 
-prove-agentsecops: prove-identity prove-policy prove-audit prove-trace prove-gateway ## The AgentSecOps latency table: identity and policy decisions, the audit's asks, the trace spine (needs PostgreSQL)
+prove-agentsecops: prove-identity prove-policy prove-audit prove-trace prove-gateway prove-firewall ## The AgentSecOps latency table: identity and policy decisions, the audit's asks, the trace spine, the gateway, the firewall's live risk (needs PostgreSQL)
 prove-gateway: ## Gateway overhead per call (target p99 < 1 ms, the tool excluded) and the runtime stream's per-event latency over gRPC and NDJSON (needs PostgreSQL: make db-up)
 	@$(LOAD_ENV) export DATABASE_URL="$${DATABASE_URL:-$$NEXC_DATABASE_URL}"; \
 	  $(CARGO) test --release --locked --manifest-path $(BACKEND_MANIFEST) --test gateway --test runtime_grpc prove_ -- --ignored --nocapture --test-threads=1 2>&1 \
 	  | grep '^prove-gateway\|prove-gateway:' | sed 's/^test [a-z_]* \.\.\. //'
+
+prove-firewall: ## What live risk adds to the Agent Firewall (a span scored in process, AuthorizeAction with it on and off), the time to contain an exfiltrating external run, and DLP false positives on random 12/13-digit numbers (needs PostgreSQL: make db-up)
+	@$(LOAD_ENV) export DATABASE_URL="$${DATABASE_URL:-$$NEXC_DATABASE_URL}"; \
+	  $(CARGO) test --release --locked --manifest-path $(BACKEND_MANIFEST) --test firewall_risk prove_firewall -- --ignored --nocapture 2>&1 \
+	  | grep 'prove-firewall:' | sed 's/^test [a-z_]* \.\.\. //'
 
 prove-api: ## Every public GET and the main writes under 64 concurrent callers, plus the three gRPC services: p50/p99/max per endpoint against the targets (docs/PERFORMANCE.md; needs PostgreSQL: make db-up)
 	@$(LOAD_ENV) export DATABASE_URL="$${DATABASE_URL:-$$NEXC_DATABASE_URL}"; \
