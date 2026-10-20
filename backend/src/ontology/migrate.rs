@@ -102,10 +102,11 @@ fn same_types(a: &Ontology, b: &Ontology) -> bool {
     keys(a) == keys(b)
 }
 
-/// Initialises a graph onto-intelli does not know (the backend's own
-/// principal did not find its vocabulary): copies what nexc stored for it,
-/// or the starter set, and records it. Under the graph's lock it asks once
-/// more, so a graph someone else copied meanwhile is read, not written.
+/// Initialises a graph onto-intelli does not hold a vocabulary for (the
+/// backend's own principal did not find it, or found only the graph's
+/// projected entity, without a type): copies what nexc stored for it, or the
+/// starter set, and records it. Under the graph's lock it asks once more, so
+/// a graph someone else copied meanwhile is read, not written.
 pub async fn ensure(
     state: &AppState,
     backend: &dyn OntologyBackend,
@@ -118,8 +119,8 @@ pub async fn ensure(
     let mut tx = state.db.begin().await?;
     repo::lock(&mut *tx, graph.id).await?;
     let vocabulary = match backend.vocabulary(&service, &graph_key(graph.id)).await {
-        Ok(found) => found,
-        Err(OntoError::NotFound(_)) => {
+        Ok(found) if !found.is_empty() => found,
+        Ok(_) | Err(OntoError::NotFound(_)) => {
             let vocabulary = initial(&mut tx, graph).await?;
             write(backend, &service, graph, &vocabulary).await?
         }
@@ -187,9 +188,11 @@ pub async fn copy(
     if repo::is_migrated(&mut *tx, graph.id).await? {
         return Ok(false);
     }
+    // The projection may have stated the graph's entity already: without a type, it holds no
+    // vocabulary (nexc never writes one without types).
     let copied = match backend.vocabulary(&service, &graph_key(graph.id)).await {
-        Ok(_) => false,
-        Err(OntoError::NotFound(_)) => {
+        Ok(found) if !found.is_empty() => false,
+        Ok(_) | Err(OntoError::NotFound(_)) => {
             let mut vocabulary = repo::legacy_ontology(&mut *tx, graph.id)
                 .await?
                 .unwrap_or_else(Ontology::starter);

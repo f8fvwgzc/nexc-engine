@@ -129,7 +129,10 @@ label, description, colour, icon, default role, default executor, stage, `produc
 - **A graph onto-intelli does not know yet** (new, or created while it was unreachable), that is one
   the backend's own principal does not find either, is initialised on its first read: with the
   ontology nexc stored for it before this release, when it was not migrated yet, else with the
-  starter set. A graph onto-intelli holds is never initialised again.
+  starter set. A graph onto-intelli holds is never initialised again. The projection (§5) states
+  every graph as the same entity its types hang from, so a graph it reached first reads as a
+  vocabulary without a type: nexc never writes one without types, so that one is initialised too,
+  unless the graph is recorded as migrated (then someone emptied it in onto-intelli).
 - **Writes**: `PUT /graphs/{gid}/ontology` keeps nexc's own rules (at most 40 types of each sort,
   slugged keys, a type that nodes or edges use cannot be removed: 422, a relation made blocking may
   not close a dependency cycle: 409), then plans the change against what onto-intelli holds and

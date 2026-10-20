@@ -842,6 +842,73 @@ async fn stored_ontologies_are_copied_once_idempotently_and_resumably(pool: PgPo
 }
 
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_graph_the_projection_stated_first_still_gets_its_stored_types(pool: PgPool) {
+    let stub = Arc::new(StubOntology::new());
+    let app = TestApp::with_ontology(
+        pool.clone(),
+        &[("NEXC_ONTO_VOCABULARY_TTL_SECS", "0")],
+        stub.clone(),
+    )
+    .await;
+    let w = world(&app).await;
+    let tenant = tenant_of(w.wid);
+    let onto_ws = workspace_name(&app.state.settings.onto_workspace_prefix, w.wid);
+    let custom = json!({
+        "node_types": [{"key": "signal", "label": "Signal", "default_role": "analyst", "stage": 1}],
+        "relation_types": [{"key": "confirms", "label": "Confirms", "blocking": true}]
+    });
+    let mut legacy = Vec::new();
+    for name in ["Trading", "Hiring"] {
+        let id = Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO graphs (id, owner_id, name, workspace_id, ontology)
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(id)
+        .bind(w.owner_id.parse::<Uuid>().unwrap())
+        .bind(name)
+        .bind(w.wid)
+        .bind(&custom)
+        .execute(&pool)
+        .await
+        .unwrap();
+        legacy.push(id);
+    }
+    // The projection states both graphs before anything copied their vocabularies: onto-intelli
+    // then has their entities, which read as vocabularies without a type.
+    export::pass(&app.state).await.unwrap();
+    for id in &legacy {
+        assert!(
+            stub.entity(&onto_ws, &format!("execution_graph:{id}"))
+                .is_some()
+        );
+        assert!(stub.stored_vocabulary(&tenant, &id.to_string()).is_none());
+    }
+    // Read first: the stored types are copied, not an empty vocabulary served.
+    let (status, read) = call(
+        &app,
+        Method::GET,
+        &format!("/graphs/{}", legacy[0]),
+        &w.owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    assert_eq!(keys(&read["ontology"], "node_types"), ["signal"]);
+    // Reached by the pass first: copied the same way.
+    let report = migrate::run(&app.state).await.unwrap();
+    assert_eq!(
+        (report.migrated, report.failed, report.remaining),
+        (1, 0, 0),
+        "{report:?}"
+    );
+    let copied = stub
+        .stored_vocabulary(&tenant, &legacy[1].to_string())
+        .unwrap();
+    assert!(copied.relation_type("confirms").unwrap().blocking);
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
 async fn the_migration_never_writes_over_a_vocabulary_onto_intelli_holds(pool: PgPool) {
     let stub = Arc::new(StubOntology::new());
     let app = TestApp::with_ontology(

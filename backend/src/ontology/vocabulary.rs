@@ -218,20 +218,39 @@ async fn follow(
 /// alike, so the vocabulary is then read as the backend's own principal.
 /// Only a graph the backend itself does not find is initialised
 /// ([`migrate::ensure`]): never one onto-intelli holds.
+///
+/// "Found" needs care: the projection states every graph as the entity
+/// `execution_graph:{id}`, which is also where the vocabulary hangs, so a
+/// graph projected before its vocabulary was ever written reads as found,
+/// with no type at all. nexc never writes a vocabulary without types (one
+/// of each sort at least), so an empty one is initialised too, unless nexc
+/// recorded the graph as migrated (then someone emptied it in onto-intelli,
+/// and that is what it holds).
 async fn fetch(
     state: &AppState,
     backend: &dyn OntologyBackend,
     principal: &Principal,
     graph: GraphRef<'_>,
 ) -> Result<Ontology, OntoError> {
+    let initialise = || async {
+        migrate::ensure(state, backend, graph)
+            .await
+            .map_err(|err| match err {
+                migrate::EnsureError::Onto(err) => err,
+                migrate::EnsureError::Database(err) => OntoError::Other(err.to_string()),
+            })
+    };
     match read_as(backend, principal, graph).await {
-        Err(OntoError::NotFound(_)) => {
-            migrate::ensure(state, backend, graph)
+        Err(OntoError::NotFound(_)) => initialise().await,
+        Ok(found) if found.is_empty() => {
+            let migrated = crate::repo::onto_migrations::is_migrated(&state.db, graph.id)
                 .await
-                .map_err(|err| match err {
-                    migrate::EnsureError::Onto(err) => err,
-                    migrate::EnsureError::Database(err) => OntoError::Other(err.to_string()),
-                })
+                .map_err(|err| OntoError::Other(err.to_string()))?;
+            if migrated {
+                Ok(found)
+            } else {
+                initialise().await
+            }
         }
         found => found,
     }

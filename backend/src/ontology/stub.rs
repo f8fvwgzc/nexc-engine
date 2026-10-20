@@ -222,6 +222,13 @@ impl StubOntology {
         state.calls.clear();
     }
 
+    fn has_entity(state: &State, workspace: &str, id: &str) -> bool {
+        state
+            .entities
+            .get(workspace)
+            .is_some_and(|e| e.contains_key(id))
+    }
+
     fn check(state: &State) -> Result<(), OntoError> {
         match &state.failure {
             Some(err) => Err(err.clone()),
@@ -789,11 +796,18 @@ impl OntologyBackend for StubOntology {
         if !sees(&state, principal, &entity) {
             return Err(OntoError::NotFound(entity));
         }
-        state
+        match state
             .vocabularies
             .get(&(principal.tenant.clone(), graph_key(graph).to_owned()))
-            .cloned()
-            .ok_or(OntoError::NotFound(entity))
+        {
+            Some(vocabulary) => Ok(vocabulary.clone()),
+            // As the server: the graph's entity is there (the projection stated it), its
+            // types are not.
+            None if Self::has_entity(&state, &principal.workspace, &entity) => {
+                Ok(Ontology::default())
+            }
+            None => Err(OntoError::NotFound(entity)),
+        }
     }
 
     async fn set_vocabulary(
@@ -807,7 +821,9 @@ impl OntologyBackend for StubOntology {
         validate(vocabulary)?;
         let key = (principal.tenant.clone(), graph_key(graph).to_owned());
         let entity = format!("execution_graph:{}", graph_key(graph));
-        if !state.vocabularies.contains_key(&key) || !sees(&state, principal, &entity) {
+        let known = state.vocabularies.contains_key(&key)
+            || Self::has_entity(&state, &principal.workspace, &entity);
+        if !known || !sees(&state, principal, &entity) {
             return Err(OntoError::NotFound(format!(
                 "execution_graph:{}",
                 graph_key(graph)
