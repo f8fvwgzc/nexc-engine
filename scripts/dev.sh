@@ -4,7 +4,9 @@
 #
 # With NEXC_ONTO_MODE=service (the default when NEXC_ONTO_URL is set) and onto-intelli checked out
 # next to this repository (../onto-intelli, or ONTO_DIR), `onto serve` runs too, on the dev
-# database (its own database `onto`; the dev PostgreSQL needs pgvector: NEXC_DB_IMAGE in .env).
+# database (its own database `onto`). The dev PostgreSQL needs pgvector for it (NEXC_DB_IMAGE in
+# .env); without, onto-intelli is not started and the backend runs with NEXC_ONTO_MODE=off, rather
+# than onto serve exiting and taking the others down.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -58,17 +60,27 @@ if [[ -z "$onto_mode" ]]; then
   if [[ -n "${NEXC_ONTO_URL:-}" ]]; then onto_mode=service; else onto_mode=off; fi
 fi
 onto_note=""
-if [[ "$onto_mode" == service && -d "$ONTO_DIR" ]]; then
+db_container="${NEXC_DB_CONTAINER:-nexc-postgres}"
+dev_sql() {
+  docker exec "$db_container" psql -U "${POSTGRES_USER:-nexc}" -d "${POSTGRES_DB:-nexc}" "$@"
+}
+if [[ "$onto_mode" == service && -d "$ONTO_DIR" ]] &&
+  ! dev_sql -tAc "SELECT 1 FROM pg_available_extensions WHERE name = 'vector'" 2>/dev/null | grep -q 1; then
+  echo "onto-intelli: not started: the dev PostgreSQL ($db_container, ${NEXC_DB_IMAGE:-postgres:17-alpine})"
+  echo "  has no pgvector, which onto-intelli needs. Set NEXC_DB_IMAGE=pgvector/pgvector:pg17 with a NEW"
+  echo "  NEXC_DB_VOLUME in .env (move existing data with pg_dump and pg_restore; see scripts/db.sh),"
+  echo "  or NEXC_ONTO_MODE=off. The backend runs with NEXC_ONTO_MODE=off for now: read-only starter"
+  echo "  vocabulary, no workspace map."
+  export NEXC_ONTO_MODE=off
+elif [[ "$onto_mode" == service && -d "$ONTO_DIR" ]]; then
   : "${NEXC_ONTO_TOKEN:?NEXC_ONTO_TOKEN is empty - run make init}"
   : "${ONTO_SESSION_SECRET:?ONTO_SESSION_SECRET is empty - run make init}"
   onto_port="${ONTO_PORT:-50051}"
   export NEXC_ONTO_MODE=service
   export NEXC_ONTO_URL="${NEXC_ONTO_URL:-http://127.0.0.1:$onto_port}"
   export NEXC_ONTO_PUBLIC_URL="${NEXC_ONTO_PUBLIC_URL:-$NEXC_ONTO_URL}"
-  db_container="${NEXC_DB_CONTAINER:-nexc-postgres}"
-  docker exec "$db_container" psql -U "${POSTGRES_USER:-nexc}" -d "${POSTGRES_DB:-nexc}" -tAc \
-    "SELECT 1 FROM pg_database WHERE datname = 'onto'" | grep -q 1 ||
-    docker exec "$db_container" psql -U "${POSTGRES_USER:-nexc}" -d "${POSTGRES_DB:-nexc}" -c "CREATE DATABASE onto" >/dev/null
+  dev_sql -tAc "SELECT 1 FROM pg_database WHERE datname = 'onto'" | grep -q 1 ||
+    dev_sql -c "CREATE DATABASE onto" >/dev/null
   export ONTO_DATABASE_URL="${ONTO_DATABASE_URL:-${NEXC_DATABASE_URL%/*}/onto}"
   # The shipped configuration, with the dev web server's origin allowed to embed the UI.
   mkdir -p data/onto

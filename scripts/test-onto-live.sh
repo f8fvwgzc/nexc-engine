@@ -1,22 +1,28 @@
 #!/usr/bin/env bash
 # make test-onto-live: the backend against a real onto-intelli, not the stub CI uses.
 #
-# Starts `onto serve` from the sibling checkout (../onto-intelli, built when its binary is
-# missing; ONTO_BIN names another) with the configuration nexc ships (deploy/onto), on a
-# throwaway PostgreSQL with pgvector, then runs backend/tests/onto_live.rs against it. Everything
-# it started is removed when it ends, pass or fail.
+# Starts `onto serve` from the sibling checkout (../onto-intelli, built first: a no-op when it is
+# up to date, so a binary from before the checkout's last change is never used; ONTO_BIN names a
+# binary to use as it is) with the configuration nexc ships (deploy/onto), on a throwaway
+# PostgreSQL with pgvector, then runs backend/tests/onto_live.rs against it. Everything it started
+# is removed when it ends, pass or fail.
 #
 #   scripts/test-onto-live.sh                 # everything on free local ports
 #   ONTO_LIVE_DATABASE_URL=postgres://… scripts/test-onto-live.sh
 #                                             # a PostgreSQL 16+ with pgvector you run: onto-intelli
-#                                             # gets the database `onto` there, the tests their own
+#                                             # gets the database `onto` there (created when missing,
+#                                             # with psql), the tests their own
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 ONTO_DIR="${ONTO_DIR:-$ROOT/../onto-intelli}"
-ONTO_BIN="${ONTO_BIN:-$ONTO_DIR/target/release/onto}"
+build_onto=""
+if [[ -z "${ONTO_BIN:-}" ]]; then
+  build_onto=1
+  ONTO_BIN="$ONTO_DIR/target/release/onto"
+fi
 PORT="${ONTO_LIVE_PORT:-50060}"
 PG_PORT="${ONTO_LIVE_PG_PORT:-55462}"
 PG_IMAGE="${ONTO_LIVE_PG_IMAGE:-nexc-postgres-pgvector:17}"
@@ -26,13 +32,16 @@ for tool in cargo curl openssl; do
   command -v "$tool" >/dev/null 2>&1 || { echo "error: '$tool' is required" >&2; exit 1; }
 done
 
-if [[ ! -x "$ONTO_BIN" ]]; then
+if [[ -n "$build_onto" ]]; then
   if [[ ! -d "$ONTO_DIR" ]]; then
     echo "error: no onto-intelli at $ONTO_DIR: clone https://github.com/f8fvwgzc/onto-intelli next to this repository, or set ONTO_BIN" >&2
     exit 1
   fi
-  echo "building onto-intelli in $ONTO_DIR"
+  echo "building onto-intelli in $ONTO_DIR (nothing to do when it is up to date)"
   (cd "$ONTO_DIR" && cargo build --release --locked -p onto-intelli-cli)
+elif [[ ! -x "$ONTO_BIN" ]]; then
+  echo "error: ONTO_BIN=$ONTO_BIN is not an executable" >&2
+  exit 1
 fi
 
 work="$(mktemp -d)"
@@ -73,6 +82,13 @@ fi
 # onto-intelli's own database on the same server.
 if [[ -n "$started_db" ]]; then
   docker exec "$CONTAINER" psql -U nexc -d nexc -tAc "CREATE DATABASE onto" >/dev/null
+else
+  command -v psql >/dev/null 2>&1 || {
+    echo "error: psql is required to create the database onto at ${base##*@} (or create it yourself)" >&2
+    exit 1
+  }
+  psql "$base/postgres" -tAc "SELECT 1 FROM pg_database WHERE datname = 'onto'" | grep -q 1 ||
+    psql "$base/postgres" -qc "CREATE DATABASE onto"
 fi
 
 cp deploy/onto/nexc-audit.toml deploy/onto/nexc-workspace.toml "$work/"

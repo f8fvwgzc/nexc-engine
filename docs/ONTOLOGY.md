@@ -318,6 +318,9 @@ onto-intelli expects.
 - **`make dev`** starts `onto serve` from `../onto-intelli` (or `ONTO_DIR`) on `127.0.0.1:50051` when
   `NEXC_ONTO_MODE=service`, on the dev database (`NEXC_DB_IMAGE` with pgvector), with the dev web
   server's origin allowed to embed its UI; otherwise it says how it runs (`NEXC_ONTO_MODE=off`).
+  When the dev database has no pgvector (the default Alpine image) it does not start onto-intelli,
+  says how to switch images (a new `NEXC_DB_VOLUME`, data moved with `pg_dump` and `pg_restore`),
+  and runs the backend with `NEXC_ONTO_MODE=off` instead of letting the stack go down.
 - **Configuration**: `deploy/onto/onto-intelli.toml` (PostgreSQL, multi-tenant, read-your-writes
   across replicas, `builtin:nexc-execution` plus `nexc-audit.toml` and `nexc-workspace.toml`, the
   governance of §2, the impersonating token, `[ui] embed_origins`). Several `onto serve` replicas can
@@ -329,8 +332,10 @@ onto-intelli expects.
   `NEXC_ONTO_PUBLIC_URL` (or `NEXC_ONTO_URL` standing in for it) names a host only the cluster
   resolves, or `/ui/` does not answer there, and says when `NEXC_ONTO_MODE=off` leaves a set
   `NEXC_ONTO_URL` unused.
-  `make test-onto-live` runs the backend's live tests (`backend/tests/onto_live.rs`) against a real
-  `onto serve` on a throwaway PostgreSQL with pgvector; CI runs the same flows against the in-memory
+  `make test-onto-live` builds `../onto-intelli` (a no-op when it is up to date; `ONTO_BIN` names a
+  binary to use as it is) and runs the backend's live tests (`backend/tests/onto_live.rs`) against a
+  real `onto serve` on a throwaway PostgreSQL with pgvector, or on `ONTO_LIVE_DATABASE_URL` (its
+  database `onto` created there when missing); CI runs the same flows against the in-memory
   stub (`backend/src/ontology/stub.rs`, `backend/tests/ontology.rs`), which serves the same gRPC
   services and the session endpoint.
 <!-- #endregion operate -->
