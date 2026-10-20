@@ -11151,7 +11151,7 @@
         "tags": [
           "workspaces"
         ],
-        "summary": "Opens a browser session for onto-intelli's UI, for the caller in this\nworkspace's tenant: their own principal with the roles of their\nworkspace role, short-lived (`NEXC_ONTO_SESSION_TTL_SECS`). The page\nhands it to the embedded UI with `postMessage` once the UI announced\nitself (`onto:ready`). Members and above; 409 when onto-intelli is off,\n503 when it is not reachable.",
+        "summary": "Opens a browser session for onto-intelli's UI, for the caller in this\nworkspace's tenant: their own principal, read-only there (`viewer`;\nowners and admins also approve proposals and apply schema changes),\nshort-lived (`NEXC_ONTO_SESSION_TTL_SECS`). The page\nhands it to the embedded UI with `postMessage` once the UI announced\nitself (`onto:ready`). Members and above; 409 when onto-intelli is off,\n503 when it is not reachable.",
         "operationId": "session",
         "parameters": [
           {
