@@ -14,6 +14,12 @@
 //! * sessions, realtime tickets and other members' personal LLM settings;
 //! * files on disk (uploaded documents, run artifacts); their passages and
 //!   records are copied, the files are not.
+//!
+//! Graph vocabularies live in onto-intelli, not in these tables: each
+//! graph's is read from there and written into the copied row's
+//! `graphs.ontology`, which the target's onto-intelli is initialised from on
+//! the graph's first read there (`docs/ONTOLOGY.md` §7). A transfer fails
+//! rather than leave them behind when onto-intelli does not answer.
 
 use std::net::IpAddr;
 
@@ -24,6 +30,9 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::app::AppState;
+use crate::domain::ontology::Ontology;
+use crate::ontology::vocabulary::graph_key;
+use crate::ontology::{OntoError, Principal};
 use crate::repo;
 
 /// Rows copied per statement for the tables that can be paged by `id`.
@@ -357,8 +366,6 @@ async fn copy_table(
     Ok(report)
 }
 
-/// Copies a workspace to `url`: prepares the schema there, then writes every
-/// table in one transaction. Returns what was copied per table.
 /// Connects to the target, and says what it is: used by the owner's
 /// connection check. Refuses a target that already holds the workspace.
 pub async fn probe_target(url: &str, workspace: Uuid) -> anyhow::Result<String> {
@@ -389,10 +396,44 @@ pub async fn probe_target(url: &str, workspace: Uuid) -> anyhow::Result<String> 
     })
 }
 
+/// The vocabularies onto-intelli holds for the workspace's graphs, read as
+/// the backend's own principal: they travel in the copied `graphs.ontology`.
+/// A graph onto-intelli does not hold yet keeps the ontology it stored; with
+/// onto-intelli off there is nothing to read (every graph has the starter).
+pub async fn vocabularies(
+    state: &AppState,
+    workspace: Uuid,
+) -> anyhow::Result<Vec<(Uuid, Ontology)>> {
+    let Some(backend) = &state.ontology else {
+        return Ok(Vec::new());
+    };
+    let service = Principal::service(&state.settings.onto_workspace_prefix, workspace);
+    let graphs: Vec<Uuid> =
+        sqlx::query_scalar("SELECT id FROM graphs WHERE workspace_id = $1 ORDER BY id")
+            .bind(workspace)
+            .fetch_all(&state.db)
+            .await?;
+    let mut found = Vec::with_capacity(graphs.len());
+    for graph in graphs {
+        match backend.vocabulary(&service, &graph_key(graph)).await {
+            Ok(vocabulary) => found.push((graph, vocabulary)),
+            Err(OntoError::NotFound(_)) => {}
+            Err(err) => anyhow::bail!(
+                "cannot read the graphs' vocabularies from onto-intelli, where they live: {err}"
+            ),
+        }
+    }
+    Ok(found)
+}
+
+/// Copies a workspace to `url`: prepares the schema there, then writes every
+/// table in one transaction, with each graph's vocabulary from onto-intelli
+/// (`vocabularies`) in its `ontology`. Returns what was copied per table.
 pub async fn copy_workspace(
     source: &PgPool,
     url: &str,
     workspace: Uuid,
+    vocabularies: &[(Uuid, Ontology)],
 ) -> anyhow::Result<Vec<TableReport>> {
     let target = repo::connect(url, 2)
         .await
@@ -422,6 +463,14 @@ pub async fn copy_workspace(
             .await
             .map_err(|err| anyhow::anyhow!("copying {} failed: {err}", t.name))?;
         reports.push(report);
+    }
+    for (graph, vocabulary) in vocabularies {
+        sqlx::query("UPDATE graphs SET ontology = $2 WHERE id = $1")
+            .bind(graph)
+            .bind(sqlx::types::Json(vocabulary))
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| anyhow::anyhow!("writing the graphs' vocabularies failed: {err}"))?;
     }
     tx.commit().await?;
     target.close().await;
@@ -581,7 +630,8 @@ pub async fn run(
     redis_url: Option<String>,
 ) {
     let outcome = async {
-        let mut report = copy_workspace(&state.db, &url, workspace).await?;
+        let vocabularies = vocabularies(state, workspace).await?;
+        let mut report = copy_workspace(&state.db, &url, workspace, &vocabularies).await?;
         let target = repo::connect(&url, 1)
             .await
             .map_err(|err| anyhow::anyhow!("cannot connect to the target database: {err}"))?;

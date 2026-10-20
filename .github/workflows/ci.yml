@@ -207,8 +207,19 @@ jobs:
             --set config.NEXC_PUBLIC_URL=https://nexc.example.com \
             --set 'oidc.adminGroups={nexc-admins}' --set oidc.allowLocalLogin=false > "$RUNNER_TEMP/sso.yaml"
           grep -q 'NEXC_OIDC_CLIENT_SECRET' "$RUNNER_TEMP/sso.yaml"
+          # onto-intelli in the release: browsers reach it at its own host, which the console frames.
+          helm template nexc deploy/helm/nexc-engine -n nexc --set secrets.existingSecret=nexc-secrets \
+            --set ontoIntelli.enabled=true --set ontoIntelli.image.repository=registry.example.com/onto-intelli \
+            --set ingress.host=nexc.example.com --set ontoIntelli.ingress.host=onto.example.com > "$RUNNER_TEMP/onto.yaml"
+          grep -q 'NEXC_ONTO_PUBLIC_URL: "http://onto.example.com"' "$RUNNER_TEMP/onto.yaml"
+          grep -A1 'name: NEXC_ONTO_PUBLIC_URL' "$RUNNER_TEMP/onto.yaml" | grep -q 'value: "http://onto.example.com"'
+          # ...and refused with no address a browser can reach.
+          if helm template nexc deploy/helm/nexc-engine -n nexc --set secrets.existingSecret=nexc-secrets \
+            --set ontoIntelli.enabled=true --set ontoIntelli.image.repository=r/o > /dev/null 2>&1; then
+            echo "rendered onto-intelli without a public URL" >&2; exit 1
+          fi
       - name: shellcheck
-        run: shellcheck -x scripts/*.sh
+        run: shellcheck -x scripts/*.sh frontend/docker-entrypoint.d/*.sh
       - name: Grafana dashboard is valid JSON
         run: python3 -m json.tool deploy/grafana/nexc-engine.json > /dev/null
       - name: hadolint

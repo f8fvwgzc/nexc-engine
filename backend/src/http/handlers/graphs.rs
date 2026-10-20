@@ -117,9 +117,18 @@ pub async fn create(
         &req.goal,
     )
     .await?;
+    // The graph's vocabulary is created in onto-intelli now (its tenant too, on first use);
+    // when onto-intelli cannot take it, the graph is initialised on its first read instead.
+    let ontology = match editor::vocabulary_of(&state, auth.id, &meta).await {
+        Ok(vocabulary) => Ontology::clone(&vocabulary),
+        Err(err) => {
+            tracing::warn!(graph = %meta.id, error = %err, "the new graph's vocabulary is not in onto-intelli yet");
+            Ontology::starter()
+        }
+    };
     Ok((
         StatusCode::CREATED,
-        Json(meta.into_graph(Vec::new(), Vec::new())),
+        Json(meta.into_graph(ontology, Vec::new(), Vec::new())),
     ))
 }
 
@@ -177,14 +186,19 @@ pub async fn update(
     Ok(Json(editor::load_graph(&state, auth.id, gid).await?))
 }
 
-/// Replaces the graph's ontology: its node types and relation types.
+/// Replaces the graph's vocabulary (its node types and relation types) in
+/// onto-intelli, as the caller: nexc checks its own rules, then plans and
+/// applies the change there in one audited write and tells the graph's
+/// sockets (`ontology.updated`). Read-only while onto-intelli is off.
 #[utoipa::path(put, path = "/graphs/{gid}/ontology", tag = "graphs", security(("bearer" = [])),
     params(("gid" = Uuid, Path, description = "Graph id")), request_body = Ontology,
     responses(
         (status = 200, body = Graph),
+        (status = 403, description = "onto-intelli refused the caller (a guest is a viewer there)", body = Problem),
         (status = 404, body = Problem),
-        (status = 409, description = "A relation made blocking would create a cycle", body = Problem),
-        (status = 422, description = "Invalid, or a type still in use was removed", body = Problem),
+        (status = 409, description = "A relation made blocking would create a cycle, or onto-intelli is off (read-only)", body = Problem),
+        (status = 422, description = "Invalid, a type still in use was removed, or onto-intelli refused a field", body = Problem),
+        (status = 503, description = "onto-intelli is not reachable", body = Problem),
     ))]
 pub async fn replace_ontology(
     State(state): State<AppState>,
@@ -245,6 +259,6 @@ pub async fn analysis(
     auth: AuthUser,
     Path(gid): Path<Uuid>,
 ) -> Result<Json<GraphAnalysis>, AppError> {
-    let graph = editor::load_graph(&state, auth.id, gid).await?;
-    Ok(Json(analysis::analyze(&graph.nodes, &graph.edges)))
+    let (_, nodes, edges) = editor::load_structure(&state, auth.id, gid).await?;
+    Ok(Json(analysis::analyze(&nodes, &edges)))
 }

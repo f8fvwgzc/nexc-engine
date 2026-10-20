@@ -102,6 +102,7 @@ export default defineConfig({
           { text: 'Backups', link: '/operate/backups' },
           { text: 'Infrastructure', link: '/operate/infrastructure' },
           { text: 'Single sign-on', link: '/operate/sso' },
+          { text: 'onto-intelli', link: '/operate/ontology' },
           { text: 'Workspace transfers', link: '/operate/transfers' },
           { text: 'Alerts', link: '/operate/alerts' },
           { text: 'SIEM export', link: '/operate/siem' },

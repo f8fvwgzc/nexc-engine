@@ -40,6 +40,12 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+          {{- with include "nexc.ontoUrl" . }}
+          env:
+            # The Content-Security-Policy's frame-src: onto-intelli's UI, which the map embeds.
+            - name: NEXC_ONTO_PUBLIC_URL
+              value: {{ include "nexc.ontoPublicUrl" $ | quote }}
+          {{- end }}
           livenessProbe:
             httpGet: { path: /healthz, port: http }
             periodSeconds: 15

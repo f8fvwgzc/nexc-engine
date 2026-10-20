@@ -4,14 +4,12 @@
 //! exposed agent's inbound tasks run in (`graphs.a2a_agent_id`).
 
 use sqlx::postgres::PgRow;
-use sqlx::types::Json;
 use sqlx::{FromRow, PgExecutor, Row};
 use uuid::Uuid;
 
 use super::enum_col;
 use crate::domain::a2a::{A2aCounterpart, A2aTask, Hops, TaskState};
 use crate::domain::capabilities::DataLabel;
-use crate::domain::ontology::Ontology;
 use crate::domain::run::RunStatus;
 
 /// A counterpart row with its encrypted header, for the gateway only.
@@ -241,15 +239,14 @@ pub async fn ensure_graph(
             .await?;
     let id = Uuid::now_v7();
     sqlx::query(
-        "INSERT INTO graphs (id, owner_id, name, description, goal, ontology, workspace_id, a2a_agent_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        "INSERT INTO graphs (id, owner_id, name, description, goal, workspace_id, a2a_agent_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
     .bind(id)
     .bind(owner)
     .bind(format!("A2A: {agent_name}"))
     .bind("Tasks received over the A2A protocol; one node per task.")
     .bind("Answer the tasks counterpart agents send over A2A.")
-    .bind(Json(Ontology::starter()))
     .bind(workspace_id)
     .bind(agent_id)
     .execute(&mut *conn)

@@ -12,7 +12,9 @@ use async_stream::stream;
 use serde_json::json;
 
 use super::{LlmEvent, LlmProvider, LlmRequest, LlmStream, StopReason, Usage, estimate_tokens};
-use crate::domain::assistant::{ASSISTANT_SCHEMA_NAME, TEAMS_MARKER, USER_MESSAGE_MARKER};
+use crate::domain::assistant::{
+    ASSISTANT_SCHEMA_NAME, SCHEMA_MARKER, TEAMS_MARKER, USER_MESSAGE_MARKER,
+};
 use crate::domain::evidence::{self, CitationKind};
 use crate::domain::graph::Executor;
 use crate::domain::insight::DAY_SUMMARY_SCHEMA_NAME;
@@ -242,9 +244,18 @@ fn assistant_json(prompt: &str) -> String {
         .map(|_| message["create issue:".len()..].trim().to_owned())
         .filter(|t| !t.is_empty() && !team.is_empty());
     let memories = prompt.matches("\n- ").count();
-    let reply = match &title {
-        Some(title) => format!("{DEMO_LABEL} Filed \"{title}\" with {team}."),
-        None => format!(
+    // `propose schema: <words>` proposes a link type named after them, when a schema was given.
+    let proposal = message
+        .to_lowercase()
+        .strip_prefix("propose schema:")
+        .map(|_| message["propose schema:".len()..].trim().to_owned())
+        .filter(|words| !words.is_empty() && prompt.contains(SCHEMA_MARKER));
+    let reply = match (&title, &proposal) {
+        (_, Some(words)) => format!(
+            "{DEMO_LABEL} Proposed \"{words}\" for review in onto-intelli; people approve it there."
+        ),
+        (Some(title), None) => format!("{DEMO_LABEL} Filed \"{title}\" with {team}."),
+        (None, None) => format!(
             "{DEMO_LABEL} The demo provider cannot answer questions. It was given {memories} \
              line(s) of workspace context. Write `create issue: <title>` to file an issue, or \
              configure a real model in Settings."
@@ -258,7 +269,22 @@ fn assistant_json(prompt: &str) -> String {
             })
         })
         .collect();
-    serde_json::json!({ "reply": reply, "issues": issues }).to_string()
+    let schema_proposals: Vec<serde_json::Value> = proposal
+        .iter()
+        .map(|words| {
+            let name = crate::domain::ontology::slug(words);
+            let changes = serde_json::json!([
+                {"op": "put_link_type", "name": name, "def": {"label": words}}
+            ]);
+            serde_json::json!({
+                "title": words,
+                "rationale": format!("The member asked for it: {words}"),
+                "changes_json": changes.to_string(),
+            })
+        })
+        .collect();
+    serde_json::json!({ "reply": reply, "issues": issues, "schema_proposals": schema_proposals })
+        .to_string()
 }
 
 /// A day summary without a model: the counts of the digest it was given,
@@ -713,7 +739,8 @@ mod tests {
         );
         let plan = refine(&ctx(vec![a.clone(), b.clone()], vec![]));
         let existing: HashSet<_> = [a.id, b.id].into();
-        let (clean, notes) = sanitize_proposal(plan.clone(), &existing, &Ontology::starter(), 500);
+        let (clean, notes) =
+            sanitize_proposal(plan.clone(), &existing, &Ontology::starter(), 500, true);
         assert_eq!(clean, plan, "demo plans need no correction: {notes:?}");
         assert_eq!(
             plan.nodes.len(),

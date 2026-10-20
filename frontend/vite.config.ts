@@ -6,26 +6,47 @@ import type { Plugin } from 'vite';
 import { defineConfig } from 'vitest/config';
 
 /**
- * Production Content-Security-Policy. Injected at build time only: the dev server relies on an
- * inline React Refresh preamble and HMR websockets that a strict policy would block.
- * The theme no-flash script lives in /public/theme-init.js so `script-src 'self'` suffices.
+ * The origin the workspace map's frame may load: onto-intelli's UI at NEXC_ONTO_PUBLIC_URL, or
+ * none. Only `scheme://host[:port]`, never a wildcard.
  */
-const CONTENT_SECURITY_POLICY = [
-  "default-src 'self'",
-  "script-src 'self'",
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
-  "font-src 'self' data:",
-  "connect-src 'self' ws: wss:",
-  "object-src 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-].join('; ');
+function frameSource(url: string | undefined): string {
+  if (!url) return "'none'";
+  try {
+    const { protocol, origin } = new URL(url);
+    return protocol === 'http:' || protocol === 'https:' ? origin : "'none'";
+  } catch {
+    return "'none'";
+  }
+}
+
+/**
+ * Production Content-Security-Policy, sent as a header: by nginx in the image (frontend/
+ * nginx.conf, the same directives, frame-src written at start from NEXC_ONTO_PUBLIC_URL) and by
+ * `vite preview` (the UI suite). The build carries no meta policy: a meta policy cannot know
+ * where onto-intelli is, and both would apply. The dev server sends none: it relies on an inline
+ * React Refresh preamble and HMR websockets that a strict policy would block. The theme
+ * no-flash script lives in /public/theme-init.js so `script-src 'self'` suffices.
+ */
+function contentSecurityPolicy(frameSrc: string): string {
+  return [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "connect-src 'self' ws: wss:",
+    `frame-src ${frameSrc}`,
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join('; ');
+}
 
 /** Primary UI font (latin subset) — preloaded so text renders without a late font swap. */
 const PRELOAD_FONT = /geist-latin-wght-normal-[\w-]+\.woff2$/;
 
-/** Build-only index.html additions: the CSP meta tag and a preload for the main font. */
+/** Build-only index.html addition: a preload for the main font. */
 function productionHtmlPlugin(): Plugin {
   return {
     name: 'nexc:production-html',
@@ -35,28 +56,21 @@ function productionHtmlPlugin(): Plugin {
       order: 'post',
       handler: (_html, ctx) => {
         const font = Object.keys(ctx.bundle ?? {}).find((file) => PRELOAD_FONT.test(file));
-        return [
-          {
-            tag: 'meta',
-            attrs: { 'http-equiv': 'Content-Security-Policy', content: CONTENT_SECURITY_POLICY },
-            injectTo: 'head-prepend',
-          },
-          ...(font
-            ? [
-                {
-                  tag: 'link',
-                  attrs: {
-                    rel: 'preload',
-                    as: 'font',
-                    type: 'font/woff2',
-                    href: `/${font}`,
-                    crossorigin: '',
-                  },
-                  injectTo: 'head' as const,
+        return font
+          ? [
+              {
+                tag: 'link',
+                attrs: {
+                  rel: 'preload',
+                  as: 'font',
+                  type: 'font/woff2',
+                  href: `/${font}`,
+                  crossorigin: '',
                 },
-              ]
-            : []),
-        ];
+                injectTo: 'head' as const,
+              },
+            ]
+          : [];
       },
     },
   };
@@ -90,7 +104,14 @@ export default defineConfig({
       },
     },
   },
-  preview: { port: 4173 },
+  preview: {
+    port: 4173,
+    headers: {
+      'Content-Security-Policy': contentSecurityPolicy(
+        frameSource(process.env.NEXC_ONTO_PUBLIC_URL),
+      ),
+    },
+  },
   build: {
     target: 'es2023',
     sourcemap: true,

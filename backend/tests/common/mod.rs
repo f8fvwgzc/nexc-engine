@@ -172,7 +172,20 @@ impl LlmProvider for FakeLlm {
                 } else {
                     json!([])
                 };
-                let text = json!({"reply": "Here you go.", "issues": issues});
+                // Proposes a schema change when asked to and shown the schema.
+                let proposals = match prompt.split_once("propose schema:") {
+                    Some((_, words)) if prompt.contains(nexc::domain::assistant::SCHEMA_MARKER) => {
+                        let words = words.lines().next().unwrap_or_default().trim();
+                        let name = nexc::domain::ontology::slug(words);
+                        let changes = json!([{"op": "put_link_type", "name": name,
+                                              "def": {"from": ["person"], "to": ["issue"]}}]);
+                        json!([{"title": words, "rationale": "asked for in the assistant",
+                                "changes_json": changes.to_string()}])
+                    }
+                    _ => json!([]),
+                };
+                let text = json!({"reply": "Here you go.", "issues": issues,
+                                  "schema_proposals": proposals});
                 return Self::events(text.to_string(), usage);
             }
             _ => {}

@@ -30,8 +30,8 @@ import {
 } from '@/components/ui/command';
 import { useLogout } from '@/features/auth/hooks/use-logout';
 import { graphsQuery } from '@/features/graphs/api';
-import { pageOf } from '@/features/insight/map-kinds';
 import { SEARCH_MIN, workspaceSearchQuery, type SearchHit } from '@/features/search/api';
+import { pageOf } from '@/features/search/pages';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useTheme } from '@/hooks/use-theme';
 import { useCommandStore } from '@/stores/command-store';
@@ -102,7 +102,7 @@ export function CommandPalette() {
                       key={hit.id}
                       // The server matched it; the typed text keeps the list's own filter from hiding it.
                       value={`${hit.title} ${hit.subtitle} ${hit.id} ${input}`}
-                      onSelect={() => run(() => void navigate(pageOf(hit) ?? '/app'))}
+                      onSelect={() => run(() => void navigate(pageOf(hit)))}
                     >
                       <Icon />
                       <span className="truncate">{hit.title}</span>

@@ -1,4 +1,5 @@
-// Vendored from onto-intelli 0.2.0 (../onto-intelli/crates/onto-grpc/proto/onto_intelli/v1/onto_intelli.proto).
+// Vendored from onto-intelli 0.2.0 (../onto-intelli/crates/onto-grpc/proto/onto_intelli/v1/onto_intelli.proto),
+// with its live schema (SchemaService) and the nexc execution vocabulary (ExecutionService).
 // The backend compiles it with protox and tonic-prost-build (no protoc needed); keep it in step
 // with the server you point NEXC_ONTO_URL at.
 
@@ -469,6 +470,153 @@ message HealthStatus {
   uint64 revision = 3;
   string llm = 4;
   bool llm_available = 5;
+}
+
+// ──────────────────────── Live schema ────────────────────────
+
+// A schema change set. Each change is an object with an `op` and its fields:
+// put_object_type {name, def, migrations?} · delete_object_type {name, migrations?} ·
+// rename_object_type {from, to} · put_property {object_type, name, def, migrations?} ·
+// delete_property {object_type, name, migrations?} · rename_property {object_type, from, to} ·
+// put_link_type {name, def, migrations?} · delete_link_type {name, migrations?} ·
+// rename_link_type {from, to} · put_interface/put_action_type/put_metric {name, def} ·
+// put_rule {def} · delete_* {name} · put_glossary_term {section, word, target} ·
+// delete_glossary_term {section, word} · set_analysis {def}.
+// Migrations: {action: delete_entities|retype|map_states|set_default|convert|drop_values|
+// delete_links|move_links|keep_latest|acknowledge, ...}.
+message SchemaChangeRequest {
+  repeated google.protobuf.Struct changes = 1;
+  string message = 2;
+  uint64 expected_version = 3;    // 0: whatever version is active
+  repeated google.protobuf.Struct migrations = 4;
+  bool dry_run = 5;               // Apply only: return the plan
+  string workspace = 6;           // where the schema.change audit event is recorded
+}
+
+message SchemaVersionRequest {
+  uint64 version = 1;             // Get: 0 = active
+}
+
+message SchemaHistoryRequest {
+  uint32 limit = 1;
+}
+
+message SchemaAsOfRequest {
+  int64 ts = 1;                   // unix ms
+  double days_ago = 2;
+}
+
+message SchemaDiffRequest {
+  uint64 from = 1;
+  uint64 to = 2;                  // 0 = active
+}
+
+message SchemaRevertRequest {
+  uint64 version = 1;
+  repeated google.protobuf.Struct migrations = 2;
+  bool dry_run = 3;
+  string workspace = 4;
+}
+
+// A schema change proposal: anyone allowed to propose (agents included)
+// files it; approvers (never agents, never the proposer) approve or reject.
+message ProposeRequest {
+  string title = 1;
+  string rationale = 2;
+  repeated google.protobuf.Struct changes = 3;
+  repeated google.protobuf.Struct migrations = 4;
+  string message = 5;
+  string source = 6;              // e.g. "nexc-assistant"
+  string workspace = 7;
+}
+
+message ListProposalsRequest {
+  string status = 1;              // open | applied | rejected | failed | withdrawn; empty = all
+  uint32 limit = 2;
+}
+
+message ProposalRef {
+  string id = 1;
+  string workspace = 2;
+}
+
+message ReviewRequest {
+  string id = 1;
+  string comment = 2;
+  uint64 seen_version = 3;        // schema version previewed; 0 = do not check
+  string workspace = 4;
+}
+
+message ReviseRequest {
+  string id = 1;
+  string title = 2;
+  string rationale = 3;
+  repeated google.protobuf.Struct changes = 4;
+  repeated google.protobuf.Struct migrations = 5;
+  string message = 6;
+  string workspace = 7;
+}
+
+// Object types, properties, link types, interfaces, action types, rules,
+// metrics and glossary terms as data: validated, previewed (impact and
+// migration), versioned, audited and reversible; or proposed and reviewed.
+service SchemaService {
+  rpc Get(SchemaVersionRequest) returns (google.protobuf.Struct);
+  rpc Status(google.protobuf.Empty) returns (google.protobuf.Struct);
+  rpc Plan(SchemaChangeRequest) returns (google.protobuf.Struct);
+  rpc Apply(SchemaChangeRequest) returns (google.protobuf.Struct);
+  rpc History(SchemaHistoryRequest) returns (google.protobuf.Struct);
+  rpc Version(SchemaVersionRequest) returns (google.protobuf.Struct);
+  rpc AsOf(SchemaAsOfRequest) returns (google.protobuf.Struct);
+  rpc Diff(SchemaDiffRequest) returns (google.protobuf.Struct);
+  rpc Revert(SchemaRevertRequest) returns (google.protobuf.Struct);
+  rpc Undo(SchemaRevertRequest) returns (google.protobuf.Struct);
+  rpc Propose(ProposeRequest) returns (google.protobuf.Struct);
+  rpc ListProposals(ListProposalsRequest) returns (google.protobuf.Struct);
+  rpc GetProposal(ProposalRef) returns (google.protobuf.Struct);
+  rpc Approve(ReviewRequest) returns (google.protobuf.Struct);
+  rpc Reject(ReviewRequest) returns (google.protobuf.Struct);
+  rpc Comment(ReviewRequest) returns (google.protobuf.Struct);
+  rpc Withdraw(ProposalRef) returns (google.protobuf.Struct);
+  rpc Revise(ReviseRequest) returns (google.protobuf.Struct);
+}
+
+// ──────────────────────── nexc execution vocabulary ────────────────────────
+// Needs ontology.extend = ["builtin:nexc-execution"]. Shapes match nexc-engine's
+// NodeType / RelationType: {key, label, description, color, icon, default_role,
+// default_executor, stage, produces_artifact, allow_code_exec} and
+// {key, label, description, blocking}.
+
+message GraphRef {
+  string graph = 1;               // key (g1) or id (execution_graph:g1)
+}
+
+message GraphsRequest {
+  string workspace = 1;
+  uint32 limit = 2;
+}
+
+message VocabularyRequest {
+  string graph = 1;
+  repeated google.protobuf.Struct node_types = 2;
+  repeated google.protobuf.Struct relation_types = 3;
+  string workspace = 4;
+}
+
+message InitGraphRequest {
+  string graph = 1;
+  string title = 2;
+  bool empty = 3;                 // true: no starter vocabulary
+  repeated google.protobuf.Struct node_types = 4;
+  repeated google.protobuf.Struct relation_types = 5;
+  string workspace = 6;
+}
+
+service ExecutionService {
+  rpc Graphs(GraphsRequest) returns (google.protobuf.Struct);
+  rpc Vocabulary(GraphRef) returns (google.protobuf.Struct);
+  rpc SetVocabulary(VocabularyRequest) returns (google.protobuf.Struct);
+  rpc InitGraph(InitGraphRequest) returns (google.protobuf.Struct);
 }
 
 message CallRequest {

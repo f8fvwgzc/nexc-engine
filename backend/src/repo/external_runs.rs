@@ -4,10 +4,8 @@
 //! node, so the trace, the audit and the console treat it like any other.
 
 use sqlx::PgExecutor;
-use sqlx::types::Json;
 use uuid::Uuid;
 
-use crate::domain::ontology::Ontology;
 use crate::domain::run::RunStatus;
 
 /// The managed graph of an external agent, created on first use. The owner
@@ -35,14 +33,13 @@ pub async fn ensure_graph(
             .await?;
     let id = Uuid::now_v7();
     sqlx::query(
-        "INSERT INTO graphs (id, owner_id, name, description, goal, ontology, workspace_id, external_agent_id)
-         VALUES ($1, $2, $3, $4, '', $5, $6, $7)",
+        "INSERT INTO graphs (id, owner_id, name, description, goal, workspace_id, external_agent_id)
+         VALUES ($1, $2, $3, $4, '', $5, $6)",
     )
     .bind(id)
     .bind(owner)
     .bind(format!("External agent: {agent_name}"))
     .bind("Runs reported through the Agent Firewall API; one node per run.")
-    .bind(Json(Ontology::starter()))
     .bind(workspace_id)
     .bind(agent_id)
     .execute(&mut *conn)

@@ -13,7 +13,10 @@ pub fn render() -> String {
     let postgres_password = hex::encode(random_bytes::<24>());
     let generated = |name: &str| -> Option<String> {
         Some(match name {
-            "NEXC_JWT_SECRET" | "NEXC_RUNTIME_TOKEN" | "NEXC_ONTO_TOKEN" => random_token(),
+            "NEXC_JWT_SECRET"
+            | "NEXC_RUNTIME_TOKEN"
+            | "NEXC_ONTO_TOKEN"
+            | "ONTO_SESSION_SECRET" => random_token(),
             "NEXC_MASTER_KEY" => {
                 base64::engine::general_purpose::STANDARD.encode(random_bytes::<32>())
             }

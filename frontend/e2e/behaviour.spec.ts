@@ -1,13 +1,15 @@
 /**
  * What the pages do over time, against the mocked API: a list that follows a live run, a page
  * that recovers from a failed load, data kept on screen when a background refetch fails, a
- * filter that matches nothing, and the unread count in the tablet's icon rail.
+ * filter that matches nothing, the unread count in the tablet's icon rail, and the workspace
+ * map's embedded onto-intelli UI: framed under the console's own Content-Security-Policy, signed
+ * in, and its session renewed by its expiry.
  */
 import { expect, test, type Page } from '@playwright/test';
 
 import { fixtures } from './fixtures';
 import { mockApi } from './support/mock-api';
-import { openRoute } from './support/page';
+import { NOW, openRoute } from './support/page';
 import { APP_ROUTES, type AppRoute } from './support/routes';
 
 const API = '/api/v1';
@@ -149,4 +151,42 @@ test.describe('the inbox unread count', () => {
       }
     });
   }
+});
+
+test.describe('the workspace map', () => {
+  test('frames onto-intelli’s UI and hands it the member’s session', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await openRoute(page, route('settings-map'), { mode: 'full', theme: 'light' });
+    // The build is served with the console's Content-Security-Policy (vite preview, as nginx):
+    // its frame-src lets the stand-in onto-intelli load, which shows what it was handed.
+    const frame = page.frameLocator('iframe[title^="Workspace map"]');
+    await expect(
+      frame.getByText(`Signed in to ${fixtures.ontologySession.workspace}`),
+    ).toBeVisible();
+  });
+
+  test('renews the session by its own expiry', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.clock.install({ time: NOW });
+    await mockApi(page, { mode: 'full', persona: 'member' });
+    // Sessions of ten minutes (NEXC_ONTO_SESSION_TTL_SECS=600), each from when it is minted.
+    let minted = 0;
+    await page.route(
+      (url) => url.pathname.endsWith('/ontology/session'),
+      (r) => {
+        minted += 1;
+        const expires = NOW.getTime() + (minted === 1 ? 10 : 18) * 60_000;
+        return r.fulfill({
+          json: { ...fixtures.ontologySession, expires_at: new Date(expires).toISOString() },
+        });
+      },
+    );
+    await page.goto(route('settings-map').path);
+    await expect.poll(() => minted).toBe(1);
+    await page.clock.fastForward('06:00');
+    expect(minted).toBe(1);
+    // Three quarters of its ten minutes: a new one, before the frame's runs out.
+    await page.clock.fastForward('02:00');
+    await expect.poll(() => minted).toBe(2);
+  });
 });

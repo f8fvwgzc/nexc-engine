@@ -33,9 +33,16 @@ data:
   {{- if .Values.backend.otlpEndpoint }}
   NEXC_OTLP_ENDPOINT: {{ .Values.backend.otlpEndpoint | quote }}
   {{- end }}
-  {{- if .Values.backend.ontoUrl }}
-  NEXC_ONTO_URL: {{ .Values.backend.ontoUrl | quote }}
+  {{- $ontoUrl := include "nexc.ontoUrl" . }}
+  {{- if $ontoUrl }}
+  NEXC_ONTO_MODE: service
+  NEXC_ONTO_URL: {{ $ontoUrl | quote }}
+  NEXC_ONTO_PUBLIC_URL: {{ include "nexc.ontoPublicUrl" . | quote }}
   NEXC_ONTO_WORKSPACE_PREFIX: {{ .Values.backend.ontoWorkspacePrefix | quote }}
+  NEXC_ONTO_VOCABULARY_TTL_SECS: {{ .Values.backend.ontoVocabularyTtlSecs | quote }}
+  NEXC_ONTO_SESSION_TTL_SECS: {{ .Values.backend.ontoSessionTtlSecs | quote }}
+  {{- else }}
+  NEXC_ONTO_MODE: "off"
   {{- end }}
   {{- with .Values.oidc }}
   {{- if .enabled }}

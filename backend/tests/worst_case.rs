@@ -959,7 +959,6 @@ async fn a_large_workspace_stays_bounded_and_fast(pool: PgPool) {
             50,
         ),
         (format!("{ws}/search?q=Load&limit=10"), 60),
-        (format!("{ws}/map/issue?q=issue&limit=100000"), 50),
         (format!("{ws}/timeline"), 1_000),
         (format!("{ws}/timeline/days?days=366"), 366),
         (format!("{ws}/audit?limit=100000"), 200),
@@ -985,11 +984,7 @@ async fn a_large_workspace_stays_bounded_and_fast(pool: PgPool) {
         assert!(took < BUDGET, "{path} took {took:?}");
     }
     // The whole-workspace views answer too, and the day is summarised from a bounded digest.
-    for path in [
-        format!("{ws}/map"),
-        format!("{ws}/usage"),
-        format!("{ws}/map/member/{}", w.owner_id),
-    ] {
+    for path in [format!("{ws}/ontology"), format!("{ws}/usage")] {
         let started = Instant::now();
         let (status, body) = call(&app, Method::GET, &path, &w.owner, None).await;
         assert_eq!(status, StatusCode::OK, "{path}: {body}");

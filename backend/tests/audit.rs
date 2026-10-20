@@ -1280,7 +1280,7 @@ async fn the_grpc_client_speaks_to_a_server_end_to_end(pool: PgPool) {
     assert_eq!(health.version, "stub");
     let accepted = client
         .ingest(
-            "ws-1",
+            &principal,
             vec![
                 json!({"op": "upsert", "kind": "agent", "key": "w/a", "title": "A", "props": {"n": 1}}),
                 json!({"op": "link", "from": "agent:w/a", "rel": "ran", "to": "run:r"}),

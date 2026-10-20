@@ -1720,7 +1720,7 @@ async fn the_audit_log_records_who_changed_the_workspace(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
-async fn owners_see_what_happened_and_how_things_relate(pool: PgPool) {
+async fn owners_see_what_happened(pool: PgPool) {
     let app = TestApp::new(pool, &[]).await;
     let (owner, _) = user(&app, "owner@example.com").await;
     let (member, _) = user(&app, "member@example.com").await;
@@ -1808,33 +1808,8 @@ async fn owners_see_what_happened_and_how_things_relate(pool: PgPool) {
     assert_eq!(days.as_array().unwrap().len(), 1, "{days}");
     assert_eq!(days[0]["events"], 5);
 
-    // The map counts the kinds of things and the ties between them.
-    let (status, map) = call(&app, Method::GET, &format!("{ws}/map"), &owner, None).await;
-    assert_eq!(status, StatusCode::OK, "{map}");
-    let count = |list: &str, pick: &dyn Fn(&Value) -> bool| -> i64 {
-        map[list]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|e| pick(e))
-            .unwrap()["count"]
-            .as_i64()
-            .unwrap()
-    };
-    assert_eq!(count("entities", &|e| e["key"] == "member"), 2);
-    assert_eq!(count("entities", &|e| e["key"] == "issue"), 2);
-    assert_eq!(
-        count("relations", &|r| r["from"] == "issue" && r["to"] == "issue"),
-        1,
-        "one sub-issue"
-    );
-    assert_eq!(
-        count("relations", &|r| r["from"] == "member" && r["to"] == "team"),
-        1
-    );
-
     // All of it is for admins and owners; the server's infrastructure for its administrators.
-    for path in ["timeline", "timeline/days", "map"] {
+    for path in ["timeline", "timeline/days"] {
         let (status, _) = call(&app, Method::GET, &format!("{ws}/{path}"), &member, None).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{path}");
     }

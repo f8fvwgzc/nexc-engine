@@ -1,20 +1,52 @@
-# onto-intelli as the audit's query engine for nexc-engine ("ask the audit").
-# Mounted at /data/onto-intelli.toml by docker-compose.onto.yml; relative paths
-# resolve against this file's folder (the `onto-data` volume).
+# onto-intelli for nexc-engine: the one place the ontology lives (docs/ONTOLOGY.md). Every graph's
+# execution vocabulary, the workspace projected as entities and links, the audit's facts, the
+# schema with its proposals, and the UI the console embeds as its workspace map.
+#
+# Mounted by docker-compose.onto.yml at /etc/onto/onto-intelli.toml, next to the two schema files
+# it extends (relative paths resolve against this file's folder). Edit `[ui] embed_origins` when
+# the console is served from another origin than http://localhost:8080.
 
 [engine]
-storage = "sqlite"
-data_dir = "."
-# One onto-intelli workspace per nexc workspace: `{NEXC_ONTO_WORKSPACE_PREFIX}{workspace id}`.
-# This is only the default for requests that name none.
+# PostgreSQL with pgvector 0.7 or newer, at ONTO_DATABASE_URL (onto-intelli reads it from the
+# environment): in Compose its own server `onto-postgres`, in Helm its own login and database on
+# the chart's PostgreSQL. One tenant per nexc workspace (x-onto-tenant: ws_<id>), one schema each.
+storage = "postgres"
+tenancy = "multi"
+# Read-your-writes across replicas: a vocabulary written through one is read back through any.
+read_consistency = "strong"
+# nexc names the workspace on every call (`{NEXC_ONTO_WORKSPACE_PREFIX}{workspace id}`).
 default_workspace = "nexc"
 ingest_queue = 4096
 
+[engine.postgres]
+tenant = "default"
+schema_prefix = "onto_"
+# Each tenant open in an `onto serve` process keeps one connection of this pool for its LISTEN, for
+# as long as the process runs, and nexc opens one tenant per workspace (its first export, read or
+# session): past `max_connections - 1` workspaces every call waits for a connection and times out.
+# Size it above the number of workspaces, with headroom, and the PostgreSQL server's own
+# max_connections above the sum over every onto serve replica (docs/ONTOLOGY.md §10).
+max_connections = 64
+connect_timeout_secs = 10
+
 [ontology]
 schema = "builtin:enterprise"
-# The audit's kinds and relations (runs, nodes, tools, hosts, policies, actions).
-extend = ["nexc-audit.toml"]
+# The graphs' node and relation types (ExecutionService), the audit's kinds and relations, and
+# the workspace's own (cycles, and the links the projection states).
+extend = ["builtin:nexc-execution", "nexc-audit.toml", "nexc-workspace.toml"]
+schema_mode = "live"
 strict = false
+
+# Who may change the schema. nexc grants `schema_admin` and `approver` to a workspace's owners
+# and admins, `member` to members, `viewer` to guests and `agent` to its assistant, which only
+# proposes: agents never apply or approve, whatever else they hold.
+[governance]
+live_edits = true
+apply_roles = ["schema_admin"]
+approve_roles = ["approver"]
+propose_roles = []
+required_approvals = 1
+allow_self_approval = false
 
 [llm]
 # mock answers offline and deterministically; set anthropic (ANTHROPIC_API_KEY) or an
@@ -40,7 +72,27 @@ proto_files = []
 
 [auth]
 mode = "token"
-# The backend presents NEXC_ONTO_TOKEN; it writes every workspace's facts, so it is an admin.
+# Browser sessions (POST /v1/auth/session) are signed with ONTO_SESSION_SECRET, the same on
+# every replica (scripts/init-env.sh generates it).
+session_secret_env = "ONTO_SESSION_SECRET"
+session_max_ttl_secs = 43200
+
+# The backend presents NEXC_ONTO_TOKEN. On its own it is the service that writes what nexc knows
+# (the projection, the audit's facts, a graph's first vocabulary), restricted entities included.
+# Every call made for someone names them (x-onto-act-*), with roles from this list only: never
+# admin.
 [[auth.tokens]]
 token_env = "NEXC_ONTO_TOKEN"
 principal = { id = "nexc-backend", roles = ["admin"], workspaces = ["*"] }
+impersonate = true
+impersonate_roles = ["viewer", "member", "agent", "approver", "schema_admin"]
+tenants = ["*"]
+
+[mcp]
+principal = { id = "mcp-agent", roles = ["agent"], workspaces = ["*"] }
+
+[ui]
+enabled = true
+# The console's origins: CSP frame-ancestors, and who may hand the UI a session.
+embed_origins = ["http://localhost:8080", "http://127.0.0.1:8080"]
+title = "Ontology"

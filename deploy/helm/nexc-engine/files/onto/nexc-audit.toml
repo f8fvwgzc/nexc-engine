@@ -1,0 +1,127 @@
+# The audit's ontology, extending onto-intelli's built-in enterprise schema with
+# what nexc-engine exports (backend/src/ontology/facts.rs): the things agents
+# act on and the relations between them. onto-intelli accepts them without this
+# file (strict = false); it names and describes them for the model that explains.
+#
+# Counts are declared as floats: facts arrive over gRPC as google.protobuf.Struct,
+# whose numbers are doubles, and onto-intelli checks a declared int against the
+# transcoded 0.0.
+
+name = "nexc-audit"
+version = 1
+
+[object_types.run]
+description = "One execution of a graph in nexc-engine; its state is the run's status, its props the cost and tokens."
+states = ["queued", "running", "succeeded", "failed", "cancelled"]
+terminal_states = ["succeeded", "failed", "cancelled"]
+alert_states = ["failed"]
+properties.cost_usd = { type = "float" }
+properties.tokens_in = { type = "float" }
+properties.tokens_out = { type = "float" }
+properties.policy_mismatches = { type = "float" }
+
+[object_types.node]
+description = "A node of a graph that a run executed."
+
+[object_types.tool]
+description = "A tool an agent may call (write_file, run_python, web_search)."
+
+[object_types.model]
+description = "A language model an agent called."
+
+[object_types.document]
+description = "A document of the knowledge base; `label` is its classification."
+properties.label = { type = "enum", values = ["public", "internal", "confidential", "restricted"] }
+
+[object_types.memory]
+description = "A memory an agent was given; `label` is its classification."
+properties.label = { type = "enum", values = ["public", "internal", "confidential", "restricted"] }
+
+[object_types.host]
+description = "A host outside the platform an agent called."
+
+[object_types.policy]
+description = "An agent's capabilities: the tools, data, hosts, models and delegation it is allowed."
+properties.version = { type = "float" }
+properties.all_tools = { type = "bool" }
+
+[object_types.action]
+description = "Something a policy decided on: a tool, a host, a model, a spawn (`action` and `subject`)."
+
+[link_types.ran]
+from = ["agent"]
+to = ["run"]
+inverse = "run_by"
+weight = 1.0
+
+[link_types.executed]
+from = ["run"]
+to = ["node"]
+inverse = "executed_in"
+weight = 0.8
+
+[link_types.used_tool]
+from = ["agent"]
+to = ["tool"]
+inverse = "tool_used_by"
+weight = 0.8
+
+[link_types.used_model]
+from = ["agent"]
+to = ["model"]
+inverse = "model_used_by"
+weight = 0.5
+
+[link_types.read]
+from = ["agent"]
+to = ["document", "memory"]
+inverse = "read_by"
+weight = 1.0
+
+[link_types.called]
+from = ["agent"]
+to = ["host"]
+inverse = "host_called_by"
+weight = 1.0
+
+[link_types.delegated_to]
+from = ["agent"]
+to = ["agent"]
+inverse = "delegated_by"
+weight = 0.9
+
+[link_types.governed_by]
+from = ["agent"]
+to = ["policy"]
+inverse = "governs"
+weight = 1.0
+
+[link_types.allows]
+from = ["policy"]
+to = ["tool"]
+inverse = "allowed_by"
+weight = 0.9
+
+[link_types.denied]
+from = ["policy"]
+to = ["action"]
+inverse = "denied_by"
+weight = 1.0
+
+[link_types.denied_in]
+from = ["action"]
+to = ["run"]
+inverse = "had_denial"
+weight = 0.9
+
+[link_types.attempted]
+from = ["agent"]
+to = ["action"]
+inverse = "attempted_by"
+weight = 0.7
+
+[link_types.reports_to]
+from = ["agent"]
+to = ["agent"]
+inverse = "manages_agent"
+weight = 0.6

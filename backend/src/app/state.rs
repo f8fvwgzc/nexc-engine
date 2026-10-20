@@ -9,6 +9,7 @@ use tonic::transport::Channel;
 
 use super::caches::Caches;
 use crate::config::{RuntimeProtocol, Settings};
+use crate::domain::ontology::OntoMode;
 use crate::engine::Engine;
 use crate::engine::executor::symphony::SymphonyBridge;
 use crate::http::middleware::rate_limit::RateLimiters;
@@ -53,8 +54,10 @@ pub struct AppState {
     pub memories: Arc<MemoryIndex>,
     /// Whether the database can search document passages by vector.
     pub passage_vectors: Arc<crate::repo::knowledge_vectors::Support>,
-    /// The onto-intelli the audit's facts go to and questions come from;
-    /// `None` turns "ask the audit" off (`NEXC_ONTO_URL` unset).
+    /// The onto-intelli that holds the workspaces' ontology: graph
+    /// vocabularies, the projected workspace, the audit's facts, schema
+    /// proposals and the UI's sessions. `None` when `NEXC_ONTO_MODE=off`:
+    /// graphs use the read-only starter vocabulary and the rest is off.
     pub ontology: Option<Arc<dyn OntologyBackend>>,
     /// The channel to the runtime's gRPC endpoint (`NEXC_RUNTIME_PROTOCOL=grpc`).
     pub runtime_grpc: Option<Channel>,
@@ -93,7 +96,7 @@ impl AppState {
             ),
         );
         let ontology: Option<Arc<dyn OntologyBackend>> = match &settings.onto_url {
-            Some(url) => {
+            Some(url) if settings.onto_mode == OntoMode::Service => {
                 let token = settings.onto_token.as_ref().map(|t| t.expose().as_str());
                 Some(Arc::new(GrpcOntology::with_channel(
                     url,
@@ -102,7 +105,7 @@ impl AppState {
                     metrics.clone(),
                 )?))
             }
-            None => None,
+            _ => None,
         };
         let state = Self::with_provider_and_metrics(settings, db, http, router, metrics)?;
         Ok(match ontology {
@@ -115,6 +118,15 @@ impl AppState {
     pub fn with_ontology(mut self, backend: Arc<dyn OntologyBackend>) -> Self {
         self.ontology = Some(backend);
         self
+    }
+
+    /// How this instance reaches onto-intelli: service whenever a backend is
+    /// configured (a stub in tests included), off otherwise.
+    pub fn onto_mode(&self) -> OntoMode {
+        match &self.ontology {
+            Some(_) => OntoMode::Service,
+            None => OntoMode::Off,
+        }
     }
 
     /// Builds the state with a custom LLM provider (tests inject fakes here).
@@ -157,7 +169,10 @@ impl AppState {
         };
         Ok(AppState {
             oidc,
-            caches: Arc::new(Caches::new(settings.cache_ttl, metrics.clone())),
+            caches: Arc::new(
+                Caches::new(settings.cache_ttl, metrics.clone())
+                    .with_vocabulary_ttl(settings.onto_vocabulary_ttl),
+            ),
             runtime_grpc,
             otlp_channel,
             gateway_http: crate::gateway::http_client()?,

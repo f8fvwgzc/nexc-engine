@@ -6,6 +6,7 @@ use super::{deps, editor};
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::graph::{EdgeOrigin, Graph, NodeDraft, NodeOrigin, normalize_tags};
+use crate::domain::ontology::Ontology;
 use crate::domain::template;
 use crate::repo;
 
@@ -55,8 +56,9 @@ pub async fn instantiate(
                 .id,
         );
     }
-    // Templates are written against the starter ontology every new graph begins with.
-    if let Some(relation) = graph.ontology.dependency_relation() {
+    // Templates are written against the starter vocabulary every new graph begins with.
+    let starter = Ontology::starter();
+    if let Some(relation) = starter.dependency_relation() {
         for (s, t) in spec.edge_indices() {
             repo::edges::create(
                 &mut *tx,

@@ -19,6 +19,7 @@ use crate::domain::graph::{EdgeOrigin, EdgeSuggestion, GraphEdge, GraphNode, wik
 use crate::domain::ontology::Ontology;
 use crate::dsa::bm25::Bm25Index;
 use crate::kernel;
+use crate::ontology::vocabulary::{self, Actor};
 use crate::realtime::events::WsMessage;
 use crate::repo;
 
@@ -149,7 +150,10 @@ pub fn schedule(state: &AppState, graph_id: Uuid) {
 pub async fn detect(state: &AppState, graph_id: Uuid) -> anyhow::Result<()> {
     let nodes = repo::nodes::list(&state.db, graph_id).await?;
     let mut edges = repo::edges::list(&state.db, graph_id).await?;
-    let ontology = repo::graphs::ontology(&state.db, graph_id).await?;
+    let Some(meta) = repo::graphs::header(&state.db, graph_id).await? else {
+        return Ok(());
+    };
+    let ontology = vocabulary::of(state, meta.vocabulary_ref(), Actor::Runtime).await?;
     let changed = sync_wikilinks(state, graph_id, &nodes, &mut edges, &ontology).await?;
     if changed {
         repo::graphs::touch(&state.db, graph_id).await?;

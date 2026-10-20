@@ -154,6 +154,7 @@ export const routes: RouteObject[] = [
               { path: 'audit', ...page(routeModules.audit) },
               { path: 'activity', ...page(routeModules.settingsActivity) },
               { path: 'map', ...page(routeModules.settingsMap) },
+              { path: 'ontology', ...page(routeModules.settingsOntology) },
               { path: 'transfer', ...page(routeModules.settingsTransfer) },
               {
                 path: 'infrastructure',

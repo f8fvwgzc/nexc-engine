@@ -72,6 +72,8 @@ import {
   type StateCategory,
 } from '@/schemas/issue';
 import type { Team, Workspace } from '@/schemas/workspace';
+import { OntologyLink } from '@/features/ontology/ontology-link';
+import { ontoEntity } from '@/schemas/ontology';
 
 const VIEW_KEY = 'nexc.issues.view';
 type View = 'list' | 'board';
@@ -315,6 +317,7 @@ function IssueDialog({
               Open graph
             </Button>
           )}
+          <OntologyLink entity={ontoEntity('issue', issue.id)} compact />
           <IconButton
             className="text-muted-foreground hover:text-destructive"
             label={`Delete ${issue.identifier}`}

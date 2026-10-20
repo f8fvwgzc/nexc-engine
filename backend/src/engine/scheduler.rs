@@ -63,6 +63,7 @@ use crate::dsa::priority::ReadyQueue;
 use crate::llm::LlmTarget;
 use crate::llm::pricing::{cost_usd, cost_usd_cached};
 use crate::llm::retry::full_jitter;
+use crate::ontology::vocabulary::{self, Actor, VocabularyError};
 use crate::realtime::events::{LogLevel, NodeStatusEvent, SseEvent};
 use crate::repo::audit::Subject;
 use crate::repo::run_leases;
@@ -104,21 +105,19 @@ pub async fn create_run(
     graph_id: Uuid,
     opts: RunOptions,
 ) -> Result<Run, AppError> {
-    let graph = editor::load_graph(state, owner, graph_id).await?;
-    if graph.nodes.is_empty() {
+    // The vocabulary is not needed here: a run can be queued while onto-intelli is away, and
+    // its nodes ask for it when they run.
+    let (graph, nodes, _) = editor::load_structure(state, owner, graph_id).await?;
+    if nodes.is_empty() {
         return Err(AppError::Unprocessable(
             "the graph has no nodes to run".into(),
         ));
     }
     let selected: Vec<&GraphNode> = match &opts.node_ids {
-        None => graph.nodes.iter().collect(),
+        None => nodes.iter().collect(),
         Some(ids) => {
             let wanted: HashSet<Uuid> = ids.iter().copied().collect();
-            let found: Vec<&GraphNode> = graph
-                .nodes
-                .iter()
-                .filter(|n| wanted.contains(&n.id))
-                .collect();
+            let found: Vec<&GraphNode> = nodes.iter().filter(|n| wanted.contains(&n.id)).collect();
             if found.len() != wanted.len() {
                 return Err(AppError::field(
                     "node_ids",
@@ -764,7 +763,11 @@ struct RunData {
     /// The latest version of every policy of the workspace, as the run started.
     policies: Arc<Vec<Policy>>,
     workspace_id: Option<Uuid>,
-    ontology: Ontology,
+    graph_name: String,
+    /// The graph's vocabulary in onto-intelli as the run started; `None` when
+    /// onto-intelli could not be reached and nothing was kept, in which case
+    /// every node asks again before it runs ([`node_vocabulary`]).
+    ontology: Option<Arc<Ontology>>,
     edges: Vec<GraphEdge>,
     /// The run's trace chain.
     trace: TraceHandle,
@@ -883,6 +886,13 @@ impl Execution {
             tx.commit().await?;
         }
         let pinned_agent = repo::a2a::pinned_agent_of_graph(&state.db, row.graph_id).await?;
+        let ontology = match vocabulary::of(state, graph.vocabulary_ref(), Actor::Runtime).await {
+            Ok(vocabulary) => Some(vocabulary),
+            Err(err) => {
+                tracing::warn!(run_id = %row.id, error = %err, "the graph's vocabulary is not at hand; each node asks for it again");
+                None
+            }
+        };
         let data = RunData {
             run_id: row.id,
             graph_id: row.graph_id,
@@ -894,7 +904,8 @@ impl Execution {
             policy: guardrails::load(state, graph.workspace_id).await?,
             policies,
             workspace_id: graph.workspace_id,
-            ontology: graph.ontology,
+            graph_name: graph.name,
+            ontology,
             edges,
             trace,
             pinned_agent,
@@ -1529,7 +1540,12 @@ async fn book_refused_spend(
 }
 
 /// Content hash used for memoization: everything that influences the result.
-fn content_hash(data: &RunData, node: &GraphNode, upstream: &[(Uuid, String)]) -> String {
+fn content_hash(
+    data: &RunData,
+    vocabulary: &Ontology,
+    node: &GraphNode,
+    upstream: &[(Uuid, String)],
+) -> String {
     let upstream: Vec<_> = upstream
         .iter()
         .map(|(id, out)| json!([id, kernel::sha256_hex(out.as_bytes())]))
@@ -1540,7 +1556,7 @@ fn content_hash(data: &RunData, node: &GraphNode, upstream: &[(Uuid, String)]) -
         "title": node.title,
         "content": node.content,
         "kind": node.kind,
-        "type": data.ontology.node_type(&node.kind),
+        "type": vocabulary.node_type(&node.kind),
         "executor": node.executor,
         "agent_role": node.agent_role,
         "provider": data.target.provider,
@@ -1578,7 +1594,29 @@ async fn run_node(
         };
     };
     let node_id = node.id;
-    match NodeTask::new(state.clone(), data.clone(), token, node, upstream, carried).await {
+    // Attempts spent waiting for the vocabulary count against the node's budget.
+    let (vocabulary, first_attempt) =
+        match node_vocabulary(&state, &data, &token, node_id, first_attempt, budget).await {
+            Ok(found) => found,
+            Err(status) => {
+                return NodeResult {
+                    index,
+                    status,
+                    output: None,
+                };
+            }
+        };
+    match NodeTask::new(
+        state.clone(),
+        data.clone(),
+        token,
+        node,
+        upstream,
+        carried,
+        vocabulary,
+    )
+    .await
+    {
         Ok(task) => task.run(index, first_attempt, budget).await,
         Err(err) => {
             let message = err.to_string();
@@ -1614,6 +1652,57 @@ async fn run_node(
             }
         }
     }
+}
+
+/// The graph's vocabulary for a node about to run: the one the run started
+/// with, or asked of onto-intelli again. While onto-intelli cannot be
+/// reached and nothing is kept, the node fails with a retryable "ontology
+/// unavailable" error: it is tried again with backoff within its attempts,
+/// and fails for good after the last. Any other refusal fails it at once.
+/// Returns the attempt the node runs as: the attempts spent waiting count
+/// against its budget.
+async fn node_vocabulary(
+    state: &AppState,
+    data: &RunData,
+    token: &CancellationToken,
+    node_id: Uuid,
+    first_attempt: i32,
+    budget: i32,
+) -> Result<(Arc<Ontology>, i32), NodeStatus> {
+    if let Some(vocabulary) = &data.ontology {
+        return Ok((vocabulary.clone(), first_attempt));
+    }
+    let graph = vocabulary::GraphRef {
+        id: data.graph_id,
+        workspace_id: data.workspace_id,
+        name: &data.graph_name,
+    };
+    let max_attempts = budget.max(1);
+    let first_attempt = first_attempt.clamp(1, max_attempts);
+    for attempt in first_attempt..=max_attempts {
+        let error = match vocabulary::of(state, graph, Actor::Runtime).await {
+            Ok(vocabulary) => return Ok((vocabulary, attempt)),
+            Err(err @ VocabularyError::Unavailable(_)) => ExecError::transient(err.to_string()),
+            Err(err) => ExecError::fatal(err.to_string()),
+        };
+        if !error.retryable || attempt == max_attempts {
+            fail_node(state, data, node_id, attempt, error.message).await;
+            return Err(NodeStatus::Failed);
+        }
+        let delay = full_jitter(
+            attempt as u32,
+            Duration::from_secs(2),
+            Duration::from_secs(60),
+        );
+        tracing::warn!(run_id = %data.run_id, %node_id, attempt, error = %error.message,
+            "attempt {attempt} failed: the graph's vocabulary is not at hand; retrying in {:.1}s",
+            delay.as_secs_f64());
+        tokio::select! {
+            _ = token.cancelled() => return Err(NodeStatus::Cancelled),
+            _ = tokio::time::sleep(delay) => {}
+        }
+    }
+    unreachable!("the last attempt always returns")
 }
 
 /// A node that waited for an approval during `attempt` when its run was
@@ -1802,14 +1891,15 @@ impl NodeTask {
         node: GraphNode,
         upstream: Vec<(Uuid, String)>,
         carried: Option<Approval>,
+        vocabulary: Arc<Ontology>,
     ) -> anyhow::Result<Self> {
         let began = Utc::now();
-        let hash = content_hash(&data, &node, &upstream);
+        let hash = content_hash(&data, &vocabulary, &node, &upstream);
         let agent = match (data.pinned_agent, data.workspace_id) {
             (Some(pinned), Some(workspace)) => {
                 repo::agents::find(&state.db, workspace, pinned).await?
             }
-            _ => orchestrator::assign(&state, data.workspace_id, &node, &data.ontology).await?,
+            _ => orchestrator::assign(&state, data.workspace_id, &node, &vocabulary).await?,
         };
         let query = format!("{} {}", node.title, node.content);
         let recalled = match data.workspace_id {
@@ -1975,7 +2065,7 @@ impl NodeTask {
                 title,
                 output,
                 relation: edge
-                    .and_then(|e| data.ontology.relation_type(&e.kind))
+                    .and_then(|e| vocabulary.relation_type(&e.kind))
                     .map(|r| r.label.clone())
                     .unwrap_or_default(),
                 reason: edge.map(|e| e.reason.clone()).unwrap_or_default(),
@@ -2138,7 +2228,7 @@ impl NodeTask {
             workspace_id: data.workspace_id,
             owner: data.owner,
             goal: data.goal.clone(),
-            node_type: data.ontology.node_type(&node.kind).cloned(),
+            node_type: vocabulary.node_type(&node.kind).cloned(),
             code_exec_allowed: data.policy.allow_code_exec,
             node,
             upstream: upstream_outputs,

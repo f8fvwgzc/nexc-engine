@@ -32,51 +32,6 @@ export const daySummarySchema = z.object({
 });
 export type DaySummary = z.infer<typeof daySummarySchema>;
 
-/** The kinds of things a workspace holds and the ties between them, counted. */
-export const workspaceMapSchema = z.object({
-  entities: z.array(z.object({ key: z.string(), label: z.string(), count: z.number().int() })),
-  relations: z.array(
-    z.object({ from: z.string(), to: z.string(), label: z.string(), count: z.number().int() }),
-  ),
-});
-export type WorkspaceMap = z.infer<typeof workspaceMapSchema>;
-
-/** The kinds of things whose ties can be followed on the map. */
-export const mapKindSchema = z.enum([
-  'member',
-  'team',
-  'project',
-  'issue',
-  'graph',
-  'document',
-  'agent',
-]);
-export type MapKind = z.infer<typeof mapKindSchema>;
-
-/** One thing of a workspace. `kind` is open: labels, cycles and topics are named but not followed. */
-export const mapItemSchema = z.object({
-  kind: z.string(),
-  id: idSchema,
-  title: z.string(),
-  subtitle: z.string(),
-});
-export type MapItem = z.infer<typeof mapItemSchema>;
-
-/** What one thing is tied to in one way: how many, and the first of them. */
-export const mapTieSchema = z.object({
-  label: z.string(),
-  kind: z.string(),
-  count: z.number().int(),
-  items: z.array(mapItemSchema),
-});
-export type MapTie = z.infer<typeof mapTieSchema>;
-
-export const mapNeighbourhoodSchema = z.object({
-  item: mapItemSchema,
-  ties: z.array(mapTieSchema),
-});
-export type MapNeighbourhood = z.infer<typeof mapNeighbourhoodSchema>;
-
 /** What the server runs on (server administrators only). */
 export const infrastructureSchema = z.object({
   database: z.object({
@@ -120,7 +75,7 @@ export const infrastructureSchema = z.object({
     max_response_bytes: z.number().int(),
   }),
   embedding_model: z.string(),
-  /** The onto-intelli the audit's facts go to; disabled when none is configured. */
+  /** The onto-intelli the workspaces' ontology lives in; disabled when none is configured. */
   ontology: z.object({
     enabled: z.boolean(),
     ok: z.boolean(),

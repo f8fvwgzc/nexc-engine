@@ -39,6 +39,8 @@ import {
 } from '@/lib/format';
 import { isRunActive } from '@/schemas/run';
 import { isWorkspaceAdmin } from '@/schemas/workspace';
+import { OntologyLink } from '@/features/ontology/ontology-link';
+import { ontoEntity } from '@/schemas/ontology';
 
 function RunDetail({ runId }: { runId: string }) {
   const [params] = useSearchParams();
@@ -98,6 +100,7 @@ function RunDetail({ runId }: { runId: string }) {
             <Button variant="outline" asChild>
               <Link to={`/app/graphs/${run.graph_id}`}>Open canvas</Link>
             </Button>
+            <OntologyLink entity={ontoEntity('run', run.id)} size="default" />
           </>
         }
       />

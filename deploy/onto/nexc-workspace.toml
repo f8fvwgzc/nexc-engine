@@ -1,0 +1,102 @@
+# nexc-engine's workspace as onto-intelli models it (backend/src/ontology/projection.rs): the
+# kinds and relations the projection states besides the built-in enterprise schema's (team,
+# person, project, issue, agent) and the nexc-execution package's (execution_graph). Only ids,
+# names, states and links are projected, never content. onto-intelli accepts them without this
+# file (strict = false); it names and describes them on the map and for the model that explains.
+#
+# Private teams, and what belongs to them, are `visibility = "restricted"` with the team (and
+# team:admins, the group of the workspace's owners and admins) on their `acl`.
+
+name = "nexc-workspace"
+version = 1
+
+[object_types.cycle]
+label = "Cycle"
+category = "container"
+icon = "calendar"
+color = "#14b8a6"
+description = "A time box a nexc team works in; its issues are in it."
+properties.number = { type = "float" }
+properties.starts_on = { type = "string" }
+properties.ends_on = { type = "string" }
+
+[link_types.in_cycle]
+label = "In cycle"
+from = ["issue"]
+to = ["cycle"]
+inverse = "cycle_issues"
+cardinality = "one"
+weight = 0.6
+description = "The cycle an issue is planned in."
+
+[link_types.cycle_of]
+label = "Cycle of"
+from = ["cycle"]
+to = ["team"]
+inverse = "has_cycle"
+cardinality = "one"
+weight = 0.7
+description = "The team a cycle belongs to."
+
+[link_types.planned_by]
+label = "Planned by"
+from = ["issue"]
+to = ["execution_graph"]
+inverse = "plans"
+cardinality = "one"
+weight = 0.8
+description = "The graph of agents that plans and runs an issue."
+
+[link_types.led_by]
+label = "Led by"
+from = ["project"]
+to = ["person"]
+inverse = "leads"
+cardinality = "one"
+weight = 0.8
+description = "The person who leads a project."
+
+[link_types.in_team]
+label = "In team"
+from = ["execution_graph"]
+to = ["team"]
+inverse = "team_graphs"
+cardinality = "one"
+weight = 0.7
+description = "The team a graph belongs to (a graph without one belongs to the whole workspace)."
+
+[link_types.created_by]
+label = "Created by"
+from = ["execution_graph"]
+to = ["person"]
+inverse = "created"
+cardinality = "one"
+weight = 0.5
+description = "Who created a graph."
+
+[link_types.uploaded_by]
+label = "Uploaded by"
+from = ["document"]
+to = ["person"]
+inverse = "uploaded"
+cardinality = "one"
+weight = 0.4
+description = "Who uploaded a document to the knowledge base."
+
+[link_types.run_of]
+label = "Run of"
+from = ["run"]
+to = ["execution_graph"]
+inverse = "has_run"
+cardinality = "one"
+weight = 0.8
+description = "The graph a run executed."
+
+[link_types.started_by]
+label = "Started by"
+from = ["run"]
+to = ["person"]
+inverse = "started"
+cardinality = "one"
+weight = 0.5
+description = "Who started a run."

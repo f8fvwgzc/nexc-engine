@@ -103,6 +103,12 @@ export const APP_ROUTES: AppRoute[] = [
     unguided: 'a quiet day has nothing to create (AUDIT.md F27, deferred)',
   },
   { name: 'settings-map', path: '/app/settings/map', persona: 'member' },
+  {
+    name: 'settings-ontology',
+    path: '/app/settings/ontology',
+    persona: 'member',
+    list: true,
+  },
   { name: 'settings-transfer', path: '/app/settings/transfer', persona: 'member' },
   {
     name: 'platform-workspaces',

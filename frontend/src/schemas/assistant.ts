@@ -10,6 +10,15 @@ export const pageContextSchema = z.object({
 });
 export type PageContext = z.infer<typeof pageContextSchema>;
 
+/** A schema change the assistant proposed in onto-intelli; people review it there. */
+export const filedProposalSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  breaking: z.boolean(),
+  review_url: z.string().nullable(),
+});
+export type FiledProposal = z.infer<typeof filedProposalSchema>;
+
 export const assistantReplySchema = z.object({
   /** The conversation this exchange was saved to; sent back to continue it. */
   conversation_id: idSchema,
@@ -19,6 +28,8 @@ export const assistantReplySchema = z.object({
   /** Drafts it could not file. */
   skipped: z.array(z.string()),
   memories_used: z.number().int().nonnegative(),
+  /** Schema changes it proposed in onto-intelli. */
+  proposals: z.array(filedProposalSchema).default([]),
 });
 export type AssistantReply = z.infer<typeof assistantReplySchema>;
 
@@ -37,6 +48,7 @@ export const turnOutcomeSchema = z.object({
   created: z.array(filedIssueSchema),
   skipped: z.array(z.string()),
   memories_used: z.number().int().nonnegative(),
+  proposals: z.array(filedProposalSchema).default([]),
 });
 export type TurnOutcome = z.infer<typeof turnOutcomeSchema>;
 

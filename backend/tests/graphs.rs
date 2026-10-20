@@ -4,10 +4,12 @@
 
 mod common;
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::http::{Method, StatusCode, header};
 use common::TestApp;
+use nexc::ontology::stub::StubOntology;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 
@@ -440,9 +442,12 @@ async fn llm_settings_store_encrypted_keys(pool: PgPool) {
     assert_eq!(cleared.body["has_api_key"], false);
 }
 
+/// A graph's vocabulary lives in onto-intelli (here the in-memory stub):
+/// nexc keeps its own rules (types in use, blocking cycles) and writes
+/// through it.
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
 async fn ontology_is_data_owned_by_the_graph(pool: PgPool) {
-    let app = TestApp::new(pool, &[]).await;
+    let app = TestApp::with_ontology(pool, &[], Arc::new(StubOntology::new())).await;
     let (token, _) = app.register("ontology@example.com").await;
     let gid = app.graph(&token, "Trade gold").await;
     let url = format!("/api/v1/graphs/{gid}");

@@ -57,7 +57,7 @@ const WRITE_TARGET_MS: f64 = 50.0;
 /// firewall's is measured in process and taken off).
 const GRPC_TARGET_MS: f64 = 1.0;
 /// The reads that aggregate a whole workspace in one answer (a dashboard, a
-/// search, a map, a month of usage) run many queries by design, and the
+/// search, a month of usage) run many queries by design, and the
 /// server's status page probes what it runs on; they are held to a target
 /// of their own.
 const AGGREGATE_TARGET_MS: f64 = 200.0;
@@ -65,9 +65,6 @@ const AGGREGATES: &[&str] = &[
     "/api/v1/admin/infrastructure",
     "/api/v1/workspaces/{wid}/secops/overview",
     "/api/v1/workspaces/{wid}/search",
-    "/api/v1/workspaces/{wid}/map",
-    "/api/v1/workspaces/{wid}/map/{kind}",
-    "/api/v1/workspaces/{wid}/map/{kind}/{id}",
     "/api/v1/workspaces/{wid}/usage",
     "/api/v1/workspaces/{wid}/timeline/summary",
     "/api/v1/workspaces/{wid}/transfers",

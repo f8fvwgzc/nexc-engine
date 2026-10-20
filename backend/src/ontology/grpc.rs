@@ -1,38 +1,56 @@
-//! The tonic client of a real onto-intelli: `authorization: Bearer` and
-//! `x-onto-workspace` on every request, the server's status codes mapped to
-//! [`OntoError`], and the proto messages mapped to the backend's types
-//! ([`convert`], shared with the stub server).
+//! The tonic client of a real onto-intelli: `authorization: Bearer`,
+//! `x-onto-tenant` and `x-onto-workspace` on every request, the
+//! impersonation headers when the call is made for someone, the server's
+//! status codes mapped to [`OntoError`], and the proto messages mapped to the
+//! backend's types ([`convert`], shared with the stub server). Browser
+//! sessions are minted over the same port's HTTP API.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures::StreamExt;
-use serde_json::Value;
-use tonic::metadata::MetadataValue;
+use serde_json::{Value, json};
+use tonic::metadata::{AsciiMetadataValue, MetadataMap, MetadataValue};
 use tonic::transport::Channel;
 use tonic::{Code, Request, Status};
 
+use crate::domain::ontology::Ontology;
 use crate::observability::metrics::Metrics;
 use crate::rpc::ChannelSettings;
 
 use super::pb::admin_service_client::AdminServiceClient;
 use super::pb::event_service_client::EventServiceClient;
+use super::pb::execution_service_client::ExecutionServiceClient;
 use super::pb::intelli_service_client::IntelliServiceClient;
 use super::pb::ontology_service_client::OntologyServiceClient;
+use super::pb::schema_service_client::SchemaServiceClient;
 use super::{
     AskAnswer, AskRequest, AskStream, AskStreamEvent, Entity, EventQuery, FindQuery, IngestOutcome,
-    OntoError, OntoEvent, OntoHealth, OntologyBackend, Principal, Subgraph, TraverseQuery, json,
+    OntoError, OntoEvent, OntoHealth, OntoSession, OntologyBackend, Principal, SchemaChange,
+    SchemaProposalDraft, Subgraph, TraverseQuery, json, pb,
 };
 
 /// Opening the TCP connection.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// One question, including the model's time when it is used.
 const ASK_TIMEOUT: Duration = Duration::from_secs(60);
-/// A graph query; deterministic, so quick.
+/// A graph query, a vocabulary or a schema read; deterministic, so quick.
 const QUERY_TIMEOUT: Duration = Duration::from_secs(10);
+/// A write that opens a tenant the first time (its tables are created then).
+const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 /// One ingest stream.
 const INGEST_TIMEOUT: Duration = Duration::from_secs(60);
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// The metadata names onto-intelli reads.
+pub mod header {
+    pub const TENANT: &str = "x-onto-tenant";
+    pub const WORKSPACE: &str = "x-onto-workspace";
+    pub const ACT_AS: &str = "x-onto-act-as";
+    pub const ACT_ROLES: &str = "x-onto-act-roles";
+    pub const ACT_WORKSPACES: &str = "x-onto-act-workspaces";
+    pub const ACT_ENTITY: &str = "x-onto-act-entity";
+}
 
 /// A real onto-intelli at `url`.
 #[derive(Clone)]
@@ -40,6 +58,9 @@ pub struct GrpcOntology {
     url: String,
     channel: Channel,
     token: Option<MetadataValue<tonic::metadata::Ascii>>,
+    /// The bearer token itself, for the HTTP API (sessions).
+    bearer: Option<String>,
+    http: reqwest::Client,
     metrics: Arc<Metrics>,
 }
 
@@ -67,6 +88,7 @@ impl GrpcOntology {
         let settings = settings.connect_timeout(CONNECT_TIMEOUT);
         let channel = crate::rpc::channel(url, &settings)
             .map_err(|err| OntoError::Invalid(format!("NEXC_ONTO_URL: {err}")))?;
+        let bearer = token.map(str::to_owned);
         let token = match token {
             Some(token) => Some(
                 format!("Bearer {token}")
@@ -75,10 +97,18 @@ impl GrpcOntology {
             ),
             None => None,
         };
+        let http = reqwest::Client::builder()
+            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(QUERY_TIMEOUT)
+            .user_agent(concat!("nexc-engine/", env!("CARGO_PKG_VERSION")))
+            .build()
+            .map_err(|err| OntoError::Invalid(format!("HTTP client: {err}")))?;
         Ok(GrpcOntology {
-            url: url.to_owned(),
+            url: url.trim_end_matches('/').to_owned(),
             channel,
             token,
+            bearer,
+            http,
             metrics,
         })
     }
@@ -89,20 +119,79 @@ impl GrpcOntology {
         result
     }
 
-    fn request<T>(&self, message: T, workspace: Option<&str>, timeout: Duration) -> Request<T> {
+    fn request<T>(
+        &self,
+        message: T,
+        principal: Option<&Principal>,
+        timeout: Duration,
+    ) -> Request<T> {
         let mut request = Request::new(message);
         if let Some(token) = &self.token {
             request
                 .metadata_mut()
                 .insert("authorization", token.clone());
         }
-        if let Some(workspace) = workspace
-            && let Ok(value) = workspace.parse()
-        {
-            request.metadata_mut().insert("x-onto-workspace", value);
+        if let Some(principal) = principal {
+            principal_metadata(request.metadata_mut(), principal);
         }
         request.set_timeout(timeout);
         request
+    }
+}
+
+fn ascii(value: &str) -> Option<AsciiMetadataValue> {
+    value.parse().ok()
+}
+
+/// The tenant, the workspace and, when the call is made for someone, who:
+/// what onto-intelli authorizes and audits the call by.
+pub fn principal_metadata(metadata: &mut MetadataMap, principal: &Principal) {
+    let mut put = |name: &'static str, value: &str| {
+        if !value.is_empty()
+            && let Some(value) = ascii(value)
+        {
+            metadata.insert(name, value);
+        }
+    };
+    put(header::TENANT, &principal.tenant);
+    put(header::WORKSPACE, &principal.workspace);
+    if principal.acts() {
+        put(header::ACT_AS, &principal.id);
+        put(header::ACT_ROLES, &principal.roles.join(","));
+        put(header::ACT_WORKSPACES, &principal.workspace);
+        if let Some(entity) = &principal.entity {
+            put(header::ACT_ENTITY, entity);
+        }
+    }
+}
+
+/// The principal the metadata names (the stub server's side of [`principal_metadata`]).
+pub fn principal_of(metadata: &MetadataMap) -> Principal {
+    let get = |name: &str| {
+        metadata
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let id = get(header::ACT_AS);
+    let roles = get(header::ACT_ROLES)
+        .split(',')
+        .map(str::trim)
+        .filter(|r| !r.is_empty())
+        .map(str::to_owned)
+        .collect();
+    let entity = Some(get(header::ACT_ENTITY)).filter(|e| !e.is_empty());
+    let workspace = Some(get(header::WORKSPACE))
+        .filter(|w| !w.is_empty())
+        .unwrap_or_else(|| get(header::ACT_WORKSPACES));
+    Principal {
+        id,
+        roles,
+        entity,
+        tenant: get(header::TENANT),
+        workspace,
     }
 }
 
@@ -119,7 +208,8 @@ pub fn error_of(status: &Status) -> OntoError {
             })
         }
         Code::PermissionDenied | Code::Unauthenticated => OntoError::Denied(message),
-        Code::InvalidArgument | Code::NotFound | Code::FailedPrecondition | Code::AlreadyExists => {
+        Code::NotFound => OntoError::NotFound(message),
+        Code::InvalidArgument | Code::FailedPrecondition | Code::AlreadyExists => {
             OntoError::Invalid(message)
         }
         _ => OntoError::Other(format!("{}: {message}", status.code().description())),
@@ -131,8 +221,25 @@ pub fn status_of(error: &OntoError) -> Status {
     match error {
         OntoError::Unavailable(m) => Status::unavailable(m.clone()),
         OntoError::Denied(m) => Status::permission_denied(m.clone()),
+        OntoError::NotFound(m) => Status::not_found(m.clone()),
         OntoError::Invalid(m) => Status::invalid_argument(m.clone()),
         OntoError::Other(m) => Status::internal(m.clone()),
+    }
+}
+
+/// The error an HTTP answer of onto-intelli stands for.
+fn http_error(status: reqwest::StatusCode, body: &Value) -> OntoError {
+    let message = body["error"]["message"]
+        .as_str()
+        .or_else(|| body["error"].as_str())
+        .unwrap_or_else(|| status.canonical_reason().unwrap_or("error"))
+        .to_owned();
+    match status.as_u16() {
+        401 | 403 => OntoError::Denied(message),
+        404 => OntoError::NotFound(message),
+        400 | 409 | 422 => OntoError::Invalid(message),
+        502..=504 => OntoError::Unavailable(message),
+        _ => OntoError::Other(format!("{status}: {message}")),
     }
 }
 
@@ -167,7 +274,7 @@ impl OntologyBackend for GrpcOntology {
     /// happened in `payload.at` (see `facts`).
     async fn ingest(
         &self,
-        workspace: &str,
+        principal: &Principal,
         records: Vec<Value>,
     ) -> Result<IngestOutcome, OntoError> {
         let mut client = EventServiceClient::new(self.channel.clone());
@@ -175,7 +282,7 @@ impl OntologyBackend for GrpcOntology {
         let stream = futures::stream::iter(messages);
         let started = Instant::now();
         let reply = client
-            .ingest(self.request(stream, Some(workspace), INGEST_TIMEOUT))
+            .ingest(self.request(stream, Some(principal), INGEST_TIMEOUT))
             .await;
         let reply = self
             .timed("EventService", "Ingest", started, reply)
@@ -192,7 +299,7 @@ impl OntologyBackend for GrpcOntology {
         let message = convert::ask_request_to(&req, &principal.workspace);
         let started = Instant::now();
         let reply = client
-            .ask(self.request(message, Some(&principal.workspace), ASK_TIMEOUT))
+            .ask(self.request(message, Some(principal), ASK_TIMEOUT))
             .await;
         let reply = self
             .timed("IntelliService", "Ask", started, reply)
@@ -210,7 +317,7 @@ impl OntologyBackend for GrpcOntology {
         let message = convert::ask_request_to(&req, &principal.workspace);
         let started = Instant::now();
         let stream = client
-            .ask_stream(self.request(message, Some(&principal.workspace), ASK_TIMEOUT))
+            .ask_stream(self.request(message, Some(principal), ASK_TIMEOUT))
             .await;
         // The stream's opening; its events follow at the model's pace.
         let stream = self
@@ -229,7 +336,7 @@ impl OntologyBackend for GrpcOntology {
         let message = convert::find_query_to(&q, &principal.workspace);
         let started = Instant::now();
         let reply = client
-            .find_entities(self.request(message, Some(&principal.workspace), QUERY_TIMEOUT))
+            .find_entities(self.request(message, Some(principal), QUERY_TIMEOUT))
             .await;
         let reply = self
             .timed("OntologyService", "FindEntities", started, reply)
@@ -247,7 +354,7 @@ impl OntologyBackend for GrpcOntology {
         let message = convert::traverse_query_to(&q);
         let started = Instant::now();
         let reply = client
-            .traverse(self.request(message, Some(&principal.workspace), QUERY_TIMEOUT))
+            .traverse(self.request(message, Some(principal), QUERY_TIMEOUT))
             .await;
         let reply = self
             .timed("OntologyService", "Traverse", started, reply)
@@ -265,13 +372,225 @@ impl OntologyBackend for GrpcOntology {
         let message = convert::event_query_to(&q, &principal.workspace);
         let started = Instant::now();
         let reply = client
-            .list(self.request(message, Some(&principal.workspace), QUERY_TIMEOUT))
+            .list(self.request(message, Some(principal), QUERY_TIMEOUT))
             .await;
         let reply = self
             .timed("EventService", "List", started, reply)
             .map_err(|s| error_of(&s))?
             .into_inner();
         Ok(reply.events.into_iter().map(convert::event_from).collect())
+    }
+
+    async fn vocabulary(&self, principal: &Principal, graph: &str) -> Result<Ontology, OntoError> {
+        let mut client = ExecutionServiceClient::new(self.channel.clone());
+        let message = pb::GraphRef {
+            graph: graph.to_owned(),
+        };
+        let started = Instant::now();
+        let reply = client
+            .vocabulary(self.request(message, Some(principal), QUERY_TIMEOUT))
+            .await;
+        let reply = self
+            .timed("ExecutionService", "Vocabulary", started, reply)
+            .map_err(|s| error_of(&s))?
+            .into_inner();
+        convert::vocabulary_from(&json::from_struct(&reply))
+    }
+
+    async fn set_vocabulary(
+        &self,
+        principal: &Principal,
+        graph: &str,
+        vocabulary: &Ontology,
+    ) -> Result<Ontology, OntoError> {
+        let mut client = ExecutionServiceClient::new(self.channel.clone());
+        let (node_types, relation_types) = convert::vocabulary_to(vocabulary);
+        let message = pb::VocabularyRequest {
+            graph: graph.to_owned(),
+            node_types,
+            relation_types,
+            workspace: principal.workspace.clone(),
+        };
+        let started = Instant::now();
+        let reply = client
+            .set_vocabulary(self.request(message, Some(principal), WRITE_TIMEOUT))
+            .await;
+        let reply = self
+            .timed("ExecutionService", "SetVocabulary", started, reply)
+            .map_err(|s| error_of(&s))?
+            .into_inner();
+        convert::vocabulary_from(&json::from_struct(&reply)["vocabulary"])
+    }
+
+    async fn init_graph(
+        &self,
+        principal: &Principal,
+        graph: &str,
+        title: &str,
+        vocabulary: Option<&Ontology>,
+    ) -> Result<Ontology, OntoError> {
+        let mut client = ExecutionServiceClient::new(self.channel.clone());
+        let (node_types, relation_types) =
+            vocabulary.map(convert::vocabulary_to).unwrap_or_default();
+        let message = pb::InitGraphRequest {
+            graph: graph.to_owned(),
+            title: title.to_owned(),
+            empty: vocabulary.is_none(),
+            node_types,
+            relation_types,
+            workspace: principal.workspace.clone(),
+        };
+        let started = Instant::now();
+        let reply = client
+            .init_graph(self.request(message, Some(principal), WRITE_TIMEOUT))
+            .await;
+        let reply = self
+            .timed("ExecutionService", "InitGraph", started, reply)
+            .map_err(|s| error_of(&s))?
+            .into_inner();
+        convert::vocabulary_from(&json::from_struct(&reply)["vocabulary"])
+    }
+
+    async fn schema(&self, principal: &Principal) -> Result<Value, OntoError> {
+        let mut client = SchemaServiceClient::new(self.channel.clone());
+        let started = Instant::now();
+        let reply = client
+            .get(self.request(
+                pb::SchemaVersionRequest { version: 0 },
+                Some(principal),
+                QUERY_TIMEOUT,
+            ))
+            .await;
+        let reply = self
+            .timed("SchemaService", "Get", started, reply)
+            .map_err(|s| error_of(&s))?
+            .into_inner();
+        Ok(json::from_struct(&reply))
+    }
+
+    async fn plan_schema(
+        &self,
+        principal: &Principal,
+        change: &SchemaChange,
+    ) -> Result<Value, OntoError> {
+        let mut client = SchemaServiceClient::new(self.channel.clone());
+        let message = pb::SchemaChangeRequest {
+            changes: change.changes.iter().map(json::to_struct).collect(),
+            message: change.message.clone(),
+            expected_version: 0,
+            migrations: change.migrations.iter().map(json::to_struct).collect(),
+            dry_run: true,
+            workspace: principal.workspace.clone(),
+        };
+        let started = Instant::now();
+        let reply = client
+            .plan(self.request(message, Some(principal), QUERY_TIMEOUT))
+            .await;
+        let reply = self
+            .timed("SchemaService", "Plan", started, reply)
+            .map_err(|s| error_of(&s))?
+            .into_inner();
+        Ok(json::from_struct(&reply))
+    }
+
+    async fn propose_schema(
+        &self,
+        principal: &Principal,
+        proposal: &SchemaProposalDraft,
+    ) -> Result<Value, OntoError> {
+        let mut client = SchemaServiceClient::new(self.channel.clone());
+        let message = pb::ProposeRequest {
+            title: proposal.title.clone(),
+            rationale: proposal.rationale.clone(),
+            changes: proposal.changes.iter().map(json::to_struct).collect(),
+            migrations: proposal.migrations.iter().map(json::to_struct).collect(),
+            message: String::new(),
+            source: proposal.source.clone(),
+            workspace: principal.workspace.clone(),
+        };
+        let started = Instant::now();
+        let reply = client
+            .propose(self.request(message, Some(principal), WRITE_TIMEOUT))
+            .await;
+        let reply = self
+            .timed("SchemaService", "Propose", started, reply)
+            .map_err(|s| error_of(&s))?
+            .into_inner();
+        Ok(json::from_struct(&reply))
+    }
+
+    async fn proposals(
+        &self,
+        principal: &Principal,
+        status: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<Value>, OntoError> {
+        let mut client = SchemaServiceClient::new(self.channel.clone());
+        let message = pb::ListProposalsRequest {
+            status: status.unwrap_or_default().to_owned(),
+            limit,
+        };
+        let started = Instant::now();
+        let reply = client
+            .list_proposals(self.request(message, Some(principal), QUERY_TIMEOUT))
+            .await;
+        let reply = self
+            .timed("SchemaService", "ListProposals", started, reply)
+            .map_err(|s| error_of(&s))?
+            .into_inner();
+        Ok(match json::from_struct(&reply)["proposals"].take() {
+            Value::Array(items) => items,
+            _ => Vec::new(),
+        })
+    }
+
+    async fn mint_session(
+        &self,
+        principal: &Principal,
+        ttl_secs: u64,
+    ) -> Result<OntoSession, OntoError> {
+        let mut body = json!({ "ttl_secs": ttl_secs });
+        // No tenant: the server's default one.
+        if !principal.tenant.is_empty() {
+            body["tenant"] = json!(principal.tenant);
+        }
+        if principal.acts() {
+            body["act_as"] = json!(principal.id);
+            body["roles"] = json!(principal.roles);
+            body["workspaces"] = json!([principal.workspace]);
+            if let Some(entity) = &principal.entity {
+                body["entity"] = json!(entity);
+            }
+        }
+        let mut request = self
+            .http
+            .post(format!("{}/v1/auth/session", self.url))
+            .json(&body);
+        if let Some(bearer) = &self.bearer {
+            request = request.bearer_auth(bearer);
+        }
+        let started = Instant::now();
+        let response = request.send().await;
+        self.metrics
+            .grpc_client("HttpApi", "AuthSession", started.elapsed());
+        let response = response.map_err(|err| OntoError::Unavailable(err.to_string()))?;
+        let status = response.status();
+        let reply: Value = response.json().await.unwrap_or(Value::Null);
+        if !status.is_success() {
+            return Err(http_error(status, &reply));
+        }
+        let token = reply["token"]
+            .as_str()
+            .filter(|t| !t.is_empty())
+            .ok_or_else(|| OntoError::Other("the session answer carries no token".into()))?;
+        Ok(OntoSession {
+            token: token.to_owned(),
+            expires_at: reply["expires_at"].as_i64().unwrap_or_default(),
+            tenant: reply["tenant"]
+                .as_str()
+                .unwrap_or(&principal.tenant)
+                .to_owned(),
+        })
     }
 }
 
@@ -282,8 +601,59 @@ pub mod convert {
 
     use super::super::{
         AskAnswer, AskMode, AskRequest, AskStreamEvent, Direction, Edge, Entity, EventQuery,
-        FindQuery, OntoEvent, ResolvedEntity, Subgraph, TraverseQuery, json, pb,
+        FindQuery, OntoError, OntoEvent, ResolvedEntity, Subgraph, TraverseQuery, json, pb,
     };
+    use crate::domain::ontology::{NodeType, Ontology, RelationType};
+
+    /// A vocabulary as `ExecutionService` takes it: node types and relation
+    /// types in nexc's own field names.
+    pub fn vocabulary_to(
+        vocabulary: &Ontology,
+    ) -> (Vec<prost_types::Struct>, Vec<prost_types::Struct>) {
+        let structs = |value: serde_json::Result<Value>| -> prost_types::Struct {
+            json::to_struct(&value.unwrap_or(Value::Null))
+        };
+        (
+            vocabulary
+                .node_types
+                .iter()
+                .map(|t| structs(serde_json::to_value(t)))
+                .collect(),
+            vocabulary
+                .relation_types
+                .iter()
+                .map(|t| structs(serde_json::to_value(t)))
+                .collect(),
+        )
+    }
+
+    /// The vocabulary of an `ExecutionService` answer (`{node_types, relation_types}`).
+    pub fn vocabulary_from(value: &Value) -> Result<Ontology, OntoError> {
+        let list = |key: &str| value[key].as_array().cloned().unwrap_or_default();
+        let node_types = list("node_types")
+            .into_iter()
+            .map(serde_json::from_value::<NodeType>)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| OntoError::Other(format!("a node type does not fit: {err}")))?;
+        let relation_types = list("relation_types")
+            .into_iter()
+            .map(serde_json::from_value::<RelationType>)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| OntoError::Other(format!("a relation type does not fit: {err}")))?;
+        Ok(Ontology {
+            node_types,
+            relation_types,
+        })
+    }
+
+    /// The `{graph, node_types, relation_types}` answer of a vocabulary.
+    pub fn vocabulary_value(graph: &str, vocabulary: &Ontology) -> Value {
+        serde_json::json!({
+            "graph": graph,
+            "node_types": vocabulary.node_types,
+            "relation_types": vocabulary.relation_types,
+        })
+    }
 
     pub fn ask_request_to(req: &AskRequest, workspace: &str) -> pb::AskRequest {
         pb::AskRequest {
@@ -645,12 +1015,21 @@ mod tests {
             OntoError::Invalid(_)
         ));
         assert!(matches!(
+            error_of(&Status::not_found("execution_graph:g")),
+            OntoError::NotFound(_)
+        ));
+        assert!(matches!(
+            error_of(&Status::failed_precondition("no nexc-execution package")),
+            OntoError::Invalid(_)
+        ));
+        assert!(matches!(
             error_of(&Status::internal("boom")),
             OntoError::Other(_)
         ));
         for err in [
             OntoError::Unavailable("a".into()),
             OntoError::Denied("b".into()),
+            OntoError::NotFound("n".into()),
             OntoError::Invalid("c".into()),
             OntoError::Other("d".into()),
         ] {

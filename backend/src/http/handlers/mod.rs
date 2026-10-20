@@ -25,6 +25,7 @@ pub mod latency;
 pub mod mcp_servers;
 pub mod memories;
 pub mod nodes;
+pub mod ontology;
 pub mod orchestrator;
 pub mod payloads;
 pub mod plans;

@@ -57,6 +57,19 @@ pub enum Command {
     },
     /// Print the OpenAPI document (JSON) to stdout.
     Openapi,
+    /// Work with onto-intelli, where the ontology lives.
+    Onto {
+        #[command(subcommand)]
+        command: OntoCommand,
+    },
+}
+
+/// `nexc onto …`
+#[derive(Debug, Subcommand)]
+pub enum OntoCommand {
+    /// Copy every graph's stored ontology into onto-intelli (once per graph;
+    /// idempotent and resumable: run it again until nothing remains).
+    Migrate,
 }
 
 /// `nexc user …`
@@ -111,7 +124,26 @@ pub async fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             println!("{}", serde_json::to_string_pretty(&http::openapi())?);
             Ok(ExitCode::SUCCESS)
         }
+        Command::Onto {
+            command: OntoCommand::Migrate,
+        } => onto_migrate().await,
     }
+}
+
+async fn onto_migrate() -> anyhow::Result<ExitCode> {
+    let settings = Settings::from_env()?;
+    let db = app::connect_db(&settings).await?;
+    let state = AppState::new(settings, db)?;
+    let report = crate::ontology::migrate::run(&state).await?;
+    println!(
+        "graph vocabularies: {} copied to onto-intelli, {} there already, {} failed, {} remaining",
+        report.migrated, report.already, report.failed, report.remaining
+    );
+    Ok(if report.failed == 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
 }
 
 fn read_password() -> anyhow::Result<String> {

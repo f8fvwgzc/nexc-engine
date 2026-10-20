@@ -34,6 +34,8 @@ LABEL org.opencontainers.image.title="nexc-engine-frontend" \
       org.opencontainers.image.licenses="MIT"
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Writes the CSP's frame-src (onto-intelli's origin, NEXC_ONTO_PUBLIC_URL) before nginx starts.
+COPY --chmod=0755 docker-entrypoint.d/40-nexc-frame-src.sh /docker-entrypoint.d/
 COPY --from=build /app/dist /usr/share/nginx/html
 
 # nginx-unprivileged runs as uid 101 and writes only to /tmp (pid, temp paths).

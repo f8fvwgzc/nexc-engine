@@ -4403,7 +4403,7 @@
         "tags": [
           "graphs"
         ],
-        "summary": "Replaces the graph's ontology: its node types and relation types.",
+        "summary": "Replaces the graph's vocabulary (its node types and relation types) in\nonto-intelli, as the caller: nexc checks its own rules, then plans and\napplies the change there in one audited write and tells the graph's\nsockets (`ontology.updated`). Read-only while onto-intelli is off.",
         "operationId": "replace_ontology",
         "parameters": [
           {
@@ -4437,6 +4437,16 @@
               }
             }
           },
+          "403": {
+            "description": "onto-intelli refused the caller (a guest is a viewer there)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "404": {
             "content": {
               "application/json": {
@@ -4447,7 +4457,7 @@
             }
           },
           "409": {
-            "description": "A relation made blocking would create a cycle",
+            "description": "A relation made blocking would create a cycle, or onto-intelli is off (read-only)",
             "content": {
               "application/json": {
                 "schema": {
@@ -4457,7 +4467,17 @@
             }
           },
           "422": {
-            "description": "Invalid, or a type still in use was removed",
+            "description": "Invalid, a type still in use was removed, or onto-intelli refused a field",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "onto-intelli is not reachable",
             "content": {
               "application/json": {
                 "schema": {
@@ -10477,239 +10497,6 @@
         ]
       }
     },
-    "/api/v1/workspaces/{wid}/map": {
-      "get": {
-        "tags": [
-          "workspaces"
-        ],
-        "summary": "The relationship map of the workspace: its kinds of things (members,\nteams, projects, issues, graphs, documents, memories, …) and the ties\nbetween them, with today's counts.",
-        "operationId": "map",
-        "parameters": [
-          {
-            "name": "wid",
-            "in": "path",
-            "description": "Workspace id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WorkspaceMap"
-                }
-              }
-            }
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/workspaces/{wid}/map/{kind}": {
-      "get": {
-        "tags": [
-          "workspaces"
-        ],
-        "summary": "The things of one kind in the workspace, by name: the members, the\nteams, the issues, to pick one and follow its ties. Admins and owners\nonly: the list spans private teams.",
-        "operationId": "map_items",
-        "parameters": [
-          {
-            "name": "wid",
-            "in": "path",
-            "description": "Workspace id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "kind",
-            "in": "path",
-            "description": "Kind of thing",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/MapKind"
-            }
-          },
-          {
-            "name": "q",
-            "in": "query",
-            "description": "Part of a name, an e-mail, an identifier.",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "1-50, default 20.",
-            "required": false,
-            "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "int64"
-            }
-          },
-          {
-            "name": "offset",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "int64"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/MapItem"
-                  }
-                }
-              }
-            }
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/workspaces/{wid}/map/{kind}/{id}": {
-      "get": {
-        "tags": [
-          "workspaces"
-        ],
-        "summary": "One thing of the workspace with everything it is tied to: a member's\nteams, issues and graphs; an issue's team, project, people, sub-issues\nand graph. Each tie gives its count and its first items, whose own ties\ncan be followed in turn. Admins and owners only.",
-        "operationId": "map_item",
-        "parameters": [
-          {
-            "name": "wid",
-            "in": "path",
-            "description": "Workspace id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "kind",
-            "in": "path",
-            "description": "Kind of thing",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/MapKind"
-            }
-          },
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Id of the thing",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MapNeighbourhood"
-                }
-              }
-            }
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
     "/api/v1/workspaces/{wid}/mcp-servers": {
       "get": {
         "tags": [
@@ -11288,6 +11075,136 @@
           },
           "409": {
             "description": "Would leave no owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/workspaces/{wid}/ontology": {
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "How the workspace's ontology is kept: the mode, where onto-intelli's UI\nis, the workspace's tenant there, and the schema change proposals still\nopen, newest first, each with its link to onto-intelli's review inbox\n(approval happens there). Members and above.",
+        "operationId": "status",
+        "parameters": [
+          {
+            "name": "wid",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OntologyStatus"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/workspaces/{wid}/ontology/session": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Opens a browser session for onto-intelli's UI, for the caller in this\nworkspace's tenant: their own principal, read-only there (`viewer`;\nowners and admins also approve proposals and apply schema changes),\nshort-lived (`NEXC_ONTO_SESSION_TTL_SECS`). The page\nhands it to the embedded UI with `postMessage` once the UI announced\nitself (`onto:ready`). Members and above; 409 when onto-intelli is off,\n503 when it is not reachable.",
+        "operationId": "session",
+        "parameters": [
+          {
+            "name": "wid",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OntologySession"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "onto-intelli is off (NEXC_ONTO_MODE=off)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "onto-intelli is not reachable",
             "content": {
               "application/json": {
                 "schema": {
@@ -16107,7 +16024,8 @@
           "reply",
           "created",
           "skipped",
-          "memories_used"
+          "memories_used",
+          "proposals"
         ],
         "properties": {
           "conversation_id": {
@@ -16127,6 +16045,13 @@
             "description": "How many memories of the workspace it was given.",
             "minimum": 0
           },
+          "proposals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FiledProposal"
+            },
+            "description": "Schema change proposals it filed in onto-intelli, for people to review there."
+          },
           "reply": {
             "type": "string"
           },
@@ -16135,7 +16060,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Drafts it could not file (unknown team, or no right to file there), as text."
+            "description": "Drafts it could not file (unknown team, or no right to file there;\na schema change onto-intelli refused), as text."
           }
         }
       },
@@ -18135,6 +18060,36 @@
           }
         }
       },
+      "FiledProposal": {
+        "type": "object",
+        "description": "A schema change proposal the assistant filed in onto-intelli, as\nremembered with the conversation; people review it there.",
+        "required": [
+          "id",
+          "title",
+          "breaking",
+          "review_url"
+        ],
+        "properties": {
+          "breaking": {
+            "type": "boolean",
+            "description": "Whether applying it would break data or vocabulary in use."
+          },
+          "id": {
+            "type": "string",
+            "description": "onto-intelli's id (`prop_…`)."
+          },
+          "review_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where to review it in onto-intelli's UI; `null` when its address is unknown."
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
       "FirewallStatus": {
         "type": "object",
         "description": "The status of the firewall, for the operator.",
@@ -18335,7 +18290,7 @@
           },
           "ontology": {
             "$ref": "#/components/schemas/Ontology",
-            "description": "The node types and relation types this graph is built from."
+            "description": "The node types and relation types this graph is built from: its\nexecution vocabulary in onto-intelli (the read-only starter set when\nonto-intelli is off)."
           },
           "team_id": {
             "type": [
@@ -19805,148 +19760,6 @@
         },
         "additionalProperties": false
       },
-      "MapEntity": {
-        "type": "object",
-        "description": "One kind of thing a workspace holds, and how many of it.",
-        "required": [
-          "key",
-          "label",
-          "count"
-        ],
-        "properties": {
-          "count": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "key": {
-            "type": "string",
-            "description": "`member`, `team`, `project`, `issue`, `graph`, `run`, `agent`,\n`document`, `passage`, `memory`, `label`, `cycle`."
-          },
-          "label": {
-            "type": "string"
-          }
-        }
-      },
-      "MapItem": {
-        "type": "object",
-        "description": "One thing of a workspace, as the map names it.",
-        "required": [
-          "kind",
-          "id",
-          "title",
-          "subtitle"
-        ],
-        "properties": {
-          "id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "kind": {
-            "type": "string",
-            "description": "A [`MapKind`] when its ties can be followed; otherwise a kind that is\nonly named here: `label`, `cycle`, `topic`."
-          },
-          "subtitle": {
-            "type": "string",
-            "description": "What tells it apart at a glance: an e-mail, a team key, a state."
-          },
-          "title": {
-            "type": "string",
-            "description": "A member's name, an issue's identifier and title, a graph's name."
-          }
-        }
-      },
-      "MapKind": {
-        "type": "string",
-        "description": "A kind of thing on the workspace map whose ties can be followed.",
-        "enum": [
-          "member",
-          "team",
-          "project",
-          "issue",
-          "graph",
-          "document",
-          "agent"
-        ]
-      },
-      "MapNeighbourhood": {
-        "type": "object",
-        "description": "One thing of a workspace with everything it is tied to.",
-        "required": [
-          "item",
-          "ties"
-        ],
-        "properties": {
-          "item": {
-            "$ref": "#/components/schemas/MapItem"
-          },
-          "ties": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/MapTie"
-            },
-            "description": "Its ties that exist; a tie to nothing is left out."
-          }
-        }
-      },
-      "MapRelation": {
-        "type": "object",
-        "description": "How two kinds of things are tied together in this workspace.",
-        "required": [
-          "from",
-          "to",
-          "label",
-          "count"
-        ],
-        "properties": {
-          "count": {
-            "type": "integer",
-            "format": "int64",
-            "description": "How many such ties exist right now."
-          },
-          "from": {
-            "type": "string"
-          },
-          "label": {
-            "type": "string",
-            "description": "The relation, read from `from` to `to`: \"belongs to\", \"plans\", …"
-          },
-          "to": {
-            "type": "string"
-          }
-        }
-      },
-      "MapTie": {
-        "type": "object",
-        "description": "What one thing is tied to in one way.",
-        "required": [
-          "label",
-          "kind",
-          "count",
-          "items"
-        ],
-        "properties": {
-          "count": {
-            "type": "integer",
-            "format": "int64",
-            "description": "How many there are."
-          },
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/MapItem"
-            },
-            "description": "The first of them; empty for kinds that are only counted."
-          },
-          "kind": {
-            "type": "string",
-            "description": "The kind of thing at the other end (also `run`, `node`, `memory`,\n`passage`, which are only counted)."
-          },
-          "label": {
-            "type": "string",
-            "description": "The relation, read from the thing: \"is on\", \"tracks\", \"was filed by\"."
-          }
-        }
-      },
       "MarkRead": {
         "type": "object",
         "description": "`POST /workspaces/{wid}/inbox/read` body.",
@@ -20841,6 +20654,15 @@
           "run"
         ]
       },
+      "OntoMode": {
+        "type": "string",
+        "description": "How nexc reaches onto-intelli (`NEXC_ONTO_MODE`).",
+        "enum": [
+          "service",
+          "embedded",
+          "off"
+        ]
+      },
       "Ontology": {
         "type": "object",
         "description": "The node types and relation types of one graph.",
@@ -20860,6 +20682,89 @@
             "items": {
               "$ref": "#/components/schemas/RelationType"
             }
+          }
+        }
+      },
+      "OntologySession": {
+        "type": "object",
+        "description": "A browser session for onto-intelli's UI: the token is the member's own,\nshort-lived and bound to the workspace's tenant; the backend's service\ntoken never reaches the page.",
+        "required": [
+          "ui_url",
+          "token",
+          "tenant",
+          "workspace",
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "tenant": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string",
+            "description": "Handed to the frame with `postMessage({type: \"onto:session\", token, tenant, workspace})`."
+          },
+          "ui_url": {
+            "type": "string",
+            "description": "onto-intelli's UI to load in the frame (`…/ui/`); deep links go after `#`."
+          },
+          "workspace": {
+            "type": "string"
+          }
+        }
+      },
+      "OntologyStatus": {
+        "type": "object",
+        "description": "The workspace's ontology, as Settings → Ontology shows it.",
+        "required": [
+          "mode",
+          "ui_url",
+          "tenant",
+          "workspace",
+          "proposals",
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the proposals could not be read, when they could not."
+          },
+          "mode": {
+            "$ref": "#/components/schemas/OntoMode"
+          },
+          "proposals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SchemaProposal"
+            },
+            "description": "Open proposals, newest first (empty when off or unreachable)."
+          },
+          "tenant": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The onto-intelli tenant of the workspace (`ws_…`); `null` when off."
+          },
+          "ui_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "onto-intelli's UI (`…/ui/`); `null` when onto-intelli is off."
+          },
+          "workspace": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The onto-intelli workspace inside the tenant; `null` when off."
           }
         }
       },
@@ -21815,6 +21720,17 @@
           "canceled"
         ]
       },
+      "ProposalStatus": {
+        "type": "string",
+        "description": "Where a schema change proposal stands in onto-intelli.",
+        "enum": [
+          "open",
+          "applied",
+          "rejected",
+          "failed",
+          "withdrawn"
+        ]
+      },
       "ProposedEdge": {
         "type": "object",
         "description": "A typed relation between two proposed nodes (by `ref`).",
@@ -22517,6 +22433,65 @@
           "failed",
           "cancelled"
         ]
+      },
+      "SchemaProposal": {
+        "type": "object",
+        "description": "A schema change proposal, as nexc lists it; people review it in onto-intelli.",
+        "required": [
+          "id",
+          "title",
+          "rationale",
+          "status",
+          "proposer",
+          "by_agent",
+          "breaking",
+          "changes",
+          "created_at",
+          "review_url"
+        ],
+        "properties": {
+          "breaking": {
+            "type": "boolean",
+            "description": "Whether applying it would break data or vocabulary in use."
+          },
+          "by_agent": {
+            "type": "boolean",
+            "description": "Filed by an agent (the assistant)."
+          },
+          "changes": {
+            "type": "integer",
+            "description": "Changes in the change set.",
+            "minimum": 0
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "description": "onto-intelli's id (`prop_…`)."
+          },
+          "proposer": {
+            "type": "string",
+            "description": "Who filed it: `user:{id}`, or `assistant:{user id}` for the assistant."
+          },
+          "rationale": {
+            "type": "string"
+          },
+          "review_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where to review it in onto-intelli's UI; `null` when its address is unknown."
+          },
+          "status": {
+            "$ref": "#/components/schemas/ProposalStatus"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
       },
       "SearchHit": {
         "type": "object",
@@ -24319,6 +24294,13 @@
             "type": "integer",
             "minimum": 0
           },
+          "proposals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FiledProposal"
+            },
+            "description": "Schema change proposals it filed."
+          },
           "skipped": {
             "type": "array",
             "items": {
@@ -25358,28 +25340,6 @@
           },
           "role": {
             "$ref": "#/components/schemas/WorkspaceRole"
-          }
-        }
-      },
-      "WorkspaceMap": {
-        "type": "object",
-        "description": "The relationship map of a workspace: its kinds of things and the ties\nbetween them, with today's numbers.",
-        "required": [
-          "entities",
-          "relations"
-        ],
-        "properties": {
-          "entities": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/MapEntity"
-            }
-          },
-          "relations": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/MapRelation"
-            }
           }
         }
       },

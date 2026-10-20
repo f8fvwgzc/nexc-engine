@@ -1,0 +1,212 @@
+{{- if .Values.ontoIntelli.enabled }}
+{{- $o := .Values.ontoIntelli }}
+{{- if not $o.image.repository }}
+{{- fail "ontoIntelli.image.repository is empty: onto-intelli publishes no image yet; build it from its repository (docker build -t <registry>/onto-intelli:<tag> ../onto-intelli), push it to your registry and name it here" }}
+{{- end }}
+{{- $origins := $o.embedOrigins }}
+{{- if not $origins }}
+{{- if not (and .Values.ingress.enabled .Values.ingress.host) }}
+{{- fail "ontoIntelli.embedOrigins is empty and there is no ingress.host to derive it from: list the console's origins (https://nexc.example.com)" }}
+{{- end }}
+{{- $origins = list (printf "http%s://%s" (ternary "s" "" (eq (include "nexc.tlsHost" (dict "host" .Values.ingress.host "root" .)) "true")) .Values.ingress.host) }}
+{{- end }}
+# onto-intelli: the one place the ontology lives (docs/ONTOLOGY.md). Every graph's node and
+# relation types, the workspace map (its UI, embedded by the console), the audit's facts and
+# the schema with its proposals; one tenant per nexc workspace, every call made as the member.
+# It keeps its data in PostgreSQL (database `ontoIntelli.database`, owned by its own login `onto`,
+# on the chart's PostgreSQL unless ONTO_DATABASE_URL is in the Secret), which needs pgvector 0.7+.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: onto-intelli-config
+  labels:
+    app.kubernetes.io/name: onto-intelli
+    {{- include "nexc.labels" . | nindent 4 }}
+data:
+  onto-intelli.toml: |
+    [engine]
+    storage = "postgres"
+    tenancy = "multi"
+    read_consistency = "strong"
+    default_workspace = "nexc"
+
+    # The database is ONTO_DATABASE_URL (onto-intelli reads it from the environment).
+    [engine.postgres]
+    tenant = "default"
+    schema_prefix = "onto_"
+    max_connections = {{ $o.maxConnections }}
+
+    [ontology]
+    schema = "builtin:enterprise"
+    extend = ["builtin:nexc-execution", "nexc-audit.toml", "nexc-workspace.toml"]
+    schema_mode = "live"
+    strict = false
+
+    [governance]
+    live_edits = true
+    apply_roles = ["schema_admin"]
+    approve_roles = ["approver"]
+    propose_roles = []
+    required_approvals = {{ $o.requiredApprovals }}
+    allow_self_approval = false
+
+    [llm]
+    provider = {{ $o.llmProvider | quote }}
+
+    [memory]
+    enabled = false
+
+    [grpc]
+    listen = "0.0.0.0:{{ $o.port }}"
+    builtin_api = true
+    reflection = true
+    health = true
+    http = true
+    proto_files = []
+
+    [auth]
+    mode = "token"
+    session_secret_env = "ONTO_SESSION_SECRET"
+    session_max_ttl_secs = 43200
+
+    [[auth.tokens]]
+    token_env = "NEXC_ONTO_TOKEN"
+    principal = { id = "nexc-backend", roles = ["admin"], workspaces = ["*"] }
+    impersonate = true
+    impersonate_roles = ["viewer", "member", "agent", "approver", "schema_admin"]
+    tenants = ["*"]
+
+    [mcp]
+    principal = { id = "mcp-agent", roles = ["agent"], workspaces = ["*"] }
+
+    [ui]
+    enabled = true
+    embed_origins = [{{ range $i, $origin := $origins }}{{ if $i }}, {{ end }}{{ $origin | quote }}{{ end }}]
+    title = "Ontology"
+  nexc-audit.toml: |
+    {{- .Files.Get "files/onto/nexc-audit.toml" | nindent 4 }}
+  nexc-workspace.toml: |
+    {{- .Files.Get "files/onto/nexc-workspace.toml" | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: onto-intelli
+  labels:
+    app.kubernetes.io/name: onto-intelli
+    {{- include "nexc.labels" . | nindent 4 }}
+spec:
+  selector: { app.kubernetes.io/name: onto-intelli }
+  ports:
+    # gRPC and HTTP (the UI and its API) on one port.
+    - name: http
+      port: {{ $o.port }}
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: onto-intelli
+  labels:
+    app.kubernetes.io/name: onto-intelli
+    app.kubernetes.io/component: ontology
+    {{- include "nexc.labels" . | nindent 4 }}
+spec:
+  replicas: {{ $o.replicas }}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels: { app.kubernetes.io/name: onto-intelli }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: onto-intelli, app.kubernetes.io/component: ontology }
+      annotations:
+        checksum/config: {{ printf "%s%s%s" $origins (.Files.Get "files/onto/nexc-audit.toml") (.Files.Get "files/onto/nexc-workspace.toml") | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "nexc.podSecurity" (dict "uid" 10001 "fsGroup" false) | nindent 8 }}
+      {{- if .Values.postgres.enabled }}
+      initContainers:
+        # Its own login and database on the chart's PostgreSQL: the role `onto` (password
+        # ONTO_POSTGRES_PASSWORD) owns the database and nothing else, nexc's database no longer
+        # admits every role, and pgvector is created by the superuser, once. onto-intelli, which
+        # browsers reach, never holds the superuser's password.
+        - name: database
+          image: {{ include "nexc.image" (dict "image" .Values.images.postgres "chart" .Chart) }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h postgres -U "$PGUSER" -d "$PGDATABASE"; do sleep 2; done
+              psql -h postgres -v ON_ERROR_STOP=1 -v pw="$ONTO_POSTGRES_PASSWORD" \
+                -v db="{{ $o.database }}" -v nexc="$PGDATABASE" <<'SQL'
+              SELECT 'CREATE ROLE onto LOGIN' WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'onto') \gexec
+              SELECT format('ALTER ROLE onto LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD %L', :'pw') \gexec
+              SELECT format('CREATE DATABASE %I OWNER onto', :'db') WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'db') \gexec
+              SELECT format('ALTER DATABASE %I OWNER TO onto', :'db') \gexec
+              SELECT format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', :'nexc') \gexec
+              \c :db
+              CREATE EXTENSION IF NOT EXISTS vector;
+              SQL
+          env:
+            - name: PGUSER
+              valueFrom: { secretKeyRef: { name: {{ include "nexc.secretName" . }}, key: POSTGRES_USER } }
+            - name: PGDATABASE
+              valueFrom: { secretKeyRef: { name: {{ include "nexc.secretName" . }}, key: POSTGRES_DB } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "nexc.secretName" . }}, key: POSTGRES_PASSWORD } }
+            - name: ONTO_POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "nexc.secretName" . }}, key: ONTO_POSTGRES_PASSWORD } }
+          securityContext:
+            {{- include "nexc.containerSecurity" . | nindent 12 }}
+      {{- end }}
+      containers:
+        - name: onto-intelli
+          image: {{ $o.image.repository }}:{{ $o.image.tag | default "latest" }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          command: ["onto", "serve", "--config", "/etc/onto/onto-intelli.toml", "--listen", "0.0.0.0:{{ $o.port }}"]
+          ports:
+            - name: http
+              containerPort: {{ $o.port }}
+          env:
+            - name: NEXC_ONTO_TOKEN
+              valueFrom: { secretKeyRef: { name: {{ include "nexc.secretName" . }}, key: NEXC_ONTO_TOKEN } }
+            - name: ONTO_SESSION_SECRET
+              valueFrom: { secretKeyRef: { name: {{ include "nexc.secretName" . }}, key: ONTO_SESSION_SECRET } }
+            {{- if .Values.postgres.enabled }}
+            - name: ONTO_POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "nexc.secretName" . }}, key: ONTO_POSTGRES_PASSWORD } }
+            - name: ONTO_DATABASE_URL
+              value: "postgres://onto:$(ONTO_POSTGRES_PASSWORD)@postgres:5432/{{ $o.database }}"
+            {{- else }}
+            - name: ONTO_DATABASE_URL
+              valueFrom: { secretKeyRef: { name: {{ include "nexc.secretName" . }}, key: ONTO_DATABASE_URL } }
+            {{- end }}
+            {{- with $o.anthropicApiKeyFromSecret }}
+            - name: ANTHROPIC_API_KEY
+              valueFrom: { secretKeyRef: { name: {{ include "nexc.secretName" $ }}, key: ANTHROPIC_API_KEY, optional: true } }
+            {{- end }}
+          readinessProbe:
+            tcpSocket: { port: http }
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: { port: http }
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            {{- toYaml $o.resources | nindent 12 }}
+          securityContext:
+            {{- include "nexc.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            - { name: config, mountPath: /etc/onto, readOnly: true }
+            - { name: data, mountPath: /data }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: config
+          configMap: { name: onto-intelli-config }
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+{{- end }}

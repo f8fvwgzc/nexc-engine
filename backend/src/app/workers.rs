@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::AppState;
 use crate::engine::{knowledge, scheduler};
-use crate::ontology::export;
+use crate::ontology::{export, migrate};
 use crate::{alerting, firewall, orchestrator, otlp, realtime, repo};
 
 const HEARTBEAT_EVERY: Duration = Duration::from_secs(10);
@@ -35,8 +35,11 @@ pub fn spawn(state: &AppState, shutdown: CancellationToken) {
     if export::spawn(state, shutdown.clone()) {
         tracing::info!(
             every_secs = export::TICK.as_secs(),
-            "the audit's facts are exported to onto-intelli"
+            "the workspaces and the audit's facts are exported to onto-intelli"
         );
+    }
+    if migrate::spawn_at_start(state, shutdown.clone()) {
+        tracing::info!("graph vocabularies are copied to onto-intelli (nexc onto migrate)");
     }
     if otlp::spawn(state, shutdown.clone()) {
         tracing::info!(

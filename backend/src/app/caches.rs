@@ -1,9 +1,12 @@
 //! Hot-read caches, one set per instance: agent cards, resolved policies per
-//! agent and policy version, workspace guardrails and workspace LLM
-//! settings. A write drops the entry here and tells every other replica to
-//! drop it too, over the realtime fan-out (PostgreSQL `NOTIFY`, see
-//! [`crate::realtime::fanout`]); `NEXC_CACHE_TTL_SECS` bounds how long an
-//! entry may live regardless (0 turns the caches off).
+//! agent and policy version, workspace guardrails, workspace LLM settings
+//! and graph vocabularies read from onto-intelli. A write drops the entry
+//! here and tells every other replica to drop it too, over the realtime
+//! fan-out (PostgreSQL `NOTIFY`, see [`crate::realtime::fanout`]);
+//! `NEXC_CACHE_TTL_SECS` bounds how long an entry may live regardless (0
+//! turns the caches off). Vocabularies have their own lifetime
+//! (`NEXC_ONTO_VOCABULARY_TTL_SECS`), and one past it is still served while
+//! onto-intelli cannot be reached.
 
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -17,6 +20,7 @@ use uuid::Uuid;
 use crate::domain::agent::{Agent, AgentOwner, AgentTeam};
 use crate::domain::agent_template::AgentEvaluation;
 use crate::domain::guardrails::Guardrails;
+use crate::domain::ontology::Ontology;
 use crate::domain::policy::PolicyVersions;
 use crate::domain::policy_document::Policy;
 use crate::engine::policy::{Resolved, levels_for, resolve, versions_of};
@@ -26,6 +30,9 @@ use crate::repo::settings::StoredLlmSettings;
 
 /// Entries kept at most, per cache, before the expired ones are swept.
 const SWEEP_AT: usize = 10_000;
+/// How long a vocabulary past its lifetime is kept to be served while
+/// onto-intelli cannot be reached.
+const VOCABULARY_KEPT: Duration = Duration::from_secs(24 * 3600);
 
 /// What a write invalidates; the wire form between replicas.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,6 +46,8 @@ pub enum Key {
     Policies(Uuid),
     Guardrails(Uuid),
     WorkspaceLlm(Uuid),
+    /// A graph's vocabulary changed in onto-intelli through nexc.
+    Vocabulary(Uuid),
 }
 
 /// The part of an agent's card that only its writes change (its recent
@@ -125,6 +134,9 @@ pub struct Caches {
     resolved: Cache<(Uuid, Uuid, i32), ResolvedPolicy>,
     guardrails: Cache<Uuid, Guardrails>,
     workspace_llm: Cache<Uuid, Option<StoredLlmSettings>>,
+    /// By graph; served fresh for `vocabulary_ttl`, kept longer as a fallback.
+    vocabularies: Cache<Uuid, Ontology>,
+    vocabulary_ttl: Duration,
     fanout: OnceLock<mpsc::Sender<Key>>,
 }
 
@@ -139,8 +151,41 @@ impl Caches {
             resolved: Cache::new("resolved_policy"),
             guardrails: Cache::new("guardrails"),
             workspace_llm: Cache::new("workspace_llm"),
+            vocabularies: Cache::new("vocabulary"),
+            vocabulary_ttl: Duration::from_secs(30),
             fanout: OnceLock::new(),
         }
+    }
+
+    /// Serves graph vocabularies fresh for `ttl` (zero: always ask onto-intelli).
+    pub fn with_vocabulary_ttl(mut self, ttl: Duration) -> Self {
+        self.vocabulary_ttl = ttl;
+        self
+    }
+
+    /// The vocabulary kept for `graph` and whether it is still fresh; a stale
+    /// one is what a run falls back on while onto-intelli cannot be reached.
+    pub fn vocabulary(&self, graph: Uuid) -> Option<(Arc<Ontology>, bool)> {
+        let found = self
+            .vocabularies
+            .entries
+            .get(&graph)
+            .filter(|e| e.at.elapsed() < VOCABULARY_KEPT)
+            .map(|e| (e.value.clone(), e.at.elapsed() < self.vocabulary_ttl));
+        let result = match &found {
+            Some((_, true)) => "hit",
+            Some((_, false)) => "stale",
+            None => "miss",
+        };
+        self.metrics
+            .cache_lookups
+            .add(&[("cache", self.vocabularies.name), ("result", result)], 1);
+        found
+    }
+
+    /// Keeps `vocabulary` as `graph`'s (kept even with a zero lifetime, as a fallback).
+    pub fn put_vocabulary(&self, graph: Uuid, vocabulary: Arc<Ontology>) {
+        self.vocabularies.put(graph, vocabulary, VOCABULARY_KEPT);
     }
 
     /// How long an entry lives.
@@ -186,6 +231,9 @@ impl Caches {
             Key::WorkspaceLlm(workspace) => {
                 self.workspace_llm.entries.remove(workspace);
             }
+            Key::Vocabulary(graph) => {
+                self.vocabularies.entries.remove(graph);
+            }
         }
     }
 
@@ -196,6 +244,7 @@ impl Caches {
         self.resolved.prune(self.ttl);
         self.guardrails.prune(self.ttl);
         self.workspace_llm.prune(self.ttl);
+        self.vocabularies.prune(VOCABULARY_KEPT);
     }
 
     /// What is kept right now, per cache (for tests and the operator).
@@ -206,6 +255,7 @@ impl Caches {
             (self.resolved.name, self.resolved.entries.len()),
             (self.guardrails.name, self.guardrails.entries.len()),
             (self.workspace_llm.name, self.workspace_llm.entries.len()),
+            (self.vocabularies.name, self.vocabularies.entries.len()),
         ]
     }
 

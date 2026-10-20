@@ -28,6 +28,98 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   terminal colour codes, trailing spaces, runs of blank lines and repeated lines go, and a result
   over 24,000 characters keeps its head and tail. File reads are left exactly as they are. A saving
   of 1,000 characters or more is mentioned in the node's log.
+- onto-intelli is the one place nexc's ontology lives (`docs/ONTOLOGY.md`): entity kinds, link
+  types, actions and every graph's node and relation types are defined, configured and reasoned
+  over there; nexc keeps no ontology model of its own. `NEXC_ONTO_MODE` picks how the backend
+  reaches it: `service` (gRPC and HTTP to `onto serve`, the default when `NEXC_ONTO_URL` is set),
+  `embedded` (refused at start: onto-intelli is published nowhere yet, and an optional path
+  dependency would break `cargo build --locked` for everyone without a sibling checkout;
+  `docs/ONTOLOGY.md` §1 says what it needs, behind the `OntologyBackend` trait it would implement),
+  or `off` (the default without a URL: graphs keep a read-only starter vocabulary). The vendored
+  protos (`backend/proto/onto_intelli/v1`) gain `SchemaService` and `ExecutionService`.
+- Every call to onto-intelli names who makes it (`docs/ONTOLOGY.md` §2): a member through its
+  impersonation headers (`x-onto-act-as: user:<id>`, `x-onto-act-roles` from the workspace role:
+  owners and admins `member,approver,schema_admin`, members `member`, guests `viewer`,
+  `x-onto-act-workspaces`, `x-onto-act-entity: person:<id>`), the assistant (`assistant:<user id>`)
+  and the run engine (`agent:runtime`) as agents; the backend's own principal only writes what nexc
+  knows (the projection, the audit's facts, a graph's first vocabulary, the migration). Each nexc
+  workspace is a tenant of its own (`x-onto-tenant: ws_<id>`), created on first use. A browser
+  session for onto-intelli's UI never holds a write role (`viewer`; owners and admins also
+  `approver` and `schema_admin`): onto-intelli has no per-entity write rule that mirrors nexc's
+  graph access and teams, so what nexc projects is written by the backend alone, after its checks.
+- Graph vocabularies in onto-intelli (`docs/ONTOLOGY.md` §4): the scheduler, the planner, the
+  editor and the canvas read a graph's node and relation types from its `ExecutionService`, through
+  an in-process read-through cache (`NEXC_ONTO_VOCABULARY_TTL_SECS`, 30 s) that a change made
+  through nexc replaces at once and drops on every replica. `PUT /graphs/{gid}/ontology` keeps
+  nexc's rules (40 types, types in use, no blocking cycle) and plans and applies the change there
+  as the member. Applying a plan adds only its new types (`InitGraph`), to the vocabulary
+  onto-intelli holds once the graph is locked (read again, never from the cache), so what was
+  changed there or through the editor meanwhile stays. A change made in onto-intelli itself
+  reaches nexc within the cache's lifetime: edges follow their relation's `blocking` flag (unless
+  that would close a cycle) and canvases get `ontology.updated`. When onto-intelli is unreachable a
+  kept vocabulary is served; without one, reads answer 503 and a run's node fails with a retryable
+  `ontology unavailable` (the attempts it spends waiting count against `NEXC_MAX_ATTEMPTS`). A
+  reader onto-intelli does not show a private team's graph to (the run engine, a member the
+  projection has not named in the team yet) is answered as the backend's own principal, and a
+  graph is initialised only when that principal does not find it either, or finds only the entity
+  the projection stated without a type, so a graph's own types are never reset to the starter set.
+- `nexc onto migrate` (also run in the background at start, `NEXC_ONTO_MIGRATE_ON_START`) copies
+  every graph's stored ontology into onto-intelli with `SetVocabulary`, once per graph, idempotent
+  and resumable (`onto_vocabulary_migrations`, migration `20261006000090_onto_vocabularies`); a
+  graph read before it is copied on that read. Each copy holds the graph's advisory lock and looks
+  again under it, so a graph migrated and edited while a pass worked through its batch is never
+  written over, and a graph onto-intelli already holds is only recorded; one replica runs the
+  start-up pass at a time. `graphs.ontology` is no longer read or written, except by a workspace
+  transfer, which reads every graph's vocabulary from onto-intelli into the copied
+  `graphs.ontology` so the target starts from it (and fails while onto-intelli does not answer);
+  the column's drop is written down for the next release (`docs/ONTOLOGY.md` §7).
+- The workspace projected into onto-intelli (`docs/ONTOLOGY.md` §5, migration
+  `20261006000091_onto_projection`): teams, people, projects, cycles, issues, agents, graphs,
+  documents and runs as entities and links (ids, names, states and links, never content), through
+  the export outbox the tables fill (their triggers now queue these too), backfilled once per
+  workspace. Private teams and what belongs to them (cycles, issues, graphs and their runs) are
+  restricted to the team and to `team:admins`, the workspace's owners and admins, which only they
+  see; a team made private or public is projected again with all of it. `onto_projection` takes
+  back links that no longer hold and deletes only what it put there, with what goes along in nexc
+  (a deleted team's cycles, a deleted graph's runs and node and relation types: migration
+  `20261006000092_onto_projection_follows` queues them before their parent goes). A deleted
+  workspace's tenant is retired (`onto_retired_tenants`): the export deletes what the projection
+  put there, and the operator drops the tenant's schema for the rest.
+  `deploy/onto/nexc-workspace.toml` names its kinds and relations.
+- The Map page embeds onto-intelli's own UI (members and above): `POST
+  /workspaces/{wid}/ontology/session` mints the member's own short-lived, read-only session
+  (`NEXC_ONTO_SESSION_TTL_SECS`; the console renews it at three quarters of the lifetime its
+  `expires_at` gives, and on return to a tab that was away past that point) with the backend's
+  token, which never reaches the browser, and the page hands it to the frame by `postMessage`
+  after `onto:ready`, to the frame's origin only (`NEXC_ONTO_PUBLIC_URL`). Issues, agents and runs
+  link to themselves on the map (`#/entities/<id>`).
+- The assistant reads the workspace's schema (`get_schema`), dry-runs a change
+  (`plan_schema_change`) and files a proposal with its rationale (`propose_schema_change`) as the
+  member's assistant, an agent that never applies or approves; its reply links each proposal.
+  Settings → Ontology (`GET /workspaces/{wid}/ontology`) lists the open proposals with a link to
+  review each in onto-intelli, where approvers decide.
+- Running onto-intelli: `docker-compose.onto.yml` builds it from `../onto-intelli` (or pulls an
+  `ONTO_IMAGE` you built and pushed) on a PostgreSQL server of its own with pgvector
+  (`onto-postgres`, volume `onto-pgdata`, login `onto`), so nexc's PostgreSQL and its volume are
+  left as they are and onto-intelli holds no credential of nexc's database; published for browsers
+  on `ONTO_HTTP_PORT`; `make init` generates `ONTO_SESSION_SECRET` and `ONTO_POSTGRES_PASSWORD`;
+  `deploy/onto/onto-intelli.toml` is multi-tenant with the impersonating token, the governance
+  above, `builtin:nexc-execution` and `[ui] embed_origins`. The Helm chart gains an optional
+  onto-intelli Deployment and Service (`ontoIntelli.enabled`): its database is owned by its own
+  login `onto` on the chart's PostgreSQL, the image must be named (onto-intelli publishes none yet),
+  and browsers reach it at `ontoIntelli.ingress.host` or `backend.ontoPublicUrl` (the chart refuses
+  to render with neither). The console's Content-Security-Policy is now one header, sent by nginx
+  (and `vite preview`) with `frame-src` set to the origin of `NEXC_ONTO_PUBLIC_URL`, so the map's
+  frame loads; the build no longer carries a meta policy. `make dev` starts onto-intelli from
+  `../onto-intelli` when `NEXC_ONTO_MODE=service` (on a dev database with pgvector; without one it
+  runs the backend with `NEXC_ONTO_MODE=off` and says how to switch) and says how it runs otherwise.
+  `nexc doctor` checks that `NEXC_ONTO_TOKEN` may act for members with every role nexc asserts (a
+  one-minute session for a throwaway principal), that browsers can reach `NEXC_ONTO_PUBLIC_URL`
+  (not a cluster-only host, `/ui/` answering) and says when `NEXC_ONTO_MODE=off` ignores a URL.
+  `make test-onto-live` builds `../onto-intelli` (a no-op when up to date) and runs
+  `backend/tests/onto_live.rs` against a real `onto serve` on a throwaway PostgreSQL; CI runs the
+  same flows against the in-memory stub, which now serves `SchemaService`, `ExecutionService` and
+  the session endpoint.
 
 - High availability of runs, failure modes first (`docs/HA.md`): what happens, how it is
   detected, how the run recovers and the RTO and RPO targets when a replica crashes while a node
@@ -1433,6 +1525,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the documentation site describe nexc-engine as the Enterprise Business Executor. The issue
   dialog's **Plan as graph** button, which left the issue for the canvas, gave way to **Hand to
   agents** on the issue itself.
+- `PUT /graphs/{gid}/ontology` writes to onto-intelli as the caller: a guest (a viewer there) gets
+  403, an unreachable onto-intelli 503, and with `NEXC_ONTO_MODE=off` the vocabulary is read-only
+  (409). Node types come back in onto-intelli's order (stage, then key); a node created without a
+  `kind` gets the first type that neither frames the work, delivers it nor runs code.
+- The audit's facts go into each workspace's own tenant, and its questions are asked as the member:
+  the export backfills every workspace once more (the facts already in the default tenant stay
+  there); restricted documents and memories carry `acl: ["team:admins"]`, so owners and admins
+  keep seeing them.
+- The workspace map is for members and above (it was for admins and owners): what they see on it
+  is what onto-intelli lets their principal see.
 
 - UI pass, shared pieces (`frontend/src/components/custom-ui`): `PageContainer` gives every page
   one of three widths (`default` for the app, `wide` for the consoles, `narrow` for settings and
@@ -1560,6 +1662,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   status, priority, assignee, labels, project and cycle on the right. Title and description save
   when the field is left; the Save button is gone. Projects are listed as rows with status, lead,
   target date and progress.
+
+### Removed
+
+- nexc's own workspace map: `GET /workspaces/{wid}/map`, `/map/{kind}` and `/map/{kind}/{id}`
+  (`repo::map`, `WorkspaceMap`, `MapItem`, `MapKind`, `MapNeighbourhood`) and the frontend's map
+  explorer. onto-intelli renders the workspace now, with search, paths, impact and history; no
+  other part of nexc used the counts.
+- `graphs.ontology` as the source of a graph's vocabulary (`repo::graphs::set_ontology`,
+  `repo::graphs::ontology`): it lives in onto-intelli. The column stays for one release, read only
+  to copy it there.
 
 ## [0.1.0] - 2026-10-04
 

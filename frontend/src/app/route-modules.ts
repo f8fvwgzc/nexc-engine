@@ -37,6 +37,7 @@ export const routeModules = {
   settingsKnowledge: () => import('@/pages/settings/knowledge-page'),
   settingsActivity: () => import('@/pages/settings/activity-page'),
   settingsMap: () => import('@/pages/settings/map-page'),
+  settingsOntology: () => import('@/pages/settings/ontology-page'),
   settingsTransfer: () => import('@/pages/settings/transfer-page'),
   platformShell: () => import('@/components/layout/platform-shell'),
   platformWorkspaces: () => import('@/pages/platform/workspaces-page'),

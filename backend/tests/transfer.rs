@@ -3,9 +3,14 @@
 
 mod common;
 
+use std::sync::Arc;
+
 use axum::http::{Method, StatusCode};
 use common::TestApp;
+use nexc::domain::ontology::Ontology;
 use nexc::engine::transfer;
+use nexc::ontology::OntoError;
+use nexc::ontology::stub::StubOntology;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 
@@ -119,7 +124,7 @@ async fn a_workspace_moves_to_its_owners_database(pool: PgPool) {
     assert_eq!(status, StatusCode::OK, "{written}");
 
     let (url, name) = empty_database(&pool).await;
-    let report = transfer::copy_workspace(&pool, &url, workspace)
+    let report = transfer::copy_workspace(&pool, &url, workspace, &[])
         .await
         .unwrap();
     let copied = |table: &str| {
@@ -174,7 +179,7 @@ async fn a_workspace_moves_to_its_owners_database(pool: PgPool) {
     target.close().await;
 
     // A second transfer to the same place is refused; this server still has everything.
-    let again = transfer::copy_workspace(&pool, &url, workspace).await;
+    let again = transfer::copy_workspace(&pool, &url, workspace, &[]).await;
     assert!(again.unwrap_err().to_string().contains("already holds"));
     let (_, still) = call(&app, Method::GET, &format!("{ws}/issues"), &owner, None).await;
     assert_eq!(still.as_array().unwrap().len(), 2);
@@ -264,6 +269,111 @@ async fn a_workspace_moves_to_its_owners_database(pool: PgPool) {
     }
 }
 
+async fn finished(app: &TestApp, token: &str, transfers: &str) -> Value {
+    for _ in 0..100 {
+        let (_, list) = call(app, Method::GET, transfers, token, None).await;
+        if list[0]["status"] != "running" {
+            return list[0].clone();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    panic!("the transfer did not finish");
+}
+
+/// Graph vocabularies live in onto-intelli, not in the tables: a transfer reads each from there
+/// into the copied graph, so the target's onto-intelli starts from it, and fails rather than
+/// leave them behind.
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn graph_vocabularies_travel_from_onto_intelli(pool: PgPool) {
+    let stub = Arc::new(StubOntology::new());
+    let app = TestApp::with_ontology(
+        pool.clone(),
+        &[("NEXC_ONTO_VOCABULARY_TTL_SECS", "0")],
+        stub.clone(),
+    )
+    .await;
+    let (owner, _) = app.register("owner@example.com").await;
+    let (_, list) = call(&app, Method::GET, "/workspaces", &owner, None).await;
+    let wid = list[0]["id"].as_str().unwrap().to_owned();
+    let (status, made) = call(
+        &app,
+        Method::POST,
+        "/graphs",
+        &owner,
+        Some(json!({"name": "Trading", "workspace_id": wid})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    let gid = made["id"].as_str().unwrap().to_owned();
+    let mut vocabulary = made["ontology"].clone();
+    vocabulary["node_types"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"key": "signal", "label": "Signal", "default_role": "analyst", "stage": 1}));
+    let (status, put) = call(
+        &app,
+        Method::PUT,
+        &format!("/graphs/{gid}/ontology"),
+        &owner,
+        Some(vocabulary),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{put}");
+    let transfers = format!("/workspaces/{wid}/transfers");
+
+    // onto-intelli does not answer: nothing is moved.
+    stub.fail_with(Some(OntoError::Unavailable("connection refused".into())));
+    let (url, name) = empty_database(&pool).await;
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &transfers,
+        &owner,
+        Some(json!({"url": url})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let failed = finished(&app, &owner, &transfers).await;
+    assert_eq!(failed["status"], "failed", "{failed}");
+    assert!(
+        failed["error"].as_str().unwrap().contains("vocabularies"),
+        "{failed}"
+    );
+
+    // It answers: the graph arrives with the vocabulary onto-intelli holds.
+    stub.fail_with(None);
+    let (url2, name2) = empty_database(&pool).await;
+    call(
+        &app,
+        Method::POST,
+        &transfers,
+        &owner,
+        Some(json!({"url": url2})),
+    )
+    .await;
+    let done = finished(&app, &owner, &transfers).await;
+    assert_eq!(done["status"], "done", "{done}");
+    let target = nexc::repo::connect(&url2, 1).await.unwrap();
+    let carried: Value = sqlx::query_scalar("SELECT ontology FROM graphs WHERE id = $1::uuid")
+        .bind(&gid)
+        .fetch_one(&target)
+        .await
+        .unwrap();
+    target.close().await;
+    let carried: Ontology = serde_json::from_value(carried).unwrap();
+    assert_eq!(carried.node_type("signal").unwrap().default_role, "analyst");
+    assert_eq!(carried.node_types.len(), 7, "{carried:?}");
+
+    for database in [name, name2] {
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE {database} WITH (FORCE)"
+        )))
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+}
+
 /// Tables that hang off a workspace and are deliberately not copied.
 const NOT_COPIED: &[(&str, &str)] = &[
     (
@@ -305,6 +415,14 @@ const NOT_COPIED: &[(&str, &str)] = &[
     (
         "run_lease_events",
         "which instances of this server held its runs and when; the target's instances are others",
+    ),
+    (
+        "onto_vocabulary_migrations",
+        "which graphs this server copied into its onto-intelli; each graph's vocabulary travels in its graphs.ontology instead, read from onto-intelli, and the target's graphs are initialised from it in its own",
+    ),
+    (
+        "onto_projection",
+        "what this server's projection put into its onto-intelli; the target projects the workspace into its own",
     ),
     (
         "sso_role_grants",

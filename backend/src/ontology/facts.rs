@@ -24,6 +24,9 @@ use crate::repo::onto_export::{ExportAgent, ExportRun, ExportSpan};
 const NAME_MAX: usize = 200;
 /// The scheme of a principal URN.
 const AGENT_SCHEME: &str = "agent://";
+/// The group of a workspace's owners and admins in onto-intelli (the
+/// projection states who is in it): what is restricted is visible to them.
+pub const ADMINS: &str = "team:admins";
 /// The tool that runs code; the policy question looks for it.
 pub const CODE_EXECUTION_TOOL: &str = "run_python";
 
@@ -364,7 +367,11 @@ impl Batch {
                     let mut props = json!({"label": label, "nexc_id": document});
                     if label == "restricted" {
                         props["visibility"] = json!("restricted");
+                        props["acl"] = json!([ADMINS]);
                     }
+                    // The workspace projection names the document; the audit fills
+                    // only what is not there yet.
+                    let before = self.records.len();
                     self.entity(
                         &id,
                         kind::DOCUMENT,
@@ -372,6 +379,9 @@ impl Batch {
                         None,
                         props,
                     );
+                    if let Some(Value::Object(record)) = self.records.get_mut(before) {
+                        record.insert("fill_only".into(), json!(true));
+                    }
                     self.link(&agent, rel::READ, &id);
                     self.event(
                         action::READ,
@@ -387,6 +397,7 @@ impl Batch {
                     let mut props = json!({"label": label, "nexc_id": memory});
                     if label == "restricted" {
                         props["visibility"] = json!("restricted");
+                        props["acl"] = json!([ADMINS]);
                     }
                     self.entity(
                         &id,

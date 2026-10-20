@@ -1,25 +1,40 @@
-//! onto-intelli as the audit's query engine ("ask the audit", AgentSecOps
-//! phase 3, `docs/AGENTSECOPS.md` §4.5).
+//! onto-intelli: where nexc's ontology lives (`docs/ONTOLOGY.md`).
 //!
-//! The trace spine records what every agent did as spans. The export worker
-//! ([`export`]) turns them into ontology facts (entities, links and events:
-//! ids, names, hosts, counts and decisions, never content) and streams them
-//! to onto-intelli, one onto-intelli workspace per nexc workspace. Questions
-//! ([`ask`]) are answered from that graph: the canned audit questions as
-//! graph and event queries the backend composes (0 tokens, milliseconds),
-//! anything else through onto-intelli's own `Ask`, which reaches a model only
-//! to explain, with facts it cites.
+//! nexc keeps no ontology model of its own. onto-intelli is the one place
+//! where entity kinds, link types and actions are defined, configured and
+//! reasoned over, with one tenant per nexc workspace (`ws_{workspace id}`):
+//!
+//! * every graph's execution vocabulary (its node types and relation types)
+//!   is read from and written to onto-intelli's `ExecutionService`, through
+//!   an in-process read-through cache ([`vocabulary`]);
+//! * the workspace's teams, projects, cycles, issues, agents, graphs,
+//!   documents, people and runs are projected into it as entities and links
+//!   ([`projection`]), next to the audit's facts ([`export`]): ids, names,
+//!   states and links, never content. onto-intelli's own UI renders that map;
+//!   the backend mints the browser's session for it;
+//! * the assistant reads the schema, dry-runs changes and files proposals
+//!   (`SchemaService`), which people approve in onto-intelli;
+//! * questions about what agents did are answered from the facts ([`ask`]).
+//!
+//! Every call is made as someone: a member through onto-intelli's
+//! impersonation headers ([`Principal::user`]), the assistant and the
+//! runtime as agents, the export as the backend's own service principal.
 //!
 //! The server is behind [`OntologyBackend`], so the gRPC client ([`grpc`])
 //! and an in-memory stub ([`stub`]) are interchangeable; tests use the stub,
-//! directly or behind an in-process gRPC server.
+//! directly or behind an in-process server. An embedded engine would be a
+//! third implementation of the same trait (see `docs/ONTOLOGY.md`).
 #![forbid(unsafe_code)]
 
 pub mod ask;
 pub mod export;
 pub mod facts;
 pub mod grpc;
+pub mod migrate;
+pub mod projection;
 pub mod stub;
+pub mod tools;
+pub mod vocabulary;
 
 use std::fmt;
 use std::pin::Pin;
@@ -28,6 +43,9 @@ use futures::Stream;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
+
+use crate::domain::ontology::Ontology;
+use crate::domain::workspace::WorkspaceRole;
 
 /// The generated `onto_intelli.v1` messages, client and server.
 #[allow(
@@ -47,10 +65,13 @@ pub enum OntoError {
     /// The server is not there, not answering in time, or refused the connection.
     #[error("onto-intelli is not reachable: {0}")]
     Unavailable(String),
-    /// The server refused the token, or the principal may not see what was asked.
+    /// The server refused the token, or the principal may not do what was asked.
     #[error("onto-intelli refused the request: {0}")]
     Denied(String),
-    /// The request does not fit: an unknown entity, a bad argument.
+    /// What was asked for does not exist (a graph without a vocabulary yet).
+    #[error("onto-intelli has no such thing: {0}")]
+    NotFound(String),
+    /// The request does not fit: a bad argument, a value the schema refuses.
     #[error("onto-intelli rejected the request: {0}")]
     Invalid(String),
     /// Anything else the server reported.
@@ -77,42 +98,176 @@ pub struct IngestOutcome {
     pub queued: bool,
 }
 
-/// The role a question is asked with, in onto-intelli's terms.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PrincipalRole {
-    /// Everything in the workspace, restricted entities included.
-    Admin,
-    /// Read and write; restricted entities only through an ACL.
-    Member,
-    /// Read only.
-    Viewer,
+/// onto-intelli's roles, as nexc grants them (`docs/ONTOLOGY.md` §2). The
+/// server's governance decides what each may do: by default `schema_admin`
+/// applies schema changes, `approver` approves proposals, `agent` only
+/// proposes.
+pub mod role {
+    pub const VIEWER: &str = "viewer";
+    pub const MEMBER: &str = "member";
+    pub const APPROVER: &str = "approver";
+    pub const SCHEMA_ADMIN: &str = "schema_admin";
+    pub const AGENT: &str = "agent";
 }
 
-/// Who is asking, and about which onto-intelli workspace.
+/// The onto-intelli roles the backend asserts when it calls for someone of a
+/// workspace role, after nexc's own checks (a vocabulary written through
+/// `PUT /graphs/{gid}/ontology`, a plan's types): owners and admins approve
+/// proposals and may apply schema changes, members read and write, guests
+/// only read.
+pub fn roles_for(role: WorkspaceRole) -> Vec<String> {
+    let roles: &[&str] = match role {
+        WorkspaceRole::Owner | WorkspaceRole::Admin => {
+            &[role::MEMBER, role::APPROVER, role::SCHEMA_ADMIN]
+        }
+        WorkspaceRole::Member => &[role::MEMBER],
+        WorkspaceRole::Guest => &[role::VIEWER],
+    };
+    roles.iter().map(|r| (*r).to_owned()).collect()
+}
+
+/// The onto-intelli roles of a browser session for onto-intelli's own UI:
+/// never a write role. onto-intelli has no per-entity write rule that
+/// mirrors nexc's (who may work on which graph, who is in which team), so
+/// the data nexc projects there (vocabularies, team membership, the audit's
+/// facts) is only written by the backend, after nexc's checks. Owners and
+/// admins still approve proposals and apply schema changes (onto-intelli
+/// runs a change's data migration as the system).
+pub fn session_roles_for(role: WorkspaceRole) -> Vec<String> {
+    let roles: &[&str] = match role {
+        WorkspaceRole::Owner | WorkspaceRole::Admin => {
+            &[role::VIEWER, role::APPROVER, role::SCHEMA_ADMIN]
+        }
+        WorkspaceRole::Member | WorkspaceRole::Guest => &[role::VIEWER],
+    };
+    roles.iter().map(|r| (*r).to_owned()).collect()
+}
+
+/// The tenant that holds a nexc workspace's ontology: `ws_{id without dashes}`
+/// (its PostgreSQL schema is `onto_ws_…`).
+pub fn tenant_of(workspace_id: Uuid) -> String {
+    format!("ws_{}", workspace_id.simple())
+}
+
+/// The onto-intelli workspace, inside the tenant, that holds the nexc
+/// workspace's entities (`{prefix}{workspace id}`).
+pub fn workspace_name(prefix: &str, workspace_id: Uuid) -> String {
+    format!("{prefix}{workspace_id}")
+}
+
+/// Who a call is made as, and where.
 ///
-/// onto-intelli's bearer authentication binds the backend's token to one
-/// principal; the asker's identity and role travel with the request so the
-/// backend's own clearance filter ([`ask::Clearance`]) and the audit entry
-/// on both sides name the person, not the service.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// onto-intelli's bearer authentication binds the backend's token to the
+/// backend's own service principal. A principal with an `id` travels as the
+/// impersonation headers (`x-onto-act-as`, `x-onto-act-roles`,
+/// `x-onto-act-workspaces`, `x-onto-act-entity`), so onto-intelli checks and
+/// audits the person or the agent, not the service; one without acts as the
+/// service itself (the export).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Principal {
-    /// `user:{id}` of the member, `system` for the export worker.
+    /// `user:{id}`, `assistant:{user id}`, `agent:runtime`; empty for the service itself.
     pub id: String,
-    pub role: PrincipalRole,
-    /// The onto-intelli workspace (`{prefix}{nexc workspace id}`).
+    /// onto-intelli roles ([`role`]).
+    pub roles: Vec<String>,
+    /// The person the principal stands for (`person:{user id}`).
+    pub entity: Option<String>,
+    /// `x-onto-tenant` ([`tenant_of`]); empty addresses the server's default tenant.
+    pub tenant: String,
+    /// The onto-intelli workspace ([`workspace_name`]).
     pub workspace: String,
 }
 
 impl Principal {
-    /// The backend itself, exporting facts into `workspace`.
+    /// The backend's own service principal in `workspace` of the default
+    /// tenant (tests, and servers without tenants).
     pub fn system(workspace: impl Into<String>) -> Self {
         Principal {
-            id: "system".into(),
-            role: PrincipalRole::Admin,
+            id: String::new(),
+            roles: Vec::new(),
+            entity: None,
+            tenant: String::new(),
             workspace: workspace.into(),
         }
     }
+
+    /// The backend's own service principal in a nexc workspace's tenant: the
+    /// export and the projection, which write what nexc knows.
+    pub fn service(prefix: &str, workspace_id: Uuid) -> Self {
+        Principal {
+            tenant: tenant_of(workspace_id),
+            ..Principal::system(workspace_name(prefix, workspace_id))
+        }
+    }
+
+    /// A member of a nexc workspace, with the onto-intelli roles of their workspace role.
+    pub fn user(prefix: &str, workspace_id: Uuid, user_id: Uuid, role: WorkspaceRole) -> Self {
+        Principal {
+            id: format!("user:{user_id}"),
+            roles: roles_for(role),
+            entity: Some(person_id(user_id)),
+            ..Principal::service(prefix, workspace_id)
+        }
+    }
+
+    /// A member in onto-intelli's own UI (the session the backend mints for
+    /// the browser): their principal with read-only roles ([`session_roles_for`]).
+    pub fn browser(prefix: &str, workspace_id: Uuid, user_id: Uuid, role: WorkspaceRole) -> Self {
+        Principal {
+            roles: session_roles_for(role),
+            ..Principal::user(prefix, workspace_id, user_id, role)
+        }
+    }
+
+    /// The assistant working for a member: an agent, which reads, plans and
+    /// proposes but never applies or approves.
+    pub fn assistant(prefix: &str, workspace_id: Uuid, user_id: Uuid) -> Self {
+        Principal {
+            id: format!("assistant:{user_id}"),
+            roles: vec![role::AGENT.to_owned()],
+            entity: Some(person_id(user_id)),
+            ..Principal::service(prefix, workspace_id)
+        }
+    }
+
+    /// The run engine reading a graph's vocabulary: an agent.
+    pub fn runtime(prefix: &str, workspace_id: Uuid) -> Self {
+        Principal {
+            id: "agent:runtime".to_owned(),
+            roles: vec![role::AGENT.to_owned()],
+            ..Principal::service(prefix, workspace_id)
+        }
+    }
+
+    /// The backend's own service principal in the same tenant and workspace.
+    pub fn as_service(&self) -> Self {
+        Principal {
+            id: String::new(),
+            roles: Vec::new(),
+            entity: None,
+            ..self.clone()
+        }
+    }
+
+    /// Whether the call is made for someone (the impersonation headers go along).
+    pub fn acts(&self) -> bool {
+        !self.id.is_empty()
+    }
+
+    /// Whether the principal holds `role`.
+    pub fn has_role(&self, role: &str) -> bool {
+        self.roles.iter().any(|r| r == role)
+    }
+}
+
+/// The entity of a person (`person:{user id}`).
+pub fn person_id(user_id: Uuid) -> String {
+    format!("person:{user_id}")
+}
+
+/// The entity of a graph, which also holds its execution vocabulary
+/// (`execution_graph:{graph id}`).
+pub fn graph_entity(graph_id: Uuid) -> String {
+    format!("execution_graph:{graph_id}")
 }
 
 /// How onto-intelli should answer.
@@ -302,6 +457,42 @@ impl OntoEvent {
     }
 }
 
+/// A schema change set (`SchemaService/Plan`): changes such as
+/// `{"op": "put_link_type", "name": …, "def": {…}}` and the migrations that
+/// resolve what they break.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct SchemaChange {
+    pub changes: Vec<Value>,
+    #[serde(default)]
+    pub migrations: Vec<Value>,
+    #[serde(default)]
+    pub message: String,
+}
+
+/// A proposal to file (`SchemaService/Propose`): a change set with the
+/// reasons for it, for people to review.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct SchemaProposalDraft {
+    pub title: String,
+    pub rationale: String,
+    pub changes: Vec<Value>,
+    #[serde(default)]
+    pub migrations: Vec<Value>,
+    /// Where it comes from (`nexc-assistant`).
+    #[serde(default)]
+    pub source: String,
+}
+
+/// A browser session minted for a principal (`POST /v1/auth/session`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OntoSession {
+    /// `onto1.…`: one principal, one tenant, short-lived; it cannot impersonate.
+    pub token: String,
+    /// Unix seconds.
+    pub expires_at: i64,
+    pub tenant: String,
+}
+
 /// An onto-intelli server, or something standing in for one.
 #[async_trait::async_trait]
 pub trait OntologyBackend: Send + Sync {
@@ -311,11 +502,12 @@ pub trait OntologyBackend: Send + Sync {
     async fn health(&self) -> Result<OntoHealth, OntoError>;
 
     /// Streams records (`{"op": "upsert", …}`, `{"op": "link", …}`,
-    /// `{"op": "event", …}`) into `workspace`; they are applied before the
-    /// reply, so a reply means they are in.
+    /// `{"op": "event", …}`, `{"op": "delete", …}`) into the principal's
+    /// tenant and workspace; they are applied before the reply, so a reply
+    /// means they are in.
     async fn ingest(
         &self,
-        workspace: &str,
+        principal: &Principal,
         records: Vec<Value>,
     ) -> Result<IngestOutcome, OntoError>;
 
@@ -340,20 +532,74 @@ pub trait OntologyBackend: Send + Sync {
         principal: &Principal,
         q: EventQuery,
     ) -> Result<Vec<OntoEvent>, OntoError>;
+
+    /// A graph's node types and relation types (`ExecutionService/Vocabulary`);
+    /// [`OntoError::NotFound`] when the graph has none in onto-intelli yet.
+    async fn vocabulary(&self, principal: &Principal, graph: &str) -> Result<Ontology, OntoError>;
+
+    /// Replaces a graph's vocabulary in one atomic write
+    /// (`ExecutionService/SetVocabulary`): types are created, changed or
+    /// removed. The graph must exist ([`OntologyBackend::init_graph`]).
+    async fn set_vocabulary(
+        &self,
+        principal: &Principal,
+        graph: &str,
+        vocabulary: &Ontology,
+    ) -> Result<Ontology, OntoError>;
+
+    /// Creates a graph, or names an existing one (`ExecutionService/InitGraph`),
+    /// with `vocabulary`'s types upserted; without one, a new graph gets
+    /// nothing (nexc always passes the types it wants).
+    async fn init_graph(
+        &self,
+        principal: &Principal,
+        graph: &str,
+        title: &str,
+        vocabulary: Option<&Ontology>,
+    ) -> Result<Ontology, OntoError>;
+
+    /// The tenant's active schema document (`SchemaService/Get`): object
+    /// types, link types, action types, rules, with `schema_version`.
+    async fn schema(&self, principal: &Principal) -> Result<Value, OntoError>;
+
+    /// Dry-runs a change set (`SchemaService/Plan`): validation, diff, impact.
+    async fn plan_schema(
+        &self,
+        principal: &Principal,
+        change: &SchemaChange,
+    ) -> Result<Value, OntoError>;
+
+    /// Files a proposal (`SchemaService/Propose`); people approve it in onto-intelli.
+    async fn propose_schema(
+        &self,
+        principal: &Principal,
+        proposal: &SchemaProposalDraft,
+    ) -> Result<Value, OntoError>;
+
+    /// Proposals of the tenant, newest first (`SchemaService/ListProposals`).
+    async fn proposals(
+        &self,
+        principal: &Principal,
+        status: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<Value>, OntoError>;
+
+    /// Mints a short-lived browser session for `principal` in its tenant
+    /// (`POST /v1/auth/session`); the backend's own token never reaches a page.
+    async fn mint_session(
+        &self,
+        principal: &Principal,
+        ttl_secs: u64,
+    ) -> Result<OntoSession, OntoError>;
 }
 
-/// The onto-intelli workspace that holds a nexc workspace's facts.
-pub fn workspace_name(prefix: &str, workspace_id: Uuid) -> String {
-    format!("{prefix}{workspace_id}")
-}
-
-impl fmt::Display for PrincipalRole {
+impl fmt::Display for Principal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            PrincipalRole::Admin => "admin",
-            PrincipalRole::Member => "member",
-            PrincipalRole::Viewer => "viewer",
-        })
+        if self.acts() {
+            write!(f, "{} ({})", self.id, self.roles.join(","))
+        } else {
+            f.write_str("service")
+        }
     }
 }
 
@@ -428,5 +674,59 @@ pub mod json {
             assert_eq!(from_proto(&to_proto(&json!([1, "two"]))), json!([1, "two"]));
             assert_eq!(to_struct(&json!("not an object")).fields.len(), 0);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn principals_carry_the_mapped_roles_and_the_tenant() {
+        let w = Uuid::nil();
+        let u = Uuid::from_u128(7);
+        let owner = Principal::user("nexc-", w, u, WorkspaceRole::Owner);
+        assert_eq!(owner.roles, ["member", "approver", "schema_admin"]);
+        assert_eq!(owner.tenant, "ws_00000000000000000000000000000000");
+        assert_eq!(owner.workspace, format!("nexc-{w}"));
+        assert_eq!(owner.entity.as_deref(), Some(&*format!("person:{u}")));
+        assert_eq!(
+            Principal::user("nexc-", w, u, WorkspaceRole::Admin).roles,
+            owner.roles
+        );
+        assert_eq!(
+            Principal::user("nexc-", w, u, WorkspaceRole::Member).roles,
+            ["member"]
+        );
+        assert_eq!(
+            Principal::user("nexc-", w, u, WorkspaceRole::Guest).roles,
+            ["viewer"]
+        );
+        // A browser session never writes: what nexc projects is written by the backend only.
+        for (role, roles) in [
+            (
+                WorkspaceRole::Owner,
+                &["viewer", "approver", "schema_admin"][..],
+            ),
+            (
+                WorkspaceRole::Admin,
+                &["viewer", "approver", "schema_admin"][..],
+            ),
+            (WorkspaceRole::Member, &["viewer"][..]),
+            (WorkspaceRole::Guest, &["viewer"][..]),
+        ] {
+            let browser = Principal::browser("nexc-", w, u, role);
+            assert_eq!(browser.roles, roles);
+            assert_eq!(browser.id, format!("user:{u}"));
+            assert!(!browser.has_role(role::MEMBER) && !browser.has_role(role::AGENT));
+        }
+        let assistant = Principal::assistant("nexc-", w, u);
+        assert_eq!(assistant.roles, ["agent"]);
+        assert!(assistant.acts() && !assistant.has_role("approver"));
+        assert_eq!(Principal::runtime("nexc-", w).roles, ["agent"]);
+        let service = Principal::service("nexc-", w);
+        assert!(!service.acts());
+        assert_eq!(service.tenant, owner.tenant);
+        assert_eq!(service.to_string(), "service");
     }
 }

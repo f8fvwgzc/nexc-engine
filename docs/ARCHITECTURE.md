@@ -116,14 +116,17 @@ and the graph is untouched. In demo mode the planner is a deterministic offline 
 ### The ontology
 
 <!-- #region ontology -->
-Nothing about node or relation types is compiled in. Every graph stores an **ontology**: its node
-types (label, meaning, colour, default role and executor, stage, whether its nodes deliver a file or
-may run code) and its relation types (label, meaning, and whether the relation is _blocking_). A
-node's `kind` and an edge's `kind` are keys into it, and every edge carries a `reason`.
+Nothing about node or relation types is compiled in. Every graph has an **ontology**, its execution
+vocabulary, kept in onto-intelli (`docs/ONTOLOGY.md` §4): its node types (label, meaning, colour,
+default role and executor, stage, whether its nodes deliver a file or may run code) and its relation
+types (label, meaning, and whether the relation is _blocking_). A node's `kind` and an edge's `kind`
+are keys into it, and every edge carries a `reason`. The backend reads it through a short-lived
+cache and writes it back there as the member who edits.
 
-A new graph starts from a small starter ontology. The planner sees the current ontology, reuses its
-types where they fit and proposes new node and relation types when the goal's domain needs them;
-applying the plan merges them into the graph. Users edit the ontology in the canvas toolbar. The
+A new graph starts from a small starter vocabulary (read-only when onto-intelli is off). The planner
+sees the current vocabulary, reuses its types where they fit and proposes new node and relation types
+when the goal's domain needs them; applying the plan adds them in onto-intelli. Users edit the
+vocabulary in the canvas toolbar, or in onto-intelli's own UI. The
 engine reads behaviour from the types instead of from fixed names: blocking relations form the
 execution DAG (other relations record meaning only and may point "backwards"), `stage` orders
 suggested dependencies, `produces_artifact` routes deliverables, and each upstream output reaches

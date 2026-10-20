@@ -161,25 +161,34 @@ circuit or opens it again. `nexc_llm_breaker_total` counts the events; `0` failu
 ## onto-intelli (optional): the audit's query engine
 
 <!-- #region onto -->
-"Ask the audit" needs an [onto-intelli](https://github.com/f8fvwgzc/onto-intelli) server: the
-backend exports the trace to it as ontology facts (ids, names, hosts, counts and decisions,
-never content) and answers audit questions from them. Set `NEXC_ONTO_URL` (its gRPC endpoint)
-and `NEXC_ONTO_TOKEN` (the bearer token its `onto-intelli.toml` knows the backend by); with
-`NEXC_ONTO_URL` unset the feature is off, nothing is exported and the ask routes answer 503.
+[onto-intelli](https://github.com/f8fvwgzc/onto-intelli) is where the ontology lives
+(`docs/ONTOLOGY.md`): graph vocabularies, the workspace map, schema proposals, and the audit's
+facts. For the audit, the backend exports the trace to it as ontology facts (ids, names, hosts,
+counts and decisions, never content), into each workspace's own tenant, and answers audit
+questions from them as the member who asks. Set `NEXC_ONTO_URL` (its gRPC and HTTP endpoint) and
+`NEXC_ONTO_TOKEN` (the impersonating token its `onto-intelli.toml` knows the backend by); with
+`NEXC_ONTO_MODE=off` (the default without a URL) nothing is exported and the ask routes answer 503.
 
 - In Compose: `make demo-onto`, or `docker compose -f docker-compose.yml -f docker-compose.onto.yml
-  --profile onto up -d --build`, builds it from a checkout next to this repository and wires the
-  backend to it; `deploy/onto/onto-intelli.toml` is its configuration (token auth, the audit's
-  schema in `deploy/onto/nexc-audit.toml`, the mock model unless `ANTHROPIC_API_KEY` is set).
+  --profile onto up -d --build`, builds it from a checkout next to this repository, on a
+  PostgreSQL server of its own with pgvector (`onto-postgres`, volume `onto-pgdata`, login `onto`),
+  and wires the backend and the console's frame-src to it; `deploy/onto/onto-intelli.toml` is its configuration
+  (tenants per workspace, the impersonating token, governance, the nexc-execution package, the
+  audit's schema in `deploy/onto/nexc-audit.toml`, the workspace's in
+  `deploy/onto/nexc-workspace.toml`, the mock model unless `ANTHROPIC_API_KEY` is set).
 - Elsewhere: run `onto serve` with a configuration like `deploy/onto/onto-intelli.toml`.
 - `nexc doctor` and Settings → Infrastructure report whether it answers, its version and the
   model it explains with.
 
-What goes out and how far it got: the tables queue every span written, run finished and agent
-changed in `onto_export_queue`; the worker claims rows with `SKIP LOCKED`, streams them and
-deletes them once onto-intelli acknowledged, so a span reaches it at least once and instances
-share the work; `onto_export_cursors` holds each workspace's backfill (done once, the first time
-the feature sees the workspace) and its last error. Moving to another onto-intelli is a restart
-with a new `NEXC_ONTO_URL` and `DELETE FROM onto_export_cursors`, which backfills everything there.
+What goes out and how far it got: the tables queue every span written, run started and finished,
+agent changed and every change of the projected workspace (teams, people, projects, cycles,
+issues, graphs, documents) in `onto_export_queue`; the worker claims rows with `SKIP LOCKED`,
+streams them and deletes them once onto-intelli acknowledged, so a span reaches it at least once
+and instances share the work; `onto_export_cursors` holds each workspace's backfill and
+projection (each done once, the first time the feature sees the workspace) and its last error,
+and `onto_projection` what the projection put there. Moving to another onto-intelli is a restart
+with a new `NEXC_ONTO_URL`, `DELETE FROM onto_export_cursors`, `DELETE FROM onto_projection` and
+`nexc onto migrate` after `DELETE FROM onto_vocabulary_migrations` (graph vocabularies live in
+onto-intelli: copy its tenants with it, or the graphs start from the starter set there).
 
 <!-- #endregion onto -->

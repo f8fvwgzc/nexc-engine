@@ -1,4 +1,4 @@
-import { keepPreviousData, queryOptions } from '@tanstack/react-query';
+import { queryOptions } from '@tanstack/react-query';
 import { z } from 'zod';
 
 import { apiRequest } from '@/lib/api/client';
@@ -8,12 +8,8 @@ import {
   daySummarySchema,
   infrastructureSchema,
   latencyReportSchema,
-  mapItemSchema,
-  mapNeighbourhoodSchema,
-  type MapKind,
   timelineDaySchema,
   timelineEntrySchema,
-  workspaceMapSchema,
 } from '@/schemas/insight';
 
 // These keys are outside the roots copied to browser storage: who did what stays on the server.
@@ -61,38 +57,6 @@ export function writeDaySummary(workspaceId: string, day: string) {
     query: { day },
   });
 }
-
-export const workspaceMapQuery = (workspaceId: string) =>
-  queryOptions({
-    queryKey: ['insight', workspaceId, 'map'] as const,
-    staleTime: FRESH.setup,
-    queryFn: ({ signal }) =>
-      apiRequest(`/workspaces/${workspaceId}/map`, workspaceMapSchema, { signal }),
-  });
-
-/** The things of one kind in a workspace, by name, to pick one and follow its ties. */
-export const mapItemsQuery = (workspaceId: string, kind: MapKind, q: string) =>
-  queryOptions({
-    queryKey: ['insight', workspaceId, 'map', kind, 'list', q] as const,
-    staleTime: FRESH.setup,
-    queryFn: ({ signal }) =>
-      apiRequest(`/workspaces/${workspaceId}/map/${kind}`, z.array(mapItemSchema), {
-        query: { q: q || undefined, limit: 20 },
-        signal,
-      }),
-    placeholderData: keepPreviousData,
-  });
-
-/** One thing with everything it is tied to. */
-export const mapNeighbourhoodQuery = (workspaceId: string, kind: MapKind, id: string) =>
-  queryOptions({
-    queryKey: ['insight', workspaceId, 'map', kind, id] as const,
-    staleTime: FRESH.setup,
-    queryFn: ({ signal }) =>
-      apiRequest(`/workspaces/${workspaceId}/map/${kind}/${id}`, mapNeighbourhoodSchema, {
-        signal,
-      }),
-  });
 
 export const infrastructureQuery = () =>
   queryOptions({

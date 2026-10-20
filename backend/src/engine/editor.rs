@@ -1,6 +1,9 @@
 //! Graph mutations shared by the REST API and the WebSocket. Every change
 //! bumps the graph version, is broadcast to the graph's sockets and, for
-//! content edits, re-runs dependency detection.
+//! content edits, re-runs dependency detection. Node and relation types come
+//! from the graph's vocabulary in onto-intelli, read as the member who edits.
+
+use std::sync::Arc;
 
 use uuid::Uuid;
 
@@ -14,6 +17,7 @@ use crate::domain::graph::{
 };
 use crate::domain::ontology::Ontology;
 use crate::domain::validation::{FieldErrors, Validate};
+use crate::ontology::vocabulary::{self, Actor, VocabularyError};
 use crate::realtime::events::WsMessage;
 use crate::repo::{self, OrNotFound};
 
@@ -96,12 +100,35 @@ pub async fn owned_graph(
         .or_not_found("graph")
 }
 
-/// Loads a full graph owned by `owner`.
-pub async fn load_graph(state: &AppState, owner: Uuid, graph_id: Uuid) -> Result<Graph, AppError> {
+/// The vocabulary of a graph `user` works on, read from onto-intelli as them.
+pub async fn vocabulary_of(
+    state: &AppState,
+    user: Uuid,
+    meta: &GraphMeta,
+) -> Result<Arc<Ontology>, AppError> {
+    Ok(vocabulary::of(state, meta.vocabulary_ref(), Actor::User(user)).await?)
+}
+
+/// A graph `owner` may work on, with its nodes and edges but not its
+/// vocabulary: what a run is started from, which does not wait on onto-intelli.
+pub async fn load_structure(
+    state: &AppState,
+    owner: Uuid,
+    graph_id: Uuid,
+) -> Result<(GraphMeta, Vec<GraphNode>, Vec<GraphEdge>), AppError> {
     let meta = owned_graph(state, owner, graph_id).await?;
     let nodes = repo::nodes::list(&state.db, graph_id).await?;
     let edges = repo::edges::list(&state.db, graph_id).await?;
-    Ok(meta.into_graph(nodes, edges))
+    Ok((meta, nodes, edges))
+}
+
+/// Loads a full graph owned by `owner`, with its vocabulary.
+pub async fn load_graph(state: &AppState, owner: Uuid, graph_id: Uuid) -> Result<Graph, AppError> {
+    let meta = owned_graph(state, owner, graph_id).await?;
+    let ontology = vocabulary_of(state, owner, &meta).await?;
+    let nodes = repo::nodes::list(&state.db, graph_id).await?;
+    let edges = repo::edges::list(&state.db, graph_id).await?;
+    Ok(meta.into_graph(Ontology::clone(&ontology), nodes, edges))
 }
 
 /// Bumps the version and tells sockets about the new summary.
@@ -134,7 +161,8 @@ pub async fn create_node(
     graph_id: Uuid,
     new: NewNode,
 ) -> Result<GraphNode, AppError> {
-    let ontology = owned_graph(state, owner, graph_id).await?.ontology;
+    let meta = owned_graph(state, owner, graph_id).await?;
+    let ontology = vocabulary_of(state, owner, &meta).await?;
     let kind = match new.kind {
         Some(kind) => kind,
         None => ontology
@@ -180,9 +208,9 @@ pub async fn update_node(
     node_id: Uuid,
     patch: NodePatch,
 ) -> Result<GraphNode, AppError> {
-    let ontology = owned_graph(state, owner, graph_id).await?.ontology;
+    let meta = owned_graph(state, owner, graph_id).await?;
     if let Some(kind) = &patch.kind {
-        check_node_kind(&ontology, kind)?;
+        check_node_kind(&*vocabulary_of(state, owner, &meta).await?, kind)?;
     }
     let mut node = repo::nodes::find(&state.db, graph_id, node_id)
         .await
@@ -253,11 +281,12 @@ pub async fn create_edge(
             "an edge cannot connect a node to itself",
         ));
     }
+    let meta = owned_graph(state, owner, graph_id).await?;
+    let ontology = vocabulary_of(state, owner, &meta).await?;
     let mut tx = state.db.begin().await?;
-    let ontology = repo::graphs::lock(&mut *tx, owner, graph_id)
+    repo::graphs::lock(&mut *tx, owner, graph_id)
         .await
-        .or_not_found("graph")?
-        .ontology;
+        .or_not_found("graph")?;
     let relation = match &kind {
         Some(kind) => ontology.relation_type(kind),
         None => ontology.default_relation(),
@@ -326,10 +355,14 @@ pub async fn update_edge_reason(
     Ok(edge)
 }
 
-/// Replaces the ontology of a graph. A type that nodes or edges still use
-/// cannot be removed (422); turning a relation blocking is refused (409) if
-/// its edges would close a cycle. Edges follow their relation's new
-/// `blocking` flag.
+/// Replaces the vocabulary of a graph in onto-intelli, as `owner`. nexc
+/// keeps its own rules: at most `TYPES_MAX` types of each sort, a type that
+/// nodes or edges still use cannot be removed (422), and turning a relation
+/// blocking is refused (409) if its edges would close a cycle. What remains
+/// is planned against the vocabulary onto-intelli holds and applied there in
+/// one atomic, audited write, while the graph row is locked; edges then
+/// follow their relation's new `blocking` flag. With onto-intelli off the
+/// vocabulary is read-only (409).
 pub async fn replace_ontology(
     state: &AppState,
     owner: Uuid,
@@ -340,7 +373,14 @@ pub async fn replace_ontology(
     let mut errors = FieldErrors::default();
     ontology.validate(&mut errors);
     errors.into_result()?;
+    if !vocabulary::editable(state) {
+        return Err(VocabularyError::ReadOnly.into());
+    }
 
+    let meta = owned_graph(state, owner, graph_id).await?;
+    // A graph onto-intelli does not hold yet is initialised on this read, before the row is
+    // locked (initialising records the graph, which waits for that lock).
+    vocabulary_of(state, owner, &meta).await?;
     let mut tx = state.db.begin().await?;
     repo::graphs::lock(&mut *tx, owner, graph_id)
         .await
@@ -392,15 +432,18 @@ pub async fn replace_ontology(
             "making this relation blocking would create a dependency cycle".into(),
         ));
     }
-    for relation in &ontology.relation_types {
+    let stored = vocabulary::replace(state, meta.vocabulary_ref(), owner, &ontology).await?;
+    for relation in &stored.relation_types {
         repo::edges::set_blocking(&mut *tx, graph_id, &relation.key, relation.blocking).await?;
     }
-    repo::graphs::set_ontology(&mut *tx, graph_id, &ontology).await?;
     tx.commit().await?;
 
-    state
-        .hub
-        .broadcast(graph_id, WsMessage::OntologyUpdated { ontology });
+    state.hub.broadcast(
+        graph_id,
+        WsMessage::OntologyUpdated {
+            ontology: Ontology::clone(&stored),
+        },
+    );
     for edge in changed {
         state
             .hub

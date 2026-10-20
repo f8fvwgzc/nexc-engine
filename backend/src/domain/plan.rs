@@ -154,14 +154,24 @@ impl PlanContext {
 /// it), edges between known refs only, no duplicates and no cycle among
 /// blocking edges (edges that would close one are dropped in order). The
 /// proposal's ontology is reduced to the types the graph does not have yet.
-/// Returns human readable notes about every correction.
+/// When the vocabulary is not `extensible` (onto-intelli is off) the plan
+/// adds no types: unknown node kinds become the default kind and edges of
+/// unknown relations are dropped. Returns human readable notes about every
+/// correction.
 pub fn sanitize_proposal(
     mut proposal: PlanProposal,
     existing: &HashSet<Uuid>,
     ontology: &Ontology,
     max_nodes: usize,
+    extensible: bool,
 ) -> (PlanProposal, Vec<String>) {
     let mut notes = Vec::new();
+    if !extensible && !proposal.ontology.node_types.is_empty()
+        || !extensible && !proposal.ontology.relation_types.is_empty()
+    {
+        notes.push("the vocabulary is read-only: the plan adds no types".to_owned());
+        proposal.ontology = Ontology::default();
+    }
     proposal.ontology.normalize();
     let mut merged = ontology.clone();
     merged.merge(&proposal.ontology);
@@ -192,7 +202,7 @@ pub fn sanitize_proposal(
         }
         let kind = slug(&node.kind);
         if merged.node_type(&kind).is_none() {
-            if merged.ensure_node_type(&kind) {
+            if extensible && merged.ensure_node_type(&kind) {
                 notes.push(format!("declared undeclared node type `{kind}`"));
             } else {
                 let fallback = merged.default_node_kind().unwrap_or_default().to_owned();
@@ -242,7 +252,7 @@ pub fn sanitize_proposal(
         if merged.relation_type(&kind).is_none() {
             // An undeclared relation never orders execution: only relations the
             // ontology marks blocking may hold a node back.
-            if !merged.ensure_relation_type(&kind, false) {
+            if !extensible || !merged.ensure_relation_type(&kind, false) {
                 notes.push(format!(
                     "dropped edge {} -> {} (unusable relation `{}`)",
                     edge.source_ref, edge.target_ref, edge.kind
@@ -327,8 +337,13 @@ mod tests {
                 edge("a", "b"),
             ],
         };
-        let (clean, notes) =
-            sanitize_proposal(proposal, &HashSet::from([known]), &Ontology::starter(), 10);
+        let (clean, notes) = sanitize_proposal(
+            proposal,
+            &HashSet::from([known]),
+            &Ontology::starter(),
+            10,
+            true,
+        );
         assert_eq!(clean.nodes.len(), 3);
         assert_eq!(clean.nodes[0].existing_id, Some(known));
         assert_eq!(clean.nodes[1].existing_id, None);
@@ -369,7 +384,8 @@ mod tests {
             ]
         }))
         .unwrap();
-        let (clean, notes) = sanitize_proposal(proposal, &HashSet::new(), &Ontology::starter(), 10);
+        let (clean, notes) =
+            sanitize_proposal(proposal, &HashSet::new(), &Ontology::starter(), 10, true);
         assert_eq!(clean.nodes[1].kind, "market_signal");
         let kinds: Vec<&str> = clean.edges.iter().map(|e| e.kind.as_str()).collect();
         assert_eq!(kinds, ["validates", "contradicts", "depends_on"]);

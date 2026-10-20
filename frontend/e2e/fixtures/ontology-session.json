@@ -1,0 +1,7 @@
+{
+  "ui_url": "http://onto.test/ui/",
+  "token": "onto1.e2e-fixture-session.signature",
+  "tenant": "ws_70a37d8f972f7494837f9dba8364cbb4",
+  "workspace": "nexc-70a37d8f-972f-7494-837f-9dba8364cbb4",
+  "expires_at": "2099-01-01T00:00:00Z"
+}

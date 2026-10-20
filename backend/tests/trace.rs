@@ -935,7 +935,7 @@ async fn a_transferred_trace_still_verifies(pool: PgPool) {
         .unwrap();
     let base = std::env::var("DATABASE_URL").unwrap();
     let url = format!("{}/{name}", base.rsplit_once('/').unwrap().0);
-    let report = nexc::engine::transfer::copy_workspace(&pool, &url, workspace)
+    let report = nexc::engine::transfer::copy_workspace(&pool, &url, workspace, &[])
         .await
         .unwrap();
     let spans = report.iter().find(|r| r.table == "agent_spans").unwrap();

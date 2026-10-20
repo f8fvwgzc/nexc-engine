@@ -1,0 +1,33 @@
+{
+  "mode": "service",
+  "ui_url": "http://onto.test/ui/",
+  "tenant": "ws_70a37d8f972f7494837f9dba8364cbb4",
+  "workspace": "nexc-70a37d8f-972f-7494-837f-9dba8364cbb4",
+  "proposals": [
+    {
+      "id": "prop_0199f3a2c41e",
+      "title": "Track code reviews",
+      "rationale": "Reviews come up in most retrospectives, yet nothing on the map says who reviewed what.",
+      "status": "open",
+      "proposer": "assistant:d6b5915c-4605-7bcb-805f-46f6433df656",
+      "by_agent": true,
+      "breaking": false,
+      "changes": 1,
+      "created_at": "2026-01-14T09:30:00Z",
+      "review_url": "http://onto.test/ui/#/proposals/prop_0199f3a2c41e"
+    },
+    {
+      "id": "prop_0199f2b7e0d3",
+      "title": "Retire the milestone kind",
+      "rationale": "Cycles replaced milestones; three old ones are retyped as cycles.",
+      "status": "open",
+      "proposer": "user:673aeeb0-8cfb-700b-81e5-e3c60b5ba318",
+      "by_agent": false,
+      "breaking": true,
+      "changes": 2,
+      "created_at": "2026-01-13T16:05:00Z",
+      "review_url": "http://onto.test/ui/#/proposals/prop_0199f2b7e0d3"
+    }
+  ],
+  "error": null
+}
