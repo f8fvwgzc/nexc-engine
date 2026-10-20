@@ -1,44 +1,95 @@
-# Optional: onto-intelli as the audit's query engine ("ask the audit").
+# onto-intelli: the one place the ontology lives (docs/ONTOLOGY.md). Every graph's node and
+# relation types, the workspace map (onto-intelli's own UI, embedded by the console), the audit's
+# facts and the schema with its proposals. Without it nexc runs with NEXC_ONTO_MODE=off.
 #
 #   docker compose -f docker-compose.yml -f docker-compose.onto.yml --profile onto up -d --build
 #   # or: make demo-onto
 #
-# Builds onto-intelli from its Dockerfile in the sibling checkout ../onto-intelli
-# (https://github.com/f8fvwgzc/onto-intelli; clone it next to this repository) and
-# points the backend at it over the internal `agents` network. The backend's token is
-# NEXC_ONTO_TOKEN from .env (`make init` generates one); onto-intelli knows the backend by it.
+# onto-intelli is built from the sibling checkout ../onto-intelli (clone
+# https://github.com/f8fvwgzc/onto-intelli next to this repository), or pulled as ONTO_IMAGE. It
+# keeps its data in a database of its own (ONTO_POSTGRES_DB, `onto`) on nexc's PostgreSQL server,
+# which therefore runs the pgvector image here (onto-intelli needs pgvector 0.7+). Moving an
+# existing installation from the Alpine image: back up first (make backup), then
+# `REINDEX DATABASE nexc` once the new image runs, or start on a new volume (docs/ONTOLOGY.md).
+#
+# The backend presents NEXC_ONTO_TOKEN; browser sessions are signed with ONTO_SESSION_SECRET
+# (`make init` generates both). Browsers reach onto-intelli's UI on ONTO_HTTP_PORT (8081), which
+# the console embeds; deploy/onto/onto-intelli.toml lists the console's origin in [ui]
+# embed_origins.
 services:
+  postgres:
+    image: ${NEXC_POSTGRES_IMAGE:-pgvector/pgvector:pg17}
+    # The Debian-based pgvector image runs as postgres (uid 999).
+    user: "999:999"
+    tmpfs:
+      - /var/run/postgresql:uid=999,gid=999,mode=0775
+      - /tmp:uid=999,gid=999,mode=1777
+
+  # Creates onto-intelli's database once, then exits.
+  onto-db:
+    profiles: [onto]
+    image: ${NEXC_POSTGRES_IMAGE:-pgvector/pgvector:pg17}
+    restart: "no"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    user: "999:999"
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-nexc}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is empty - run `make init`}
+      PGDATABASE: ${POSTGRES_DB:-nexc}
+      ONTO_DB: ${ONTO_POSTGRES_DB:-onto}
+    command:
+      - sh
+      - -c
+      - >-
+        psql -tAc "SELECT 1 FROM pg_database WHERE datname = '$$ONTO_DB'" | grep -q 1
+        || psql -c "CREATE DATABASE \"$$ONTO_DB\""
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [data]
+
   onto-intelli:
     profiles: [onto]
+    image: ${ONTO_IMAGE:-nexc-onto-intelli:local}
+    pull_policy: missing # ONTO_IMAGE when set and pullable, else built from ../onto-intelli
     build:
-      context: ../onto-intelli
+      context: ${ONTO_BUILD_CONTEXT:-../onto-intelli}
     restart: unless-stopped
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     init: true
     environment:
-      ONTO_CONFIG: /data/onto-intelli.toml
+      ONTO_CONFIG: /etc/onto/onto-intelli.toml
+      ONTO_DATABASE_URL: postgres://${POSTGRES_USER:-nexc}:${POSTGRES_PASSWORD}@postgres:5432/${ONTO_POSTGRES_DB:-onto}
       NEXC_ONTO_TOKEN: ${NEXC_ONTO_TOKEN:?NEXC_ONTO_TOKEN is empty - run `make init`}
+      ONTO_SESSION_SECRET: ${ONTO_SESSION_SECRET:?ONTO_SESSION_SECRET is empty - run `make init`}
       # Real explanations need a key; without one the mock provider answers offline.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     volumes:
-      - onto-data:/data
-      - ./deploy/onto/onto-intelli.toml:/data/onto-intelli.toml:ro
-      - ./deploy/onto/nexc-audit.toml:/data/nexc-audit.toml:ro
+      - ./deploy/onto:/etc/onto:ro
     tmpfs:
       - /tmp
+      - /data:mode=1777
+    ports:
+      # The UI and its HTTP API, for browsers (the console embeds the UI). gRPC shares the port;
+      # every call needs a token.
+      - "${ONTO_HTTP_PORT:-8081}:50051"
     healthcheck:
       test: ["CMD-SHELL", "onto call system.health '{}' --remote http://127.0.0.1:50051 --token \"$$NEXC_ONTO_TOKEN\" >/dev/null"]
       interval: 10s
       timeout: 5s
-      retries: 6
-      start_period: 10s
-    networks: [agents, egress]
+      retries: 12
+      start_period: 20s
+    depends_on:
+      postgres: { condition: service_healthy }
+      onto-db: { condition: service_completed_successfully }
+    networks: [agents, data, egress]
 
   backend:
     environment:
+      NEXC_ONTO_MODE: service
       NEXC_ONTO_URL: ${NEXC_ONTO_URL:-http://onto-intelli:50051}
-
-volumes:
-  onto-data:
+      NEXC_ONTO_PUBLIC_URL: ${NEXC_ONTO_PUBLIC_URL:-http://localhost:8081}

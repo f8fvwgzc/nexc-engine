@@ -64,10 +64,19 @@ backend:
     port: 50052
   # OpenTelemetry: the OTLP/gRPC collector every span is exported to; empty keeps it off.
   otlpEndpoint: ""
-  # Ask the audit: onto-intelli's gRPC endpoint; empty keeps it off. Its token goes in the
+  # onto-intelli, where the ontology lives (docs/ONTOLOGY.md): an `onto serve` you run, by its
+  # gRPC and HTTP endpoint. Empty: the chart's own (ontoIntelli.enabled) or, without one, off
+  # (graphs keep the read-only starter vocabulary, no workspace map). Its token goes in the
   # Secret as NEXC_ONTO_TOKEN.
   ontoUrl: ""
+  # Where browsers reach onto-intelli's UI, which the console embeds as its workspace map, e.g.
+  # https://onto.nexc.example.com (ontoIntelli.ingress.host). Empty: ontoUrl.
+  ontoPublicUrl: ""
   ontoWorkspacePrefix: nexc-
+  # How long a graph's vocabulary is served from memory (0: every read asks onto-intelli).
+  ontoVocabularyTtlSecs: 30
+  # Lifetime of the browser sessions the console mints for onto-intelli's UI.
+  ontoSessionTtlSecs: 3600
   gateway:
     callsPerMinute: 120
     timeoutSecs: 30
@@ -128,6 +137,36 @@ frontend:
     requests: { cpu: 50m, memory: 32Mi }
     limits: { cpu: 500m, memory: 128Mi }
 
+# onto-intelli in the release (docs/ONTOLOGY.md): a Deployment and a Service on port `port`,
+# configured as nexc needs it (tenants per workspace, impersonation, governance, the UI's
+# embed_origins). It keeps its data in its own database on the chart's PostgreSQL, which then needs
+# pgvector 0.7+: set images.postgres to pgvector/pgvector:pg17 (a new volume: the Alpine image's
+# text indexes are not valid under Debian), or, with postgres.enabled=false, put ONTO_DATABASE_URL
+# in the Secret. The Secret also needs NEXC_ONTO_TOKEN and ONTO_SESSION_SECRET
+# (scripts/init-env.sh --k8s generates both).
+ontoIntelli:
+  enabled: false
+  image:
+    repository: ghcr.io/f8fvwgzc/onto-intelli
+    tag: "0.2.0"
+  replicas: 1
+  port: 50051
+  database: onto
+  maxConnections: 10
+  requiredApprovals: 1
+  # mock answers the audit offline; anthropic needs ANTHROPIC_API_KEY (anthropicApiKeyFromSecret).
+  llmProvider: mock
+  anthropicApiKeyFromSecret: false
+  # The console's origins, allowed to embed the UI and hand it a session. Empty: the ingress host.
+  embedOrigins: []
+  # A host of its own on the ingress for browsers (the UI and its HTTP API); set
+  # backend.ontoPublicUrl to it. Empty: not routed.
+  ingress:
+    host: ""
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "2", memory: 2Gi }
+
 postgres:
   # false: bring your own (a managed database or an operator) and put its URL in the Secret as
   # NEXC_DATABASE_URL.
@@ -185,6 +224,7 @@ secrets:
     NEXC_METRICS_TOKEN: ""
     NEXC_FIREWALL_SIGNING_KEY: ""
     NEXC_ONTO_TOKEN: ""
+    ONTO_SESSION_SECRET: ""
     ANTHROPIC_API_KEY: ""
     NEXC_ADMIN_EMAIL: ""
     NEXC_ADMIN_PASSWORD: ""

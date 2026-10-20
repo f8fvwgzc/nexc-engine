@@ -76,9 +76,32 @@ spec:
       ports:
         - { port: {{ .Values.runtime.httpPort }}, protocol: TCP }
         - { port: {{ .Values.runtime.grpcPort }}, protocol: TCP }
+{{- if .Values.ontoIntelli.enabled }}
+---
+# onto-intelli: from the backend (gRPC and the session endpoint), and from the ingress controller
+# for browsers (the UI the console embeds, and its HTTP API).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: onto-intelli-from-backend-and-ingress
+  labels:
+    {{- include "nexc.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: onto-intelli }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: backend }
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: {{ .Values.networkPolicies.ingressNamespace }} }
+      ports:
+        - { port: {{ .Values.ontoIntelli.port }}, protocol: TCP }
+{{- end }}
 {{- if .Values.postgres.enabled }}
 ---
-# postgres: only from the backend.
+# postgres: only from the backend (and onto-intelli, when it runs, for its own database).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -93,6 +116,10 @@ spec:
     - from:
         - podSelector:
             matchLabels: { app.kubernetes.io/name: backend }
+        {{- if .Values.ontoIntelli.enabled }}
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: onto-intelli }
+        {{- end }}
       ports:
         - { port: 5432, protocol: TCP }
 {{- end }}

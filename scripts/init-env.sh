@@ -58,6 +58,8 @@ fill NEXC_MASTER_KEY "$(openssl rand -base64 32)"
 fill NEXC_RUNTIME_TOKEN "$(openssl rand -hex 32)"
 fill NEXC_METRICS_TOKEN "$(openssl rand -hex 32)"
 fill NEXC_ONTO_TOKEN "$(openssl rand -hex 32)"
+# Signs onto-intelli's browser sessions, the same on every onto-intelli replica (32+ characters).
+fill ONTO_SESSION_SECRET "$(openssl rand -hex 32)"
 fill POSTGRES_USER nexc
 fill POSTGRES_DB nexc
 fill POSTGRES_PASSWORD "$(openssl rand -hex 24)"
