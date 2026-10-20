@@ -81,6 +81,7 @@ fn v1_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(health::healthz))
         .routes(routes!(health::readyz))
+        .routes(routes!(agent_token_keys::jwks))
         .routes(routes!(auth::register))
         .routes(routes!(auth::login))
         .routes(routes!(auth::refresh))
@@ -350,6 +351,7 @@ mod tests {
             "/api/v1/workspaces/{wid}/mcp-servers",
             "/api/v1/workspaces/{wid}/mcp-servers/{sid}/check",
             "/api/v1/agents/{id}/tokens",
+            "/api/v1/agent-tokens/jwks.json",
             "/api/v1/agents/{id}/tokens/{tid}",
             "/api/v1/agents/{id}/a2a/tasks",
             "/api/v1/workspaces/{wid}/a2a-counterparts",

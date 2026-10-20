@@ -1060,6 +1060,7 @@ async fn prove_gateway(pool: PgPool) {
         graph_id,
         workspace_id: Some(workspace_id),
         owner: owner_id,
+        owner_role: Some(nexc::domain::workspace::WorkspaceRole::Owner),
         goal: String::new(),
         node,
         node_type: None,

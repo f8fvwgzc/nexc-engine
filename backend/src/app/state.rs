@@ -160,6 +160,10 @@ impl AppState {
             None => None,
         };
         let firewall_signer = Arc::new(Signer::from_seed(settings.firewall_signing_key.expose())?);
+        let agent_tokens = Arc::new(AgentTokenKeys::new(
+            settings.agent_token_signing_key.expose(),
+            &settings.agent_token_verify_keys,
+        )?);
         let oidc = match &settings.oidc {
             Some(oidc) => Some(Arc::new(OidcClient::new(
                 oidc.clone(),
@@ -183,7 +187,7 @@ impl AppState {
                 settings.jwt_secret.expose(),
                 settings.access_ttl,
             )),
-            agent_tokens: Arc::new(AgentTokenKeys::new(settings.agent_token_key.expose())),
+            agent_tokens,
             secret_box: Arc::new(SecretBox::new(settings.master_key.expose())),
             llm: Arc::new(LlmService::new(provider, metrics.clone())),
             limiters: Arc::new(RateLimiters::new(

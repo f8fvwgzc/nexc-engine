@@ -5,6 +5,7 @@ pub mod a2a;
 pub mod a2a_counterparts;
 pub mod account;
 pub mod agent_templates;
+pub mod agent_token_keys;
 pub mod agents;
 pub mod alert_destinations;
 pub mod alerts;

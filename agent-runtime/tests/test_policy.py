@@ -5,6 +5,7 @@ than its parent, and the decisions take microseconds (CONTRACT section 8)."""
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import statistics
@@ -14,11 +15,14 @@ from typing import Any
 
 import httpx
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 
+from nexc_runtime import policy as policy_module
 from nexc_runtime.api.app import create_app
 from nexc_runtime.api.schemas import ExecuteRequest
 from nexc_runtime.config import Settings
+from nexc_runtime.keys import keys_from
 from nexc_runtime.policy import (
     AgentToken,
     Capabilities,
@@ -29,23 +33,34 @@ from nexc_runtime.policy import (
     decide_spawn,
     decide_tool,
     decide_tool_with,
-    derive_key,
-    encode_token,
     verify_token,
 )
 from nexc_runtime.runner import execute
 from nexc_runtime.streaming import EventStream
 
 from .conftest import (
-    AGENT_KEY,
     AUTH,
+    BACKEND_KID,
+    BACKEND_PUBLIC,
+    HUMAN,
+    TOKEN,
     FakeProvider,
     Step,
     call,
     execute_body,
+    hs256_token,
     mint_token,
     parse_ndjson,
+    sign_token,
+    token_claims,
 )
+
+# The runtime's keys in these tests: the backend's public key alone.
+KEYS = keys_from([BACKEND_PUBLIC])
+# Another Ed25519 key: whoever holds it is not the backend.
+STRANGER = Ed25519PrivateKey.from_private_bytes(b"s" * 32)
+# The HS256 key the backend and the runtime used to share, rebuilt from the bearer secret.
+OLD_SHARED_KEY = hashlib.sha256(b"nexc-agent-token-v1:" + TOKEN.encode()).digest()
 
 ClientFactory = Callable[..., tuple[TestClient, FakeProvider]]
 
@@ -55,7 +70,7 @@ def _spans(events: list[dict[str, Any]], kind: str | None = None) -> list[dict[s
 
 
 def _verified(**overrides: Any) -> AgentToken:
-    return verify_token(mint_token(**overrides), AGENT_KEY, run_id="run-1", node_id="node-1")
+    return verify_token(mint_token(**overrides), KEYS, run_id="run-1", node_id="node-1")
 
 
 def test_the_recording_claim_is_read_and_passed_to_sub_agents() -> None:
@@ -65,7 +80,7 @@ def test_the_recording_claim_is_read_and_passed_to_sub_agents() -> None:
     assert token.recording.on
     assert token.recording.prompts and token.recording.tool_io
     assert not token.recording.completions
-    child = token.child("writer/researcher-1", AGENT_KEY)
+    child = token.child("writer/researcher-1")
     assert child.recording == token.recording
     with pytest.raises(TokenError):
         _verified(recording="yes")
@@ -74,7 +89,7 @@ def test_the_recording_claim_is_read_and_passed_to_sub_agents() -> None:
 # --- tokens -------------------------------------------------------------------------------------
 
 
-def test_a_valid_token_carries_the_capabilities() -> None:
+def test_a_valid_token_carries_the_capabilities_and_the_human() -> None:
     token = _verified(
         capabilities={"tools": ["write_file", "finish"], "delegation": {"max_depth": 1}}
     )
@@ -82,7 +97,42 @@ def test_a_valid_token_carries_the_capabilities() -> None:
     assert token.capabilities.tools == ("write_file", "finish")
     assert token.capabilities.max_depth == 1 and token.capabilities.max_fan_out == 4
     assert token.capabilities.labels == ("public", "internal")
-    assert derive_key("t" * 40) == AGENT_KEY and len(AGENT_KEY) == 32
+    assert token.on_behalf_of is not None
+    assert (token.on_behalf_of.user_id, token.on_behalf_of.workspace_role) == (
+        HUMAN["user_id"],
+        "admin",
+    )
+    personal = _verified(on_behalf_of={"user_id": HUMAN["user_id"], "workspace_role": None})
+    assert personal.on_behalf_of is not None and personal.on_behalf_of.workspace_role is None
+
+
+def _forged(claims: dict[str, Any]) -> list[tuple[str, str]]:
+    """What someone without the backend's private key can produce, and why each is refused."""
+    return [
+        # HS256 under the key the runtime could derive from its own bearer secret, or under the
+        # bearer secret itself: the hole this design closes. Naming the backend's kid changes
+        # nothing.
+        (hs256_token(claims, OLD_SHARED_KEY), "not EdDSA"),
+        (hs256_token(claims, TOKEN.encode()), "not EdDSA"),
+        (hs256_token(claims, OLD_SHARED_KEY, kid=None), "not EdDSA"),
+        # HS256 keyed with the public key (algorithm confusion).
+        (hs256_token(claims, BACKEND_PUBLIC), "not EdDSA"),
+        # Another Ed25519 key, under its own id or under the backend's.
+        (sign_token(claims, STRANGER), "does not know"),
+        (sign_token(claims, STRANGER, kid=BACKEND_KID), "signature"),
+        # No key id at all.
+        (sign_token(claims, header={"alg": "EdDSA"}), "names no key"),
+        # `alg: none`.
+        (sign_token(claims, header={"alg": "none", "kid": BACKEND_KID}), "not EdDSA"),
+    ]
+
+
+@pytest.mark.parametrize(("token", "reason"), _forged(token_claims()))
+def test_a_token_signed_with_anything_but_the_backends_key_is_refused(
+    token: str, reason: str
+) -> None:
+    with pytest.raises(TokenError, match=reason):
+        verify_token(token, KEYS, run_id="run-1", node_id="node-1")
 
 
 @pytest.mark.parametrize(
@@ -91,17 +141,19 @@ def test_a_valid_token_carries_the_capabilities() -> None:
         (None, "no agent token"),
         ("", "no agent token"),
         ("not.a.jwt.at.all", "not a JWT"),
-        (mint_token(key=b"another-key-another-key-another!"), "signature"),
         (mint_token(now=int(time.time()) - 3600, ttl_s=60), "expired"),
         (mint_token(now=int(time.time()) + 3600), "not valid yet"),
         (mint_token(run_id="run-2"), "another run or node"),
         (mint_token(node_id="node-2"), "another run or node"),
         (mint_token(capabilities={"tools": "write_file"}), "not a list of strings"),
+        (mint_token(on_behalf_of=None), "acts for"),
+        (mint_token(on_behalf_of={"workspace_role": "owner"}), "user id"),
+        (mint_token(on_behalf_of={"user_id": "u", "workspace_role": 3}), "not a role"),
     ],
 )
-def test_forged_expired_and_foreign_tokens_are_refused(token: str | None, reason: str) -> None:
+def test_expired_foreign_and_incomplete_tokens_are_refused(token: str | None, reason: str) -> None:
     with pytest.raises(TokenError, match=reason):
-        verify_token(token, AGENT_KEY, run_id="run-1", node_id="node-1")
+        verify_token(token, KEYS, run_id="run-1", node_id="node-1")
 
 
 def test_a_tampered_payload_does_not_verify() -> None:
@@ -110,23 +162,20 @@ def test_a_tampered_payload_does_not_verify() -> None:
     # The same signature over a payload that allows everything.
     claims = json.loads(__import__("base64").urlsafe_b64decode(payload + "=="))
     claims["capabilities"] = {}
-    widened = encode_token(claims, AGENT_KEY).split(".")[1]
+    widened = sign_token(claims, STRANGER).split(".")[1]
     with pytest.raises(TokenError, match="signature"):
-        verify_token(f"{header}.{widened}.{signature}", AGENT_KEY, run_id="run-1", node_id="node-1")
-    # `alg: none` is not an algorithm.
-    none_header = __import__("base64").urlsafe_b64encode(b'{"alg":"none"}').rstrip(b"=").decode()
-    with pytest.raises(TokenError, match="HS256"):
-        verify_token(f"{none_header}.{payload}.", AGENT_KEY, run_id="run-1", node_id="node-1")
+        verify_token(f"{header}.{widened}.{signature}", KEYS, run_id="run-1", node_id="node-1")
     # A token for another runtime, signed with the right key.
     foreign = json.loads(__import__("base64").urlsafe_b64decode(payload + "=="))
     foreign["aud"] = "nexc-api"
     with pytest.raises(TokenError, match="not for this runtime"):
-        verify_token(encode_token(foreign, AGENT_KEY), AGENT_KEY, run_id="run-1", node_id="node-1")
+        verify_token(sign_token(foreign), KEYS, run_id="run-1", node_id="node-1")
 
 
 def test_the_run_refuses_to_start_without_a_valid_token(client_for: ClientFactory) -> None:
     client, provider = client_for([Step(calls=[call("finish", answer="never")])])
-    for token in (None, "garbage", mint_token(key=b"x" * 32), mint_token(run_id="other")):
+    forged = [token for token, _ in _forged(token_claims())]
+    for token in (None, "garbage", mint_token(run_id="other"), *forged):
         body = execute_body()
         body["token"] = token
         events = parse_ndjson(client.post("/v1/execute", json=body, headers=AUTH).content)
@@ -274,14 +323,19 @@ def test_a_sub_agent_is_never_wider_than_its_parent(client_for: ClientFactory) -
     assert "spawn_subagent" in provider.seen_tools[1]
 
 
-def test_a_child_token_is_narrowed_and_signed() -> None:
+def test_a_child_token_is_narrowed_in_process_and_never_signed() -> None:
     parent = _verified(capabilities={"tools": ["finish"], "delegation": {"max_depth": 1}})
-    child = parent.child("writer/researcher-1", AGENT_KEY)
+    child = parent.child("writer/researcher-1")
     assert child.depth == 1 and child.principal == "writer/researcher-1"
+    assert child.claims["sub"] == "writer/researcher-1" and child.claims["depth"] == 1
     assert child.capabilities.is_within(parent.capabilities)
     assert child.expires_at == parent.expires_at
-    again = verify_token(child.raw, AGENT_KEY, run_id="run-1", node_id="node-1")
-    assert again.capabilities == child.capabilities and again.depth == 1
+    assert child.on_behalf_of == parent.on_behalf_of, "the same human"
+    # The runtime holds no key that signs: the child's only signed token is its root's.
+    assert child.raw == parent.raw
+    again = verify_token(child.raw, KEYS, run_id="run-1", node_id="node-1")
+    assert again.depth == 0 and again.principal == "writer"
+    assert not any(hasattr(policy_module, name) for name in ("encode_token", "derive_key"))
     # The depth limit means the grandchild may not be born.
     assert (
         decide_spawn(child.capabilities, "qa", depth=2, children=0).rule == "delegation.max_depth"
@@ -368,10 +422,9 @@ def test_rules_are_read_from_the_token_and_decide_with_the_capabilities() -> Non
     # A token without rules reads as the defaults; a child keeps its parent's rules and labels.
     plain = _verified()
     assert plain.rules == Rules() and plain.labels == ()
-    child = token.child("writer/researcher-1", AGENT_KEY)
+    child = token.child("writer/researcher-1")
     assert child.rules == rules and child.labels == token.labels
-    again = verify_token(child.raw, AGENT_KEY, run_id="run-1", node_id="node-1")
-    assert again.rules.approval_tools == ("make_docx",)
+    assert child.rules.approval_tools == ("make_docx",)
     with pytest.raises(TokenError):
         _verified(rules={"limits": {"tokens_per_run": "lots"}})
     with pytest.raises(TokenError):
@@ -417,6 +470,7 @@ async def _start(
             settings=app.state.settings,
             census=app.state.census,
             events=events,
+            keys=app.state.keys,
             provider_factory=app.state.provider_factory,
             approvals=app.state.approvals,
         )

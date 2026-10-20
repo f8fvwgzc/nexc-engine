@@ -6,6 +6,7 @@ invalid request)."""
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import socket
 from collections.abc import AsyncIterator, Callable
 from typing import Any
@@ -27,7 +28,17 @@ from nexc_runtime.rpc.convert import execute_to_dict
 from nexc_runtime.rpc.runtime_grpc import AgentRuntimeStub
 from nexc_runtime.runner import default_provider_factory
 
-from .conftest import AUTH, TOKEN, FakeProvider, Step, call, execute_body, mint_token
+from .conftest import (
+    AUTH,
+    TOKEN,
+    FakeProvider,
+    Step,
+    call,
+    execute_body,
+    hs256_token,
+    mint_token,
+    token_claims,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -450,7 +461,9 @@ async def test_refusals_never_start_a_run(serve: Callable[..., Any]) -> None:
             assert "sk-ant-secret-value" not in (refused.value.message or "")
         # A forged agent token ends the stream with the terminal error, as on NDJSON.
         async with stub.Execute.open(metadata=[("authorization", AUTH["Authorization"])]) as stream:
-            forged = execute_body(token=mint_token(key=b"wrong-key-wrong-key-wrong-key-12"))
+            forged = execute_body(
+                token=hs256_token(token_claims(), hashlib.sha256(TOKEN.encode()).digest())
+            )
             await stream.send_message(pb.BackendCommand(execute=to_request(forged)), end=True)
             events = await collect(stream)
             assert kinds(events) == ["error"]

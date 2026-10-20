@@ -53,6 +53,7 @@ pub async fn run() -> ExitCode {
     check_runtime_grpc(&mut r, &settings).await;
     check_ontology(&mut r, &settings).await;
     check_firewall(&mut r, &settings);
+    check_agent_tokens(&mut r, &settings);
     check_otlp(&mut r, &settings).await;
     check_sso(&mut r, &settings).await;
     check_llm(&mut r, &settings);
@@ -223,6 +224,36 @@ fn check_firewall(r: &mut Report, settings: &Settings) {
             ),
             Err(err) => r.line(Level::Fail, "firewall api", err.to_string()),
         },
+    }
+}
+
+/// The key per-run agent tokens are signed with and the public keys that
+/// verify them: what an operator copies into the runtime's
+/// `NEXC_AGENT_TOKEN_VERIFY_KEYS`, or checks against its JWKS URL.
+fn check_agent_tokens(r: &mut Report, settings: &Settings) {
+    match crate::security::agent_token::AgentTokenKeys::new(
+        settings.agent_token_signing_key.expose(),
+        &settings.agent_token_verify_keys,
+    ) {
+        Ok(keys) => {
+            let jwks = keys.jwks();
+            r.line(
+                Level::Ok,
+                "agent tokens",
+                format!(
+                    "EdDSA, kid {} (public key {}){}; {} key(s) published at /api/v1/agent-tokens/jwks.json",
+                    keys.kid(),
+                    jwks.keys[0].x,
+                    if std::env::var("NEXC_AGENT_TOKEN_SIGNING_KEY").is_ok_and(|k| !k.is_empty()) {
+                        ""
+                    } else {
+                        ", derived from NEXC_MASTER_KEY"
+                    },
+                    jwks.keys.len()
+                ),
+            );
+        }
+        Err(err) => r.line(Level::Fail, "agent tokens", err.to_string()),
     }
 }
 

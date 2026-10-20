@@ -285,6 +285,14 @@ pub async fn instantiate(
     };
     let mut tx = state.db.begin().await?;
     let agent = repo::agents::create(&mut *tx, auth.id, workspace, &fields).await?;
+    repo::agents::audit_created(
+        &mut *tx,
+        workspace,
+        auth.id,
+        &agent,
+        &format!("from template {}", template.id),
+    )
+    .await?;
     let policy = repo::policies::insert(
         &mut *tx,
         workspace,

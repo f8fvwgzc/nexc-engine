@@ -45,6 +45,8 @@ pub async fn seed_default_org(
             a2a_exposed: false,
         };
         let agent = repo::agents::create(&mut *conn, owner, workspace, &fields).await?;
+        repo::agents::audit_created(&mut *conn, workspace, owner, &agent, "default organisation")
+            .await?;
         ids.insert(seed.role, agent.id);
     }
     Ok(())

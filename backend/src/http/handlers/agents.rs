@@ -379,7 +379,7 @@ pub async fn get(
     }))
 }
 
-/// Adds an agent to a workspace (members and above).
+/// Adds an agent to a workspace (members and above); audited as `agent_created`.
 #[utoipa::path(post, path = "/agents", tag = "agents", security(("bearer" = [])), request_body = CreateAgent,
     responses((status = 201, body = Agent), (status = 403, body = Problem), (status = 404, body = Problem),
         (status = 409, body = Problem), (status = 422, body = Problem)))]
@@ -409,10 +409,11 @@ pub async fn create(
     };
     check_manager(&state, workspace, None, fields.reports_to).await?;
     check_owner_and_team(&state, workspace, fields.owner_user_id, fields.team_id).await?;
-    Ok((
-        StatusCode::CREATED,
-        Json(repo::agents::create(&state.db, auth.id, workspace, &fields).await?),
-    ))
+    let mut tx = state.db.begin().await?;
+    let agent = repo::agents::create(&mut *tx, auth.id, workspace, &fields).await?;
+    repo::agents::audit_created(&mut *tx, workspace, auth.id, &agent, "created").await?;
+    tx.commit().await?;
+    Ok((StatusCode::CREATED, Json(agent)))
 }
 
 /// Updates an agent (members of its workspace and above). A change of
@@ -577,7 +578,8 @@ pub async fn release(
     Ok(Json(agent))
 }
 
-/// Removes an agent (its reports no longer report to anyone).
+/// Removes an agent (its reports no longer report to anyone); audited as
+/// `agent_deleted`.
 #[utoipa::path(delete, path = "/agents/{id}", tag = "agents", security(("bearer" = [])),
     params(("id" = Uuid, Path, description = "Agent id")),
     responses((status = 204, description = "Deleted"), (status = 403, body = Problem), (status = 404, body = Problem)))]
@@ -587,12 +589,14 @@ pub async fn delete(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
     let workspace = workspace_of_agent(&state, auth, id, Access::Write).await?;
-    if repo::agents::delete(&state.db, workspace, id).await? {
-        state.caches.invalidate(Key::Agent(id));
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(AppError::NotFound("agent"))
-    }
+    let mut tx = state.db.begin().await?;
+    let agent = repo::agents::delete(&mut *tx, workspace, id)
+        .await?
+        .ok_or(AppError::NotFound("agent"))?;
+    repo::agents::audit_deleted(&mut *tx, workspace, auth.id, &agent, "deleted").await?;
+    tx.commit().await?;
+    state.caches.invalidate(Key::Agent(id));
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // --- API tokens of external agents (the Agent Firewall API) ---------------------------------

@@ -1591,9 +1591,23 @@ async fn the_audit_log_records_who_changed_the_workspace(pool: PgPool) {
     let wid = personal_workspace(&app, &owner).await;
     let ws = format!("/workspaces/{wid}");
 
-    // A new workspace has an empty log.
+    // A new workspace's log holds the birth of its default agents and nothing else.
     let (status, log) = call(&app, Method::GET, &format!("{ws}/audit"), &owner, None).await;
-    assert_eq!((status, log.as_array().unwrap().len()), (StatusCode::OK, 0));
+    assert_eq!(status, StatusCode::OK);
+    let born = log.as_array().unwrap().len();
+    assert!(
+        born > 0
+            && log
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|e| e["action"] == "agent_created"
+                    && e["detail"]
+                        .as_str()
+                        .unwrap()
+                        .starts_with("default organisation")),
+        "{log}"
+    );
 
     let invite = json!({"email": "member@example.com", "role": "member"});
     call(
@@ -1650,6 +1664,7 @@ async fn the_audit_log_records_who_changed_the_workspace(pool: PgPool) {
         .unwrap()
         .iter()
         .rev()
+        .skip(born)
         .map(|e| {
             (
                 e["action"].as_str().unwrap(),
@@ -1773,8 +1788,15 @@ async fn owners_see_what_happened(pool: PgPool) {
         .iter()
         .map(|e| e["kind"].as_str().unwrap())
         .collect();
+    // The workspace's default agents were born first, each audited as `agent_created`.
+    let defaults = nexc::domain::agent::DEFAULT_ORG.len();
+    assert_eq!(kinds.len(), 5 + defaults, "{timeline}");
+    assert!(
+        kinds[5..].iter().all(|k| *k == "agent_created"),
+        "{kinds:?}"
+    );
     assert_eq!(
-        kinds,
+        kinds[..5],
         [
             "issue_comment",
             "issue_created",
@@ -1806,7 +1828,7 @@ async fn owners_see_what_happened(pool: PgPool) {
     )
     .await;
     assert_eq!(days.as_array().unwrap().len(), 1, "{days}");
-    assert_eq!(days[0]["events"], 5);
+    assert_eq!(days[0]["events"], 5 + defaults);
 
     // All of it is for admins and owners; the server's infrastructure for its administrators.
     for path in ["timeline", "timeline/days"] {

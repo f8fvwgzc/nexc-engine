@@ -191,6 +191,14 @@ pub async fn create(
     let secret = api_token::generate();
     let mut tx = state.db.begin().await?;
     let agent = repo::agents::create(&mut *tx, auth.id, wid, &fields).await?;
+    repo::agents::audit_created(
+        &mut *tx,
+        wid,
+        auth.id,
+        &agent,
+        &format!("for A2A counterpart a2a:{name}"),
+    )
+    .await?;
     let token = repo::agent_tokens::insert(
         &mut *tx,
         agent.id,
@@ -308,9 +316,17 @@ pub async fn delete(
         .await?
         .ok_or(AppError::NotFound("a2a counterpart"))?;
     let mut tx = state.db.begin().await?;
-    if !repo::a2a::delete_counterpart(&mut tx, wid, cid).await? {
-        return Err(AppError::NotFound("a2a counterpart"));
-    }
+    let agent = repo::a2a::delete_counterpart(&mut tx, wid, cid)
+        .await?
+        .ok_or(AppError::NotFound("a2a counterpart"))?;
+    repo::agents::audit_deleted(
+        &mut *tx,
+        wid,
+        auth.id,
+        &agent,
+        &format!("with A2A counterpart a2a:{}", row.counterpart.name),
+    )
+    .await?;
     tx.commit().await?;
     state
         .caches

@@ -23,7 +23,8 @@ from ..api.schemas import ExecuteRequest
 from ..approvals import ApprovalOutcome
 from ..config import Settings
 from ..control import RunControl, ToolOutcome
-from ..policy import TokenError, verify_token
+from ..keys import KeyRing
+from ..policy import TokenError, token_kid, verify_token
 from ..runner import ProviderFactory, default_provider_factory, execute
 from ..streaming import EventStream
 from . import runtime_pb2 as pb
@@ -42,10 +43,12 @@ class AgentRuntimeService(AgentRuntimeBase):
         settings: Settings,
         census: Census,
         *,
+        keys: KeyRing | None = None,
         provider_factory: ProviderFactory = default_provider_factory,
     ) -> None:
         self.settings = settings
         self.census = census
+        self.keys = keys if keys is not None else settings.key_ring()
         self.provider_factory = provider_factory
 
     # --- auth -------------------------------------------------------------------------------
@@ -101,6 +104,7 @@ class AgentRuntimeService(AgentRuntimeBase):
                 settings=self.settings,
                 census=self.census,
                 events=events,
+                keys=self.keys,
                 provider_factory=self.provider_factory,
                 approvals=control.approvals,
                 control=control,
@@ -149,7 +153,7 @@ class AgentRuntimeService(AgentRuntimeBase):
                 elif kind == "ack":
                     control.tools.ack(command.ack.request_id)
                 elif kind == "policy_update":
-                    self._update_policy(request, control, command.policy_update.token)
+                    await self._update_policy(request, control, command.policy_update.token)
                 elif kind == "cancel_agent":
                     stop = command.cancel_agent
                     if not control.cancel_agent(stop.spawn_span_id, stop.reason or None):
@@ -168,12 +172,15 @@ class AgentRuntimeService(AgentRuntimeBase):
         # its terminal event. A backend that goes away resets the stream instead, which
         # cancels the handler and, with it, the run.
 
-    def _update_policy(self, request: ExecuteRequest, control: RunControl, token: str) -> None:
+    async def _update_policy(
+        self, request: ExecuteRequest, control: RunControl, token: str
+    ) -> None:
         """A fresh token for the same run and node replaces the rules; a bad one is ignored."""
+        await self.keys.ensure(token_kid(token))
         try:
             fresh = verify_token(
                 token,
-                self.settings.agent_token_key(),
+                self.keys,
                 run_id=request.run_id,
                 node_id=request.node_id,
             )
@@ -190,9 +197,13 @@ async def serve(
     host: str | None = None,
     port: int | None = None,
     provider_factory: ProviderFactory = default_provider_factory,
+    keys: KeyRing | None = None,
 ) -> Server:
-    """Starts the gRPC server; the caller closes it."""
-    server = Server([AgentRuntimeService(settings, census, provider_factory=provider_factory)])
+    """Starts the gRPC server; the caller closes it. `keys` is the HTTP app's ring, so both
+    wires learn a rotated key once."""
+    server = Server(
+        [AgentRuntimeService(settings, census, keys=keys, provider_factory=provider_factory)]
+    )
     await server.start(
         host if host is not None else settings.runtime_host,
         port if port is not None else settings.runtime_grpc_port,

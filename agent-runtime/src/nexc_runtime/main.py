@@ -29,7 +29,7 @@ def load_settings() -> Settings:
         # Report which settings are wrong without echoing their (possibly secret) values.
         print("nexc-runtime: invalid configuration:", file=sys.stderr)
         for err in exc.errors(include_input=False, include_url=False):
-            field = ".".join(str(p) for p in err["loc"]).upper()
+            field = ".".join(str(p) for p in err["loc"]).upper() or "SETTINGS"
             print(f"  {field}: {err['msg']}", file=sys.stderr)
         print("Run `make init` at the repo root to generate secrets.", file=sys.stderr)
         raise SystemExit(2) from None
@@ -49,7 +49,7 @@ async def run(settings: Settings) -> None:
     http = uvicorn.Server(config)
     grpc = None
     if settings.runtime_grpc_port:
-        grpc = await serve_grpc(settings, app.state.census)
+        grpc = await serve_grpc(settings, app.state.census, keys=app.state.keys)
         log.info(
             "gRPC stream listening on %s:%s", settings.runtime_host, settings.runtime_grpc_port
         )

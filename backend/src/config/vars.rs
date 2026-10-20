@@ -206,10 +206,16 @@ pub const ENV_VARS: &[EnvVar] = &[
         "shared bearer secret, at least 32 characters",
     ),
     var(
-        "NEXC_AGENT_TOKEN_KEY",
+        "NEXC_AGENT_TOKEN_SIGNING_KEY",
         "",
         true,
-        "signs per-run agent tokens (backend + runtime); derived from NEXC_RUNTIME_TOKEN when unset",
+        "base64 of 32 bytes, the Ed25519 seed per-run agent tokens are signed with (backend only); derived from NEXC_MASTER_KEY when unset",
+    ),
+    var(
+        "NEXC_AGENT_TOKEN_VERIFY_KEYS",
+        "",
+        false,
+        "comma separated Ed25519 public keys that verify agent tokens too: the previous key after a rotation, the next one before it",
     ),
     var(
         "NEXC_RUNTIME_PROTOCOL",

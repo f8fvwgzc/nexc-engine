@@ -23,7 +23,8 @@ use chrono::Utc;
 use common::{RUNTIME_TOKEN, TestApp, collect_until};
 use nexc::domain::capabilities::{Capabilities, DataLabel, DataScopes, Delegation};
 use nexc::domain::policy::{Action, decide};
-use nexc::security::agent_token::{AgentTokenKeys, derive_key};
+use nexc::domain::workspace::WorkspaceRole;
+use nexc::security::agent_token::{AgentClaims, AgentGrant, AgentTokenKeys, OnBehalfOf};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tokio::sync::broadcast;
@@ -230,8 +231,34 @@ async fn audit_actions(app: &TestApp, token: &str, wid: &str, action: &str) -> V
         .collect()
 }
 
-fn keys() -> AgentTokenKeys {
-    AgentTokenKeys::new(&derive_key(RUNTIME_TOKEN))
+/// The HS256 key the backend and the runtime shared before (removed): the
+/// runtime could rebuild it from its own bearer secret and mint any token.
+fn old_shared_key() -> Vec<u8> {
+    let mut material = b"nexc-agent-token-v1:".to_vec();
+    material.extend_from_slice(RUNTIME_TOKEN.as_bytes());
+    nexc::kernel::sha256(&material).to_vec()
+}
+
+/// What an external verifier does with nothing but the published key set:
+/// pick the key the token's `kid` names, check the EdDSA signature and claims.
+async fn verify_with_published_keys(app: &TestApp, token: &str) -> Option<AgentClaims> {
+    let r = app
+        .request(Method::GET, "/api/v1/agent-tokens/jwks.json", None, None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let set: jsonwebtoken::jwk::JwkSet = serde_json::from_value(r.body).unwrap();
+    let header = jsonwebtoken::decode_header(token).ok()?;
+    if header.alg != jsonwebtoken::Algorithm::EdDSA {
+        return None;
+    }
+    let jwk = set.find(header.kid.as_deref()?)?;
+    let key = jsonwebtoken::DecodingKey::from_jwk(jwk).ok()?;
+    let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::EdDSA);
+    validation.set_audience(&["nexc-runtime"]);
+    validation.set_issuer(&["nexc-engine"]);
+    jsonwebtoken::decode::<AgentClaims>(token, &key, &validation)
+        .ok()
+        .map(|d| d.claims)
 }
 
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
@@ -278,10 +305,31 @@ async fn the_runtime_receives_a_token_that_carries_the_agents_capabilities(pool:
     assert_eq!(requests.len(), 1);
     let request = &requests[0];
     assert_eq!(request["agent"]["principal"], principal);
-    let claims = keys()
-        .verify(request["token"].as_str().unwrap())
-        .expect("the token verifies with the shared key");
+    let raw = request["token"].as_str().unwrap();
+    let header = jsonwebtoken::decode_header(raw).unwrap();
+    assert_eq!(header.alg, jsonwebtoken::Algorithm::EdDSA);
+    assert_eq!(header.kid.as_deref(), Some(app.state.agent_tokens.kid()));
+    let claims = app
+        .state
+        .agent_tokens
+        .verify(raw)
+        .expect("the token verifies with the backend's keys");
+    assert_eq!(
+        verify_with_published_keys(&app, raw).await.as_ref(),
+        Some(&claims),
+        "and with the published key set alone"
+    );
     assert_eq!(claims.sub, principal);
+    // It names the human the agent acts for: who started the run, as the workspace's owner.
+    let (_, me) = call(&app, Method::GET, "/auth/me", &token, None).await;
+    let me: Uuid = me["id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(
+        claims.on_behalf_of,
+        OnBehalfOf {
+            user_id: me,
+            workspace_role: Some(WorkspaceRole::Owner)
+        }
+    );
     assert_eq!(
         (claims.run_id.to_string(), claims.node_id.to_string()),
         (rid.clone(), node)
@@ -304,9 +352,47 @@ async fn the_runtime_receives_a_token_that_carries_the_agents_capabilities(pool:
     assert_eq!(claims.capabilities.delegation.max_depth, 1);
     // The node's timeout plus a minute of slack: no longer.
     assert_eq!(claims.exp - claims.iat, 600 + 60);
-    // The same key, derived from the runtime's bearer secret, refuses a token signed with another.
-    let other = AgentTokenKeys::new(b"not-the-key-not-the-key-not-the-key!");
-    assert!(other.verify(request["token"].as_str().unwrap()).is_none());
+    // What the runtime could mint with its bearer secret (HS256 under the key derived from
+    // it, or under the secret itself, even naming the backend's kid) is refused by the
+    // backend and by anyone holding the published keys.
+    for secret in [old_shared_key(), RUNTIME_TOKEN.as_bytes().to_vec()] {
+        let mut forged_header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256);
+        forged_header.kid = Some(app.state.agent_tokens.kid().to_owned());
+        let forged = jsonwebtoken::encode(
+            &forged_header,
+            &claims,
+            &jsonwebtoken::EncodingKey::from_secret(&secret),
+        )
+        .unwrap();
+        assert!(app.state.agent_tokens.verify(&forged).is_none());
+        assert!(verify_with_published_keys(&app, &forged).await.is_none());
+    }
+    // So is a token signed with any other Ed25519 key.
+    let stranger = AgentTokenKeys::new(&[42; 32], &[]).unwrap();
+    let foreign = stranger
+        .issue(
+            &AgentGrant {
+                principal: &claims.sub,
+                on_behalf_of: claims.on_behalf_of,
+                run_id: claims.run_id,
+                node_id: claims.node_id,
+                agent_id: claims.agent_id,
+                workspace_id: claims.workspace_id,
+                policy_version: claims.policy_version,
+                capabilities: &Capabilities::default(),
+                rules: &claims.rules,
+                labels: &claims.labels,
+                recording: claims.recording,
+            },
+            Duration::from_secs(60),
+        )
+        .unwrap();
+    assert!(app.state.agent_tokens.verify(&foreign.token).is_none());
+    assert!(
+        verify_with_published_keys(&app, &foreign.token)
+            .await
+            .is_none()
+    );
 
     // Every span of the node is attributed to the principal, the backend's own included.
     let spans = spans_of(&app, &token, &rid).await;
@@ -314,6 +400,15 @@ async fn the_runtime_receives_a_token_that_carries_the_agents_capabilities(pool:
     assert!(
         spans.iter().all(|s| s["principal"] == principal),
         "{spans:?}"
+    );
+    // The node's context span names the human the agent acts for, as its token does.
+    let context = spans
+        .iter()
+        .find(|s| s["kind"] == "data_read" && s["name"] == "context")
+        .expect("a context span");
+    assert_eq!(
+        context["attributes"]["on_behalf_of"],
+        json!({"user_id": me, "workspace_role": "owner"})
     );
     // The verdict on the output is the node's one policy span; nothing was refused.
     assert!(
@@ -1099,4 +1194,151 @@ fn prove_identity() {
         at(0.99).as_secs_f64() * 1e6 < budget,
         "p99 is over the {budget} µs target"
     );
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn creating_and_deleting_an_agent_is_audited_with_who_did_it(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let (owner, _) = app.register("owner@example.com").await;
+    let wid = workspace(&app, &owner).await;
+    let (_, me) = call(&app, Method::GET, "/auth/me", &owner, None).await;
+    let me = me["id"].as_str().unwrap().to_owned();
+    // A member of the workspace adds and removes agents too.
+    let (member, _) = app.register("member@example.com").await;
+    let (status, body) = call(
+        &app,
+        Method::POST,
+        &format!("/workspaces/{wid}/members"),
+        &owner,
+        Some(json!({"email": "member@example.com", "role": "member"})),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {body}");
+    let (_, them) = call(&app, Method::GET, "/auth/me", &member, None).await;
+    let them = them["id"].as_str().unwrap().to_owned();
+
+    // The workspace's default organisation was born on its creator's behalf.
+    let defaults = audit_actions(&app, &owner, &wid, "agent_created").await;
+    assert!(!defaults.is_empty());
+    assert!(defaults.iter().all(|e| {
+        e["actor_id"] == me.as_str()
+            && e["subject"].as_str().unwrap().starts_with("agent://")
+            && e["detail"]
+                .as_str()
+                .unwrap()
+                .starts_with("default organisation")
+    }));
+
+    // By hand, by a member: the entry names the member and the new principal.
+    let (status, created) = call(
+        &app,
+        Method::POST,
+        "/agents",
+        &member,
+        Some(json!({
+            "workspace_id": wid, "name": "Auditor", "role": "auditor",
+            "purpose": "Checks what the others did.",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let principal = created["principal_id"].as_str().unwrap().to_owned();
+    let entries = audit_actions(&app, &owner, &wid, "agent_created").await;
+    let entry = entries
+        .iter()
+        .find(|e| e["subject"] == principal.as_str())
+        .expect("the new agent is audited");
+    assert_eq!(entry["actor_id"], them.as_str());
+    assert_eq!(entry["actor_name"], "Test");
+    assert_eq!(
+        entry["detail"],
+        format!("created; role auditor; owner {them}; policy version 0")
+    );
+
+    // From a template, by the owner.
+    let (status, templated) = call(
+        &app,
+        Method::POST,
+        "/agents/from-template/analyst",
+        &owner,
+        Some(json!({"workspace_id": wid, "name": "Templated"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{templated}");
+    let entries = audit_actions(&app, &owner, &wid, "agent_created").await;
+    let entry = entries
+        .iter()
+        .find(|e| e["subject"] == templated["agent"]["principal_id"])
+        .unwrap_or_else(|| panic!("the templated agent is audited: {entries:?} {templated}"));
+    assert_eq!(entry["actor_id"], me.as_str());
+    assert!(
+        entry["detail"]
+            .as_str()
+            .unwrap()
+            .starts_with("from template analyst;"),
+        "{entry}"
+    );
+
+    // Deleted by the member: the entry outlives the agent and names who removed it.
+    let aid = created["id"].as_str().unwrap();
+    let (status, _) = call(
+        &app,
+        Method::DELETE,
+        &format!("/agents/{aid}"),
+        &member,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let deleted = audit_actions(&app, &owner, &wid, "agent_deleted").await;
+    assert_eq!(deleted.len(), 1, "{deleted:?}");
+    assert_eq!(deleted[0]["subject"], principal.as_str());
+    assert_eq!(deleted[0]["actor_id"], them.as_str());
+    assert_eq!(
+        deleted[0]["detail"],
+        "deleted; role auditor; policy version 0"
+    );
+    // A delete that finds nothing leaves no entry.
+    let (status, _) = call(
+        &app,
+        Method::DELETE,
+        &format!("/agents/{aid}"),
+        &member,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        audit_actions(&app, &owner, &wid, "agent_deleted")
+            .await
+            .len(),
+        1
+    );
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn the_key_set_is_public_and_lists_the_signing_key_first(pool: PgPool) {
+    let previous = nexc::security::agent_token::public_key_of(&[3; 32]).unwrap();
+    let previous_x = {
+        use base64::Engine as _;
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(previous)
+    };
+    let app = TestApp::new(pool, &[("NEXC_AGENT_TOKEN_VERIFY_KEYS", &previous_x)]).await;
+    let r = app
+        .request(Method::GET, "/api/v1/agent-tokens/jwks.json", None, None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let keys = r.body["keys"].as_array().unwrap();
+    assert_eq!(keys.len(), 2, "{}", r.body);
+    assert_eq!(keys[0]["kid"], app.state.agent_tokens.kid());
+    assert_eq!(keys[1]["x"], previous_x.as_str());
+    assert_eq!(
+        keys[1]["kid"],
+        nexc::security::agent_token::key_id(&previous).as_str()
+    );
+    assert!(keys.iter().all(|k| k["kty"] == "OKP"
+        && k["crv"] == "Ed25519"
+        && k["alg"] == "EdDSA"
+        && k["use"] == "sig"
+        && k.get("d").is_none()));
 }

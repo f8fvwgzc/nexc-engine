@@ -1251,6 +1251,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "grpclib" },
     { name = "httpx" },
@@ -1279,6 +1280,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", specifier = ">=1.11.0" },
+    { name = "cryptography", specifier = ">=50.0.2" },
     { name = "fastapi", specifier = ">=0.142.2" },
     { name = "grpclib", specifier = ">=0.4.9" },
     { name = "httpx", specifier = ">=0.28.1" },
