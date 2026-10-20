@@ -14,6 +14,7 @@ use axum::http::{Method, StatusCode};
 use common::{TestApp, collect_until};
 use nexc::app::caches::Key;
 use nexc::ontology::stub::StubOntology;
+use nexc::ontology::vocabulary::GraphRef;
 use nexc::ontology::{OntoError, Principal, export, migrate, tenant_of, workspace_name};
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -709,6 +710,104 @@ async fn stored_ontologies_are_copied_once_idempotently_and_resumably(pool: PgPo
     );
     // The writes were the backend's own, never a member's.
     assert!(stub.calls_to("set_vocabulary").iter().all(|p| !p.acts()));
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn the_migration_never_writes_over_a_vocabulary_onto_intelli_holds(pool: PgPool) {
+    let stub = Arc::new(StubOntology::new());
+    let app = TestApp::with_ontology(
+        pool.clone(),
+        &[("NEXC_ONTO_VOCABULARY_TTL_SECS", "0")],
+        stub.clone(),
+    )
+    .await;
+    let w = world(&app).await;
+    let tenant = tenant_of(w.wid);
+    let backend = app.state.ontology.clone().unwrap();
+    let custom = json!({
+        "node_types": [{"key": "signal", "label": "Signal", "default_role": "analyst", "stage": 1}],
+        "relation_types": [{"key": "confirms", "label": "Confirms", "blocking": true}]
+    });
+    // Two graphs as the release before left them, with an ontology of their own.
+    let mut legacy = Vec::new();
+    for name in ["Trading", "Hiring"] {
+        let id = Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO graphs (id, owner_id, name, workspace_id, ontology)
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(id)
+        .bind(w.owner_id.parse::<Uuid>().unwrap())
+        .bind(name)
+        .bind(w.wid)
+        .bind(&custom)
+        .execute(&pool)
+        .await
+        .unwrap();
+        legacy.push(id);
+    }
+
+    // The pass has read its batch when a member opens the first graph (it is copied on that
+    // read) and changes it: a type of their own, a label of their own.
+    let url = format!("/graphs/{}", legacy[0]);
+    let (_, read) = call(&app, Method::GET, &url, &w.owner, None).await;
+    let mut vocabulary = read["ontology"].clone();
+    vocabulary["node_types"][0]["label"] = json!("Market signal");
+    vocabulary["node_types"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"key": "hedge", "label": "Hedge", "stage": 2}));
+    let (status, put) = call(
+        &app,
+        Method::PUT,
+        &format!("{url}/ontology"),
+        &w.owner,
+        Some(vocabulary),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{put}");
+    // The pass reaches it with its stale batch: under the graph's lock it sees the graph
+    // migrated, and writes nothing.
+    let graph = GraphRef {
+        id: legacy[0],
+        workspace_id: Some(w.wid),
+        name: "Trading",
+    };
+    assert!(
+        !migrate::copy(&app.state, backend.as_ref(), graph)
+            .await
+            .unwrap()
+    );
+    let kept = stub
+        .stored_vocabulary(&tenant, &legacy[0].to_string())
+        .unwrap();
+    assert!(kept.node_type("hedge").is_some(), "{kept:?}");
+    assert_eq!(kept.node_type("signal").unwrap().label, "Market signal");
+
+    // The second is in onto-intelli already, edited there, but was never recorded (a copy that
+    // stopped before recording it): the pass only records it.
+    let mut edited: nexc::domain::ontology::Ontology = serde_json::from_value(custom).unwrap();
+    edited.normalize();
+    edited.node_types[0].label = "Candidate".into();
+    stub.put_vocabulary(&tenant, &legacy[1].to_string(), edited.clone());
+    let writes = stub.calls_to("init_graph").len() + stub.calls_to("set_vocabulary").len();
+    let report = migrate::run(&app.state).await.unwrap();
+    assert_eq!(
+        (report.migrated, report.already, report.remaining),
+        (0, 1, 0),
+        "{report:?}"
+    );
+    assert_eq!(
+        stub.calls_to("init_graph").len() + stub.calls_to("set_vocabulary").len(),
+        writes
+    );
+    assert_eq!(
+        stub.stored_vocabulary(&tenant, &legacy[1].to_string())
+            .unwrap()
+            .node_types[0]
+            .label,
+        "Candidate"
+    );
 }
 
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]

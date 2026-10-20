@@ -41,7 +41,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `nexc onto migrate` (also run in the background at start, `NEXC_ONTO_MIGRATE_ON_START`) copies
   every graph's stored ontology into onto-intelli with `SetVocabulary`, once per graph, idempotent
   and resumable (`onto_vocabulary_migrations`, migration `20261006000090_onto_vocabularies`); a
-  graph read before it is copied on that read. `graphs.ontology` is no longer read or written; its
+  graph read before it is copied on that read. Each copy holds the graph's advisory lock and looks
+  again under it, so a graph migrated and edited while a pass worked through its batch is never
+  written over, and a graph onto-intelli already holds is only recorded; one replica runs the
+  start-up pass at a time. `graphs.ontology` is no longer read or written; its
   drop is written down for the next release (`docs/ONTOLOGY.md` §7).
 - The workspace projected into onto-intelli (`docs/ONTOLOGY.md` §5, migration
   `20261006000091_onto_projection`): teams, people, projects, cycles, issues, agents, graphs,

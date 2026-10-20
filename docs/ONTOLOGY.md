@@ -190,7 +190,12 @@ it into onto-intelli, once per graph, as the backend's own principal (`InitGraph
 `onto_vocabulary_migrations`:
 
 - **Idempotent**: a migrated graph is never written again, so what was edited in onto-intelli since
-  is kept; a graph onto-intelli already holds and nexc stored nothing for is only recorded.
+  is kept; a graph onto-intelli already holds is only recorded (a copy that stopped before recording
+  it wrote it already).
+- **Safe while people work**: every copy, by the pass or by a first read on any replica, holds the
+  graph's lock (a transaction-scoped advisory lock) and looks again under it, so a graph opened and
+  edited while the pass worked through its batch is left as it is. One replica runs the start-up
+  pass at a time (`pg_try_advisory_lock`); the others wait until nothing remains.
 - **Resumable**: a graph that fails (onto-intelli unreachable, a type it refused) is recorded with
   its error and tried again on the next pass; the command exits non-zero while any failed.
 - **At start**: the backend runs the same pass in the background (`NEXC_ONTO_MIGRATE_ON_START=true`)

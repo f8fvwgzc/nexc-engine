@@ -31,6 +31,34 @@ pub async fn legacy_ontology(
         .filter(|o| !o.node_types.is_empty() || !o.relation_types.is_empty()))
 }
 
+/// Serialises everyone who would copy a graph's vocabulary into onto-intelli
+/// (its first read, the migration pass, on any replica) until the
+/// transaction ends: whoever comes second sees what the first did.
+pub async fn lock(db: impl PgExecutor<'_>, graph_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('nexc.onto.vocabulary:' || $1::text, 0))",
+    )
+    .bind(graph_id)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Takes the lock of the migration pass on this connection, when no other
+/// replica holds it (released by [`unlock_pass`], or when the connection closes).
+pub async fn try_lock_pass(db: impl PgExecutor<'_>) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtext('nexc.onto.migrate'))")
+        .fetch_one(db)
+        .await
+}
+
+pub async fn unlock_pass(db: impl PgExecutor<'_>) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT pg_advisory_unlock(hashtext('nexc.onto.migrate'))")
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
 /// Whether onto-intelli holds the graph's vocabulary.
 pub async fn is_migrated(db: impl PgExecutor<'_>, graph_id: Uuid) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(

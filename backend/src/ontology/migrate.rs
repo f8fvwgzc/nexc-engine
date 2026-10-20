@@ -10,15 +10,25 @@
 //! read before the pass reached it is initialised the same way on its first
 //! read ([`ensure`]). After the pass, `graphs.ontology` is not read or
 //! written any more; the column is dropped one release later.
+//!
+//! Whoever copies a graph holds its lock (`repo::lock`, a transaction-scoped
+//! advisory lock) and looks again under it: a graph migrated meanwhile (its
+//! first read while the pass worked through a batch, another replica) is
+//! left alone, and a graph onto-intelli already holds is only recorded (it
+//! was written by a copy that stopped before recording it, or edited since).
+//! Only one replica runs the start-up pass at a time.
 
 use std::time::Duration;
 
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
+use sqlx::PgConnection;
+
 use super::vocabulary::{GraphRef, graph_key};
 use super::{OntoError, OntologyBackend, Principal};
 use crate::app::AppState;
+use crate::app::caches::Key;
 use crate::domain::ontology::Ontology;
 use crate::repo::onto_migrations as repo;
 
@@ -32,7 +42,8 @@ const RETRY: Duration = Duration::from_secs(60);
 pub struct Report {
     /// Graphs copied into onto-intelli now.
     pub migrated: usize,
-    /// Graphs onto-intelli already held as nexc would have written them.
+    /// Graphs left as they were: migrated since the pass read its batch, or
+    /// held by onto-intelli already (then only recorded).
     pub already: usize,
     /// Graphs that could not be copied (tried again on the next pass).
     pub failed: usize,
@@ -51,11 +62,11 @@ pub enum EnsureError {
 
 /// The vocabulary a graph starts with in onto-intelli: what nexc stored for
 /// it, when it has not been migrated yet and stored one, else the starter.
-async fn initial(state: &AppState, graph: GraphRef<'_>) -> Result<Ontology, sqlx::Error> {
-    let stored = if repo::is_migrated(&state.db, graph.id).await? {
+async fn initial(db: &mut PgConnection, graph: GraphRef<'_>) -> Result<Ontology, sqlx::Error> {
+    let stored = if repo::is_migrated(&mut *db, graph.id).await? {
         None
     } else {
-        repo::legacy_ontology(&state.db, graph.id).await?
+        repo::legacy_ontology(&mut *db, graph.id).await?
     };
     let mut vocabulary = stored.unwrap_or_else(Ontology::starter);
     vocabulary.normalize();
@@ -91,8 +102,10 @@ fn same_types(a: &Ontology, b: &Ontology) -> bool {
     keys(a) == keys(b)
 }
 
-/// Initialises a graph onto-intelli does not know (its vocabulary was not
-/// found): copies what nexc stored for it, or the starter set, and records it.
+/// Initialises a graph onto-intelli does not know (the backend's own
+/// principal did not find its vocabulary): copies what nexc stored for it,
+/// or the starter set, and records it. Under the graph's lock it asks once
+/// more, so a graph someone else copied meanwhile is read, not written.
 pub async fn ensure(
     state: &AppState,
     backend: &dyn OntologyBackend,
@@ -101,11 +114,20 @@ pub async fn ensure(
     let Some(workspace_id) = graph.workspace_id else {
         return Ok(Ontology::starter());
     };
-    let vocabulary = initial(state, graph).await?;
     let service = Principal::service(&state.settings.onto_workspace_prefix, workspace_id);
-    let written = write(backend, &service, graph, &vocabulary).await?;
-    repo::mark_migrated(&state.db, graph.id, workspace_id).await?;
-    Ok(written)
+    let mut tx = state.db.begin().await?;
+    repo::lock(&mut *tx, graph.id).await?;
+    let vocabulary = match backend.vocabulary(&service, &graph_key(graph.id)).await {
+        Ok(found) => found,
+        Err(OntoError::NotFound(_)) => {
+            let vocabulary = initial(&mut tx, graph).await?;
+            write(backend, &service, graph, &vocabulary).await?
+        }
+        Err(err) => return Err(err.into()),
+    };
+    repo::mark_migrated(&mut *tx, graph.id, workspace_id).await?;
+    tx.commit().await?;
+    Ok(vocabulary)
 }
 
 /// One pass over every graph not migrated yet.
@@ -127,7 +149,7 @@ pub async fn run(state: &AppState) -> anyhow::Result<Report> {
                 workspace_id: Some(pending.workspace_id),
                 name: &pending.name,
             };
-            match migrate_one(state, backend.as_ref(), graph).await {
+            match copy(state, backend.as_ref(), graph).await {
                 Ok(true) => report.migrated += 1,
                 Ok(false) => report.already += 1,
                 Err(err) => {
@@ -148,9 +170,10 @@ pub async fn run(state: &AppState) -> anyhow::Result<Report> {
     Ok(report)
 }
 
-/// Copies one graph; false when onto-intelli held it already and nexc
-/// stored nothing of its own for it (nothing is written then).
-async fn migrate_one(
+/// Copies one graph of a pass, under its lock; false when nothing was
+/// written: the graph was migrated since the pass read its batch, or
+/// onto-intelli holds its vocabulary already (then it is only recorded).
+pub async fn copy(
     state: &AppState,
     backend: &dyn OntologyBackend,
     graph: GraphRef<'_>,
@@ -159,26 +182,49 @@ async fn migrate_one(
         return Ok(false);
     };
     let service = Principal::service(&state.settings.onto_workspace_prefix, workspace_id);
-    let stored = repo::legacy_ontology(&state.db, graph.id).await?;
-    match backend.vocabulary(&service, &graph_key(graph.id)).await {
-        Ok(_) if stored.is_none() => {
-            repo::mark_migrated(&state.db, graph.id, workspace_id).await?;
-            Ok(false)
-        }
-        Ok(_) | Err(OntoError::NotFound(_)) => {
-            let mut vocabulary = stored.unwrap_or_else(Ontology::starter);
+    let mut tx = state.db.begin().await?;
+    repo::lock(&mut *tx, graph.id).await?;
+    if repo::is_migrated(&mut *tx, graph.id).await? {
+        return Ok(false);
+    }
+    let copied = match backend.vocabulary(&service, &graph_key(graph.id)).await {
+        Ok(_) => false,
+        Err(OntoError::NotFound(_)) => {
+            let mut vocabulary = repo::legacy_ontology(&mut *tx, graph.id)
+                .await?
+                .unwrap_or_else(Ontology::starter);
             vocabulary.normalize();
             write(backend, &service, graph, &vocabulary).await?;
-            repo::mark_migrated(&state.db, graph.id, workspace_id).await?;
-            Ok(true)
+            true
         }
-        Err(err) => Err(err.into()),
+        Err(err) => return Err(err.into()),
+    };
+    repo::mark_migrated(&mut *tx, graph.id, workspace_id).await?;
+    tx.commit().await?;
+    if copied {
+        state.caches.invalidate(Key::Vocabulary(graph.id));
     }
+    Ok(copied)
+}
+
+/// One start-up pass, when no other replica runs one: `None` when another
+/// does (this replica looks again later).
+async fn run_alone(state: &AppState) -> anyhow::Result<Option<Report>> {
+    let mut conn = state.db.acquire().await?;
+    // A lock left on a pooled connection would outlive the pass.
+    conn.close_on_drop();
+    if !repo::try_lock_pass(&mut *conn).await? {
+        return Ok(None);
+    }
+    let report = run(state).await;
+    repo::unlock_pass(&mut *conn).await?;
+    report.map(Some)
 }
 
 /// The start-up pass, in the background: it runs until no graph fails,
 /// trying failed graphs again every minute (graphs created later are
-/// initialised on their first read).
+/// initialised on their first read). One replica runs it at a time; the
+/// others wait until nothing remains.
 pub fn spawn_at_start(state: &AppState, shutdown: CancellationToken) -> bool {
     if state.ontology.is_none() || !state.settings.onto_migrate_on_start {
         return false;
@@ -186,13 +232,14 @@ pub fn spawn_at_start(state: &AppState, shutdown: CancellationToken) -> bool {
     let state = state.clone();
     tokio::spawn(async move {
         loop {
-            let done = match run(&state).await {
-                Ok(report) => {
+            let done = match run_alone(&state).await {
+                Ok(Some(report)) => {
                     if report.migrated + report.failed > 0 {
                         tracing::info!(?report, "graph vocabularies copied to onto-intelli");
                     }
                     report.failed == 0
                 }
+                Ok(None) => repo::remaining(&state.db).await.is_ok_and(|left| left == 0),
                 Err(err) => {
                     tracing::warn!(error = %err, "onto-intelli vocabulary migration failed");
                     false
