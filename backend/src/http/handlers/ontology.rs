@@ -123,8 +123,9 @@ pub async fn status(
 }
 
 /// Opens a browser session for onto-intelli's UI, for the caller in this
-/// workspace's tenant: their own principal with the roles of their
-/// workspace role, short-lived (`NEXC_ONTO_SESSION_TTL_SECS`). The page
+/// workspace's tenant: their own principal, read-only there (`viewer`;
+/// owners and admins also approve proposals and apply schema changes),
+/// short-lived (`NEXC_ONTO_SESSION_TTL_SECS`). The page
 /// hands it to the embedded UI with `postMessage` once the UI announced
 /// itself (`onto:ready`). Members and above; 409 when onto-intelli is off,
 /// 503 when it is not reachable.
@@ -146,7 +147,8 @@ pub async fn session(
         ));
     };
     let prefix = &state.settings.onto_workspace_prefix;
-    let principal = Principal::user(prefix, wid, auth.id, workspace.role);
+    // Read-only: what nexc projects is written by the backend alone, after its own checks.
+    let principal = Principal::browser(prefix, wid, auth.id, workspace.role);
     let minted = backend
         .mint_session(&principal, state.settings.onto_session_ttl.as_secs())
         .await

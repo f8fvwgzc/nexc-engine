@@ -110,7 +110,9 @@ pub mod role {
     pub const AGENT: &str = "agent";
 }
 
-/// The onto-intelli roles of a workspace role: owners and admins approve
+/// The onto-intelli roles the backend asserts when it calls for someone of a
+/// workspace role, after nexc's own checks (a vocabulary written through
+/// `PUT /graphs/{gid}/ontology`, a plan's types): owners and admins approve
 /// proposals and may apply schema changes, members read and write, guests
 /// only read.
 pub fn roles_for(role: WorkspaceRole) -> Vec<String> {
@@ -120,6 +122,23 @@ pub fn roles_for(role: WorkspaceRole) -> Vec<String> {
         }
         WorkspaceRole::Member => &[role::MEMBER],
         WorkspaceRole::Guest => &[role::VIEWER],
+    };
+    roles.iter().map(|r| (*r).to_owned()).collect()
+}
+
+/// The onto-intelli roles of a browser session for onto-intelli's own UI:
+/// never a write role. onto-intelli has no per-entity write rule that
+/// mirrors nexc's (who may work on which graph, who is in which team), so
+/// the data nexc projects there (vocabularies, team membership, the audit's
+/// facts) is only written by the backend, after nexc's checks. Owners and
+/// admins still approve proposals and apply schema changes (onto-intelli
+/// runs a change's data migration as the system).
+pub fn session_roles_for(role: WorkspaceRole) -> Vec<String> {
+    let roles: &[&str] = match role {
+        WorkspaceRole::Owner | WorkspaceRole::Admin => {
+            &[role::VIEWER, role::APPROVER, role::SCHEMA_ADMIN]
+        }
+        WorkspaceRole::Member | WorkspaceRole::Guest => &[role::VIEWER],
     };
     roles.iter().map(|r| (*r).to_owned()).collect()
 }
@@ -187,6 +206,15 @@ impl Principal {
             roles: roles_for(role),
             entity: Some(person_id(user_id)),
             ..Principal::service(prefix, workspace_id)
+        }
+    }
+
+    /// A member in onto-intelli's own UI (the session the backend mints for
+    /// the browser): their principal with read-only roles ([`session_roles_for`]).
+    pub fn browser(prefix: &str, workspace_id: Uuid, user_id: Uuid, role: WorkspaceRole) -> Self {
+        Principal {
+            roles: session_roles_for(role),
+            ..Principal::user(prefix, workspace_id, user_id, role)
         }
     }
 
@@ -674,6 +702,24 @@ mod tests {
             Principal::user("nexc-", w, u, WorkspaceRole::Guest).roles,
             ["viewer"]
         );
+        // A browser session never writes: what nexc projects is written by the backend only.
+        for (role, roles) in [
+            (
+                WorkspaceRole::Owner,
+                &["viewer", "approver", "schema_admin"][..],
+            ),
+            (
+                WorkspaceRole::Admin,
+                &["viewer", "approver", "schema_admin"][..],
+            ),
+            (WorkspaceRole::Member, &["viewer"][..]),
+            (WorkspaceRole::Guest, &["viewer"][..]),
+        ] {
+            let browser = Principal::browser("nexc-", w, u, role);
+            assert_eq!(browser.roles, roles);
+            assert_eq!(browser.id, format!("user:{u}"));
+            assert!(!browser.has_role(role::MEMBER) && !browser.has_role(role::AGENT));
+        }
         let assistant = Principal::assistant("nexc-", w, u);
         assert_eq!(assistant.roles, ["agent"]);
         assert!(assistant.acts() && !assistant.has_role("approver"));

@@ -75,20 +75,30 @@ checks and audits that person, not the backend:
 | `x-onto-act-workspaces` | the onto-intelli workspace of the nexc workspace           |
 | `x-onto-act-entity`     | `person:<user id>` (members and their assistant)           |
 
-| nexc                                | onto-intelli roles                        | What onto-intelli lets them do (with the governance `deploy/onto` ships)                                   |
-| ----------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| workspace owner or admin            | `member`, `approver`, `schema_admin`      | read and write; approve or reject proposals; apply schema changes directly                                  |
-| member                              | `member`                                  | read and write; propose schema changes                                                                     |
-| guest                               | `viewer`                                  | read                                                                                                       |
-| the assistant, working for a member | `agent`                                   | read, plan and propose schema changes; never apply or approve them, whatever else it holds                  |
-| the run engine                      | `agent`                                   | read graph vocabularies                                                                                    |
-| the backend itself (no `act-as`)    | the token's own principal (`admin`)       | the projection, the audit's facts, the first vocabulary of a graph and the migration                        |
+| nexc                                | Calls the backend makes for them      | Their browser session (onto-intelli's UI) | What onto-intelli lets them do (with the governance `deploy/onto` ships)                                                  |
+| ----------------------------------- | ------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| workspace owner or admin            | `member`, `approver`, `schema_admin`  | `viewer`, `approver`, `schema_admin`      | through nexc: what nexc allowed (a graph's vocabulary, a plan's types); in the UI: read, approve or reject proposals, apply schema changes directly |
+| member                              | `member`                              | `viewer`                                  | through nexc: what nexc allowed; in the UI: read, propose schema changes                                                  |
+| guest                               | `viewer`                              | `viewer`                                  | read                                                                                                                      |
+| the assistant, working for a member | `agent`                               | —                                         | read, plan and propose schema changes; never apply or approve them, whatever else it holds                                |
+| the run engine                      | `agent`                               | —                                         | read graph vocabularies (a private team's graph is read as the backend, §4)                                               |
+| the backend itself (no `act-as`)    | the token's own principal (`admin`)   | —                                         | the projection, the audit's facts, the first vocabulary of a graph and the migration                                      |
 
 The roles the backend may assert are limited by the token's `impersonate_roles` (`viewer`, `member`,
 `agent`, `approver`, `schema_admin`; never `admin`), and `[governance]` gives `schema_admin` the right
 to apply and `approver` the right to approve. A guest who works on a team graph therefore reads its
 vocabulary but cannot change it (403). The single admin principal is only the backend's own: no
 user-facing call is made as it.
+
+**A browser session never holds a write role.** onto-intelli grants `member` the right to write
+every entity it can see, and has no per-entity rule that mirrors nexc's own: who may work on which
+graph, who is in which team. A session with `member` could rewrite any graph's vocabulary (its
+executors, roles, code execution, blocking flags), link itself into `team:admins` or a private team
+and so read what is restricted to it, or edit the audit's facts. So what nexc projects is written
+only by the backend, after nexc's checks (`PUT /graphs/{gid}/ontology` checks graph access, the
+40-type limit and the blocking cycles), and a graph's types are edited in nexc, not in onto-intelli's
+UI. Applying an approved schema change still works for owners and admins: onto-intelli runs its data
+migration as the system. `team:admins` is itself restricted to its members (§5).
 
 ## 3. One tenant per workspace
 
@@ -130,8 +140,8 @@ label, description, colour, icon, default role, default executor, stage, `produc
   holds once the graph row is locked (read again then, never from the cache), and only them
   (`InitGraph` upserts the types it is given and leaves every other one as it is). A type added,
   changed or removed in onto-intelli or through the editor meanwhile stays as it is.
-- **Edits made in onto-intelli itself** (its UI, an approved proposal, an action) reach nexc within
-  the cache's lifetime. Edges follow their relation's `blocking` flag, unless that would close a
+- **Edits made in onto-intelli itself** (an approved proposal's data migration, an operator's own
+  token; browser sessions are read-only, §2) reach nexc within the cache's lifetime. Edges follow their relation's `blocking` flag, unless that would close a
   dependency cycle (the edges then keep theirs and the backend logs the conflict), and open canvases
   get `ontology.updated`.
 
@@ -177,7 +187,7 @@ cleared_at FROM onto_retired_tenants` lists the tenants to drop.
 **The Map page** (Settings → Workspace map, members and above) embeds onto-intelli's UI at
 `NEXC_ONTO_PUBLIC_URL/ui/`. The backend mints the member's own session with
 `POST /workspaces/{wid}/ontology/session`: a short-lived token (`NEXC_ONTO_SESSION_TTL_SECS`) for
-their principal in the workspace's tenant, which cannot impersonate anyone. The page loads the
+their principal in the workspace's tenant, read-only there (§2), which cannot impersonate anyone. The page loads the
 frame, waits for `{type: "onto:ready"}` from the frame's origin and hands it
 `{type: "onto:session", token, tenant, workspace}` with `postMessage` to that origin only. The
 backend's own token never reaches a browser, and the session never travels in an address. Issues,

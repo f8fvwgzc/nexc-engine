@@ -24,7 +24,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `x-onto-act-workspaces`, `x-onto-act-entity: person:<id>`), the assistant (`assistant:<user id>`)
   and the run engine (`agent:runtime`) as agents; the backend's own principal only writes what nexc
   knows (the projection, the audit's facts, a graph's first vocabulary, the migration). Each nexc
-  workspace is a tenant of its own (`x-onto-tenant: ws_<id>`), created on first use.
+  workspace is a tenant of its own (`x-onto-tenant: ws_<id>`), created on first use. A browser
+  session for onto-intelli's UI never holds a write role (`viewer`; owners and admins also
+  `approver` and `schema_admin`): onto-intelli has no per-entity write rule that mirrors nexc's
+  graph access and teams, so what nexc projects is written by the backend alone, after its checks.
 - Graph vocabularies in onto-intelli (`docs/ONTOLOGY.md` §4): the scheduler, the planner, the
   editor and the canvas read a graph's node and relation types from its `ExecutionService`, through
   an in-process read-through cache (`NEXC_ONTO_VOCABULARY_TTL_SECS`, 30 s) that a change made
@@ -64,7 +67,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   put there, and the operator drops the tenant's schema for the rest. `deploy/onto/nexc-workspace.toml`
   names its kinds and relations.
 - The Map page embeds onto-intelli's own UI (members and above): `POST
-  /workspaces/{wid}/ontology/session` mints the member's own short-lived session
+  /workspaces/{wid}/ontology/session` mints the member's own short-lived, read-only session
   (`NEXC_ONTO_SESSION_TTL_SECS`) with the backend's token, which never reaches the browser, and the
   page hands it to the frame by `postMessage` after `onto:ready`, to the frame's origin only
   (`NEXC_ONTO_PUBLIC_URL`). Issues, agents and runs link to themselves on the map

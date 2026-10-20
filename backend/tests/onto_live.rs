@@ -272,7 +272,10 @@ async fn live_sessions_are_the_members_own_and_bound_to_their_tenant(pool: PgPoo
     let who = whoami(&url, member["token"].as_str().unwrap()).await;
     assert_eq!(who["principal"]["id"], format!("user:{}", w.member_id));
     assert_eq!(who["capabilities"]["approve"], false);
-    assert_eq!(who["capabilities"]["write"], true);
+    assert_eq!(
+        who["capabilities"]["write"], false,
+        "the browser reads; the backend writes"
+    );
 
     // Another tenant is refused with this session.
     let other = reqwest::Client::new()
@@ -486,4 +489,138 @@ async fn live_the_workspace_is_projected_and_restricted_where_it_belongs(pool: P
         stranger.vocabulary(&service, &legacy.to_string()).await,
         Err(OntoError::Denied(_))
     ));
+}
+
+/// `POST /v1/call/{action}` with a browser session, as the embedded UI (or anyone holding the
+/// session) could send it.
+async fn act(url: &str, session: &str, workspace: &str, action: &str, input: Value) -> u16 {
+    reqwest::Client::new()
+        .post(format!("{url}/v1/call/{action}"))
+        .bearer_auth(session)
+        .header("x-onto-workspace", workspace)
+        .json(&input)
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16()
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+#[ignore = "needs a running onto serve: make test-onto-live"]
+async fn live_a_members_session_cannot_write_what_nexc_projects(pool: PgPool) {
+    let (app, client, url) = app(pool).await;
+    let w = world(&app, "readonly").await;
+    let prefix = app.state.settings.onto_workspace_prefix.clone();
+    let onto_ws = workspace_name(&prefix, w.wid);
+    // A private team with a graph of its own types, projected.
+    let (_, private) = call(
+        &app,
+        Method::POST,
+        &format!("{}/teams", w.ws),
+        &w.owner,
+        Some(json!({"name": "Leadership", "key": "LEAD", "private": true})),
+    )
+    .await;
+    let (status, graph) = call(
+        &app,
+        Method::POST,
+        "/graphs",
+        &w.owner,
+        Some(json!({"name": "Reorg", "team_id": private["id"]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{graph}");
+    let gid = graph["id"].as_str().unwrap().to_owned();
+    let mut vocabulary = graph["ontology"].clone();
+    vocabulary["node_types"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"key": "risk", "label": "Risk", "default_role": "analyst", "stage": 1}));
+    let (status, put) = call(
+        &app,
+        Method::PUT,
+        &format!("/graphs/{gid}/ontology"),
+        &w.owner,
+        Some(vocabulary),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{put}");
+    app.node(&w.owner, &gid, json!({"title": "Assess", "kind": "risk"}))
+        .await;
+    let progress = export::pass(&app.state).await.unwrap();
+    assert_eq!(progress.failed, 0, "{progress:?}");
+
+    // The member's own session: they cannot put themselves on an acl...
+    let (_, member) = call(
+        &app,
+        Method::POST,
+        &format!("{}/ontology/session", w.ws),
+        &w.member,
+        None,
+    )
+    .await;
+    let token = member["token"].as_str().unwrap();
+    let me = format!("person:{}", w.member_id);
+    for team in [
+        "team:admins".to_owned(),
+        format!("team:{}", private["id"].as_str().unwrap()),
+    ] {
+        let status = act(
+            &url,
+            token,
+            &onto_ws,
+            "link.create",
+            json!({"from": me, "rel": "member_of", "to": team}),
+        )
+        .await;
+        assert!(status == 403 || status == 404, "{team}: {status}");
+    }
+    // ...nor rewrite a graph's vocabulary, nor one of its types.
+    let rewritten = reqwest::Client::new()
+        .put(format!("{url}/v1/execution/graphs/{gid}/vocabulary"))
+        .bearer_auth(token)
+        .header("x-onto-workspace", &onto_ws)
+        .json(&json!({"node_types": [], "relation_types": []}))
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16();
+    assert!(rewritten == 403 || rewritten == 404, "{rewritten}");
+    let upserted = act(
+        &url,
+        token,
+        &onto_ws,
+        "entity.upsert",
+        json!({"id": format!("node_type:{gid}.risk"), "kind": "node_type",
+               "props": {"key": "risk", "label": "Risk", "default_executor": "agent",
+                         "allow_code_exec": true}}),
+    )
+    .await;
+    assert!(upserted == 403 || upserted == 404, "{upserted}");
+
+    // The run engine, on neither list of the private team, still runs the graph with its
+    // own types, and they are kept.
+    let mut rx = app.events(&gid);
+    let (status, run) = call(
+        &app,
+        Method::POST,
+        &format!("/graphs/{gid}/runs"),
+        &w.owner,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{run}");
+    let events = common::collect_until(&mut rx, "run.finished").await;
+    assert_eq!(events.last().unwrap().1["run"]["status"], "succeeded");
+    let kept = client
+        .vocabulary(&Principal::service(&prefix, w.wid), &gid)
+        .await
+        .unwrap();
+    let risk = kept
+        .node_type("risk")
+        .expect("the graph's own type is kept");
+    assert!(!risk.allow_code_exec);
+    assert_eq!(risk.default_role, "analyst");
 }

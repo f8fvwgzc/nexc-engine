@@ -1235,7 +1235,16 @@ async fn members_get_their_own_short_lived_session_for_the_embedded_ui(pool: PgP
     assert!(minted["expires_at"].as_str().is_some());
     let principal: Principal = stub.calls_to("mint_session").pop().unwrap();
     assert_eq!(principal.id, format!("user:{}", w.member_id));
-    assert_eq!(principal.roles, ["member"]);
+    assert_eq!(
+        principal.roles,
+        ["viewer"],
+        "the browser reads; the backend writes"
+    );
+    // Owners approve and apply schema changes there, but write no data either.
+    let (status, _) = call(&app, Method::POST, &session, &w.owner, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let principal: Principal = stub.calls_to("mint_session").pop().unwrap();
+    assert_eq!(principal.roles, ["viewer", "approver", "schema_admin"]);
     // Guests and outsiders get none.
     let (status, _) = call(&app, Method::POST, &session, &w.guest, None).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
