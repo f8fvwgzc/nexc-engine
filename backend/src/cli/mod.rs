@@ -62,6 +62,21 @@ pub enum Command {
         #[command(subcommand)]
         command: OntoCommand,
     },
+    /// Serve the agent runtime's egress: a forward proxy that connects only to
+    /// the hosts and ports on its allow-list (the LLM endpoints). Needs no
+    /// database and no secrets.
+    EgressProxy {
+        /// Where to listen.
+        #[arg(long, env = "NEXC_EGRESS_LISTEN", default_value = "0.0.0.0:3128")]
+        listen: std::net::SocketAddr,
+        /// `host[:port]`, comma separated; a host without a port is allowed on
+        /// 443 only, `*.example.com` allows its subdomains.
+        #[arg(long, env = "NEXC_EGRESS_ALLOW", default_value = "")]
+        allow: String,
+        /// On SIGTERM, how long the connections open may still finish.
+        #[arg(long, env = "NEXC_EGRESS_DRAIN_SECS", default_value_t = 60)]
+        drain_secs: u64,
+    },
 }
 
 /// `nexc onto …`
@@ -127,6 +142,18 @@ pub async fn run(cli: Cli) -> anyhow::Result<ExitCode> {
         Command::Onto {
             command: OntoCommand::Migrate,
         } => onto_migrate().await,
+        Command::EgressProxy {
+            listen,
+            allow,
+            drain_secs,
+        } => {
+            let allow = crate::egress_proxy::AllowList::parse(&allow)
+                .map_err(|e| anyhow::anyhow!("NEXC_EGRESS_ALLOW: {e}"))?;
+            let drain = std::time::Duration::from_secs(drain_secs);
+            crate::egress_proxy::run(listen, allow, drain)
+                .await
+                .map(|()| ExitCode::SUCCESS)
+        }
     }
 }
 

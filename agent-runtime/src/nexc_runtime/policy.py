@@ -1,9 +1,11 @@
 """The per-run agent token and the in-process policy it carries (CONTRACT section 8).
 
-The backend mints a signed token for every node it dispatches: the agent's principal, the run
-and node, a snapshot of the agent's capabilities and the policy version. This runtime refuses
-to start without a valid one, decides every tool call and spawn from it in microseconds without
-leaving the process, and hands sub-agents a narrowed copy. The backend re-checks every span it
+The backend mints a signed token for every node it dispatches: the agent's principal, the human
+it acts for, the run and node, a snapshot of the agent's capabilities and the policy version.
+Only the backend signs (EdDSA); this runtime checks the signature with public keys alone
+(`keys.KeyRing`), so it can never mint or widen a token. It refuses to start without a valid
+one, decides every tool call and spawn from it in microseconds without leaving the process, and
+hands sub-agents a narrowed copy, in process and unsigned. The backend re-checks every span it
 receives against the same capabilities, so nothing here is the last line of defence; it is the
 first, and the one the model sees.
 
@@ -14,21 +16,22 @@ flags any decision that disagrees with its own as a `policy_mismatch`.
 from __future__ import annotations
 
 import base64
-import hashlib
-import hmac
 import json
 import os
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, replace
+from typing import Any, Protocol
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 ISSUER = "nexc-engine"
 AUDIENCE = "nexc-runtime"
+# The one algorithm accepted: the backend signs with Ed25519 and nothing else verifies.
+ALGORITHM = "EdDSA"
 # Clock skew tolerated on `exp` and `nbf`, as the backend tolerates it.
 LEEWAY_S = 5
-# Prefix of the key derivation from the runtime's shared secret (see `security/agent_token.rs`).
-DERIVATION_TAG = b"nexc-agent-token-v1:"
 
 LABELS = ("public", "internal", "confidential", "restricted")
 MEMORY_NAMESPACES = ("user", "graph", "node")
@@ -41,9 +44,15 @@ class TokenError(Exception):
     """The token is missing, forged, expired or for another run."""
 
 
-def derive_key(runtime_token: str) -> bytes:
-    """The HMAC key both sides use when no `NEXC_AGENT_TOKEN_KEY` is configured."""
-    return hashlib.sha256(DERIVATION_TAG + runtime_token.encode("utf-8")).digest()
+class UnknownKeyError(TokenError):
+    """The token names a key this runtime does not know: forged, or signed with a key the
+    backend published since the runtime last managed to fetch its key set (worth a retry)."""
+
+
+class KeySource(Protocol):
+    """Where a token's `kid` finds its public key (`keys.KeyRing`, or a plain mapping)."""
+
+    def get(self, kid: str, /) -> Ed25519PublicKey | None: ...
 
 
 # --- capabilities -------------------------------------------------------------------------------
@@ -367,13 +376,35 @@ def _unb64url(text: str) -> bytes:
         raise TokenError("token is not base64url") from exc
 
 
-def encode_token(claims: Mapping[str, Any], key: bytes) -> str:
-    """An HS256 JWT of `claims` (what the backend produces; used here for sub-agents and tests)."""
-    header = _b64url(json.dumps({"typ": "JWT", "alg": "HS256"}, separators=(",", ":")).encode())
-    payload = _b64url(json.dumps(dict(claims), separators=(",", ":")).encode("utf-8"))
-    signed = f"{header}.{payload}".encode("ascii")
-    signature = _b64url(hmac.new(key, signed, hashlib.sha256).digest())
-    return f"{header}.{payload}.{signature}"
+def token_kid(token: str | None) -> str | None:
+    """The `kid` a token's header names, read without verifying anything (to find its key)."""
+    if not token or token.count(".") != 2:
+        return None
+    try:
+        header = json.loads(_unb64url(token.split(".", 1)[0]))
+    except (ValueError, TokenError):
+        return None
+    kid = header.get("kid") if isinstance(header, dict) else None
+    return kid if isinstance(kid, str) else None
+
+
+@dataclass(frozen=True, slots=True)
+class OnBehalfOf:
+    """The human an agent acts for: who started the run, and their role in its workspace."""
+
+    user_id: str
+    workspace_role: str | None
+
+    @classmethod
+    def from_dict(cls, raw: Any) -> OnBehalfOf:
+        if not isinstance(raw, Mapping):
+            raise TokenError("token names no human it acts for (on_behalf_of)")
+        user_id, role = raw.get("user_id"), raw.get("workspace_role")
+        if not isinstance(user_id, str) or not user_id:
+            raise TokenError("on_behalf_of.user_id is not a user id")
+        if role is not None and not isinstance(role, str):
+            raise TokenError("on_behalf_of.workspace_role is not a role")
+        return cls(user_id=user_id, workspace_role=role)
 
 
 @dataclass(frozen=True, slots=True)
@@ -388,16 +419,21 @@ class AgentToken:
     capabilities: Capabilities
     expires_at: int
     claims: Mapping[str, Any]
+    # The backend-signed token this authority comes from (a sub-agent's is its root's).
     raw: str
+    # The human the agent acts for; a token without one is refused.
+    on_behalf_of: OnBehalfOf | None = None
     # The resolved rules beside the capabilities, and the labels of the data the node was given.
     rules: Rules = Rules()
     labels: tuple[str, ...] = ()
     # What is sent up of what the agents say and hear.
     recording: Recording = Recording()
 
-    def child(self, principal: str, key: bytes, *, now: float | None = None) -> AgentToken:
-        """A token for a sub-agent: the same run and node, one level deeper, and never wider
-        than this one (its capabilities are this token's narrowed by themselves)."""
+    def child(self, principal: str, *, now: float | None = None) -> AgentToken:
+        """The authority of a sub-agent: the same run, node and human, one level deeper, and
+        never wider than this one (its capabilities are this token's narrowed by themselves).
+        It lives in this process only and is not signed: this runtime holds no key that could
+        sign it, and `raw` stays the backend's token it derives from."""
         now_s = int(time.time() if now is None else now)
         capabilities = self.capabilities.narrow(self.capabilities)
         claims = {
@@ -409,19 +445,12 @@ class AgentToken:
             "depth": self.depth + 1,
             "capabilities": capabilities.to_dict(),
         }
-        return AgentToken(
+        return replace(
+            self,
             principal=principal,
-            run_id=self.run_id,
-            node_id=self.node_id,
             depth=self.depth + 1,
-            policy_version=self.policy_version,
             capabilities=capabilities,
-            expires_at=self.expires_at,
             claims=claims,
-            raw=encode_token(claims, key),
-            rules=self.rules,
-            labels=self.labels,
-            recording=self.recording,
         )
 
 
@@ -431,14 +460,15 @@ def _new_jti() -> str:
 
 def verify_token(
     token: str | None,
-    key: bytes,
+    keys: KeySource,
     *,
     run_id: str,
     node_id: str,
     now: float | None = None,
 ) -> AgentToken:
-    """Checks the signature (constant time), the algorithm, issuer, audience, times and that the
-    token was minted for this run and node. Raises `TokenError` with the reason."""
+    """Checks the algorithm (EdDSA only), the key the header's `kid` names (one of `keys`), the
+    signature, issuer, audience, times, the human it acts for and that the token was minted for
+    this run and node. Raises `TokenError` with the reason."""
     if not token:
         raise TokenError("no agent token in the request")
     parts = token.split(".")
@@ -449,11 +479,18 @@ def verify_token(
         header = json.loads(_unb64url(header_b64))
     except ValueError as exc:
         raise TokenError("token header is not JSON") from exc
-    if not isinstance(header, dict) or header.get("alg") != "HS256":
-        raise TokenError("token algorithm is not HS256")
-    expected = hmac.new(key, f"{header_b64}.{payload_b64}".encode("ascii"), hashlib.sha256)
-    if not hmac.compare_digest(_unb64url(signature_b64), expected.digest()):
-        raise TokenError("token signature does not verify")
+    if not isinstance(header, dict) or header.get("alg") != ALGORITHM:
+        raise TokenError(f"token algorithm is not {ALGORITHM}")
+    kid = header.get("kid")
+    if not isinstance(kid, str) or not kid:
+        raise TokenError("token names no key (kid)")
+    key = keys.get(kid)
+    if key is None:
+        raise UnknownKeyError(f"token names a key this runtime does not know ({kid})")
+    try:
+        key.verify(_unb64url(signature_b64), f"{header_b64}.{payload_b64}".encode("ascii"))
+    except InvalidSignature as exc:
+        raise TokenError("token signature does not verify") from exc
     try:
         claims = json.loads(_unb64url(payload_b64))
     except ValueError as exc:
@@ -490,6 +527,7 @@ def verify_token(
         expires_at=int(exp),
         claims=claims,
         raw=token,
+        on_behalf_of=OnBehalfOf.from_dict(claims.get("on_behalf_of")),
         rules=Rules.from_dict(claims.get("rules")),
         labels=tuple(labels),
         recording=Recording.from_dict(claims.get("recording")),

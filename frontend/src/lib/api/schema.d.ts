@@ -414,6 +414,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agent-tokens/jwks.json": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The keys agent tokens verify with: the one the backend signs with first,
+         *     then the others it still accepts (`NEXC_AGENT_TOKEN_VERIFY_KEYS`: the
+         *     previous key after a rotation, the next one before it). Public: they are
+         *     public keys, and the runtime fetches them without credentials.
+         */
+        get: operations["jwks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agents": {
         parameters: {
             query?: never;
@@ -424,7 +446,7 @@ export interface paths {
         /** The agents of a workspace. */
         get: operations["list"];
         put?: never;
-        /** Adds an agent to a workspace (members and above). */
+        /** Adds an agent to a workspace (members and above); audited as `agent_created`. */
         post: operations["create"];
         delete?: never;
         options?: never;
@@ -473,7 +495,10 @@ export interface paths {
         get: operations["get"];
         put?: never;
         post?: never;
-        /** Removes an agent (its reports no longer report to anyone). */
+        /**
+         * Removes an agent (its reports no longer report to anyone); audited as
+         *     `agent_deleted`.
+         */
         delete: operations["delete"];
         options?: never;
         head?: never;
@@ -4114,7 +4139,7 @@ export interface components {
          * @description What an audit entry records.
          * @enum {string}
          */
-        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned" | "trace_sealed" | "policy_changed" | "policy_mismatch" | "agent_quarantined" | "agent_released" | "recording_changed" | "payload_viewed" | "agent_cancelled" | "approval_granted" | "approval_denied" | "artifact_quarantined" | "artifact_released" | "alert_raised" | "alert_destination_changed" | "classification_changed" | "mcp_server_added" | "mcp_server_removed" | "agent_token_issued" | "agent_token_revoked" | "agent_a2a_changed" | "a2a_counterpart_added" | "a2a_counterpart_removed" | "graph_deleted" | "evidence_purged" | "evidence_exported";
+        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned" | "trace_sealed" | "policy_changed" | "policy_mismatch" | "agent_quarantined" | "agent_released" | "recording_changed" | "payload_viewed" | "agent_cancelled" | "approval_granted" | "approval_denied" | "artifact_quarantined" | "artifact_released" | "alert_raised" | "alert_destination_changed" | "classification_changed" | "mcp_server_added" | "mcp_server_removed" | "agent_token_issued" | "agent_token_revoked" | "agent_a2a_changed" | "a2a_counterpart_added" | "a2a_counterpart_removed" | "graph_deleted" | "evidence_purged" | "evidence_exported" | "agent_created" | "agent_deleted";
         /** @description An answer from the audit. */
         AuditAnswer: {
             answer: string;
@@ -8660,6 +8685,25 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    jwks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Jwks"];
                 };
             };
         };

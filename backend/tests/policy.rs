@@ -25,7 +25,6 @@ use nexc::domain::capabilities::{Capabilities, DataLabel};
 use nexc::domain::policy::{Action, decide_with};
 use nexc::domain::policy_document::{Policy, PolicyDocument, PolicyScope};
 use nexc::engine::policy::{levels_for, resolve};
-use nexc::security::agent_token::{AgentTokenKeys, derive_key};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -350,10 +349,6 @@ async fn audit_actions(app: &TestApp, token: &str, wid: &str, action: &str) -> V
         .collect()
 }
 
-fn keys() -> AgentTokenKeys {
-    AgentTokenKeys::new(&derive_key(RUNTIME_TOKEN))
-}
-
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
 async fn policies_are_versioned_only_narrow_and_govern_the_run(pool: PgPool) {
     let (runtime, seen, _) = policy_runtime().await;
@@ -600,7 +595,11 @@ async fn policies_are_versioned_only_narrow_and_govern_the_run(pool: PgPool) {
     );
     assert_eq!(node_run["context_labels"], json!([]));
     let request = seen.lock().unwrap().last().unwrap().clone();
-    let claims = keys().verify(request["token"].as_str().unwrap()).unwrap();
+    let claims = app
+        .state
+        .agent_tokens
+        .verify(request["token"].as_str().unwrap())
+        .unwrap();
     assert_eq!(
         claims.capabilities.tools,
         Some(vec![

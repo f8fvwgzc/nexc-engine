@@ -1,4 +1,6 @@
-# Python agent runtime: internal only (NetworkPolicy admits the backend alone).
+# Python agent runtime: internal only (NetworkPolicy admits the backend alone, and lets it reach
+# only the backend's key-set port and runtime-egress; no DNS). Apply the Services before it starts
+# (kubectl apply -k does): its peers' addresses come from their Services' environment variables.
 apiVersion: v1
 kind: Service
 metadata:
@@ -53,10 +55,19 @@ spec:
           env:
             - name: NEXC_RUNTIME_TOKEN
               valueFrom: { secretKeyRef: { name: nexc-secrets, key: NEXC_RUNTIME_TOKEN } }
-            # Signs the per-run agent tokens; derived from NEXC_RUNTIME_TOKEN on both sides when absent.
-            - name: NEXC_AGENT_TOKEN_KEY
-              valueFrom:
-                secretKeyRef: { name: nexc-secrets, key: NEXC_AGENT_TOKEN_KEY, optional: true }
+            # The runtime may not ask DNS (a lookup is a way out), so it reaches its two peers by the
+            # addresses Kubernetes puts in every pod's environment for the Services that exist.
+            # The backend alone signs the per-run agent tokens (Ed25519): the runtime fetches its
+            # public keys from the backend's key-set port, by the key id a token names.
+            - name: NEXC_AGENT_TOKEN_JWKS_URL
+              value: "http://$(BACKEND_SERVICE_HOST):8081/api/v1/agent-tokens/jwks.json"
+            # Out through runtime-egress alone: the NetworkPolicy allows nothing else.
+            - name: HTTPS_PROXY
+              value: "http://$(RUNTIME_EGRESS_SERVICE_HOST):3128"
+            - name: HTTP_PROXY
+              value: "http://$(RUNTIME_EGRESS_SERVICE_HOST):3128"
+            - name: NO_PROXY
+              value: "localhost,127.0.0.1"
             - name: NEXC_LLM_MODEL
               valueFrom: { configMapKeyRef: { name: nexc-config, key: NEXC_LLM_MODEL } }
             - name: RUNTIME_HOST

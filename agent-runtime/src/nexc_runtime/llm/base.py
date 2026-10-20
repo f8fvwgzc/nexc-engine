@@ -68,6 +68,23 @@ class LLMError(Exception):
         self.retryable = retryable
 
 
+def egress_refused(exc: BaseException, endpoint: str) -> LLMError | None:
+    """The error for a model call the runtime's egress proxy refused (`runtime-egress` answered
+    the CONNECT with 403): final, and saying what to change. `None` for any other failure."""
+    seen: BaseException | None = exc
+    for _ in range(8):  # the SDKs wrap the transport's error once or twice
+        if seen is None:
+            break
+        if type(seen).__name__ == "ProxyError" and "403" in str(seen):
+            return LLMError(
+                f"the runtime's egress proxy refused {endpoint}: add its host:port to "
+                "NEXC_RUNTIME_EGRESS_ALLOW (runtime.egress.allow in the Helm chart)",
+                retryable=False,
+            )
+        seen = seen.__cause__ or seen.__context__
+    return None
+
+
 class LLMProvider(Protocol):
     name: str
     model: str

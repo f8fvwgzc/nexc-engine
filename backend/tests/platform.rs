@@ -114,6 +114,8 @@ async fn the_platform_and_the_workspaces_are_separate_apis(pool: PgPool) {
             "/api/v1/admin/",
             "/api/v1/healthz",
             "/api/v1/readyz",
+            // Public keys, for the runtime and outside verifiers.
+            "/api/v1/agent-tokens/jwks.json",
         ];
         let stream =
             path.ends_with("/events") && path.contains("/graphs/") || path.ends_with("/ws");

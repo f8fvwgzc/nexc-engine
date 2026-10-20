@@ -7,6 +7,79 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- **Only the backend can sign an agent token (breaking; see the upgrade note below).** The per-run
+  agent token was HS256 under a key derived from the runtime's bearer secret, so the runtime,
+  which the design treats as untrusted, could mint any token it liked. It is now EdDSA (Ed25519):
+  the backend signs with `NEXC_AGENT_TOKEN_SIGNING_KEY`, or a seed derived from
+  `NEXC_MASTER_KEY`, and names the key by `kid` (its RFC 7638 thumbprint). The runtime holds
+  public keys only: pinned (`NEXC_AGENT_TOKEN_PUBLIC_KEYS`) or fetched from the backend's new
+  public key set, `GET /api/v1/agent-tokens/jwks.json` (also served alone on a second listener,
+  `NEXC_KEYS_ADDR`), when a token names a key it has not seen and every 5 minutes; never both,
+  and it accepts `EdDSA` and nothing else. The set lists the signing key first, then the
+  backend's `NEXC_AGENT_TOKEN_VERIFY_KEYS`, so keys rotate without a gap (`docs/CONTRACT.md` §8).
+  A token naming a key the runtime does not know yet is refused as retryable; a key the set
+  stops listing keeps verifying for 15 minutes. A sub-agent's narrowed authority stays in the
+  runtime's memory and is no longer signed. `nexc doctor` prints the key id and public key.
+- Agent tokens name the human the agent acts for: `on_behalf_of` `{user_id, workspace_role}`, who
+  started the run and their role in its workspace, required on both sides. The node's
+  `data_read` `context` span records it, and a `policy_mismatch` audit entry names it.
+- Creating and deleting an agent are audit actions, `agent_created` and `agent_deleted` (subject
+  the principal, detail how, the role, the owner and the policy version), written in the same
+  transaction as the change on every path: by hand, from a template, a new workspace's default
+  organisation (so a new workspace's log and timeline start with its default agents) and an A2A
+  counterpart's proxy agent. Agents created before this release have no such entry.
+- The agent runtime reaches only the backend's keys and its LLM endpoints. `nexc egress-proxy`
+  (in the backend image, no secrets) connects only to the `host:port` entries of
+  `NEXC_EGRESS_ALLOW`, requires a tunnel to carry TLS whose server name (SNI) is the host it was
+  opened to, answers 403 to anything else, logs every connection and drains on SIGTERM
+  (`NEXC_EGRESS_DRAIN_SECS`). Docker Compose moves the runtime off the `egress` network onto the
+  internal `agents` network, with `HTTPS_PROXY` pointing at the new `runtime-egress` service
+  (`NEXC_RUNTIME_EGRESS_ALLOW`, `api.anthropic.com:443` by default); Docker's DNS answers it
+  container names only. Kubernetes (kustomize and the chart) adds `runtime-egress` and Egress
+  NetworkPolicies: the runtime may reach the backend's key-set port (8081, never the API) and
+  `runtime-egress`, and no DNS (it finds both by their Service environment variables);
+  `runtime-egress` reaches DNS and TLS on public addresses (the chart's
+  `networkPolicies.runtimeEgressExtra` adds a local provider, `networkPolicies.dnsEgress` another
+  DNS). A model endpoint the proxy refuses fails once with the setting to change. Model calls
+  still go to the provider without passing the tools gateway, and a compromised runtime can send
+  data to an allowed provider under a key of its own: an open gap, recorded in
+  `docs/AGENTSECOPS.md` §4.3.
+
+**Upgrade note for existing deployments.**
+
+1. Settings first. Remove `NEXC_AGENT_TOKEN_KEY` wherever you set it (`.env`, `secret.env`, the
+   chart's `secrets.values` or the Secret behind `secrets.existingSecret`): the backend and the
+   runtime refuse to start while it is set, and the chart refuses to render. An empty
+   `NEXC_AGENT_TOKEN_KEY=` line is ignored. The backend needs nothing new: it signs with a seed
+   derived from `NEXC_MASTER_KEY` unless you set `NEXC_AGENT_TOKEN_SIGNING_KEY`
+   (`openssl rand -base64 32`). Run `nexc doctor` with the new image to see the key it will use.
+2. The runtime needs the backend's public keys: `NEXC_AGENT_TOKEN_JWKS_URL` (Compose, kustomize
+   and the chart set it to the backend's key-set port; `make init` adds
+   `http://localhost:8080/api/v1/agent-tokens/jwks.json` to an existing `.env` for `make dev`), or
+   `NEXC_AGENT_TOKEN_PUBLIC_KEYS` with the public key `nexc doctor` prints. Without one of them it
+   does not start.
+3. Switch with no node running, because an old runtime refuses the new tokens and a new one the old.
+   Stop the backend (`docker compose stop backend`, `kubectl -n nexc scale deploy/backend
+   --replicas=0`): its runs hand over and wait (docs/HA.md). Then update everything (`docker
+   compose up -d`, `kubectl apply -k deploy/k8s`, `helm upgrade`), wait until `agent-runtime`
+   and `runtime-egress` are ready, and start the backend again; the runs go on. A node caught
+   across the switch anyway fails with `agent token refused` and can be run again.
+4. Model endpoints: the runtime reaches only what `NEXC_RUNTIME_EGRESS_ALLOW` (chart:
+   `runtime.egress.allow`) lists, `api.anthropic.com:443` by default. Add the `host:port` of
+   every other endpoint in use: `NEXC_LLM_BASE_URL` and the base URLs saved under Settings → LLM
+   (`SELECT base_url FROM llm_settings UNION SELECT base_url FROM workspace_llm_settings`). A local
+   provider on the Docker host is `host.docker.internal:11434` (Ollama), with
+   `NEXC_LLM_BASE_URL=http://host.docker.internal:11434/v1`.
+5. Kubernetes with a CNI that enforces NetworkPolicy: a provider on a private address or in the
+   cluster also needs an egress rule for `runtime-egress` (chart:
+   `networkPolicies.runtimeEgressExtra`), and a cluster DNS other than CoreDNS as `kube-dns` in
+   `kube-system` needs `networkPolicies.dnsEgress` (kustomize: edit `runtime-egress-out`).
+6. Rolling back, or replicas of two versions side by side: an older backend cannot read the new
+   audit actions, so `GET /workspaces/{wid}/audit` answers 500 there for a workspace that has
+   `agent_created` or `agent_deleted` entries until every replica runs this release.
+
 ### Added
 
 - Evidence that survives (`docs/AGENTSECOPS.md` §12). Each workspace's audit log is a hash chain

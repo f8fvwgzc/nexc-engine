@@ -43,6 +43,8 @@ def create_app(
     )
     app.state.settings = settings
     app.state.census = Census()
+    # The backend's public keys, shared by both wires (`main` hands it to the gRPC server).
+    app.state.keys = settings.key_ring()
     app.state.provider_factory = provider_factory
     app.state.approvals = ApprovalRegistry()
     app.add_middleware(
@@ -150,6 +152,7 @@ async def _stream(app: FastAPI, body: ExecuteRequest) -> AsyncIterator[bytes]:
             settings=app.state.settings,
             census=app.state.census,
             events=events,
+            keys=app.state.keys,
             provider_factory=app.state.provider_factory,
             approvals=app.state.approvals,
         )

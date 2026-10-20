@@ -65,17 +65,21 @@ async fn a_day_is_summarised_on_request_and_kept(pool: PgPool) {
     assert_eq!((status, none.is_null()), (StatusCode::OK, true), "{none}");
     assert_eq!(calls(), 0);
 
-    // Written from the day's three entries: the member, the team and the issue.
+    // Written from the day's entries: the default agents' births, the member, the team and
+    // the issue.
     let (status, written) = call(&app, Method::POST, &summary, &owner, None).await;
     assert_eq!(status, StatusCode::OK, "{written}");
     let today = chrono::Utc::now().date_naive().to_string();
+    let defaults = nexc::domain::agent::DEFAULT_ORG.len();
     assert_eq!(
         written["headline"].as_str(),
-        Some(format!("3 things happened on {today} (UTC).").as_str())
+        Some(format!("{} things happened on {today} (UTC).", 3 + defaults).as_str())
     );
     assert_eq!(
         written["highlights"],
-        json!(["By kind: issue_created 1, member_added 1, team_created 1"]),
+        json!([format!(
+            "By kind: agent_created {defaults}, issue_created 1, member_added 1, team_created 1"
+        )]),
         "the digest reached the model, and the empty point was dropped"
     );
     assert_eq!(written["attention"], json!([]));
@@ -86,7 +90,12 @@ async fn a_day_is_summarised_on_request_and_kept(pool: PgPool) {
             written["stale"].as_bool(),
             written["created_by"].as_str(),
         ),
-        (Some(today.as_str()), Some(3), Some(false), Some("Test"))
+        (
+            Some(today.as_str()),
+            Some(3 + defaults as i64),
+            Some(false),
+            Some("Test")
+        )
     );
     assert!(!written["model"].as_str().unwrap().is_empty());
     assert_eq!(calls(), 1);
@@ -110,12 +119,12 @@ async fn a_day_is_summarised_on_request_and_kept(pool: PgPool) {
     let (_, stale) = call(&app, Method::GET, &summary, &owner, None).await;
     assert_eq!(
         (stale["stale"].as_bool(), stale["event_count"].as_i64()),
-        (Some(true), Some(3))
+        (Some(true), Some(3 + defaults as i64))
     );
     let (_, again) = call(&app, Method::POST, &summary, &owner, None).await;
     assert_eq!(
         (again["stale"].as_bool(), again["event_count"].as_i64()),
-        (Some(false), Some(4))
+        (Some(false), Some(4 + defaults as i64))
     );
     assert_eq!(calls(), 2);
     // What surrounded the day reached the model too: a deadline, and the day's spending.
@@ -150,7 +159,7 @@ async fn a_day_is_summarised_on_request_and_kept(pool: PgPool) {
     let (_, still) = call(&app, Method::GET, &summary, &owner, None).await;
     assert_eq!(
         still["event_count"].as_i64(),
-        Some(4),
+        Some(4 + defaults as i64),
         "the kept one stays readable"
     );
 }

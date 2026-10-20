@@ -79,6 +79,13 @@ if [[ "$OUT" == ".env" ]]; then
   DB_PORT="${DB_PORT:-5432}"
 fi
 
+if [[ "$OUT" == ".env" ]]; then
+  # Where the runtime of `make dev` fetches the backend's agent-token keys (an .env written before
+  # agent tokens were Ed25519 has no such line, and the runtime does not start without it).
+  API_PORT="$(get NEXC_PORT)"
+  fill NEXC_AGENT_TOKEN_JWKS_URL "http://localhost:${API_PORT:-8080}/api/v1/agent-tokens/jwks.json"
+fi
+
 if [[ -z "$(get NEXC_DATABASE_URL)" ]]; then
   put NEXC_DATABASE_URL \
     "postgres://$(get POSTGRES_USER):$(get POSTGRES_PASSWORD)@${DB_HOST}:${DB_PORT}/$(get POSTGRES_DB)"

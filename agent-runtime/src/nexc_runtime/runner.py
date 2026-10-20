@@ -17,9 +17,18 @@ from .approvals import ApprovalRegistry
 from .config import Settings
 from .control import RunControl
 from .evidence import Sources, split_head
+from .keys import KeyRing
 from .llm import DemoBrief, LLMError, LLMProvider, build_provider, redact
 from .llm.demo import first_sentence
-from .policy import AgentToken, TokenError, decide_model_with, decide_tool_with, verify_token
+from .policy import (
+    AgentToken,
+    TokenError,
+    UnknownKeyError,
+    decide_model_with,
+    decide_tool_with,
+    token_kid,
+    verify_token,
+)
 from .prompts import Upstream, build_task_prompt
 from .streaming import EventStream, collect_artifacts
 from .tools import Workspace
@@ -78,6 +87,7 @@ async def execute(
     settings: Settings,
     census: Census,
     events: EventStream,
+    keys: KeyRing,
     provider_factory: ProviderFactory = default_provider_factory,
     approvals: ApprovalRegistry | None = None,
     control: RunControl | None = None,
@@ -86,16 +96,20 @@ async def execute(
 
     `control` is the backend's hold on the run over the gRPC stream (gateway results, token
     updates, the cancel); the NDJSON wire runs without one."""
-    # Nothing starts without the backend's token: no workspace, no provider, no agent.
+    # Nothing starts without the backend's token: no workspace, no provider, no agent. Its key
+    # is the backend's public one, fetched first when the token names one not seen yet.
+    await keys.ensure(token_kid(request.token))
     try:
         token = verify_token(
             request.token,
-            settings.agent_token_key(),
+            keys,
             run_id=request.run_id,
             node_id=request.node_id,
         )
     except TokenError as exc:
-        events.error(f"agent token refused: {exc}", retryable=False)
+        # A key not known yet may be one the backend just published while its key set could not
+        # be fetched: the backend may try again. Anything else is final.
+        events.error(f"agent token refused: {exc}", retryable=isinstance(exc, UnknownKeyError))
         return
     secret = request.llm.api_key.get_secret_value() if request.llm.api_key else None
     timeout = min(request.limits.timeout_s, settings.runtime_timeout_cap_s)
@@ -178,7 +192,6 @@ async def _run(
         produces_artifact=_produces_artifact(request),
         max_turns=min(request.limits.max_turns, settings.runtime_max_turns_cap),
         allow_code_exec=allow_code_exec,
-        token_key=settings.agent_token_key(),
         approvals=approvals,
         control=control,
         # Gateway tools are performed by the backend over the stream; none without one.
@@ -201,7 +214,7 @@ async def _run(
         "info",
         f"agent {spec.name!r} ({spec.role}) born on {provider.name}/{provider.model} "
         f"with a budget of {budget_tokens} tokens, as {token.principal} "
-        f"under policy version {token.policy_version}",
+        f"on behalf of {_human(token)} under policy version {token.policy_version}",
     )
     root = Agent(
         scope=scope,
@@ -310,3 +323,11 @@ def _slug(text: str) -> str:
 def _make_workspace(root: Path) -> Path:
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     return Path(tempfile.mkdtemp(prefix="run-", dir=root))
+
+
+def _human(token: AgentToken) -> str:
+    """`user <id> (<role>)`, as the backend's audit details name the human."""
+    who = token.on_behalf_of
+    if who is None:
+        return "nobody"
+    return f"user {who.user_id} ({who.workspace_role or 'no workspace'})"

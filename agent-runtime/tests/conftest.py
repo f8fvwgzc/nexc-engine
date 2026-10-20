@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
 import time
 from collections.abc import Callable, Iterator
@@ -10,38 +13,76 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from fastapi.testclient import TestClient
 
 from nexc_runtime.api.app import create_app
 from nexc_runtime.api.schemas import ExecuteRequest
 from nexc_runtime.config import Settings
+from nexc_runtime.keys import key_id
 from nexc_runtime.llm import Conversation, LLMError, ToolCall, ToolResult, ToolSpec, Turn
 from nexc_runtime.llm.base import StopKind, TextSink
-from nexc_runtime.policy import derive_key, encode_token
 
 TOKEN = "t" * 40
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
-# The agent-token key the test settings end up with (no NEXC_AGENT_TOKEN_KEY: derived).
-AGENT_KEY = derive_key(TOKEN)
+# The backend's agent-token key in these tests: its private half signs here (as only the backend
+# does in production); the runtime is configured with the public half alone.
+BACKEND_KEY = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
+BACKEND_PUBLIC = BACKEND_KEY.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+BACKEND_KID = key_id(BACKEND_PUBLIC)
+BACKEND_X = base64.urlsafe_b64encode(BACKEND_PUBLIC).rstrip(b"=").decode()
+# A user id and role as the backend puts them in `on_behalf_of`.
+HUMAN = {"user_id": "0199bc0e-0000-7000-8000-0000000000aa", "workspace_role": "admin"}
 
 
-def mint_token(
+def b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def sign_token(
+    claims: dict[str, Any],
+    key: Ed25519PrivateKey = BACKEND_KEY,
+    *,
+    kid: str | None = None,
+    header: dict[str, Any] | None = None,
+) -> str:
+    """An EdDSA JWT of `claims`, as the backend signs it; `kid` defaults to `key`'s own id."""
+    if kid is None:
+        public = key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        kid = key_id(public)
+    head = header if header is not None else {"typ": "JWT", "alg": "EdDSA", "kid": kid}
+    signed = f"{b64url(json.dumps(head).encode())}.{b64url(json.dumps(claims).encode())}"
+    return f"{signed}.{b64url(key.sign(signed.encode('ascii')))}"
+
+
+def hs256_token(claims: dict[str, Any], secret: bytes, *, kid: str | None = BACKEND_KID) -> str:
+    """What a runtime holding a symmetric key could mint: HS256 under `secret`."""
+    head: dict[str, Any] = {"typ": "JWT", "alg": "HS256"}
+    if kid is not None:
+        head["kid"] = kid
+    signed = f"{b64url(json.dumps(head).encode())}.{b64url(json.dumps(claims).encode())}"
+    mac = hmac.new(secret, signed.encode("ascii"), hashlib.sha256).digest()
+    return f"{signed}.{b64url(mac)}"
+
+
+def token_claims(
     *,
     run_id: str = "run-1",
     node_id: str = "node-1",
     principal: str = "writer",
     capabilities: dict[str, Any] | None = None,
     policy_version: int = 1,
-    key: bytes = AGENT_KEY,
     now: int | None = None,
     ttl_s: int = 660,
     rules: dict[str, Any] | None = None,
     labels: list[str] | None = None,
     recording: dict[str, Any] | None = None,
-) -> str:
-    """A per-run agent token as the backend mints it (`security/agent_token.rs`)."""
+    on_behalf_of: dict[str, Any] | None = HUMAN,
+) -> dict[str, Any]:
+    """The claims of a per-run agent token as the backend mints it (`security/agent_token.rs`)."""
     now = int(time.time()) if now is None else now
-    claims = {
+    claims: dict[str, Any] = {
         "iss": "nexc-engine",
         "aud": "nexc-runtime",
         "sub": principal,
@@ -57,13 +98,22 @@ def mint_token(
         "policy_version": policy_version,
         "capabilities": capabilities or {},
     }
+    if on_behalf_of is not None:
+        claims["on_behalf_of"] = on_behalf_of
     if rules is not None:
         claims["rules"] = rules
     if labels is not None:
         claims["labels"] = labels
     if recording is not None:
         claims["recording"] = recording
-    return encode_token(claims, key)
+    return claims
+
+
+def mint_token(
+    *, key: Ed25519PrivateKey = BACKEND_KEY, kid: str | None = None, **claims: Any
+) -> str:
+    """A per-run agent token as the backend mints it, signed with `key` (the backend's)."""
+    return sign_token(token_claims(**claims), key, kid=kid)
 
 
 @dataclass
@@ -138,6 +188,7 @@ def make_settings(workspace_root: Path) -> Callable[..., Settings]:
     def factory(**overrides: Any) -> Settings:
         values: dict[str, Any] = {
             "nexc_runtime_token": TOKEN,
+            "nexc_agent_token_public_keys": BACKEND_X,
             "runtime_workspace": workspace_root,
         }
         values.update(overrides)

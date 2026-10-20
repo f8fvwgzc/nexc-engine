@@ -76,3 +76,9 @@ http{{ if include "nexc.tlsHost" (dict "host" $o.ingress.host "root" .) }}s{{ en
 {{- fail "ontoIntelli.enabled needs ontoIntelli.ingress.host or backend.ontoPublicUrl: where browsers reach onto-intelli's UI, which the workspace map embeds (the Service onto-intelli is not reachable from a browser)" -}}
 {{- end -}}
 {{- end }}
+
+{{/* What runtime-egress lets through (runtime.egress.allow; guarded for --reuse-values from an
+older release, which has no runtime.egress). */}}
+{{- define "nexc.egressAllow" -}}
+{{ dig "egress" "allow" "api.anthropic.com:443" .Values.runtime }}
+{{- end }}

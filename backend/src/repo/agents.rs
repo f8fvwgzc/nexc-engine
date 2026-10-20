@@ -4,8 +4,10 @@ use sqlx::postgres::PgRow;
 use sqlx::{FromRow, PgExecutor, Row};
 use uuid::Uuid;
 
+use super::audit::Subject;
 use super::enum_col;
 use crate::domain::agent::{Agent, AgentOwner, AgentRuntime, AgentStatus, AgentTeam, principal_id};
+use crate::domain::audit::AuditAction;
 use crate::domain::capabilities::Capabilities;
 
 impl FromRow<'_, PgRow> for Agent {
@@ -322,18 +324,18 @@ pub async fn team_in_workspace(
         .await
 }
 
-/// Deletes an agent (reports re-parent to nobody). Returns false if absent.
+/// Deletes an agent (reports re-parent to nobody). Returns it as it was, or
+/// `None` if absent.
 pub async fn delete(
     db: impl PgExecutor<'_>,
     workspace_id: Uuid,
     id: Uuid,
-) -> Result<bool, sqlx::Error> {
-    let done = sqlx::query("DELETE FROM agents WHERE workspace_id = $1 AND id = $2")
+) -> Result<Option<Agent>, sqlx::Error> {
+    sqlx::query_as("DELETE FROM agents WHERE workspace_id = $1 AND id = $2 RETURNING *")
         .bind(workspace_id)
         .bind(id)
-        .execute(db)
-        .await?;
-    Ok(done.rows_affected() == 1)
+        .fetch_optional(db)
+        .await
 }
 
 /// Adds spent tokens and records a heartbeat (the agent just finished work);
@@ -438,4 +440,54 @@ pub async fn adopt_orphans_of(db: impl PgExecutor<'_>, owner_id: Uuid) -> Result
     .execute(db)
     .await?;
     Ok(done.rows_affected())
+}
+
+/// Notes the birth of `agent` in its workspace's audit log, as `actor` and
+/// `how` (by hand, from a template, …). Written in the caller's transaction,
+/// so a principal never exists without its entry.
+pub async fn audit_created(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    actor_id: Uuid,
+    agent: &Agent,
+    how: &str,
+) -> Result<(), sqlx::Error> {
+    let owner = agent
+        .owner_user_id
+        .map_or_else(|| "nobody".to_owned(), |id| id.to_string());
+    super::audit::record(
+        db,
+        workspace_id,
+        actor_id,
+        AuditAction::AgentCreated,
+        Subject::Text(&agent.principal_id),
+        &format!(
+            "{how}; role {}; owner {owner}; policy version {}",
+            agent.role, agent.policy_version
+        ),
+    )
+    .await
+}
+
+/// Notes the deletion of `agent` in its workspace's audit log, as `actor`;
+/// written in the caller's transaction.
+pub async fn audit_deleted(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    actor_id: Uuid,
+    agent: &Agent,
+    how: &str,
+) -> Result<(), sqlx::Error> {
+    super::audit::record(
+        db,
+        workspace_id,
+        actor_id,
+        AuditAction::AgentDeleted,
+        Subject::Text(&agent.principal_id),
+        &format!(
+            "{how}; role {}; policy version {}",
+            agent.role, agent.policy_version
+        ),
+    )
+    .await
 }

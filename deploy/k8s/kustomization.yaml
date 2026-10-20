@@ -19,6 +19,7 @@ resources:
   - postgres.yaml
   - backend.yaml
   - agent-runtime.yaml
+  - runtime-egress.yaml
   - frontend.yaml
   - ingress.yaml
   - networkpolicies.yaml

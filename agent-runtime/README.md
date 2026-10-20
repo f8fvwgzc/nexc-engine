@@ -13,7 +13,9 @@ The protocol is specified in [docs/CONTRACT.md §8](../docs/CONTRACT.md#8-agent-
 
 ```sh
 uv sync                                    # installs Python 3.12 and the locked dependencies
-NEXC_RUNTIME_TOKEN=$(openssl rand -hex 32) uv run nexc-runtime   # or: python -m nexc_runtime
+NEXC_RUNTIME_TOKEN=$(openssl rand -hex 32) \
+NEXC_AGENT_TOKEN_JWKS_URL=http://localhost:8080/api/v1/agent-tokens/jwks.json \
+  uv run nexc-runtime                      # or: python -m nexc_runtime
 ```
 
 From the repo root `make dev-runtime` loads `.env` for you. Container: `docker build -t nexc-runtime .`
@@ -34,6 +36,9 @@ curl -sN localhost:8090/v1/execute \
 | Variable | Default | Meaning |
 |---|---|---|
 | `NEXC_RUNTIME_TOKEN` | – (required, ≥ 32 chars) | shared bearer secret with the backend |
+| `NEXC_AGENT_TOKEN_JWKS_URL` | – | the backend's public agent-token keys (`/api/v1/agent-tokens/jwks.json`), fetched by the `kid` a token names; this or the next is required, never both |
+| `NEXC_AGENT_TOKEN_PUBLIC_KEYS` | – | the backend's Ed25519 public keys (base64url, comma separated), when they are configured rather than fetched. The runtime holds no key that signs: only the backend mints agent tokens |
+| `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` | – | where model calls go out; Compose and Kubernetes point them at `runtime-egress`, the runtime's only way out |
 | `RUNTIME_HOST` / `RUNTIME_PORT` | `0.0.0.0` / `8090` | bind address |
 | `RUNTIME_WORKSPACE` | `/tmp/nexc-runtime` | parent of the per-run scratch directories |
 | `RUNTIME_ALLOW_CODE_EXEC` | `false` | registers the sandboxed `run_python` tool (the request must also set `limits.allow_code_exec`) |

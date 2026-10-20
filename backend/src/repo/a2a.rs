@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use super::enum_col;
 use crate::domain::a2a::{A2aCounterpart, A2aTask, Hops, TaskState};
+use crate::domain::agent::Agent;
 use crate::domain::capabilities::DataLabel;
 use crate::domain::run::RunStatus;
 
@@ -178,12 +179,13 @@ pub async fn set_counterpart_check(
     Ok(())
 }
 
-/// Removes a counterpart with its principal; false when it was not there.
+/// Removes a counterpart with its principal; returns the principal's agent
+/// as it was, `None` when the counterpart was not there.
 pub async fn delete_counterpart(
     conn: &mut sqlx::PgConnection,
     workspace_id: Uuid,
     id: Uuid,
-) -> Result<bool, sqlx::Error> {
+) -> Result<Option<Agent>, sqlx::Error> {
     let agent: Option<Uuid> = sqlx::query_scalar(
         "DELETE FROM a2a_counterparts WHERE workspace_id = $1 AND id = $2 RETURNING agent_id",
     )
@@ -192,7 +194,7 @@ pub async fn delete_counterpart(
     .fetch_optional(&mut *conn)
     .await?;
     let Some(agent) = agent else {
-        return Ok(false);
+        return Ok(None);
     };
     // A counterpart records nothing in a graph of its own; should its principal have one,
     // the runs there stay with their evidence.
@@ -204,12 +206,11 @@ pub async fn delete_counterpart(
     .bind(agent)
     .execute(&mut *conn)
     .await?;
-    sqlx::query("DELETE FROM agents WHERE id = $1 AND workspace_id = $2")
+    sqlx::query_as("DELETE FROM agents WHERE id = $1 AND workspace_id = $2 RETURNING *")
         .bind(agent)
         .bind(workspace_id)
-        .execute(&mut *conn)
-        .await?;
-    Ok(true)
+        .fetch_optional(&mut *conn)
+        .await
 }
 
 /// How many counterparts a workspace registered.

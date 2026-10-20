@@ -78,6 +78,13 @@ string_enum!(
         EvidencePurged => "evidence_purged",
         /// Someone exported a run's evidence bundle (subject: the run id; detail: the key).
         EvidenceExported => "evidence_exported",
+        /// An agent principal was created: by hand, from a template, as the default
+        /// organisation of a new workspace, or as an A2A counterpart's proxy
+        /// (subject: the principal; detail: how, its role and owner).
+        AgentCreated => "agent_created",
+        /// An agent principal was deleted, by hand or with its A2A counterpart
+        /// (subject: the principal; detail: its role and policy version).
+        AgentDeleted => "agent_deleted",
     }
 );
 

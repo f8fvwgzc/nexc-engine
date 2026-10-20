@@ -1192,6 +1192,26 @@
         ]
       }
     },
+    "/api/v1/agent-tokens/jwks.json": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "The keys agent tokens verify with: the one the backend signs with first,\nthen the others it still accepts (`NEXC_AGENT_TOKEN_VERIFY_KEYS`: the\nprevious key after a rotation, the next one before it). Public: they are\npublic keys, and the runtime fetches them without credentials.",
+        "operationId": "jwks",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Jwks"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/agents": {
       "get": {
         "tags": [
@@ -1256,7 +1276,7 @@
         "tags": [
           "agents"
         ],
-        "summary": "Adds an agent to a workspace (members and above).",
+        "summary": "Adds an agent to a workspace (members and above); audited as `agent_created`.",
         "operationId": "create",
         "requestBody": {
           "content": {
@@ -1453,7 +1473,7 @@
         "tags": [
           "agents"
         ],
-        "summary": "Removes an agent (its reports no longer report to anyone).",
+        "summary": "Removes an agent (its reports no longer report to anyone); audited as\n`agent_deleted`.",
         "operationId": "delete",
         "parameters": [
           {
@@ -16297,7 +16317,9 @@
           "a2a_counterpart_removed",
           "graph_deleted",
           "evidence_purged",
-          "evidence_exported"
+          "evidence_exported",
+          "agent_created",
+          "agent_deleted"
         ]
       },
       "AuditAnswer": {

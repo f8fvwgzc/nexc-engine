@@ -16,6 +16,10 @@ data:
   NEXC_RUNTIME_URL: http://agent-runtime:{{ .Values.runtime.httpPort }}
   NEXC_RUNTIME_PROTOCOL: {{ .Values.backend.runtimeProtocol | quote }}
   NEXC_RUNTIME_GRPC_URL: http://agent-runtime:{{ .Values.runtime.grpcPort }}
+  # The backend's second listener: the agent-token key set alone, the one port of the backend
+  # the runtime may reach.
+  NEXC_KEYS_ADDR: "0.0.0.0:8081"
+  NEXC_RUNTIME_EGRESS_ALLOW: {{ include "nexc.egressAllow" . | quote }}
   NEXC_GATEWAY_CALLS_PER_MINUTE: {{ .Values.backend.gateway.callsPerMinute | quote }}
   NEXC_GATEWAY_TIMEOUT_SECS: {{ .Values.backend.gateway.timeoutSecs | quote }}
   NEXC_GATEWAY_MAX_RESPONSE_BYTES: {{ .Values.backend.gateway.maxResponseBytes | quote }}

@@ -5,7 +5,8 @@
 #   open http://localhost:8080
 #
 # Only the web UI is published. The backend, the agent runtime and PostgreSQL live on internal
-# networks. Optional texc-symphony executor: `docker compose --profile symphony up -d`.
+# networks; the runtime reaches the internet only through runtime-egress, for the LLM endpoints
+# of NEXC_RUNTIME_EGRESS_ALLOW. Optional texc-symphony executor: `docker compose --profile symphony up -d`.
 #
 # Two backend replicas (docs/HA.md), so a run survives the loss of the one executing it: set
 # NEXC_BACKEND_REPLICAS=2 in .env, so every later `docker compose up -d` keeps both, then
@@ -92,9 +93,16 @@ services:
       NEXC_LLM_PROVIDER: ${NEXC_LLM_PROVIDER:-demo}
       # The lease a replica holds on a run it executes (docs/HA.md); the same on every replica.
       NEXC_RUN_LEASE_SECS: ${NEXC_RUN_LEASE_SECS:-30}
+      # A second listener with the agent-token key set alone, for the runtime (Kubernetes lets the
+      # runtime reach only this port of the backend; here they share a network).
+      NEXC_KEYS_ADDR: 0.0.0.0:8081
     # On SIGTERM the backend fails readiness, hands its runs to the other replicas (their trace
     # written, their lease released) and lets requests in flight finish: give it the time.
     stop_grace_period: 30s
+    # A local provider on this machine (NEXC_LLM_BASE_URL=http://host.docker.internal:11434/v1),
+    # which runtime-egress reaches too once it is on NEXC_RUNTIME_EGRESS_ALLOW.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - nexc-data:/data
       - symphony-config:/data/symphony
@@ -121,8 +129,14 @@ services:
     # LLM API keys arrive per request from the backend and are never stored.
     environment:
       NEXC_RUNTIME_TOKEN: ${NEXC_RUNTIME_TOKEN:?NEXC_RUNTIME_TOKEN is empty - run `make init`}
-      # Signs the per-run agent tokens; both sides derive it from NEXC_RUNTIME_TOKEN when empty.
-      NEXC_AGENT_TOKEN_KEY: ${NEXC_AGENT_TOKEN_KEY:-}
+      # The backend alone signs the per-run agent tokens (Ed25519); the runtime fetches its
+      # public keys from here, by the key id a token names. No signing key ever reaches it.
+      NEXC_AGENT_TOKEN_JWKS_URL: http://backend:8081/api/v1/agent-tokens/jwks.json
+      # Its only way out: the egress proxy below, which lets through the LLM endpoints of
+      # NEXC_RUNTIME_EGRESS_ALLOW and nothing else. The backend is reached directly.
+      HTTPS_PROXY: http://runtime-egress:3128
+      HTTP_PROXY: http://runtime-egress:3128
+      NO_PROXY: backend,localhost,127.0.0.1
       NEXC_LLM_MODEL: ${NEXC_LLM_MODEL:-claude-opus-5}
       RUNTIME_HOST: 0.0.0.0
       RUNTIME_PORT: "8090"
@@ -141,7 +155,42 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-    # agents: reachable only from the backend. egress: outbound calls to the LLM provider.
+    # agents only: reachable from the backend, and out through runtime-egress alone. It is on
+    # no network with a route to the internet.
+    networks: [agents]
+
+  # The agent runtime's egress (`nexc egress-proxy`, from the backend image, with no secrets):
+  # CONNECT to the hosts and ports of NEXC_RUNTIME_EGRESS_ALLOW, plain HTTP to a local provider
+  # named there (`host.docker.internal:11434` for Ollama on this machine), 403 for anything
+  # else, every connection logged. It sees host names, never what is inside TLS: routing the
+  # LLM traffic through the tools gateway is an open gap (docs/AGENTSECOPS.md).
+  runtime-egress:
+    <<: *hardening
+    image: ghcr.io/f8fvwgzc/nexc-engine-backend:${NEXC_IMAGE_TAG:-latest}
+    pull_policy: missing
+    build:
+      context: ./backend
+    command: ["egress-proxy"]
+    environment:
+      NEXC_EGRESS_LISTEN: 0.0.0.0:3128
+      NEXC_EGRESS_ALLOW: ${NEXC_RUNTIME_EGRESS_ALLOW:-api.anthropic.com:443}
+      # On a stop, the model answers streaming through get this long to finish.
+      NEXC_EGRESS_DRAIN_SECS: "60"
+      NEXC_ENV: ${NEXC_ENV:-development}
+      NEXC_LOG: ${NEXC_LOG:-info}
+    stop_grace_period: 75s
+    # A local provider on this machine (NEXC_LLM_BASE_URL=http://host.docker.internal:11434/v1)
+    # is reached from here once its host:port is on the allow-list.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:3128/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
     networks: [agents, egress]
 
   frontend:
@@ -208,5 +257,6 @@ networks:
   # backend <-> PostgreSQL only.
   data:
     internal: true
-  # Outbound internet for LLM APIs (backend, runtime) and git/Codex (symphony).
+  # Outbound internet: LLM APIs (the backend, runtime-egress on the runtime's behalf) and
+  # git/Codex (symphony). The agent runtime is not on it.
   egress:

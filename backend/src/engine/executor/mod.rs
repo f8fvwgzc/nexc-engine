@@ -28,6 +28,7 @@ use crate::domain::recording::Redaction;
 use crate::domain::run::Artifact;
 use crate::domain::settings::LlmProviderKind;
 use crate::domain::trace::{SYSTEM_PRINCIPAL, SpanDraft, SpanKind, SpanStatus};
+use crate::domain::workspace::WorkspaceRole;
 use crate::engine::approvals::Carried;
 use crate::engine::lease::{self, Lease, WriteError};
 use crate::engine::trace::TraceHandle;
@@ -35,6 +36,7 @@ use crate::llm::{LlmError, LlmTarget};
 use crate::realtime::events::{LogLevel, NodeStatusEvent, SseEvent};
 use crate::repo;
 use crate::repo::audit::Subject;
+use crate::security::agent_token::OnBehalfOf;
 
 /// Everything an executor needs to run one node attempt.
 pub struct ExecContext {
@@ -45,6 +47,9 @@ pub struct ExecContext {
     pub workspace_id: Option<Uuid>,
     /// Who started the run.
     pub owner: Uuid,
+    /// Their role in the run's workspace as the run was prepared: with
+    /// `owner`, the human the node's agent acts for (`on_behalf_of`).
+    pub owner_role: Option<WorkspaceRole>,
     pub goal: String,
     pub node: GraphNode,
     /// The node's type in the graph's ontology (absent if the type was removed).
@@ -100,6 +105,7 @@ impl ExecContext {
             graph_id: self.graph_id,
             workspace_id: self.workspace_id,
             owner: self.owner,
+            owner_role: self.owner_role,
             goal: String::new(),
             node: self.node.clone(),
             node_type: None,
@@ -146,6 +152,14 @@ impl ExecContext {
         self.agent
             .as_ref()
             .map_or_else(|| SYSTEM_PRINCIPAL.to_owned(), |a| a.principal_id.clone())
+    }
+
+    /// The human the node's agent acts for, as its token and its spans name them.
+    pub fn on_behalf_of(&self) -> OnBehalfOf {
+        OnBehalfOf {
+            user_id: self.owner,
+            workspace_role: self.owner_role,
+        }
     }
 
     /// Decides `action` under the node's capabilities and rules (in-process, microseconds).
@@ -226,7 +240,11 @@ impl ExecContext {
                 self.owner,
                 AuditAction::PolicyMismatch,
                 Subject::Text(&principal),
-                &format!("run {} span {span_id}: {detail} ({rule})", self.run_id),
+                &format!(
+                    "run {} span {span_id}: {detail} ({rule}); on behalf of {}",
+                    self.run_id,
+                    self.on_behalf_of()
+                ),
             )
             .await
         {

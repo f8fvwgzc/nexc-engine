@@ -101,8 +101,6 @@ class RunScope:
     kind: str
     max_turns: int
     allow_code_exec: bool
-    # Signs the narrowed tokens sub-agents are born with.
-    token_key: bytes
     kind_description: str = ""
     produces_artifact: bool = False
     # Where the backend delivers decisions on held tool calls (None: nothing can wait).
@@ -403,7 +401,7 @@ class Agent:
         except SpawnRefused as exc:
             raise ToolError(str(exc)) from None
         # The child is born with a narrowed copy of this token: never wider than this one.
-        child_token = self.token.child(principal, scope.token_key)
+        child_token = self.token.child(principal)
 
         scope.events.spawn(name, role)
         # The birth is an instant: the child's turns hang under it as they happen.

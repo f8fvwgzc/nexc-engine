@@ -12,6 +12,12 @@ COMPOSE ?= docker compose
 BACKEND_MANIFEST := backend/Cargo.toml
 # Load the root .env into a recipe's environment (secrets never appear on the command line).
 LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a;
+# What the runtime must not get of .env: the backend's keys and credentials (with the master key it
+# could derive the agent-token signing key and mint its own tokens).
+RUNTIME_ENV := env -u NEXC_MASTER_KEY -u NEXC_AGENT_TOKEN_SIGNING_KEY -u NEXC_FIREWALL_SIGNING_KEY \
+  -u NEXC_JWT_SECRET -u NEXC_DATABASE_URL -u POSTGRES_PASSWORD -u NEXC_METRICS_TOKEN \
+  -u NEXC_ONTO_TOKEN -u ONTO_SESSION_SECRET -u ONTO_POSTGRES_PASSWORD -u NEXC_ADMIN_PASSWORD \
+  -u ANTHROPIC_API_KEY -u NEXC_EMBED_API_KEY -u NEXC_OIDC_CLIENT_SECRET
 
 .PHONY: help init setup dev dev-backend dev-frontend dev-runtime db-up db-down db-shell \
         backup backup-check restore prove prove-trace prove-identity prove-audit prove-policy prove-agentsecops prove-gateway prove-firewall prove-api test-worst-case \
@@ -47,7 +53,7 @@ dev-frontend: ## Run only the Vite dev server on :5173
 	cd frontend && $(PNPM) dev
 
 dev-runtime: ## Run only the agent runtime on :8090
-	@$(LOAD_ENV) cd agent-runtime && $(UV) run nexc-runtime
+	@$(LOAD_ENV) cd agent-runtime && $(RUNTIME_ENV) $(UV) run nexc-runtime
 
 db-up: ## Start PostgreSQL 17 in docker on localhost:5432 (data in a named volume)
 	@scripts/db.sh up

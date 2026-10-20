@@ -60,6 +60,7 @@ use crate::domain::seal::SignedSeal;
 use crate::domain::settings::{ConfigScope, LlmProviderKind};
 use crate::domain::trace::{SYSTEM_PRINCIPAL, SpanDraft, SpanKind, SpanStatus};
 use crate::domain::usage::{UsageEvent, UsagePurpose};
+use crate::domain::workspace::WorkspaceRole;
 use crate::dsa::priority::ReadyQueue;
 use crate::llm::LlmTarget;
 use crate::llm::pricing::{cost_usd, cost_usd_cached};
@@ -70,6 +71,7 @@ use crate::repo::audit::Subject;
 use crate::repo::run_leases;
 use crate::repo::runs::{NodeOutcome, RunRow, StoredNode};
 use crate::repo::{self, OrNotFound};
+use crate::security::agent_token::OnBehalfOf;
 use crate::{kernel, memory, orchestrator};
 
 /// How often the dispatcher looks for queued runs and for leases that ran out.
@@ -767,6 +769,9 @@ struct RunData {
     run_id: Uuid,
     graph_id: Uuid,
     owner: Uuid,
+    /// The owner's role in the graph's workspace as the run was prepared (the
+    /// `on_behalf_of` of every agent token the run issues).
+    owner_role: Option<WorkspaceRole>,
     goal: String,
     force: bool,
     target: LlmTarget,
@@ -899,6 +904,12 @@ impl Execution {
             repo::runs::set_policy_versions(&mut *tx, row.id, &versions).await?;
             tx.commit().await?;
         }
+        let owner_role = match graph.workspace_id {
+            Some(workspace) => {
+                repo::workspaces::role_of(&state.db, workspace, row.owner_id).await?
+            }
+            None => None,
+        };
         let pinned_agent = repo::a2a::pinned_agent_of_graph(&state.db, row.graph_id).await?;
         let ontology = match vocabulary::of(state, graph.vocabulary_ref(), Actor::Runtime).await {
             Ok(vocabulary) => Some(vocabulary),
@@ -911,6 +922,7 @@ impl Execution {
             run_id: row.id,
             graph_id: row.graph_id,
             owner: row.owner_id,
+            owner_role,
             goal: graph.goal,
             force: row.force,
             target,
@@ -2233,6 +2245,11 @@ impl NodeTask {
                 "recording": data.policy.recording.is_on(),
                 "recording_kinds": data.policy.recording.kinds(),
                 "recording_redact_labels": data.policy.recording.redact_labels,
+                // The human the node's agent acts for, as its token names them.
+                "on_behalf_of": OnBehalfOf {
+                    user_id: data.owner,
+                    workspace_role: data.owner_role,
+                },
             }),
         });
         let ctx = ExecContext {
@@ -2241,6 +2258,7 @@ impl NodeTask {
             graph_id: data.graph_id,
             workspace_id: data.workspace_id,
             owner: data.owner,
+            owner_role: data.owner_role,
             goal: data.goal.clone(),
             node_type: vocabulary.node_type(&node.kind).cloned(),
             code_exec_allowed: data.policy.allow_code_exec,

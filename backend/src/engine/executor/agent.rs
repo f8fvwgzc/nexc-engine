@@ -446,12 +446,14 @@ fn context(
     })
 }
 
-/// The per-run token: the principal, the run and node, the capabilities
-/// snapshot and the policy version, valid for the node's timeout plus slack.
+/// The per-run token: the principal, the human it acts for, the run and
+/// node, the capabilities snapshot and the policy version, valid for the
+/// node's timeout plus slack. Signed by the backend alone (Ed25519).
 pub(super) fn mint_token(ctx: &ExecContext) -> Result<String, ExecError> {
     let principal = ctx.principal();
     let grant = AgentGrant {
         principal: &principal,
+        on_behalf_of: ctx.on_behalf_of(),
         run_id: ctx.run_id,
         node_id: ctx.node.id,
         agent_id: ctx.agent.as_ref().map(|a| a.id),
@@ -466,10 +468,21 @@ pub(super) fn mint_token(ctx: &ExecContext) -> Result<String, ExecError> {
             tool_io: ctx.recording.tool_io,
         },
     };
-    ctx.state
+    let issued = ctx
+        .state
         .agent_tokens
         .issue(&grant, ctx.state.settings.node_timeout + EXPIRY_SLACK)
-        .map_err(|e| ExecError::fatal(format!("cannot mint the agent token: {e}")))
+        .map_err(|e| ExecError::fatal(format!("cannot mint the agent token: {e}")))?;
+    tracing::debug!(
+        run_id = %ctx.run_id,
+        node_id = %ctx.node.id,
+        principal = %principal,
+        on_behalf_of = %grant.on_behalf_of,
+        jti = %issued.jti,
+        kid = %issued.kid,
+        "agent token issued"
+    );
+    Ok(issued.token)
 }
 
 /// Tokens the run may spend: what the agent has left, capped by the

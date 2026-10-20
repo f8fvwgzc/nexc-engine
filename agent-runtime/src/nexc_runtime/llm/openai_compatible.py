@@ -20,6 +20,7 @@ from .base import (
     ToolResult,
     ToolSpec,
     Turn,
+    egress_refused,
     redact,
 )
 
@@ -114,6 +115,9 @@ class OpenAICompatibleProvider:
         except httpx.TimeoutException:
             raise LLMError("LLM endpoint timed out", retryable=True) from None
         except httpx.TransportError as exc:
+            refused = egress_refused(exc, str(self._client.base_url))
+            if refused is not None:
+                raise refused from None
             raise LLMError(
                 self._safe(f"cannot reach LLM endpoint: {exc}"), retryable=True
             ) from None

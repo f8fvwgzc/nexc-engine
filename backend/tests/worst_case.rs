@@ -41,6 +41,8 @@ const PUBLIC: &[&str] = &[
     "/a2a/agents/{principal}/card",
     // The public keys seals, decisions and evidence bundles verify with: public by design.
     "/.well-known/jwks.json",
+    // The public keys of the agent tokens: what the runtime and outside verifiers check with.
+    "/api/v1/agent-tokens/jwks.json",
 ];
 
 struct Operation {

@@ -10,6 +10,7 @@ pub mod cli;
 pub mod config;
 pub mod domain;
 pub mod dsa;
+pub mod egress_proxy;
 pub mod engine;
 pub mod firewall;
 pub mod gateway;

@@ -6,10 +6,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from .policy import derive_key
+from .keys import BadKey, KeyRing, parse_public_key
 
 MIN_TOKEN_LENGTH = 32
 
@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     Field names map to upper-case environment variables (`runtime_port` -> `RUNTIME_PORT`).
     """
 
-    # An empty variable (`NEXC_AGENT_TOKEN_KEY=` in `.env`) counts as unset.
+    # An empty variable (`NEXC_AGENT_TOKEN_PUBLIC_KEYS=` in `.env`) counts as unset.
     model_config = SettingsConfigDict(
         case_sensitive=False, extra="ignore", frozen=True, env_ignore_empty=True
     )
@@ -35,12 +35,20 @@ class Settings(BaseSettings):
     nexc_runtime_token: SecretStr = Field(
         description="Shared bearer secret between the backend and this runtime (>= 32 chars).",
     )
-    # Verifies the per-run agent tokens the backend signs; derived from the runtime token
-    # when unset (the backend derives it the same way).
-    nexc_agent_token_key: SecretStr | None = Field(
+    # The per-run agent tokens are signed by the backend alone (EdDSA); this runtime gets public
+    # keys only: pinned here (base64url Ed25519 keys, comma separated), or fetched from the
+    # backend's key set. Exactly one of the two.
+    nexc_agent_token_public_keys: str | None = Field(
         default=None,
-        description="Key of the per-run agent tokens (>= 32 chars); derived when unset.",
+        description="Ed25519 public keys of the agent tokens (base64url, comma separated).",
     )
+    nexc_agent_token_jwks_url: str | None = Field(
+        default=None,
+        description="The backend's key set: http://backend:8080/api/v1/agent-tokens/jwks.json",
+    )
+    # The HS256 key the backend and this runtime shared before: refused by name, so an old
+    # deployment learns it is gone instead of running with a secret nothing reads.
+    nexc_agent_token_key: SecretStr | None = Field(default=None, exclude=True, repr=False)
     runtime_max_request_bytes: int = Field(default=4 * 1024 * 1024, ge=1024)
     # /v1/parse takes a whole uploaded file as its body, so it has its own, larger limit.
     runtime_max_parse_bytes: int = Field(default=50 * 1024 * 1024, ge=1024)
@@ -70,20 +78,59 @@ class Settings(BaseSettings):
     # --- logging -----------------------------------------------------------------------------
     runtime_log_level: Literal["debug", "info", "warning", "error"] = "info"
 
-    @field_validator("nexc_runtime_token", "nexc_agent_token_key")
+    @field_validator("nexc_runtime_token")
     @classmethod
-    def _token_strength(cls, value: SecretStr | None) -> SecretStr | None:
-        if value is not None and len(value.get_secret_value()) < MIN_TOKEN_LENGTH:
+    def _token_strength(cls, value: SecretStr) -> SecretStr:
+        if len(value.get_secret_value()) < MIN_TOKEN_LENGTH:
             raise ValueError(
                 f"must be at least {MIN_TOKEN_LENGTH} characters (generate one with `make init`)"
             )
         return value
 
-    def agent_token_key(self) -> bytes:
-        """The HMAC key of the per-run agent tokens."""
+    @field_validator("nexc_agent_token_public_keys")
+    @classmethod
+    def _public_keys(cls, value: str | None) -> str | None:
+        for part in (value or "").split(","):
+            if part.strip():
+                try:
+                    parse_public_key(part)
+                except BadKey as exc:
+                    raise ValueError(f"not an Ed25519 public key: {exc}") from None
+        return value
+
+    @field_validator("nexc_agent_token_jwks_url")
+    @classmethod
+    def _jwks_url(cls, value: str | None) -> str | None:
+        if value is not None and not value.startswith(("http://", "https://")):
+            raise ValueError("must be an http(s) URL")
+        return value
+
+    @model_validator(mode="after")
+    def _agent_token_keys(self) -> Settings:
         if self.nexc_agent_token_key is not None:
-            return self.nexc_agent_token_key.get_secret_value().encode("utf-8")
-        return derive_key(self.nexc_runtime_token.get_secret_value())
+            raise ValueError(
+                "NEXC_AGENT_TOKEN_KEY is no longer read: agent tokens are signed with Ed25519 by "
+                "the backend alone. Remove it and set NEXC_AGENT_TOKEN_JWKS_URL (or "
+                "NEXC_AGENT_TOKEN_PUBLIC_KEYS); see the upgrade note in CHANGELOG.md"
+            )
+        if self.nexc_agent_token_public_keys and self.nexc_agent_token_jwks_url:
+            raise ValueError(
+                "set NEXC_AGENT_TOKEN_PUBLIC_KEYS or NEXC_AGENT_TOKEN_JWKS_URL, not both: pinned "
+                "keys mean nothing if a key set fetched over the network may add others"
+            )
+        if not self.nexc_agent_token_public_keys and not self.nexc_agent_token_jwks_url:
+            raise ValueError(
+                "set NEXC_AGENT_TOKEN_JWKS_URL (the backend's "
+                "/api/v1/agent-tokens/jwks.json) or NEXC_AGENT_TOKEN_PUBLIC_KEYS: without "
+                "the backend's public keys no agent token verifies"
+            )
+        return self
+
+    def key_ring(self) -> KeyRing:
+        """A fresh ring of the configured public keys and the key set URL."""
+        return KeyRing.from_config(
+            self.nexc_agent_token_public_keys, self.nexc_agent_token_jwks_url
+        )
 
 
 @lru_cache(maxsize=1)

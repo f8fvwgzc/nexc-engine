@@ -37,12 +37,13 @@ Tunables: `MINIKUBE_PROFILE`, `MINIKUBE_CPUS` (4), `MINIKUBE_MEMORY` (8192), `MI
 | `ConfigMap nexc-config` | from `config.env` (non-secret settings) |
 | `Secret nexc-secrets` | from `secret.env` (git-ignored; template `secret.example.env`) |
 | `StatefulSet postgres` + headless `Service` | `postgres:17-alpine`, 5 Gi PVC, runs as uid 70, read-only root |
-| `Deployment backend` (2 replicas) + `Service` + `PVC backend-data` | startup/liveness `/api/v1/healthz`, readiness `/api/v1/readyz` |
-| `Deployment agent-runtime` (2 replicas) + `Service` | gets only `NEXC_RUNTIME_TOKEN` and runtime settings, workspace on an `emptyDir` |
+| `Deployment backend` (2 replicas) + `Service` + `PVC backend-data` | startup/liveness `/api/v1/healthz`, readiness `/api/v1/readyz`; port 8081 serves the agent-token key set alone (`NEXC_KEYS_ADDR`) |
+| `Deployment agent-runtime` (2 replicas) + `Service` | gets only `NEXC_RUNTIME_TOKEN`, the backend's agent-token key set URL and runtime settings, workspace on an `emptyDir` |
+| `Deployment runtime-egress` (2 replicas) + `Service` | `nexc egress-proxy` from the backend image, no secrets: the runtime's only way out, to the `host:port` entries of `NEXC_RUNTIME_EGRESS_ALLOW` |
 | `Deployment frontend` (2 replicas) + `Service` | nginx-unprivileged on 8080 |
 | `Ingress nexc` | class `nginx`, host `nexc.local`; `/api` → backend, `/` → frontend; SSE/WebSocket timeouts and no buffering |
-| `NetworkPolicy` ×5 | default deny ingress; frontend ← ingress; backend ← frontend + ingress; runtime ← backend (HTTP 8090 and the gRPC stream 8095); postgres ← backend. The Agent Firewall API (`NEXC_GRPC_ADDR`) is off by default and documented in the file for when you open it to another namespace |
-| `PodDisruptionBudget` ×3 | `minAvailable: 1` for backend, runtime and frontend |
+| `NetworkPolicy` ×8 | default deny ingress; frontend ← ingress; backend ← frontend + ingress (8080), runtime (8081, the agent-token key set alone); runtime ← backend (HTTP 8090 and the gRPC stream 8095); runtime → backend 8081 and runtime-egress only, no DNS (it finds both by their Service environment variables, so apply the Services first: `kubectl apply -k` does); runtime-egress ← runtime; runtime-egress → DNS and TLS on public addresses (IPv4 and IPv6); postgres ← backend. The Agent Firewall API (`NEXC_GRPC_ADDR`) is off by default and documented in the file for when you open it to another namespace |
+| `PodDisruptionBudget` ×4 | `minAvailable: 1` for backend, runtime, runtime-egress and frontend |
 
 Every pod runs as non-root with `readOnlyRootFilesystem`, `allowPrivilegeEscalation: false`,
 `capabilities.drop: [ALL]`, seccomp `RuntimeDefault` and no service-account token.

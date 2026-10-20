@@ -65,9 +65,14 @@ pub struct Settings {
     /// The runtime's gRPC endpoint (`http://host:8095`).
     pub runtime_grpc_url: String,
     pub runtime_token: Secret<String>,
-    /// Signs the per-run agent tokens the runtime verifies: `NEXC_AGENT_TOKEN_KEY`,
-    /// or derived from the runtime token when it is unset.
-    pub agent_token_key: Secret<Vec<u8>>,
+    /// The Ed25519 seed the per-run agent tokens are signed with:
+    /// `NEXC_AGENT_TOKEN_SIGNING_KEY`, or derived from the master key, which
+    /// only the backend holds. The runtime gets public keys only.
+    pub agent_token_signing_key: Secret<[u8; 32]>,
+    /// Public keys that verify agent tokens besides the signing key's
+    /// (`NEXC_AGENT_TOKEN_VERIFY_KEYS`): the previous key after a rotation,
+    /// the next one before it. Listed in the published key set.
+    pub agent_token_verify_keys: Vec<[u8; 32]>,
     pub symphony_enabled: bool,
     pub symphony_url: String,
     pub symphony_workflow: PathBuf,
@@ -102,6 +107,10 @@ pub struct Settings {
     pub metrics_token: Option<Secret<String>>,
     /// Where the Agent Firewall API listens (`0.0.0.0:50052`); unset keeps it off.
     pub grpc_addr: Option<SocketAddr>,
+    /// A listener that serves the agent-token key set and nothing else
+    /// (`NEXC_KEYS_ADDR`, `0.0.0.0:8081`), so the runtime's network may reach
+    /// the keys without reaching the API; unset keeps it off.
+    pub keys_addr: Option<SocketAddr>,
     /// Ed25519 seed nexc signs with (firewall decisions, run seals, evidence bundles):
     /// `NEXC_SIGNING_KEY` (or the older `NEXC_FIREWALL_SIGNING_KEY`), or derived from the
     /// master key when neither is set.
@@ -246,7 +255,8 @@ impl Settings {
             runtime_url: r.string("NEXC_RUNTIME_URL", "http://localhost:8090"),
             runtime_protocol: r.parse("NEXC_RUNTIME_PROTOCOL", RuntimeProtocol::Grpc),
             runtime_grpc_url: r.string("NEXC_RUNTIME_GRPC_URL", "http://localhost:8095"),
-            agent_token_key: Secret::new(r.agent_token_key(prod)),
+            agent_token_signing_key: Secret::new(r.agent_token_signing_key()),
+            agent_token_verify_keys: r.agent_token_verify_keys(),
             runtime_token: Secret::new(r.runtime_token(prod)),
             symphony_enabled: r.parse("NEXC_SYMPHONY_ENABLED", false),
             symphony_url: r.string("NEXC_SYMPHONY_URL", "http://localhost:4000"),
@@ -272,6 +282,7 @@ impl Settings {
             trust_proxy: r.parse("NEXC_TRUST_PROXY", false),
             metrics_token: r.optional("NEXC_METRICS_TOKEN").map(Secret::new),
             grpc_addr: r.grpc_addr(),
+            keys_addr: r.socket_addr("NEXC_KEYS_ADDR"),
             firewall_signing_key: Secret::new(r.firewall_signing_key()),
             signing_key_derived: r.signing_key_raw().is_none(),
             signing_keys_retired: r.retired_signing_keys(),
@@ -593,25 +604,73 @@ impl Reader<'_> {
         token
     }
 
-    /// The agent token key: `NEXC_AGENT_TOKEN_KEY` when set (≥ 32 characters),
-    /// else derived from `NEXC_RUNTIME_TOKEN`, which the runtime also holds.
-    fn agent_token_key(&mut self, prod: bool) -> Vec<u8> {
-        match self.optional("NEXC_AGENT_TOKEN_KEY") {
-            Some(key) => {
-                if key.chars().count() < 32 {
-                    self.errors
-                        .push("NEXC_AGENT_TOKEN_KEY must be at least 32 characters".into());
-                } else if prod && is_weak(&key) {
-                    self.errors.push(
-                        "NEXC_AGENT_TOKEN_KEY looks weak; generate one with `openssl rand -hex 32`"
-                            .into(),
-                    );
+    /// The agent token seed: `NEXC_AGENT_TOKEN_SIGNING_KEY` (base64 of 32
+    /// bytes) when set, else derived from the master key, which only the
+    /// backend holds. The HS256 key of earlier releases is refused by name: it
+    /// was shared with the runtime, which could mint tokens with it.
+    fn agent_token_signing_key(&mut self) -> [u8; 32] {
+        if self.optional("NEXC_AGENT_TOKEN_KEY").is_some() {
+            self.errors.push(
+                "NEXC_AGENT_TOKEN_KEY is no longer read: agent tokens are signed with Ed25519 by \
+                 the backend alone (NEXC_AGENT_TOKEN_SIGNING_KEY, derived from NEXC_MASTER_KEY \
+                 when unset). Remove it here and from the runtime, and give the runtime \
+                 NEXC_AGENT_TOKEN_JWKS_URL instead (CHANGELOG.md, upgrade note)"
+                    .into(),
+            );
+        }
+        match self.optional("NEXC_AGENT_TOKEN_SIGNING_KEY") {
+            Some(raw) => {
+                let decoded = base64::engine::general_purpose::STANDARD
+                    .decode(raw.as_bytes())
+                    .ok()
+                    .and_then(|bytes| <[u8; 32]>::try_from(bytes.as_slice()).ok());
+                match decoded {
+                    Some(seed) => seed,
+                    None => {
+                        self.errors.push(
+                            "NEXC_AGENT_TOKEN_SIGNING_KEY must be base64 of exactly 32 bytes \
+                             (generate one with `openssl rand -base64 32`)"
+                                .into(),
+                        );
+                        random_bytes::<32>()
+                    }
                 }
-                key.into_bytes()
             }
             None => {
-                let runtime_token = (self.lookup)("NEXC_RUNTIME_TOKEN").unwrap_or_default();
-                crate::security::agent_token::derive_key(&runtime_token).to_vec()
+                let master = (self.lookup)("NEXC_MASTER_KEY").unwrap_or_default();
+                crate::security::agent_token::derive_seed(master.as_bytes())
+            }
+        }
+    }
+
+    /// `NEXC_AGENT_TOKEN_VERIFY_KEYS`: comma separated Ed25519 public keys
+    /// (base64url or base64 of 32 bytes) that verify agent tokens too.
+    fn agent_token_verify_keys(&mut self) -> Vec<[u8; 32]> {
+        let Some(raw) = self.optional("NEXC_AGENT_TOKEN_VERIFY_KEYS") else {
+            return Vec::new();
+        };
+        let mut keys = Vec::new();
+        for part in raw.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+            match crate::security::agent_token::parse_public_key(part) {
+                Some(key) => keys.push(key),
+                None => self.errors.push(format!(
+                    "NEXC_AGENT_TOKEN_VERIFY_KEYS: `{part}` is not an Ed25519 public key \
+                     (base64url or base64 of 32 bytes, as the key set lists it in `x`)"
+                )),
+            }
+        }
+        keys
+    }
+
+    /// A `host:port` setting; unset is `None`.
+    fn socket_addr(&mut self, key: &str) -> Option<SocketAddr> {
+        let raw = self.optional(key)?;
+        match raw.parse() {
+            Ok(addr) => Some(addr),
+            Err(_) => {
+                self.errors
+                    .push(format!("{key}: `{raw}` is not a host:port address"));
+                None
             }
         }
     }
@@ -786,6 +845,61 @@ mod tests {
         m.insert("NEXC_CORS_ORIGINS", "*".into());
         let err = load(&m).unwrap_err();
         assert_eq!(err.0.len(), 4, "{err}");
+    }
+
+    #[test]
+    fn agent_tokens_are_signed_by_a_backend_key_the_runtime_never_holds() {
+        use crate::security::agent_token::{derive_seed, key_id, public_key_of};
+
+        // Unset: derived from the master key, which the runtime does not have.
+        let s = load(&base()).unwrap();
+        let master = base()["NEXC_MASTER_KEY"].clone();
+        assert_eq!(
+            s.agent_token_signing_key.expose(),
+            &derive_seed(master.as_bytes())
+        );
+        assert!(s.agent_token_verify_keys.is_empty());
+        // Set, with the previous key's public half still accepted.
+        let previous = public_key_of(&[5; 32]).unwrap();
+        let mut m = base();
+        m.insert(
+            "NEXC_AGENT_TOKEN_SIGNING_KEY",
+            base64::engine::general_purpose::STANDARD.encode([9u8; 32]),
+        );
+        m.insert(
+            "NEXC_AGENT_TOKEN_VERIFY_KEYS",
+            format!(
+                " {} ,{}",
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(previous),
+                base64::engine::general_purpose::STANDARD.encode(previous)
+            ),
+        );
+        let s = load(&m).unwrap();
+        assert_eq!(s.agent_token_signing_key.expose(), &[9u8; 32]);
+        assert_eq!(s.agent_token_verify_keys, vec![previous, previous]);
+        assert!(!key_id(&previous).is_empty());
+        // The shared HS256 key of earlier releases is refused by name, and so are bad keys.
+        let mut m = base();
+        m.insert("NEXC_AGENT_TOKEN_KEY", "x".repeat(40));
+        m.insert("NEXC_AGENT_TOKEN_SIGNING_KEY", "not-32-bytes".into());
+        m.insert("NEXC_AGENT_TOKEN_VERIFY_KEYS", "AAAA".into());
+        let err = load(&m).unwrap_err().to_string();
+        assert!(
+            err.contains("NEXC_AGENT_TOKEN_KEY is no longer read"),
+            "{err}"
+        );
+        assert!(
+            err.contains("NEXC_AGENT_TOKEN_SIGNING_KEY must be base64"),
+            "{err}"
+        );
+        assert!(
+            err.contains("NEXC_AGENT_TOKEN_VERIFY_KEYS: `AAAA`"),
+            "{err}"
+        );
+        // An empty variable (`NEXC_AGENT_TOKEN_KEY=` left in an old `.env`) is no error.
+        let mut m = base();
+        m.insert("NEXC_AGENT_TOKEN_KEY", String::new());
+        assert!(load(&m).is_ok());
     }
 
     #[test]
