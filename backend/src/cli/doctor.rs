@@ -252,15 +252,19 @@ async fn check_otlp(r: &mut Report, settings: &Settings) {
     }
 }
 
-/// onto-intelli, the audit's query engine: disabled, reachable (with its
-/// version and model), or not.
+/// onto-intelli, where the ontology lives: off (graphs keep the read-only
+/// starter vocabulary), reachable (with its version and model), or not.
 async fn check_ontology(r: &mut Report, settings: &Settings) {
-    let Some(url) = &settings.onto_url else {
-        return r.line(
-            Level::Ok,
-            "onto-intelli",
-            "disabled (set NEXC_ONTO_URL to ask the audit)",
-        );
+    let url = match (&settings.onto_mode, &settings.onto_url) {
+        (crate::domain::ontology::OntoMode::Service, Some(url)) => url,
+        _ => {
+            return r.line(
+                Level::Ok,
+                "onto-intelli",
+                "off: graphs use the read-only starter vocabulary, no workspace map \
+                 (set NEXC_ONTO_URL; docs/ONTOLOGY.md)",
+            );
+        }
     };
     let token = settings.onto_token.as_ref().map(|t| t.expose().as_str());
     let backend = match GrpcOntology::new(url, token) {

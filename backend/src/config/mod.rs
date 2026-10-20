@@ -14,6 +14,7 @@ use base64::Engine as _;
 
 pub use secret::Secret;
 
+use crate::domain::ontology::OntoMode;
 use crate::domain::settings::LlmProviderKind;
 use crate::domain::user;
 use crate::domain::validation::FieldErrors;
@@ -72,12 +73,25 @@ pub struct Settings {
     pub symphony_workflow: PathBuf,
     /// Agent command for texc-symphony; Symphony's default (Codex) when unset.
     pub symphony_agent_command: Option<String>,
-    /// gRPC endpoint of onto-intelli (`http://host:50051`); unset turns "ask the audit" off.
+    /// How nexc reaches onto-intelli (`NEXC_ONTO_MODE`): over gRPC (the default when
+    /// `NEXC_ONTO_URL` is set), embedded (not in this build) or not at all.
+    pub onto_mode: OntoMode,
+    /// gRPC and HTTP endpoint of `onto serve` (`http://host:50051`).
     pub onto_url: Option<String>,
-    /// Bearer token onto-intelli knows the backend by; unset when its auth is off.
+    /// Bearer token onto-intelli knows the backend by (`impersonate = true` in its config).
     pub onto_token: Option<Secret<String>>,
-    /// Prefix of the onto-intelli workspace that holds each nexc workspace's facts.
+    /// Prefix of the onto-intelli workspace that holds each nexc workspace's entities.
     pub onto_workspace_prefix: String,
+    /// Where browsers reach `onto serve` (its UI at `/ui/`); `NEXC_ONTO_URL` when unset.
+    pub onto_public_url: Option<String>,
+    /// How long a graph's vocabulary is served from memory before onto-intelli is
+    /// asked again (zero: every read asks); a change made through nexc drops it at once.
+    pub onto_vocabulary_ttl: Duration,
+    /// How long a browser session for onto-intelli's UI lasts.
+    pub onto_session_ttl: Duration,
+    /// Copy every graph's stored ontology into onto-intelli when the backend starts
+    /// (`nexc onto migrate`, idempotent and resumable).
+    pub onto_migrate_on_start: bool,
     pub max_concurrency: usize,
     pub max_attempts: u32,
     pub node_timeout: Duration,
@@ -234,9 +248,17 @@ impl Settings {
                 r.string("NEXC_SYMPHONY_WORKFLOW", "./data/symphony/WORKFLOW.md"),
             ),
             symphony_agent_command: r.optional("NEXC_SYMPHONY_AGENT_COMMAND"),
+            onto_mode: r.onto_mode(),
             onto_url: r.optional("NEXC_ONTO_URL"),
             onto_token: r.optional("NEXC_ONTO_TOKEN").map(Secret::new),
             onto_workspace_prefix: r.string("NEXC_ONTO_WORKSPACE_PREFIX", "nexc-"),
+            onto_public_url: r
+                .optional("NEXC_ONTO_PUBLIC_URL")
+                .or_else(|| r.optional("NEXC_ONTO_URL"))
+                .map(|u| u.trim_end_matches('/').to_owned()),
+            onto_vocabulary_ttl: Duration::from_secs(r.parse("NEXC_ONTO_VOCABULARY_TTL_SECS", 30)),
+            onto_session_ttl: Duration::from_secs(r.parse("NEXC_ONTO_SESSION_TTL_SECS", 3600)),
+            onto_migrate_on_start: r.parse("NEXC_ONTO_MIGRATE_ON_START", true),
             max_concurrency: r.parse("NEXC_MAX_CONCURRENCY", 4),
             max_attempts: r.parse("NEXC_MAX_ATTEMPTS", 3),
             node_timeout: Duration::from_secs(r.parse("NEXC_NODE_TIMEOUT_SECS", 600)),
@@ -327,6 +349,28 @@ impl Settings {
             && !(url.starts_with("http://") || url.starts_with("https://"))
         {
             errors.push("NEXC_ONTO_URL must start with http:// or https://".into());
+        }
+        if let Some(url) = &self.onto_public_url
+            && !(url.starts_with("http://") || url.starts_with("https://"))
+        {
+            errors.push("NEXC_ONTO_PUBLIC_URL must start with http:// or https://".into());
+        }
+        match self.onto_mode {
+            OntoMode::Service if self.onto_url.is_none() => errors.push(
+                "NEXC_ONTO_MODE=service needs NEXC_ONTO_URL (the address of `onto serve`)".into(),
+            ),
+            OntoMode::Embedded => errors.push(
+                "NEXC_ONTO_MODE=embedded: this build has no embedded onto-intelli (it needs \
+                 onto-intelli published as a crate; see docs/ONTOLOGY.md); use service or off"
+                    .into(),
+            ),
+            _ => {}
+        }
+        if self.onto_vocabulary_ttl > Duration::from_secs(3600) {
+            errors.push("NEXC_ONTO_VOCABULARY_TTL_SECS must be at most 3600".into());
+        }
+        if !(60..=43_200).contains(&self.onto_session_ttl.as_secs()) {
+            errors.push("NEXC_ONTO_SESSION_TTL_SECS must be between 60 and 43200".into());
         }
         if !(self.runtime_grpc_url.starts_with("http://")
             || self.runtime_grpc_url.starts_with("https://"))
@@ -446,6 +490,20 @@ impl Reader<'_> {
             Some(raw) => raw.parse().unwrap_or_else(|_| {
                 self.errors.push(format!("{key}: cannot parse `{raw}`"));
                 default
+            }),
+        }
+    }
+
+    /// `NEXC_ONTO_MODE`; service when `NEXC_ONTO_URL` is set and nothing else is said.
+    fn onto_mode(&mut self) -> OntoMode {
+        match self.optional("NEXC_ONTO_MODE") {
+            None if self.optional("NEXC_ONTO_URL").is_some() => OntoMode::Service,
+            None => OntoMode::Off,
+            Some(raw) => raw.to_ascii_lowercase().parse().unwrap_or_else(|_| {
+                self.errors.push(format!(
+                    "NEXC_ONTO_MODE: `{raw}` is not one of service, embedded, off"
+                ));
+                OntoMode::Off
             }),
         }
     }

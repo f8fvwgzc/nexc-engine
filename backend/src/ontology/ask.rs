@@ -13,8 +13,10 @@
 //! The asker's workspace role is their clearance: admins and owners see
 //! every fact, members do not see confidential or restricted data ids (the
 //! fact stays, as "withheld", so counts remain honest), guests are refused.
-//! onto-intelli's own bearer authentication binds the backend's token to one
-//! principal, so the clearance is applied here, before an answer leaves.
+//! Every question goes to onto-intelli as the asker (their own principal in
+//! the workspace's tenant, through the impersonation headers), and the
+//! clearance is applied here too, before an answer leaves: onto-intelli's
+//! roles do not know nexc's data labels.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::Instant;
@@ -29,7 +31,7 @@ use uuid::Uuid;
 use super::facts::{self, action, kind, rel};
 use super::{
     AskMode, AskRequest, AskStreamEvent, Direction, EventQuery, FindQuery, OntoError, OntoEvent,
-    OntologyBackend, Principal, PrincipalRole, TraverseQuery, workspace_name,
+    OntologyBackend, Principal, TraverseQuery,
 };
 use crate::app::AppState;
 use crate::domain::AppError;
@@ -158,16 +160,15 @@ impl Clearance {
 }
 
 impl Asker {
+    /// The asker as onto-intelli sees them: their own principal in the
+    /// workspace's tenant, with the roles of their workspace role.
     fn principal(&self, state: &AppState) -> Principal {
-        Principal {
-            id: format!("user:{}", self.user_id),
-            role: if self.role.is_admin() {
-                PrincipalRole::Admin
-            } else {
-                PrincipalRole::Member
-            },
-            workspace: workspace_name(&state.settings.onto_workspace_prefix, self.workspace_id),
-        }
+        Principal::user(
+            &state.settings.onto_workspace_prefix,
+            self.workspace_id,
+            self.user_id,
+            self.role,
+        )
     }
 
     fn clearance(&self) -> Clearance {
@@ -192,7 +193,7 @@ fn failed(err: OntoError) -> AppError {
         OntoError::Denied(detail) => {
             AppError::Forbidden(format!("the audit service refused the question: {detail}"))
         }
-        OntoError::Invalid(detail) => AppError::Unprocessable(detail),
+        OntoError::Invalid(detail) | OntoError::NotFound(detail) => AppError::Unprocessable(detail),
         OntoError::Other(detail) => AppError::Internal(anyhow::anyhow!("onto-intelli: {detail}")),
     }
 }
