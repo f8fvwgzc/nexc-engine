@@ -1,16 +1,18 @@
 """The public keys this runtime checks agent tokens with (CONTRACT section 8).
 
 Only the backend signs agent tokens (EdDSA, Ed25519); this runtime never holds a key that could
-mint one. It verifies with public keys: the ones configured in `NEXC_AGENT_TOKEN_VERIFY_KEYS`,
+mint one. It verifies with public keys: the ones configured in `NEXC_AGENT_TOKEN_PUBLIC_KEYS`,
 and the set the backend publishes at `NEXC_AGENT_TOKEN_JWKS_URL`
 (`GET /api/v1/agent-tokens/jwks.json`). A token names its key by `kid`, the key's RFC 7638
 thumbprint, which is computed here from the key itself: a published `kid` that disagrees is
 ignored, so nobody can file one key under another's id.
 
 The set is fetched when a token names a key not seen yet (the backend rotated) and again once
-it is older than `MAX_AGE_S` (a retired key stops verifying), never more often than every
-`MIN_REFRESH_S`, so a stream of tokens with made-up ids cannot turn into a stream of fetches.
-A failed fetch keeps the keys already known.
+it is older than `MAX_AGE_S`, never more often than every `MIN_REFRESH_S` after a fetch that
+worked (`MIN_RETRY_S` after one that failed), so a stream of tokens with made-up ids cannot turn
+into a stream of fetches. A failed fetch keeps the keys already known, and a key the set stops
+listing keeps verifying for `RETIRE_GRACE_S` after it was last listed: replicas of the backend
+answering with the sets before and after a rotation do not make the runtime flip between them.
 """
 
 from __future__ import annotations
@@ -31,8 +33,13 @@ log = logging.getLogger(__name__)
 
 # How long a fetched key set is trusted before it is fetched again.
 MAX_AGE_S = 300.0
-# The shortest interval between two fetches.
+# The shortest interval between two fetches, after one that worked and after one that failed (the
+# backend retries a refused node within seconds).
 MIN_REFRESH_S = 10.0
+MIN_RETRY_S = 1.0
+# How long a key the published set stopped listing still verifies: longer than `MAX_AGE_S`, so one
+# refresh answered by a replica not yet rolled does not drop it.
+RETIRE_GRACE_S = 900.0
 FETCH_TIMEOUT_S = 3.0
 # A key set is a few hundred bytes; anything this large is not one.
 MAX_JWKS_BYTES = 64 * 1024
@@ -136,7 +143,8 @@ class KeyRing:
         min_refresh_s: float = MIN_REFRESH_S,
     ) -> None:
         self._configured = dict(configured or {})
-        self._published: dict[str, Ed25519PublicKey] = {}
+        # Each published key with when the set last listed it.
+        self._published: dict[str, tuple[Ed25519PublicKey, float]] = {}
         self.jwks_url = jwks_url
         self._fetch = fetch
         self._clock = clock
@@ -144,6 +152,7 @@ class KeyRing:
         self._min_refresh_s = min_refresh_s
         self._fetched_at: float | None = None
         self._tried_at: float | None = None
+        self._last_failed = False
         self._lock = asyncio.Lock()
         self.fetches = 0
 
@@ -154,7 +163,10 @@ class KeyRing:
 
     def get(self, kid: str) -> Ed25519PublicKey | None:
         """The key a token names, if this runtime knows it now."""
-        return self._configured.get(kid) or self._published.get(kid)
+        if kid in self._configured:
+            return self._configured[kid]
+        published = self._published.get(kid)
+        return published[0] if published is not None else None
 
     @property
     def kids(self) -> list[str]:
@@ -176,19 +188,29 @@ class KeyRing:
             if (kid is None or self.get(kid) is not None) and not self._stale():
                 return
             now = self._clock()
-            if self._tried_at is not None and now - self._tried_at < self._min_refresh_s:
+            interval = MIN_RETRY_S if self._last_failed else self._min_refresh_s
+            if self._tried_at is not None and now - self._tried_at < interval:
                 return
             self._tried_at = now
             self.fetches += 1
             try:
                 published = keys_from_jwks(await self._fetch(self.jwks_url))
             except Exception as exc:  # unreachable backend, bad JSON, too large, ...
+                self._last_failed = True
                 log.warning(
-                    "agent token keys not refreshed from %s: %s",
+                    "agent token keys not refreshed from %s: %s: %s",
                     self.jwks_url,
                     type(exc).__name__,
+                    str(exc)[:200],
                 )
                 return
-            self._published = published
-            self._fetched_at = self._clock()
+            self._last_failed = False
+            listed_at = self._clock()
+            kept = {
+                kid: entry
+                for kid, entry in self._published.items()
+                if kid not in published and listed_at - entry[1] < RETIRE_GRACE_S
+            }
+            self._published = {kid: (key, listed_at) for kid, key in published.items()} | kept
+            self._fetched_at = listed_at
             log.info("agent token keys refreshed: %s", ", ".join(self.kids) or "none")

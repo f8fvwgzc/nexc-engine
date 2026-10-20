@@ -1341,4 +1341,32 @@ async fn the_key_set_is_public_and_lists_the_signing_key_first(pool: PgPool) {
         && k["alg"] == "EdDSA"
         && k["use"] == "sig"
         && k.get("d").is_none()));
+
+    // NEXC_KEYS_ADDR's router: the same set at the same path, and nothing of the API.
+    use tower::ServiceExt as _;
+    let keys_only = nexc::http::handlers::agent_token_keys::keys_only_router(app.state.clone());
+    let get = |path: &str| {
+        axum::http::Request::builder()
+            .uri(path)
+            .body(Body::empty())
+            .unwrap()
+    };
+    let r = keys_only
+        .clone()
+        .oneshot(get("/api/v1/agent-tokens/jwks.json"))
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(r.into_body(), 1 << 16).await.unwrap();
+    let set: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(set["keys"].as_array().unwrap().len(), 2);
+    for path in [
+        "/api/v1/healthz",
+        "/api/v1/auth/providers",
+        "/api/v1/workspaces",
+        "/metrics",
+    ] {
+        let r = keys_only.clone().oneshot(get(path)).await.unwrap();
+        assert_eq!(r.status(), StatusCode::NOT_FOUND, "{path}");
+    }
 }

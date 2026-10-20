@@ -107,6 +107,10 @@ pub struct Settings {
     pub metrics_token: Option<Secret<String>>,
     /// Where the Agent Firewall API listens (`0.0.0.0:50052`); unset keeps it off.
     pub grpc_addr: Option<SocketAddr>,
+    /// A listener that serves the agent-token key set and nothing else
+    /// (`NEXC_KEYS_ADDR`, `0.0.0.0:8081`), so the runtime's network may reach
+    /// the keys without reaching the API; unset keeps it off.
+    pub keys_addr: Option<SocketAddr>,
     /// Ed25519 seed the firewall signs decisions with: `NEXC_FIREWALL_SIGNING_KEY`,
     /// or derived from the master key when unset.
     pub firewall_signing_key: Secret<[u8; 32]>,
@@ -272,6 +276,7 @@ impl Settings {
             trust_proxy: r.parse("NEXC_TRUST_PROXY", false),
             metrics_token: r.optional("NEXC_METRICS_TOKEN").map(Secret::new),
             grpc_addr: r.grpc_addr(),
+            keys_addr: r.socket_addr("NEXC_KEYS_ADDR"),
             firewall_signing_key: Secret::new(r.firewall_signing_key()),
             otlp_endpoint: r.optional("NEXC_OTLP_ENDPOINT"),
             api_calls_per_minute: r.parse("NEXC_API_CALLS_PER_MINUTE", 600),
@@ -647,6 +652,19 @@ impl Reader<'_> {
             }
         }
         keys
+    }
+
+    /// A `host:port` setting; unset is `None`.
+    fn socket_addr(&mut self, key: &str) -> Option<SocketAddr> {
+        let raw = self.optional(key)?;
+        match raw.parse() {
+            Ok(addr) => Some(addr),
+            Err(_) => {
+                self.errors
+                    .push(format!("{key}: `{raw}` is not a host:port address"));
+                None
+            }
+        }
     }
 
     /// Where the Agent Firewall API listens, when it is on.

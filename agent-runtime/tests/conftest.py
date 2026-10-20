@@ -188,7 +188,7 @@ def make_settings(workspace_root: Path) -> Callable[..., Settings]:
     def factory(**overrides: Any) -> Settings:
         values: dict[str, Any] = {
             "nexc_runtime_token": TOKEN,
-            "nexc_agent_token_verify_keys": BACKEND_X,
+            "nexc_agent_token_public_keys": BACKEND_X,
             "runtime_workspace": workspace_root,
         }
         values.update(overrides)

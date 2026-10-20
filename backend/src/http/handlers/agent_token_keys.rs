@@ -17,3 +17,12 @@ use crate::security::agent_token::Jwks;
 pub async fn jwks(State(state): State<AppState>) -> Json<Jwks> {
     Json(state.agent_tokens.jwks())
 }
+
+/// The router of `NEXC_KEYS_ADDR`: the key set at the same path as on the
+/// API, and nothing else (every other path is 404), so a NetworkPolicy can
+/// let the runtime reach it without opening the API to it.
+pub fn keys_only_router(state: AppState) -> axum::Router {
+    axum::Router::new()
+        .route("/api/v1/agent-tokens/jwks.json", axum::routing::get(jwks))
+        .with_state(state)
+}

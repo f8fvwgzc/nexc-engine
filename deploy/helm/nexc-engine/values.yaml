@@ -138,7 +138,7 @@ runtime:
   # for subdomains) and nothing else. A local provider needs its host:port here and a rule in
   # networkPolicies.runtimeEgressExtra.
   egress:
-    allow: api.anthropic.com:443,api.openai.com:443
+    allow: api.anthropic.com:443
     replicas: 2
     resources:
       requests: { cpu: 20m, memory: 32Mi }
@@ -276,9 +276,16 @@ networkPolicies:
   ingressNamespace: ingress-nginx
   # Namespaces whose pods may call the Agent Firewall API when `backend.grpcAddr` is set.
   firewallFrom: []
-  # The namespace and labels of the cluster DNS, which the runtime and runtime-egress may ask.
+  # The cluster DNS runtime-egress asks (the runtime asks none): its namespace and labels, or,
+  # when it is not CoreDNS in kube-system, the whole rule, e.g. for NodeLocal DNSCache
+  #   dnsEgress:
+  #     - to: [{ ipBlock: { cidr: 169.254.20.10/32 } }]
+  #       ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]
+  # and on OpenShift namespace `openshift-dns`, labels `dns.operator.openshift.io/daemonset-dns:
+  # default`, port 5353.
   dnsNamespace: kube-system
   dnsPodLabels: { k8s-app: kube-dns }
+  dnsEgress: []
   # More egress rules for runtime-egress, beyond DNS and TLS to public addresses: a local
   # provider in the cluster or on a private network, e.g.
   #   - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: llm } } }]

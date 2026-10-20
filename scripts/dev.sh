@@ -99,7 +99,13 @@ else
   echo "  workspace map is off. With ../onto-intelli checked out, set NEXC_ONTO_MODE=service in .env."
 fi
 
-start runtime 35 bash -c 'cd agent-runtime && exec uv run nexc-runtime'
+# The runtime gets none of the backend's keys and credentials from .env (with the master key it
+# could derive the agent-token signing key): the same list as RUNTIME_ENV in the Makefile.
+start runtime 35 env -u NEXC_MASTER_KEY -u NEXC_AGENT_TOKEN_SIGNING_KEY -u NEXC_FIREWALL_SIGNING_KEY \
+  -u NEXC_JWT_SECRET -u NEXC_DATABASE_URL -u POSTGRES_PASSWORD -u NEXC_METRICS_TOKEN \
+  -u NEXC_ONTO_TOKEN -u ONTO_SESSION_SECRET -u ONTO_POSTGRES_PASSWORD -u NEXC_ADMIN_PASSWORD \
+  -u ANTHROPIC_API_KEY -u NEXC_EMBED_API_KEY -u NEXC_OIDC_CLIENT_SECRET \
+  bash -c 'cd agent-runtime && exec uv run nexc-runtime'
 start backend 36 cargo run --manifest-path backend/Cargo.toml -- serve
 start web 32 "$PNPM" --dir frontend dev
 

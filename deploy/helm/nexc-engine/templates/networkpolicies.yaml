@@ -29,9 +29,9 @@ spec:
       ports:
         - { port: 8080, protocol: TCP }
 ---
-# backend: only from the frontend pods and the ingress controller, and from the agent runtime,
-# which fetches the public keys of its tokens (/api/v1/agent-tokens/jwks.json); the Agent
-# Firewall API, when on, from the namespaces named in networkPolicies.firewallFrom.
+# backend: its API only from the frontend pods and the ingress controller; its key-set port
+# (NEXC_KEYS_ADDR, the agent-token public keys and nothing else) from the agent runtime; the
+# Agent Firewall API, when on, from the namespaces named in networkPolicies.firewallFrom.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -46,12 +46,15 @@ spec:
     - from:
         - podSelector:
             matchLabels: { app.kubernetes.io/name: frontend }
-        - podSelector:
-            matchLabels: { app.kubernetes.io/name: agent-runtime }
         - namespaceSelector:
             matchLabels: { kubernetes.io/metadata.name: {{ .Values.networkPolicies.ingressNamespace }} }
       ports:
         - { port: 8080, protocol: TCP }
+    - from:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: agent-runtime }
+      ports:
+        - { port: 8081, protocol: TCP }
     {{- if and .Values.backend.grpcAddr .Values.networkPolicies.firewallFrom }}
     - from:
         {{- range .Values.networkPolicies.firewallFrom }}
@@ -81,9 +84,10 @@ spec:
         - { port: {{ .Values.runtime.httpPort }}, protocol: TCP }
         - { port: {{ .Values.runtime.grpcPort }}, protocol: TCP }
 ---
-# agent runtime, outbound: the backend (the agent-token keys), runtime-egress (the LLM endpoints
-# of runtime.egress.allow) and DNS. Nothing else: a compromised runtime cannot reach the
-# internet, the cloud metadata endpoint or other services in the cluster on its own.
+# agent runtime, outbound: the backend's key-set port (the agent-token keys) and runtime-egress
+# (the LLM endpoints of runtime.egress.allow). Nothing else, not even DNS (a lookup of
+# <data>.attacker.example is a way out): a compromised runtime cannot reach the internet, the
+# backend's API, the cloud metadata endpoint or other services in the cluster on its own.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -99,21 +103,12 @@ spec:
         - podSelector:
             matchLabels: { app.kubernetes.io/name: backend }
       ports:
-        - { port: 8080, protocol: TCP }
+        - { port: 8081, protocol: TCP }
     - to:
         - podSelector:
             matchLabels: { app.kubernetes.io/name: runtime-egress }
       ports:
         - { port: 3128, protocol: TCP }
-    - to:
-        - namespaceSelector:
-            matchLabels: { kubernetes.io/metadata.name: {{ .Values.networkPolicies.dnsNamespace }} }
-          podSelector:
-            matchLabels:
-              {{- toYaml .Values.networkPolicies.dnsPodLabels | nindent 14 }}
-      ports:
-        - { port: 53, protocol: UDP }
-        - { port: 53, protocol: TCP }
 ---
 # runtime-egress: only from the agent runtime.
 apiVersion: networking.k8s.io/v1
@@ -135,7 +130,8 @@ spec:
 ---
 # runtime-egress, outbound: DNS and TLS to public addresses (its allow-list picks the hosts by
 # name); private, link-local and metadata ranges are out of reach unless
-# networkPolicies.runtimeEgressExtra opens them.
+# networkPolicies.runtimeEgressExtra opens them. networkPolicies.dnsEgress replaces the DNS rule
+# (NodeLocal DNSCache, OpenShift).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -147,19 +143,26 @@ spec:
     matchLabels: { app.kubernetes.io/name: runtime-egress }
   policyTypes: [Egress]
   egress:
+    {{- with .Values.networkPolicies.dnsEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- else }}
     - to:
         - namespaceSelector:
-            matchLabels: { kubernetes.io/metadata.name: {{ .Values.networkPolicies.dnsNamespace }} }
+            matchLabels: { kubernetes.io/metadata.name: {{ .Values.networkPolicies.dnsNamespace | default "kube-system" }} }
           podSelector:
             matchLabels:
-              {{- toYaml .Values.networkPolicies.dnsPodLabels | nindent 14 }}
+              {{- toYaml (.Values.networkPolicies.dnsPodLabels | default (dict "k8s-app" "kube-dns")) | nindent 14 }}
       ports:
         - { port: 53, protocol: UDP }
         - { port: 53, protocol: TCP }
+    {{- end }}
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
             except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 100.64.0.0/10, 127.0.0.0/8]
+        - ipBlock:
+            cidr: ::/0
+            except: ["fc00::/7", "fe80::/10", "::1/128", "::ffff:0:0/96"]
       ports:
         - { port: 443, protocol: TCP }
     {{- with .Values.networkPolicies.runtimeEgressExtra }}

@@ -138,9 +138,9 @@ async def test_an_unknown_kid_fetches_the_published_set_once_across_a_rotation()
     await _verify(ring, mint_token(key=NEXT_KEY))
     assert ring.fetches == 2
     # Step 3: the old key is retired. Once the set is stale it is fetched again, and the old
-    # key's tokens stop verifying.
+    # key's tokens stop verifying once it has gone unlisted for the grace period.
     backend.keys = [NEXT_KEY]
-    clock.now += 301
+    clock.now += 901
     with pytest.raises(TokenError, match="does not know"):
         await _verify(ring, mint_token())
     await _verify(ring, mint_token(key=NEXT_KEY))
@@ -170,6 +170,42 @@ async def test_fetches_are_bounded_and_a_failed_fetch_keeps_the_keys() -> None:
         await _verify(ring_bad, mint_token())
 
 
+async def test_after_a_failed_fetch_the_next_try_comes_soon() -> None:
+    backend = FakeBackend(BACKEND_KEY)
+    backend.fail = True
+    clock = Clock()
+    ring = KeyRing(jwks_url=URL, fetch=backend, clock=clock)
+    with pytest.raises(TokenError, match="does not know"):
+        await _verify(ring, mint_token())
+    # Within the second: no fetch. The backend's retry, seconds later: a fetch, and it works.
+    with pytest.raises(TokenError, match="does not know"):
+        await _verify(ring, mint_token())
+    assert ring.fetches == 1
+    backend.fail = False
+    clock.now += 2
+    await _verify(ring, mint_token())
+    assert ring.fetches == 2
+
+
+async def test_replicas_answering_with_the_old_set_do_not_drop_the_new_key() -> None:
+    backend = FakeBackend(BACKEND_KEY, NEXT_KEY)
+    clock = Clock()
+    ring = KeyRing(jwks_url=URL, fetch=backend, clock=clock)
+    await _verify(ring, mint_token(key=NEXT_KEY))
+    # Replicas not yet rolled answer the next fetches with the set before the rotation.
+    backend.keys = [BACKEND_KEY]
+    for _ in range(2):
+        clock.now += 301
+        await _verify(ring, mint_token())
+        await _verify(ring, mint_token(key=NEXT_KEY))
+    assert ring.fetches == 3
+    # Until the key has gone unlisted for the grace period.
+    clock.now += 301
+    await _verify(ring, mint_token())
+    with pytest.raises(TokenError, match="does not know"):
+        await _verify(ring, mint_token(key=NEXT_KEY))
+
+
 async def _json(text: str) -> Any:
     return json.loads(text)
 
@@ -191,12 +227,15 @@ def test_the_runtime_needs_public_keys_and_refuses_the_old_shared_key(
     with pytest.raises(ValidationError, match="no longer read"):
         Settings(**base, nexc_agent_token_jwks_url=URL, nexc_agent_token_key="k" * 40)
     with pytest.raises(ValidationError, match="Ed25519 public key"):
-        Settings(**base, nexc_agent_token_verify_keys="AAAA")
+        Settings(**base, nexc_agent_token_public_keys="AAAA")
     with pytest.raises(ValidationError, match="http"):
         Settings(**base, nexc_agent_token_jwks_url="file:///etc/keys.json")
+    # Pinned keys and a fetched set together would let the fetch add keys to the pin.
+    with pytest.raises(ValidationError, match="not both"):
+        Settings(**base, nexc_agent_token_public_keys=BACKEND_X, nexc_agent_token_jwks_url=URL)
     assert Settings(**base, nexc_agent_token_jwks_url=URL).key_ring().jwks_url == URL
     # Nothing secret about agent tokens is left in the runtime's settings.
-    ok = Settings(**base, nexc_agent_token_verify_keys=BACKEND_X)
+    ok = Settings(**base, nexc_agent_token_public_keys=BACKEND_X)
     assert "agent_token_key" not in ok.model_dump()
 
 
@@ -205,8 +244,8 @@ def test_a_run_whose_token_names_a_rotated_key_fetches_it_first(
 ) -> None:
     backend = FakeBackend(BACKEND_KEY, NEXT_KEY)
     provider = FakeProvider([Step(calls=[call("finish", answer="Done.")])])
-    # The configured key is the old one; the set at the URL lists the next.
-    settings = make_settings(nexc_agent_token_jwks_url=URL)
+    # The key set lists the current key and the next one the backend signs with now.
+    settings = make_settings(nexc_agent_token_public_keys=None, nexc_agent_token_jwks_url=URL)
     app = create_app(settings, provider_factory=lambda _r, _s: provider)
     app.state.keys._fetch = backend
     with TestClient(app) as client:
@@ -214,3 +253,32 @@ def test_a_run_whose_token_names_a_rotated_key_fetches_it_first(
         events = parse_ndjson(client.post("/v1/execute", json=body, headers=AUTH).content)
     assert events[-1]["type"] == "result", events[-1]
     assert backend.urls == [URL]
+
+
+def test_a_key_not_known_yet_is_refused_as_worth_a_retry(
+    make_settings: Callable[..., Settings],
+) -> None:
+    backend = FakeBackend(BACKEND_KEY)
+    backend.fail = True
+    provider = FakeProvider([Step(calls=[call("finish", answer="never")])])
+    app = create_app(
+        make_settings(nexc_agent_token_public_keys=None, nexc_agent_token_jwks_url=URL),
+        provider_factory=lambda _r, _s: provider,
+    )
+    app.state.keys._fetch = backend
+    with TestClient(app) as client:
+        # Signed with a key the backend published while its set could not be fetched.
+        body = execute_body(token=mint_token(key=NEXT_KEY))
+        events = parse_ndjson(client.post("/v1/execute", json=body, headers=AUTH).content)
+        assert events[-1]["type"] == "error" and events[-1]["retryable"] is True
+        assert "does not know" in events[-1]["message"]
+        # The backend is back (and the retry interval has passed).
+        backend.fail = False
+        app.state.keys._tried_at = None
+        # A forged signature under a known key is final.
+        forged = mint_token(kid=BACKEND_KID, key=NEXT_KEY)
+        events = parse_ndjson(
+            client.post("/v1/execute", json=execute_body(token=forged), headers=AUTH).content
+        )
+        assert events[-1]["retryable"] is False and "signature" in events[-1]["message"]
+    assert provider.seen_tools == []

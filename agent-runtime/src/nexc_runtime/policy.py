@@ -44,6 +44,11 @@ class TokenError(Exception):
     """The token is missing, forged, expired or for another run."""
 
 
+class UnknownKeyError(TokenError):
+    """The token names a key this runtime does not know: forged, or signed with a key the
+    backend published since the runtime last managed to fetch its key set (worth a retry)."""
+
+
 class KeySource(Protocol):
     """Where a token's `kid` finds its public key (`keys.KeyRing`, or a plain mapping)."""
 
@@ -481,7 +486,7 @@ def verify_token(
         raise TokenError("token names no key (kid)")
     key = keys.get(kid)
     if key is None:
-        raise TokenError(f"token names a key this runtime does not know ({kid})")
+        raise UnknownKeyError(f"token names a key this runtime does not know ({kid})")
     try:
         key.verify(_unb64url(signature_b64), f"{header_b64}.{payload_b64}".encode("ascii"))
     except InvalidSignature as exc:

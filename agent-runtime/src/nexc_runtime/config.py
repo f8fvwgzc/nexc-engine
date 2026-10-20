@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     Field names map to upper-case environment variables (`runtime_port` -> `RUNTIME_PORT`).
     """
 
-    # An empty variable (`NEXC_AGENT_TOKEN_VERIFY_KEYS=` in `.env`) counts as unset.
+    # An empty variable (`NEXC_AGENT_TOKEN_PUBLIC_KEYS=` in `.env`) counts as unset.
     model_config = SettingsConfigDict(
         case_sensitive=False, extra="ignore", frozen=True, env_ignore_empty=True
     )
@@ -36,9 +36,9 @@ class Settings(BaseSettings):
         description="Shared bearer secret between the backend and this runtime (>= 32 chars).",
     )
     # The per-run agent tokens are signed by the backend alone (EdDSA); this runtime gets public
-    # keys only: configured here (base64url Ed25519 keys, comma separated) and/or fetched from
-    # the backend's key set. At least one of the two.
-    nexc_agent_token_verify_keys: str | None = Field(
+    # keys only: pinned here (base64url Ed25519 keys, comma separated), or fetched from the
+    # backend's key set. Exactly one of the two.
+    nexc_agent_token_public_keys: str | None = Field(
         default=None,
         description="Ed25519 public keys of the agent tokens (base64url, comma separated).",
     )
@@ -87,7 +87,7 @@ class Settings(BaseSettings):
             )
         return value
 
-    @field_validator("nexc_agent_token_verify_keys")
+    @field_validator("nexc_agent_token_public_keys")
     @classmethod
     def _public_keys(cls, value: str | None) -> str | None:
         for part in (value or "").split(","):
@@ -111,12 +111,17 @@ class Settings(BaseSettings):
             raise ValueError(
                 "NEXC_AGENT_TOKEN_KEY is no longer read: agent tokens are signed with Ed25519 by "
                 "the backend alone. Remove it and set NEXC_AGENT_TOKEN_JWKS_URL (or "
-                "NEXC_AGENT_TOKEN_VERIFY_KEYS); see the upgrade note in CHANGELOG.md"
+                "NEXC_AGENT_TOKEN_PUBLIC_KEYS); see the upgrade note in CHANGELOG.md"
             )
-        if not self.nexc_agent_token_verify_keys and not self.nexc_agent_token_jwks_url:
+        if self.nexc_agent_token_public_keys and self.nexc_agent_token_jwks_url:
+            raise ValueError(
+                "set NEXC_AGENT_TOKEN_PUBLIC_KEYS or NEXC_AGENT_TOKEN_JWKS_URL, not both: pinned "
+                "keys mean nothing if a key set fetched over the network may add others"
+            )
+        if not self.nexc_agent_token_public_keys and not self.nexc_agent_token_jwks_url:
             raise ValueError(
                 "set NEXC_AGENT_TOKEN_JWKS_URL (the backend's "
-                "/api/v1/agent-tokens/jwks.json) or NEXC_AGENT_TOKEN_VERIFY_KEYS: without "
+                "/api/v1/agent-tokens/jwks.json) or NEXC_AGENT_TOKEN_PUBLIC_KEYS: without "
                 "the backend's public keys no agent token verifies"
             )
         return self
@@ -124,7 +129,7 @@ class Settings(BaseSettings):
     def key_ring(self) -> KeyRing:
         """A fresh ring of the configured public keys and the key set URL."""
         return KeyRing.from_config(
-            self.nexc_agent_token_verify_keys, self.nexc_agent_token_jwks_url
+            self.nexc_agent_token_public_keys, self.nexc_agent_token_jwks_url
         )
 
 

@@ -23,6 +23,7 @@ from .llm.demo import first_sentence
 from .policy import (
     AgentToken,
     TokenError,
+    UnknownKeyError,
     decide_model_with,
     decide_tool_with,
     token_kid,
@@ -106,7 +107,9 @@ async def execute(
             node_id=request.node_id,
         )
     except TokenError as exc:
-        events.error(f"agent token refused: {exc}", retryable=False)
+        # A key not known yet may be one the backend just published while its key set could not
+        # be fetched: the backend may try again. Anything else is final.
+        events.error(f"agent token refused: {exc}", retryable=isinstance(exc, UnknownKeyError))
         return
     secret = request.llm.api_key.get_secret_value() if request.llm.api_key else None
     timeout = min(request.limits.timeout_s, settings.runtime_timeout_cap_s)

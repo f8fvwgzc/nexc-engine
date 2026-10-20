@@ -179,7 +179,9 @@ def test_the_run_refuses_to_start_without_a_valid_token(client_for: ClientFactor
         body = execute_body()
         body["token"] = token
         events = parse_ndjson(client.post("/v1/execute", json=body, headers=AUTH).content)
-        assert events[-1]["type"] == "error" and events[-1]["retryable"] is False
+        # Only a key the runtime has not seen is worth another attempt (it may be new).
+        unknown_key = "does not know" in events[-1]["message"]
+        assert events[-1]["type"] == "error" and events[-1]["retryable"] is unknown_key
         assert events[-1]["message"].startswith("agent token refused")
         assert not _spans(events), "no agent was born"
     assert provider.seen_tools == [], "the model was never called"

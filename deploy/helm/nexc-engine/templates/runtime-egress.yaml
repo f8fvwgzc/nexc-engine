@@ -26,7 +26,7 @@ metadata:
     app.kubernetes.io/component: agents
     {{- include "nexc.labels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.runtime.egress.replicas }}
+  replicas: {{ dig "egress" "replicas" 2 .Values.runtime }}
   revisionHistoryLimit: 5
   selector:
     matchLabels: { app.kubernetes.io/name: runtime-egress }
@@ -37,10 +37,13 @@ spec:
     metadata:
       labels: { app.kubernetes.io/name: runtime-egress, app.kubernetes.io/component: agents }
       annotations:
-        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        # Rolled when its allow-list changes, not by every other setting: a roll cuts nothing
+        # (it drains), but it is not free.
+        checksum/allow: {{ include "nexc.egressAllow" . | sha256sum }}
     spec:
       automountServiceAccountToken: false
-      terminationGracePeriodSeconds: 10
+      # A rollout lets the model answers streaming through finish (NEXC_EGRESS_DRAIN_SECS).
+      terminationGracePeriodSeconds: 75
       securityContext:
         {{- include "nexc.podSecurity" (dict "uid" 10001) | nindent 8 }}
       containers:
@@ -56,8 +59,16 @@ spec:
               value: "0.0.0.0:3128"
             - name: NEXC_EGRESS_ALLOW
               valueFrom: { configMapKeyRef: { name: nexc-config, key: NEXC_RUNTIME_EGRESS_ALLOW } }
+            - name: NEXC_EGRESS_DRAIN_SECS
+              value: "60"
             - name: NEXC_LOG
               valueFrom: { configMapKeyRef: { name: nexc-config, key: NEXC_LOG } }
+            - name: NEXC_ENV
+              valueFrom: { configMapKeyRef: { name: nexc-config, key: NEXC_ENV } }
+          lifecycle:
+            # The Service stops sending new connections before the proxy stops accepting them.
+            preStop:
+              exec: { command: ["sleep", "5"] }
           livenessProbe:
             httpGet: { path: /healthz, port: proxy }
             periodSeconds: 15
@@ -67,6 +78,6 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 3
           resources:
-            {{- toYaml .Values.runtime.egress.resources | nindent 12 }}
+            {{- toYaml (dig "egress" "resources" (dict "requests" (dict "cpu" "20m" "memory" "32Mi") "limits" (dict "cpu" "500m" "memory" "128Mi")) .Values.runtime) | nindent 12 }}
           securityContext:
             {{- include "nexc.containerSecurity" . | nindent 12 }}

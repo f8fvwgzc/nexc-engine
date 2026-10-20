@@ -33,7 +33,8 @@ spec:
       labels: { app.kubernetes.io/name: runtime-egress, app.kubernetes.io/component: agents }
     spec:
       automountServiceAccountToken: false
-      terminationGracePeriodSeconds: 10
+      # A rollout lets the model answers streaming through finish (NEXC_EGRESS_DRAIN_SECS).
+      terminationGracePeriodSeconds: 75
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -52,8 +53,16 @@ spec:
               value: "0.0.0.0:3128"
             - name: NEXC_EGRESS_ALLOW
               valueFrom: { configMapKeyRef: { name: nexc-config, key: NEXC_RUNTIME_EGRESS_ALLOW } }
+            - name: NEXC_EGRESS_DRAIN_SECS
+              value: "60"
             - name: NEXC_LOG
               valueFrom: { configMapKeyRef: { name: nexc-config, key: NEXC_LOG } }
+            - name: NEXC_ENV
+              valueFrom: { configMapKeyRef: { name: nexc-config, key: NEXC_ENV } }
+          lifecycle:
+            # The Service stops sending new connections before the proxy stops accepting them.
+            preStop:
+              exec: { command: ["sleep", "5"] }
           livenessProbe:
             httpGet: { path: /healthz, port: proxy }
             periodSeconds: 15

@@ -73,6 +73,9 @@ pub enum Command {
         /// 443 only, `*.example.com` allows its subdomains.
         #[arg(long, env = "NEXC_EGRESS_ALLOW", default_value = "")]
         allow: String,
+        /// On SIGTERM, how long the connections open may still finish.
+        #[arg(long, env = "NEXC_EGRESS_DRAIN_SECS", default_value_t = 60)]
+        drain_secs: u64,
     },
 }
 
@@ -139,10 +142,15 @@ pub async fn run(cli: Cli) -> anyhow::Result<ExitCode> {
         Command::Onto {
             command: OntoCommand::Migrate,
         } => onto_migrate().await,
-        Command::EgressProxy { listen, allow } => {
+        Command::EgressProxy {
+            listen,
+            allow,
+            drain_secs,
+        } => {
             let allow = crate::egress_proxy::AllowList::parse(&allow)
                 .map_err(|e| anyhow::anyhow!("NEXC_EGRESS_ALLOW: {e}"))?;
-            crate::egress_proxy::run(listen, allow)
+            let drain = std::time::Duration::from_secs(drain_secs);
+            crate::egress_proxy::run(listen, allow, drain)
                 .await
                 .map(|()| ExitCode::SUCCESS)
         }

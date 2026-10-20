@@ -212,6 +212,12 @@ pub const ENV_VARS: &[EnvVar] = &[
         "base64 of 32 bytes, the Ed25519 seed per-run agent tokens are signed with (backend only); derived from NEXC_MASTER_KEY when unset",
     ),
     var(
+        "NEXC_KEYS_ADDR",
+        "",
+        false,
+        "a listener serving only the agent-token key set (host:port, e.g. 0.0.0.0:8081): the runtime reaches the keys without reaching the API; empty keeps it off",
+    ),
+    var(
         "NEXC_AGENT_TOKEN_VERIFY_KEYS",
         "",
         false,

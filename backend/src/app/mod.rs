@@ -136,6 +136,22 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
     let shutdown = CancellationToken::new();
     workers::spawn(&state, shutdown.clone());
     let app = router::build(state.clone());
+    if let Some(keys_addr) = state.settings.keys_addr {
+        // The agent-token key set alone, for the runtime's network (it stays up while the API
+        // drains: a run handed over still needs its keys).
+        let keys = tokio::net::TcpListener::bind(keys_addr).await?;
+        tracing::info!(addr = %keys_addr, "agent-token key set listening");
+        let router = crate::http::handlers::agent_token_keys::keys_only_router(state.clone());
+        let stop = shutdown.clone();
+        tokio::spawn(async move {
+            let served = axum::serve(keys, router)
+                .with_graceful_shutdown(stop.cancelled_owned())
+                .await;
+            if let Err(err) = served {
+                tracing::error!(error = %err, "the agent-token key set listener stopped");
+            }
+        });
+    }
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(%addr, env = ?state.settings.env, "nexc listening");
     let draining = state.clone();

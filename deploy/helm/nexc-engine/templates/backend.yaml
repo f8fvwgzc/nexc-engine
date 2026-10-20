@@ -33,6 +33,10 @@ spec:
     - name: http
       port: 8080
       targetPort: http
+    # The agent-token key set alone (NEXC_KEYS_ADDR): what the runtime may reach, never the API.
+    - name: keys
+      port: 8081
+      targetPort: keys
     {{- if .Values.backend.grpcAddr }}
     # The Agent Firewall API, for the agent platforms that sit behind nexc (CONTRACT §8).
     - name: firewall
@@ -84,6 +88,8 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+            - name: keys
+              containerPort: 8081
             {{- if .Values.backend.grpcAddr }}
             - name: firewall
               containerPort: {{ .Values.backend.firewall.port }}
