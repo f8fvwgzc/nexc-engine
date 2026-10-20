@@ -1,5 +1,6 @@
-//! The workspace assistant: answers from the workspace's memory and can file
-//! issues on the member's behalf.
+//! The workspace assistant: answers from the workspace's memory, can file
+//! issues on the member's behalf, and can propose changes to the workspace's
+//! ontology in onto-intelli (people approve them there).
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -20,6 +21,10 @@ pub const MESSAGE_MAX: usize = 4_000;
 pub const HISTORY_MAX: usize = 20;
 /// Most issues one reply may file.
 pub const ISSUES_PER_REPLY_MAX: usize = 5;
+/// Heads the workspace's ontology schema in the assistant's context.
+pub const SCHEMA_MARKER: &str = "## Ontology schema (onto-intelli)";
+/// Most schema change proposals one reply may file.
+pub const PROPOSALS_PER_REPLY_MAX: usize = 3;
 /// Longest page path or title the client may report.
 pub const PAGE_MAX: usize = 300;
 /// A conversation is titled by its first message, cut to this many characters.
@@ -54,6 +59,20 @@ pub struct FiledIssue {
     pub title: String,
 }
 
+/// A schema change proposal the assistant filed in onto-intelli, as
+/// remembered with the conversation; people review it there.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, ToSchema)]
+pub struct FiledProposal {
+    /// onto-intelli's id (`prop_…`).
+    pub id: String,
+    pub title: String,
+    /// Whether applying it would break data or vocabulary in use.
+    pub breaking: bool,
+    /// Where to review it in onto-intelli's UI; `null` when its address is unknown.
+    #[schema(required = true)]
+    pub review_url: Option<String>,
+}
+
 /// What an assistant turn did besides answering, kept with its message.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize, ToSchema)]
 pub struct TurnOutcome {
@@ -63,6 +82,9 @@ pub struct TurnOutcome {
     pub skipped: Vec<String>,
     #[serde(default)]
     pub memories_used: usize,
+    /// Schema change proposals it filed.
+    #[serde(default)]
+    pub proposals: Vec<FiledProposal>,
 }
 
 /// A saved conversation with the assistant: one member's, in one workspace.
@@ -147,12 +169,27 @@ pub struct IssueDraft {
     pub priority: i16,
 }
 
+/// A schema change the assistant wants proposed: onto-intelli's change
+/// objects, written as a JSON array (structured outputs take no free-form
+/// objects).
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct ProposalDraft {
+    pub title: String,
+    #[serde(default)]
+    pub rationale: String,
+    /// `[{"op": "put_link_type", "name": …, "def": {…}}, …]`.
+    #[serde(default)]
+    pub changes_json: String,
+}
+
 /// What the model returns.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 pub struct AssistantOutput {
     pub reply: String,
     #[serde(default)]
     pub issues: Vec<IssueDraft>,
+    #[serde(default)]
+    pub schema_proposals: Vec<ProposalDraft>,
 }
 
 /// What the member gets back.
@@ -163,8 +200,11 @@ pub struct AssistantReply {
     pub reply: String,
     /// Issues the assistant filed while answering.
     pub created: Vec<Issue>,
-    /// Drafts it could not file (unknown team, or no right to file there), as text.
+    /// Drafts it could not file (unknown team, or no right to file there;
+    /// a schema change onto-intelli refused), as text.
     pub skipped: Vec<String>,
     /// How many memories of the workspace it was given.
     pub memories_used: usize,
+    /// Schema change proposals it filed in onto-intelli, for people to review there.
+    pub proposals: Vec<FiledProposal>,
 }
