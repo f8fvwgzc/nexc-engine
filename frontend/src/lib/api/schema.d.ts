@@ -5196,6 +5196,11 @@ export interface components {
             /** Format: uuid */
             issue_id: string;
             kind: components["schemas"]["IssueEventKind"];
+            /**
+             * Format: uuid
+             * @description The run a `run` entry reports; `null` for other entries and once the run is deleted.
+             */
+            run_id: string | null;
             /** @description What a change set. */
             to: string | null;
         };
@@ -5203,7 +5208,7 @@ export interface components {
          * @description What an entry of an issue's timeline records.
          * @enum {string}
          */
-        IssueEventKind: "comment" | "state" | "priority" | "assignee" | "title" | "due";
+        IssueEventKind: "comment" | "state" | "priority" | "assignee" | "title" | "due" | "run";
         /** @description Someone an issue refers to. */
         IssuePerson: {
             name: string;
@@ -5784,7 +5789,7 @@ export interface components {
          * @description Why an issue is in someone's inbox.
          * @enum {string}
          */
-        NotificationKind: "assigned" | "comment" | "state" | "due" | "approval" | "alert";
+        NotificationKind: "assigned" | "comment" | "state" | "due" | "approval" | "alert" | "run";
         /**
          * @description How nexc reaches onto-intelli (`NEXC_ONTO_MODE`).
          * @enum {string}
