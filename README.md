@@ -253,8 +253,10 @@ Only nginx is published (`NEXC_HTTP_PORT`, default 8080). The backend, runtime a
 internal networks; every container runs as non-root with a read-only root filesystem,
 `cap_drop: ALL` and `no-new-privileges`. `make demo` forces demo mode regardless of `.env`.
 `make demo-onto` adds [onto-intelli](https://github.com/f8fvwgzc/onto-intelli) (built from a
-checkout next to this one, `docker-compose.onto.yml`, profile `onto`) as the audit's query
-engine, runs a demo graph and asks the six audit questions, printing mode, tokens and latency.
+checkout next to this one, `docker-compose.onto.yml`, profile `onto`, on PostgreSQL with
+pgvector): the one place the ontology lives, with the workspace map it renders and the console
+embeds (`docs/ONTOLOGY.md`). It runs a demo graph and asks the six audit questions, printing mode,
+tokens and latency.
 
 This path is tested: `make docker-up` builds the three images from source (backend 133 MB,
 frontend 62 MB, runtime 295 MB), the stack comes up healthy, and `make smoke` walks register →
@@ -320,7 +322,7 @@ authoritative table is [docs/CONTRACT.md §2](docs/CONTRACT.md#2-environment-var
 | `NEXC_ENV`                                                 | `development`              | `production` enforces secure cookies, HSTS and strong secrets  |
 | `NEXC_ALLOW_SIGNUP`                                        | `true`                     | disable after creating your accounts                           |
 | `RUNTIME_ALLOW_CODE_EXEC`                                  | `false`                    | enables the sandboxed `run_python` agent tool                  |
-| `NEXC_ONTO_URL`, `NEXC_ONTO_TOKEN`                         | –                          | optional onto-intelli: the trace as facts, "ask the audit"     |
+| `NEXC_ONTO_MODE`, `NEXC_ONTO_URL`, `NEXC_ONTO_TOKEN`       | off without a URL          | onto-intelli: graph vocabularies, the workspace map, schema proposals, "ask the audit" (`docs/ONTOLOGY.md`) |
 
 <!-- #endregion configuration -->
 ## CLI
@@ -336,6 +338,7 @@ nexc doctor               # check configuration, database, runtime and onto-inte
 nexc user create          # create a user, or with --admin a platform administrator
 nexc config show          # print the effective configuration (secrets redacted)
 nexc openapi              # print the OpenAPI document to stdout
+nexc onto migrate         # copy every graph's stored ontology into onto-intelli (once; resumable)
 ```
 
 From a checkout use `cargo run --manifest-path backend/Cargo.toml -- <command>`; in Compose,
