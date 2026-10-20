@@ -1,0 +1,921 @@
+//! onto-intelli as the one place nexc's ontology lives (`docs/ONTOLOGY.md`),
+//! against the in-memory stub: graph vocabularies read and written there as
+//! the acting member, cached, and failing over; the one-shot migration of
+//! the stored ontologies; the workspace projected as entities and links; the
+//! browser session of the embedded UI; the open proposals; and the
+//! assistant filing schema changes as an agent, which people approve there.
+#![forbid(unsafe_code)]
+
+mod common;
+
+use std::sync::Arc;
+
+use axum::http::{Method, StatusCode};
+use common::{TestApp, collect_until};
+use nexc::app::caches::Key;
+use nexc::ontology::stub::StubOntology;
+use nexc::ontology::{OntoError, Principal, export, migrate, tenant_of, workspace_name};
+use serde_json::{Value, json};
+use sqlx::PgPool;
+use uuid::Uuid;
+
+async fn user(app: &TestApp, email: &str) -> (String, String) {
+    let (token, _) = app.register(email).await;
+    let me = app
+        .request(Method::GET, "/api/v1/auth/me", Some(&token), None)
+        .await;
+    (token, me.body["id"].as_str().unwrap().to_owned())
+}
+
+async fn call(
+    app: &TestApp,
+    method: Method,
+    path: &str,
+    token: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
+    let r = app
+        .request(method, &format!("/api/v1{path}"), Some(token), body)
+        .await;
+    (r.status, r.body)
+}
+
+/// A workspace with a public and a private team, a member, a guest and an outsider.
+struct World {
+    wid: Uuid,
+    ws: String,
+    eng: String,
+    secret: String,
+    owner: String,
+    owner_id: String,
+    member: String,
+    member_id: String,
+    guest: String,
+    outsider: String,
+}
+
+async fn world(app: &TestApp) -> World {
+    let (owner, owner_id) = user(app, "owner@example.com").await;
+    let (member, member_id) = user(app, "member@example.com").await;
+    let (guest, _) = user(app, "guest@example.com").await;
+    let (outsider, _) = user(app, "outsider@example.com").await;
+    let (_, list) = call(app, Method::GET, "/workspaces", &owner, None).await;
+    let wid: Uuid = list[0]["id"].as_str().unwrap().parse().unwrap();
+    let ws = format!("/workspaces/{wid}");
+    for (email, role) in [
+        ("member@example.com", "member"),
+        ("guest@example.com", "guest"),
+    ] {
+        let body = json!({"email": email, "role": role});
+        call(
+            app,
+            Method::POST,
+            &format!("{ws}/members"),
+            &owner,
+            Some(body),
+        )
+        .await;
+    }
+    let mut teams = Vec::new();
+    for body in [
+        json!({"name": "Engineering", "key": "ENG"}),
+        json!({"name": "Leadership", "key": "LEAD", "private": true}),
+    ] {
+        let (status, team) = call(
+            app,
+            Method::POST,
+            &format!("{ws}/teams"),
+            &owner,
+            Some(body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{team}");
+        teams.push(team["id"].as_str().unwrap().to_owned());
+    }
+    World {
+        wid,
+        ws,
+        eng: teams[0].clone(),
+        secret: teams[1].clone(),
+        owner,
+        owner_id,
+        member,
+        member_id,
+        guest,
+        outsider,
+    }
+}
+
+async fn graph(app: &TestApp, w: &World, token: &str, name: &str) -> (StatusCode, Value) {
+    call(
+        app,
+        Method::POST,
+        "/graphs",
+        token,
+        Some(json!({"name": name, "workspace_id": w.wid})),
+    )
+    .await
+}
+
+fn keys(vocabulary: &Value, list: &str) -> Vec<String> {
+    vocabulary[list]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["key"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn graph_vocabularies_live_in_onto_intelli_and_are_written_as_the_member(pool: PgPool) {
+    let stub = Arc::new(StubOntology::new());
+    let app = TestApp::with_ontology(
+        pool,
+        &[("NEXC_ONTO_VOCABULARY_TTL_SECS", "0")],
+        stub.clone(),
+    )
+    .await;
+    let w = world(&app).await;
+    let tenant = tenant_of(w.wid);
+    assert_eq!(tenant, format!("ws_{}", w.wid.simple()));
+
+    // A new graph's vocabulary is created in its workspace's tenant, as the backend itself.
+    let (status, created) = graph(&app, &w, &w.owner, "Launch").await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let gid = created["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        keys(&created["ontology"], "node_types"),
+        ["topic", "research", "code", "task", "document", "output"],
+        "the starter set, in onto-intelli's order"
+    );
+    assert!(stub.stored_vocabulary(&tenant, &gid).is_some());
+    let init = stub.calls_to("init_graph");
+    assert!(
+        init.iter().all(|p| !p.acts() && p.tenant == tenant),
+        "{init:?}"
+    );
+    // ...and read as the owner: their own principal with the roles of an owner.
+    let reads = stub.calls_to("vocabulary");
+    let owner = &reads[0];
+    assert_eq!(owner.id, format!("user:{}", w.owner_id));
+    assert_eq!(owner.roles, ["member", "approver", "schema_admin"]);
+    assert_eq!(
+        owner.entity.as_deref(),
+        Some(&*format!("person:{}", w.owner_id))
+    );
+    assert_eq!(owner.tenant, tenant);
+    assert_eq!(
+        owner.workspace,
+        workspace_name(&app.state.settings.onto_workspace_prefix, w.wid)
+    );
+
+    // A node of the default kind is a task, whatever order the types come in.
+    let url = format!("/graphs/{gid}");
+    let (_, node) = call(
+        &app,
+        Method::POST,
+        &format!("{url}/nodes"),
+        &w.member,
+        Some(json!({"title": "Plan"})),
+    )
+    .await;
+    assert_eq!(node["kind"], "task");
+
+    // The member changes the vocabulary: nexc checks its rules, onto-intelli stores it.
+    let mut vocabulary = created["ontology"].clone();
+    vocabulary["node_types"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"key": "Risk", "label": "", "default_role": "", "stage": 1}));
+    let (status, put) = call(
+        &app,
+        Method::PUT,
+        &format!("{url}/ontology"),
+        &w.member,
+        Some(vocabulary.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{put}");
+    assert!(keys(&put["ontology"], "node_types").contains(&"risk".to_owned()));
+    let stored = stub.stored_vocabulary(&tenant, &gid).unwrap();
+    assert!(stored.node_type("risk").is_some());
+    let writer = stub.calls_to("set_vocabulary").pop().unwrap();
+    assert_eq!(writer.id, format!("user:{}", w.member_id));
+    assert_eq!(writer.roles, ["member"]);
+
+    // nexc's own rules stay nexc's: a type in use cannot go, at most TYPES_MAX types.
+    let mut pruned = put["ontology"].clone();
+    pruned["node_types"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|t| t["key"] != "task");
+    let (status, refused) = call(
+        &app,
+        Method::PUT,
+        &format!("{url}/ontology"),
+        &w.member,
+        Some(pruned),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    let mut crowded = put["ontology"].clone();
+    for n in 0..45 {
+        crowded["node_types"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"key": format!("kind_{n}"), "label": "K"}));
+    }
+    let (status, _) = call(
+        &app,
+        Method::PUT,
+        &format!("{url}/ontology"),
+        &w.member,
+        Some(crowded),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // Two nodes tied by a relation that does not order execution...
+    let (_, a) = call(
+        &app,
+        Method::POST,
+        &format!("{url}/nodes"),
+        &w.member,
+        Some(json!({"title": "A"})),
+    )
+    .await;
+    let (_, b) = call(
+        &app,
+        Method::POST,
+        &format!("{url}/nodes"),
+        &w.member,
+        Some(json!({"title": "B"})),
+    )
+    .await;
+    let (status, edge) = call(
+        &app,
+        Method::POST,
+        &format!("{url}/edges"),
+        &w.member,
+        Some(json!({"source": a["id"], "target": b["id"], "kind": "relates_to"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{edge}");
+    assert_eq!(edge["blocking"], false);
+
+    // ...until someone makes it blocking in onto-intelli itself: nexc follows on the next read.
+    let mut edited = stub.stored_vocabulary(&tenant, &gid).unwrap();
+    for relation in &mut edited.relation_types {
+        if relation.key == "relates_to" {
+            relation.blocking = true;
+        }
+    }
+    edited.node_types.retain(|t| t.key != "topic");
+    stub.put_vocabulary(&tenant, &gid, edited);
+    let (_, read) = call(&app, Method::GET, &url, &w.member, None).await;
+    assert!(!keys(&read["ontology"], "node_types").contains(&"topic".to_owned()));
+    let followed = read["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == edge["id"])
+        .unwrap();
+    assert_eq!(followed["blocking"], true, "edges follow their relation");
+
+    // A guest of the workspace is a viewer in onto-intelli: a team graph they are in reads,
+    // but onto-intelli refuses their write.
+    let (_, team_graph) = call(
+        &app,
+        Method::POST,
+        "/graphs",
+        &w.owner,
+        Some(json!({"name": "Team plan", "team_id": w.eng})),
+    )
+    .await;
+    let team_gid = team_graph["id"].as_str().unwrap();
+    call(
+        &app,
+        Method::PUT,
+        &format!(
+            "{}/teams/{}/members/{}",
+            w.ws,
+            w.eng,
+            guest_id(&app, &w).await
+        ),
+        &w.owner,
+        Some(json!({"role": "member"})),
+    )
+    .await;
+    let (status, seen) = call(
+        &app,
+        Method::GET,
+        &format!("/graphs/{team_gid}"),
+        &w.guest,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{seen}");
+    assert_eq!(stub.calls_to("vocabulary").pop().unwrap().roles, ["viewer"]);
+    let (status, refused) = call(
+        &app,
+        Method::PUT,
+        &format!("/graphs/{team_gid}/ontology"),
+        &w.guest,
+        Some(seen["ontology"].clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+}
+
+async fn guest_id(app: &TestApp, w: &World) -> String {
+    let (_, members) = call(
+        app,
+        Method::GET,
+        &format!("{}/members", w.ws),
+        &w.owner,
+        None,
+    )
+    .await;
+    members
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["role"] == "guest")
+        .unwrap()["user_id"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn without_onto_intelli_graphs_keep_the_read_only_starter_set(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let w = world(&app).await;
+    let (status, created) = graph(&app, &w, &w.owner, "Plain").await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(
+        created["ontology"]["node_types"].as_array().unwrap().len(),
+        6
+    );
+    let gid = created["id"].as_str().unwrap();
+    let (status, refused) = call(
+        &app,
+        Method::PUT,
+        &format!("/graphs/{gid}/ontology"),
+        &w.owner,
+        Some(created["ontology"].clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert!(refused["detail"].as_str().unwrap().contains("read-only"));
+
+    // The console says so, and has no session to offer.
+    let (status, ontology) = call(
+        &app,
+        Method::GET,
+        &format!("{}/ontology", w.ws),
+        &w.member,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(ontology["mode"], "off");
+    assert_eq!(ontology["ui_url"], Value::Null);
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &format!("{}/ontology/session", w.ws),
+        &w.member,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn an_unreachable_onto_intelli_is_served_from_the_cache_or_fails_retryably(pool: PgPool) {
+    let stub = Arc::new(StubOntology::new());
+    let app = TestApp::with_ontology(
+        pool,
+        &[
+            ("NEXC_ONTO_VOCABULARY_TTL_SECS", "0"),
+            ("NEXC_MAX_ATTEMPTS", "1"),
+        ],
+        stub.clone(),
+    )
+    .await;
+    let w = world(&app).await;
+    let (_, kept) = graph(&app, &w, &w.owner, "Kept").await;
+    let kept = kept["id"].as_str().unwrap().to_owned();
+    let node = app.node(&w.owner, &kept, json!({"title": "Write"})).await;
+
+    stub.fail_with(Some(OntoError::Unavailable("connection refused".into())));
+    // What was read before is still served, however old.
+    let (status, read) = call(
+        &app,
+        Method::GET,
+        &format!("/graphs/{kept}"),
+        &w.owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    assert_eq!(read["ontology"]["node_types"].as_array().unwrap().len(), 6);
+    // A graph never read is not: 503, and it can still be created (its vocabulary comes later).
+    let (status, fresh) = graph(&app, &w, &w.owner, "Fresh").await;
+    assert_eq!(status, StatusCode::CREATED, "{fresh}");
+    let fresh = fresh["id"].as_str().unwrap();
+    let (status, problem) = call(
+        &app,
+        Method::GET,
+        &format!("/graphs/{fresh}"),
+        &w.owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{problem}");
+    assert!(
+        problem["detail"]
+            .as_str()
+            .unwrap()
+            .contains("ontology unavailable")
+    );
+
+    // A run whose vocabulary is not at hand fails its node, retryably, with what happened.
+    app.state
+        .caches
+        .drop_local(&Key::Vocabulary(kept.parse().unwrap()));
+    let mut rx = app.events(&kept);
+    let (status, run) = call(
+        &app,
+        Method::POST,
+        &format!("/graphs/{kept}/runs"),
+        &w.owner,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{run}");
+    let events = collect_until(&mut rx, "run.finished").await;
+    let finished = &events.last().unwrap().1["run"];
+    assert_eq!(finished["status"], "failed");
+    let failed = finished["node_runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["node_id"] == node)
+        .unwrap();
+    assert!(
+        failed["error"]
+            .as_str()
+            .unwrap()
+            .contains("ontology unavailable"),
+        "{failed}"
+    );
+
+    // Back again: the run goes through.
+    stub.fail_with(None);
+    let mut rx = app.events(&kept);
+    call(
+        &app,
+        Method::POST,
+        &format!("/graphs/{kept}/runs"),
+        &w.owner,
+        Some(json!({"force": true})),
+    )
+    .await;
+    let events = collect_until(&mut rx, "run.finished").await;
+    assert_eq!(events.last().unwrap().1["run"]["status"], "succeeded");
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn stored_ontologies_are_copied_once_idempotently_and_resumably(pool: PgPool) {
+    let stub = Arc::new(StubOntology::new());
+    let app = TestApp::with_ontology(
+        pool.clone(),
+        &[("NEXC_ONTO_VOCABULARY_TTL_SECS", "0")],
+        stub.clone(),
+    )
+    .await;
+    let w = world(&app).await;
+    let tenant = tenant_of(w.wid);
+    // Three graphs as the release before left them: two with an ontology of their own.
+    let mut legacy = Vec::new();
+    for name in ["Trading", "Hiring", "Plain"] {
+        let id = Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO graphs (id, owner_id, name, workspace_id) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(id)
+        .bind(w.owner_id.parse::<Uuid>().unwrap())
+        .bind(name)
+        .bind(w.wid)
+        .execute(&pool)
+        .await
+        .unwrap();
+        legacy.push(id);
+    }
+    let custom = json!({
+        "node_types": [{"key": "signal", "label": "Signal", "default_role": "analyst", "stage": 1}],
+        "relation_types": [{"key": "confirms", "label": "Confirms", "blocking": true}]
+    });
+    for id in &legacy[..2] {
+        sqlx::query("UPDATE graphs SET ontology = $2 WHERE id = $1")
+            .bind(id)
+            .bind(&custom)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    // One is read before the migration reaches it: it is copied on that read.
+    let (_, read) = call(
+        &app,
+        Method::GET,
+        &format!("/graphs/{}", legacy[0]),
+        &w.owner,
+        None,
+    )
+    .await;
+    assert_eq!(keys(&read["ontology"], "node_types"), ["signal"]);
+
+    // onto-intelli is down: the pass records the failures and reports them.
+    stub.fail_with(Some(OntoError::Unavailable("down".into())));
+    let report = migrate::run(&app.state).await.unwrap();
+    assert_eq!((report.migrated, report.failed), (0, 2), "{report:?}");
+    let noted: Option<String> =
+        sqlx::query_scalar("SELECT last_error FROM onto_vocabulary_migrations WHERE graph_id = $1")
+            .bind(legacy[1])
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(noted.unwrap().contains("not reachable"));
+
+    // It is back: the pass resumes and copies what remains.
+    stub.fail_with(None);
+    let report = migrate::run(&app.state).await.unwrap();
+    assert_eq!(
+        (report.migrated, report.failed, report.remaining),
+        (2, 0, 0)
+    );
+    let copied = stub
+        .stored_vocabulary(&tenant, &legacy[1].to_string())
+        .unwrap();
+    assert!(copied.relation_type("confirms").unwrap().blocking);
+    assert_eq!(
+        stub.stored_vocabulary(&tenant, &legacy[2].to_string())
+            .unwrap()
+            .node_types
+            .len(),
+        6,
+        "a graph that stored nothing gets the starter set"
+    );
+
+    // Edited in onto-intelli since, a migrated graph is never written again.
+    let mut edited = copied.clone();
+    edited.node_types[0].label = "Market signal".into();
+    stub.put_vocabulary(&tenant, &legacy[1].to_string(), edited);
+    let report = migrate::run(&app.state).await.unwrap();
+    assert_eq!(
+        (report.migrated, report.failed, report.remaining),
+        (0, 0, 0)
+    );
+    assert_eq!(
+        stub.stored_vocabulary(&tenant, &legacy[1].to_string())
+            .unwrap()
+            .node_types[0]
+            .label,
+        "Market signal"
+    );
+    // The writes were the backend's own, never a member's.
+    assert!(stub.calls_to("set_vocabulary").iter().all(|p| !p.acts()));
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn the_workspace_is_projected_as_entities_and_links_without_content(pool: PgPool) {
+    let stub = Arc::new(StubOntology::new());
+    let app = TestApp::with_ontology(pool, &[], stub.clone()).await;
+    let w = world(&app).await;
+    let onto_ws = workspace_name(&app.state.settings.onto_workspace_prefix, w.wid);
+    let (_, issue) = call(
+        &app,
+        Method::POST,
+        &format!("{}/teams/{}/issues", w.ws, w.eng),
+        &w.member,
+        Some(
+            json!({"title": "Fix login", "description": "SECRET-DESCRIPTION",
+                    "assignee_id": w.member_id}),
+        ),
+    )
+    .await;
+    let issue_id = issue["id"].as_str().unwrap().to_owned();
+    let (_, hidden) = call(
+        &app,
+        Method::POST,
+        &format!("{}/teams/{}/issues", w.ws, w.secret),
+        &w.owner,
+        Some(json!({"title": "Reorg"})),
+    )
+    .await;
+
+    // One pass: the backfill states the whole workspace, as the backend's service principal.
+    export::pass(&app.state).await.unwrap();
+    let person = format!("person:{}", w.member_id);
+    let entity = |id: &str| stub.entity(&onto_ws, id);
+    let member = entity(&person).expect("people are entities");
+    assert_eq!(
+        (member.title.as_str(), &member.props["role"]),
+        ("Test", &json!("member"))
+    );
+    let fix = entity(&format!("issue:{issue_id}")).expect("the issue is an entity");
+    assert_eq!(fix.title, "ENG-1 Fix login");
+    assert_eq!(fix.state, "triaged", "an unstarted issue");
+    assert!(stub.has_link(
+        &onto_ws,
+        &format!("issue:{issue_id}"),
+        "assigned_to",
+        &person
+    ));
+    assert!(stub.has_link(
+        &onto_ws,
+        &format!("issue:{issue_id}"),
+        "belongs_to",
+        &format!("team:{}", w.eng)
+    ));
+    let secret_team = entity(&format!("team:{}", w.secret)).unwrap();
+    assert_eq!(secret_team.props["visibility"], "restricted");
+    assert_eq!(
+        secret_team.props["acl"],
+        json!([format!("team:{}", w.secret), "team:admins"]),
+        "the team, and the workspace's owners and admins"
+    );
+    let owner_person = format!("person:{}", w.owner_id);
+    assert!(stub.has_link(&onto_ws, &owner_person, "member_of", "team:admins"));
+    assert!(!stub.has_link(&onto_ws, &person, "member_of", "team:admins"));
+    let reorg = entity(&format!("issue:{}", hidden["id"].as_str().unwrap())).unwrap();
+    assert_eq!(reorg.props["visibility"], "restricted");
+    let text = serde_json::to_string(&stub.records()).unwrap();
+    assert!(!text.contains("SECRET-DESCRIPTION"), "no content leaves");
+    assert!(!text.contains("@example.com"), "no e-mail address leaves");
+    let ingests = stub.calls_to("ingest");
+    assert!(
+        ingests
+            .iter()
+            .all(|p| !p.acts() && p.tenant.starts_with("ws_")),
+        "the projection writes as the backend, each workspace into its own tenant"
+    );
+    assert!(
+        ingests
+            .iter()
+            .any(|p| p.tenant == tenant_of(w.wid) && p.workspace == onto_ws)
+    );
+
+    // Changes follow through the queue: a new assignee replaces the old link...
+    call(
+        &app,
+        Method::PATCH,
+        &format!("/issues/{issue_id}"),
+        &w.member,
+        Some(json!({"assignee_id": w.owner_id})),
+    )
+    .await;
+    export::pass(&app.state).await.unwrap();
+    assert!(stub.has_link(
+        &onto_ws,
+        &format!("issue:{issue_id}"),
+        "assigned_to",
+        &owner_person
+    ));
+    assert!(!stub.has_link(
+        &onto_ws,
+        &format!("issue:{issue_id}"),
+        "assigned_to",
+        &person
+    ));
+    // ...and a deleted issue is deleted there too.
+    let (status, _) = call(
+        &app,
+        Method::DELETE,
+        &format!("/issues/{issue_id}"),
+        &w.owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    export::pass(&app.state).await.unwrap();
+    assert!(entity(&format!("issue:{issue_id}")).is_none());
+    // A graph is the same entity as its vocabulary, tied to whoever made it.
+    let (_, made) = graph(&app, &w, &w.owner, "Roadmap").await;
+    export::pass(&app.state).await.unwrap();
+    let graph_entity = format!("execution_graph:{}", made["id"].as_str().unwrap());
+    assert_eq!(entity(&graph_entity).unwrap().title, "Roadmap");
+    assert!(stub.has_link(&onto_ws, &graph_entity, "created_by", &owner_person));
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn members_get_their_own_short_lived_session_for_the_embedded_ui(pool: PgPool) {
+    let stub = Arc::new(StubOntology::new());
+    let app = TestApp::with_ontology(
+        pool,
+        &[("NEXC_ONTO_PUBLIC_URL", "https://onto.example.com/")],
+        stub.clone(),
+    )
+    .await;
+    let w = world(&app).await;
+    let session = format!("{}/ontology/session", w.ws);
+    let (status, minted) = call(&app, Method::POST, &session, &w.member, None).await;
+    assert_eq!(status, StatusCode::OK, "{minted}");
+    assert_eq!(minted["ui_url"], "https://onto.example.com/ui/");
+    assert_eq!(minted["tenant"], tenant_of(w.wid));
+    assert_eq!(
+        minted["workspace"],
+        workspace_name(&app.state.settings.onto_workspace_prefix, w.wid)
+    );
+    assert!(minted["token"].as_str().unwrap().starts_with("onto1."));
+    assert!(minted["expires_at"].as_str().is_some());
+    let principal: Principal = stub.calls_to("mint_session").pop().unwrap();
+    assert_eq!(principal.id, format!("user:{}", w.member_id));
+    assert_eq!(principal.roles, ["member"]);
+    // Guests and outsiders get none.
+    let (status, _) = call(&app, Method::POST, &session, &w.guest, None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = call(&app, Method::POST, &session, &w.outsider, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // onto-intelli down: 503, nothing leaks.
+    stub.fail_with(Some(OntoError::Unavailable("down".into())));
+    let (status, problem) = call(&app, Method::POST, &session, &w.owner, None).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{problem}");
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn the_assistant_proposes_schema_changes_as_an_agent_and_people_review_them(pool: PgPool) {
+    let stub = Arc::new(StubOntology::new());
+    let app = TestApp::with_ontology(
+        pool,
+        &[("NEXC_ONTO_PUBLIC_URL", "http://onto.local:50051")],
+        stub.clone(),
+    )
+    .await;
+    let w = world(&app).await;
+    let ask = format!("{}/assistant", w.ws);
+    let (status, reply) = call(
+        &app,
+        Method::POST,
+        &ask,
+        &w.member,
+        Some(json!({"message": "propose schema: track reviews"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{reply}");
+    let filed = &reply["proposals"][0];
+    assert_eq!(filed["title"], "track reviews");
+    let id = filed["id"].as_str().unwrap();
+    assert_eq!(
+        filed["review_url"],
+        format!("http://onto.local:50051/ui/#/proposals/{id}")
+    );
+    // Read, dry-run and filed as the member's assistant: an agent, never an approver.
+    for method in ["schema", "plan_schema", "propose_schema"] {
+        let made_as = stub.calls_to(method);
+        assert_eq!(made_as.len(), 1, "{method}");
+        assert_eq!(made_as[0].id, format!("assistant:{}", w.member_id));
+        assert_eq!(made_as[0].roles, ["agent"]);
+    }
+    let stored = stub.proposals_of(&tenant_of(w.wid));
+    assert_eq!(stored[0]["source"], "nexc-assistant");
+    assert_eq!(stored[0]["status"], "open");
+
+    // Settings → Ontology lists it, with the link to review it in onto-intelli.
+    let (status, ontology) = call(
+        &app,
+        Method::GET,
+        &format!("{}/ontology", w.ws),
+        &w.member,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{ontology}");
+    assert_eq!(ontology["mode"], "service");
+    assert_eq!(ontology["proposals"][0]["id"], id);
+    assert_eq!(ontology["proposals"][0]["by_agent"], true);
+    assert_eq!(ontology["proposals"][0]["status"], "open");
+    let (status, _) = call(
+        &app,
+        Method::GET,
+        &format!("{}/ontology", w.ws),
+        &w.guest,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // A guest's assistant reads no schema and proposes nothing.
+    let (_, guest_reply) = call(
+        &app,
+        Method::POST,
+        &ask,
+        &w.guest,
+        Some(json!({"message": "propose schema: track budgets"})),
+    )
+    .await;
+    assert_eq!(guest_reply["proposals"], json!([]));
+    assert_eq!(stub.proposals_of(&tenant_of(w.wid)).len(), 1);
+}
+
+/// The real client against the stub behind the real wire: every new call
+/// carries the tenant and, when made for someone, who; the session goes over
+/// the same port's HTTP API; the server's refusals come back as errors.
+#[tokio::test]
+async fn the_client_carries_the_member_and_the_tenant_on_every_call() {
+    use nexc::domain::ontology::Ontology;
+    use nexc::domain::workspace::WorkspaceRole;
+    use nexc::ontology::grpc::GrpcOntology;
+    use nexc::ontology::stub::server;
+    use nexc::ontology::{OntologyBackend, SchemaChange, SchemaProposalDraft};
+
+    let stub = Arc::new(StubOntology::new());
+    let token = "onto-token-0123456789";
+    let running = server::serve(stub.clone(), Some(token)).await.unwrap();
+    let client = GrpcOntology::new(&running.url(), Some(token)).unwrap();
+    let (w, u) = (Uuid::now_v7(), Uuid::now_v7());
+    let admin = Principal::user("nexc-", w, u, WorkspaceRole::Admin);
+    let service = Principal::service("nexc-", w);
+
+    assert!(matches!(
+        client.vocabulary(&admin, "g1").await,
+        Err(OntoError::NotFound(_))
+    ));
+    client
+        .init_graph(&service, "g1", "G", Some(&Ontology::starter()))
+        .await
+        .unwrap();
+    let read = client.vocabulary(&admin, "g1").await.unwrap();
+    assert_eq!(read.node_types.len(), 6);
+    assert_eq!(read.node_types[0].stage, 0, "numbers come back as numbers");
+    let mut less = read.clone();
+    less.node_types.retain(|t| t.key != "output");
+    let stored = client.set_vocabulary(&admin, "g1", &less).await.unwrap();
+    assert_eq!(stored.node_types.len(), 5);
+    assert_eq!(stub.calls_to("set_vocabulary").pop().unwrap(), admin);
+    let init = stub.calls_to("init_graph").pop().unwrap();
+    assert!(!init.acts() && init.tenant == admin.tenant);
+    let mut bad = less.clone();
+    bad.node_types[0].color = "red".into();
+    assert!(matches!(
+        client.set_vocabulary(&admin, "g1", &bad).await,
+        Err(OntoError::Invalid(_))
+    ));
+
+    let assistant = Principal::assistant("nexc-", w, u);
+    let schema = client.schema(&assistant).await.unwrap();
+    assert!(schema["object_types"].is_object());
+    let change = json!({"op": "put_link_type", "name": "reviews", "def": {}});
+    let plan = client
+        .plan_schema(
+            &assistant,
+            &SchemaChange {
+                changes: vec![change.clone()],
+                ..SchemaChange::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(plan["valid"], true);
+    let filed = client
+        .propose_schema(
+            &assistant,
+            &SchemaProposalDraft {
+                title: "Reviews".into(),
+                rationale: "asked".into(),
+                changes: vec![change],
+                migrations: vec![],
+                source: "nexc-assistant".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(filed["proposer"]["id"], assistant.id);
+    let open = client.proposals(&admin, Some("open"), 10).await.unwrap();
+    assert_eq!(open.len(), 1);
+    assert_eq!(stub.calls_to("propose_schema").pop().unwrap(), assistant);
+
+    let session = client.mint_session(&admin, 600).await.unwrap();
+    assert!(session.token.starts_with("onto1."));
+    assert_eq!(session.tenant, admin.tenant);
+    let minted_for = stub.calls_to("mint_session").pop().unwrap();
+    assert_eq!(
+        (minted_for.id.as_str(), minted_for.roles.clone()),
+        (admin.id.as_str(), admin.roles.clone())
+    );
+
+    // A token the server does not know is refused, on both wires.
+    let stranger = GrpcOntology::new(&running.url(), Some("not-the-token-012345")).unwrap();
+    assert!(matches!(
+        stranger.vocabulary(&admin, "g1").await,
+        Err(OntoError::Denied(_))
+    ));
+    assert!(matches!(
+        stranger.mint_session(&admin, 600).await,
+        Err(OntoError::Denied(_))
+    ));
+    running.stop().await;
+}

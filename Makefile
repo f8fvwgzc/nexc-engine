@@ -15,7 +15,7 @@ LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a;
 
 .PHONY: help init setup dev dev-backend dev-frontend dev-runtime db-up db-down db-shell \
         backup backup-check restore prove prove-trace prove-identity prove-audit prove-policy prove-agentsecops prove-gateway prove-api test-worst-case \
-        build test test-backend test-frontend test-runtime e2e-ui e2e-ui-update lint fmt check \
+        build test test-backend test-frontend test-runtime test-onto-live e2e-ui e2e-ui-update lint fmt check \
         docker-build docker-up docker-down docker-logs demo demo-onto demo-secops seed-demo \
         minikube-up minikube-down k8s-render openapi proto-runtime doctor clean \
         docs docs-build docs-dev
@@ -37,7 +37,7 @@ setup: ## Install dependencies: cargo fetch, frontend packages, runtime venv
 
 ##@ Local development
 
-dev: db-up ## Run PostgreSQL + backend + runtime + frontend together (Ctrl-C stops all)
+dev: db-up ## Run PostgreSQL + backend + runtime + frontend (+ onto-intelli from ../onto-intelli when NEXC_ONTO_MODE=service) together (Ctrl-C stops all)
 	@scripts/dev.sh
 
 dev-backend: ## Run only the backend (nexc serve) on :8080
@@ -75,6 +75,9 @@ test-frontend: ## Frontend unit tests (vitest)
 
 test-runtime: ## Agent runtime tests (pytest, fake LLM, no network)
 	cd agent-runtime && $(UV) run pytest
+
+test-onto-live: ## The backend against a real onto-intelli: onto serve from ../onto-intelli (ONTO_DIR, ONTO_BIN) on a throwaway PostgreSQL with pgvector (needs Docker, or ONTO_LIVE_DATABASE_URL)
+	scripts/test-onto-live.sh
 
 e2e-ui: ## SPA UI suite: every route at 375/768/1280 px on fixtures, layout check, axe and screenshot baselines (in the Playwright image CI uses; needs Docker)
 	scripts/e2e-ui.sh
@@ -165,7 +168,7 @@ demo: ## Start the stack in demo mode (offline LLM, no API key needed)
 	$(COMPOSE) -f docker-compose.yml -f docker-compose.demo.yml up -d --build
 	@echo "demo running on http://localhost:$${NEXC_HTTP_PORT:-8080}"
 
-demo-onto: ## Demo mode plus onto-intelli (built from ../onto-intelli): a demo graph, then the six audit questions with mode, tokens and latency
+demo-onto: ## Demo mode plus onto-intelli (built from ../onto-intelli, on PostgreSQL with pgvector): the workspace map, then the six audit questions with mode, tokens and latency
 	@[ -f .env ] || scripts/init-env.sh
 	@[ -d ../onto-intelli ] || { echo "clone https://github.com/f8fvwgzc/onto-intelli next to this repository first"; exit 1; }
 	$(COMPOSE) -f docker-compose.yml -f docker-compose.demo.yml -f docker-compose.onto.yml --profile onto up -d --build
