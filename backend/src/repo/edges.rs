@@ -96,6 +96,17 @@ pub async fn set_blocking(
     Ok(())
 }
 
+/// The relations a graph's edges use, with the `blocking` flag each holds.
+pub async fn kinds(
+    db: impl PgExecutor<'_>,
+    graph_id: Uuid,
+) -> Result<Vec<(String, bool)>, sqlx::Error> {
+    sqlx::query_as("SELECT DISTINCT kind, blocking FROM edges WHERE graph_id = $1")
+        .bind(graph_id)
+        .fetch_all(db)
+        .await
+}
+
 /// Deletes one edge of a graph. Returns false if absent.
 pub async fn delete(
     db: impl PgExecutor<'_>,

@@ -136,7 +136,9 @@ pub struct Graph {
     pub goal: String,
     /// Incremented on every mutation of the graph, its nodes or edges.
     pub version: i64,
-    /// The node types and relation types this graph is built from.
+    /// The node types and relation types this graph is built from: its
+    /// execution vocabulary in onto-intelli (the read-only starter set when
+    /// onto-intelli is off).
     pub ontology: Ontology,
     pub nodes: Vec<GraphNode>,
     pub edges: Vec<GraphEdge>,
@@ -156,14 +158,27 @@ pub struct GraphMeta {
     pub description: String,
     pub goal: String,
     pub version: i64,
-    pub ontology: Ontology,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 impl GraphMeta {
-    /// Combines the header with its nodes and edges.
-    pub fn into_graph(self, nodes: Vec<GraphNode>, edges: Vec<GraphEdge>) -> Graph {
+    /// The graph as its vocabulary is looked up by.
+    pub fn vocabulary_ref(&self) -> crate::ontology::vocabulary::GraphRef<'_> {
+        crate::ontology::vocabulary::GraphRef {
+            id: self.id,
+            workspace_id: self.workspace_id,
+            name: &self.name,
+        }
+    }
+
+    /// Combines the header with its vocabulary, nodes and edges.
+    pub fn into_graph(
+        self,
+        ontology: Ontology,
+        nodes: Vec<GraphNode>,
+        edges: Vec<GraphEdge>,
+    ) -> Graph {
         Graph {
             id: self.id,
             workspace_id: self.workspace_id,
@@ -172,7 +187,7 @@ impl GraphMeta {
             description: self.description,
             goal: self.goal,
             version: self.version,
-            ontology: self.ontology,
+            ontology,
             nodes,
             edges,
             created_at: self.created_at,

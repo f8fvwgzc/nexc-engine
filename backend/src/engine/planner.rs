@@ -27,6 +27,7 @@ use crate::dsa::graph::Indexed;
 use crate::llm::pricing::cost_usd;
 use crate::llm::{JsonSchema, LlmEvent, LlmRequest, Message, StopReason, Usage};
 use crate::memory;
+use crate::ontology::vocabulary;
 use crate::realtime::events::{SseEvent, WsMessage};
 use crate::repo::{self, OrNotFound, plans};
 
@@ -351,8 +352,13 @@ async fn generate(
     let proposal: PlanProposal = serde_json::from_str(text.trim())
         .map_err(|e| format!("the model returned an invalid plan: {e}"))?;
     let existing: HashSet<Uuid> = graph.nodes.iter().map(|n| n.id).collect();
-    let (proposal, notes) =
-        sanitize_proposal(proposal, &existing, &graph.ontology, MAX_NODES as usize);
+    let (proposal, notes) = sanitize_proposal(
+        proposal,
+        &existing,
+        &graph.ontology,
+        MAX_NODES as usize,
+        vocabulary::editable(state),
+    );
     for note in &notes {
         tracing::info!(%plan_id, note, "plan corrected");
     }
@@ -406,19 +412,21 @@ async fn stream_nodes(
 }
 
 /// Applies a ready plan in one transaction: adds its new types to the
-/// graph's ontology, upserts its nodes, replaces the graph's plan-origin
-/// edges and lays out new nodes by topological level.
+/// graph's vocabulary in onto-intelli (as `owner`; not while onto-intelli is
+/// off), upserts its nodes, replaces the graph's plan-origin edges and lays
+/// out new nodes by topological level.
 pub async fn apply(
     state: &AppState,
     owner: Uuid,
     graph_id: Uuid,
     plan_id: Uuid,
 ) -> Result<Graph, AppError> {
+    let meta = editor::owned_graph(state, owner, graph_id).await?;
+    let mut ontology = Ontology::clone(&*editor::vocabulary_of(state, owner, &meta).await?);
     let mut tx = state.db.begin().await?;
-    let mut ontology = repo::graphs::lock(&mut *tx, owner, graph_id)
+    repo::graphs::lock(&mut *tx, owner, graph_id)
         .await
-        .or_not_found("graph")?
-        .ontology;
+        .or_not_found("graph")?;
     let plan = plans::find(&mut *tx, graph_id, plan_id)
         .await
         .or_not_found("plan")?;
@@ -441,9 +449,11 @@ pub async fn apply(
         )));
     }
 
-    let ontology_changed = ontology.merge(&plan.ontology);
+    let ontology_changed = vocabulary::editable(state) && ontology.merge(&plan.ontology);
     if ontology_changed {
-        repo::graphs::set_ontology(&mut *tx, graph_id, &ontology).await?;
+        ontology = Ontology::clone(
+            &*vocabulary::replace(state, meta.vocabulary_ref(), owner, &ontology).await?,
+        );
     }
     let removed = repo::edges::delete_by_origin(&mut *tx, graph_id, EdgeOrigin::Plan).await?;
     let mut edges = repo::edges::list(&mut *tx, graph_id).await?;

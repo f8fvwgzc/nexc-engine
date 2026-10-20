@@ -1,12 +1,17 @@
-//! The ontology of a graph: which types of node exist and which typed
-//! relations may connect them. Every graph owns its ontology as data; nothing
-//! about node or relation types is compiled in except the starter set a new
-//! graph begins with, which the user and the planner are free to rewrite.
+//! The execution vocabulary of a graph: which types of node exist and which
+//! typed relations may connect them, in the shape onto-intelli's
+//! `ExecutionService` reads and writes them (`docs/ONTOLOGY.md`). The
+//! vocabulary lives in onto-intelli; nexc holds only these types to work
+//! with it, the rules it keeps on its side (at most [`TYPES_MAX`] types, no
+//! blocking cycle), and the starter set: what a new graph begins with, and
+//! the read-only vocabulary of every graph when onto-intelli is off.
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::graph::Executor;
+use super::string_enum;
 use super::validation::{FieldErrors, Validate};
 
 /// Maximum number of node types and of relation types in one ontology.
@@ -251,11 +256,17 @@ impl Ontology {
     }
 
     /// Key of the type a node gets when the caller names none: the first
-    /// type whose nodes neither frame the work nor deliver it, else the first.
+    /// type whose nodes neither frame the work, deliver it nor run code,
+    /// else the first that neither frames nor delivers, else the first.
+    /// onto-intelli orders types by stage and key, so a safe default does
+    /// not depend on the order they were written in.
     pub fn default_node_kind(&self) -> Option<&str> {
+        let work = |t: &&NodeType| !t.produces_artifact && t.default_role == FALLBACK_ROLE;
         self.node_types
             .iter()
-            .find(|t| !t.produces_artifact && t.default_role == FALLBACK_ROLE)
+            .filter(work)
+            .find(|t| !t.allow_code_exec)
+            .or_else(|| self.node_types.iter().find(work))
             .or(self.node_types.first())
             .map(|t| t.key.as_str())
     }
@@ -395,6 +406,88 @@ impl Ontology {
         });
         true
     }
+}
+
+string_enum!(
+    /// How nexc reaches onto-intelli (`NEXC_ONTO_MODE`).
+    OntoMode {
+        /// Over gRPC to `onto serve` (`NEXC_ONTO_URL`).
+        Service => "service",
+        /// onto-intelli linked into the backend (not in this build; see `docs/ONTOLOGY.md`).
+        Embedded => "embedded",
+        /// No onto-intelli: graphs use the read-only starter vocabulary.
+        Off => "off",
+    }
+);
+
+string_enum!(
+    /// Where a schema change proposal stands in onto-intelli.
+    ProposalStatus {
+        /// Waiting for review.
+        Open => "open",
+        /// Approved and applied as a schema version.
+        Applied => "applied",
+        Rejected => "rejected",
+        /// Approved, but it no longer applied; the proposer may revise it.
+        Failed => "failed",
+        Withdrawn => "withdrawn",
+    }
+);
+
+/// A schema change proposal, as nexc lists it; people review it in onto-intelli.
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+pub struct SchemaProposal {
+    /// onto-intelli's id (`prop_…`).
+    pub id: String,
+    pub title: String,
+    pub rationale: String,
+    pub status: ProposalStatus,
+    /// Who filed it: `user:{id}`, or `assistant:{user id}` for the assistant.
+    pub proposer: String,
+    /// Filed by an agent (the assistant).
+    pub by_agent: bool,
+    /// Whether applying it would break data or vocabulary in use.
+    pub breaking: bool,
+    /// Changes in the change set.
+    pub changes: usize,
+    pub created_at: DateTime<Utc>,
+    /// Where to review it in onto-intelli's UI; `null` when its address is unknown.
+    #[schema(required = true)]
+    pub review_url: Option<String>,
+}
+
+/// The workspace's ontology, as Settings → Ontology shows it.
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+pub struct OntologyStatus {
+    pub mode: OntoMode,
+    /// onto-intelli's UI (`…/ui/`); `null` when onto-intelli is off.
+    #[schema(required = true)]
+    pub ui_url: Option<String>,
+    /// The onto-intelli tenant of the workspace (`ws_…`); `null` when off.
+    #[schema(required = true)]
+    pub tenant: Option<String>,
+    /// The onto-intelli workspace inside the tenant; `null` when off.
+    #[schema(required = true)]
+    pub workspace: Option<String>,
+    /// Open proposals, newest first (empty when off or unreachable).
+    pub proposals: Vec<SchemaProposal>,
+    /// Why the proposals could not be read, when they could not.
+    #[schema(required = true)]
+    pub error: Option<String>,
+}
+
+/// A browser session for onto-intelli's UI: the token is the member's own,
+/// short-lived and bound to the workspace's tenant; the backend's service
+/// token never reaches the page.
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+pub struct OntologySession {
+    /// onto-intelli's UI to load in the frame (`…/ui/`); deep links go after `#`.
+    pub ui_url: String,
+    /// Handed to the frame with `postMessage({type: "onto:session", token, tenant, workspace})`.
+    pub token: String,
+    pub tenant: String,
+    pub workspace: String,
+    pub expires_at: DateTime<Utc>,
 }
 
 /// A submitted ontology needs at least one type of each sort and at most
