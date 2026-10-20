@@ -1061,6 +1061,158 @@ async fn the_workspace_is_projected_as_entities_and_links_without_content(pool: 
 }
 
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn the_projection_follows_privacy_and_what_goes_with_its_parent(pool: PgPool) {
+    let stub = Arc::new(StubOntology::new());
+    let app = TestApp::with_ontology(pool.clone(), &[], stub.clone()).await;
+    let w = world(&app).await;
+    let tenant = tenant_of(w.wid);
+    let onto_ws = workspace_name(&app.state.settings.onto_workspace_prefix, w.wid);
+    let entity = |id: &str| stub.entity(&onto_ws, id);
+    let restricted = |id: &str| {
+        let props = entity(id).unwrap_or_else(|| panic!("{id} is there")).props;
+        (props["visibility"] == "restricted").then(|| props["acl"].clone())
+    };
+
+    // The public team's issue, cycle, graph and a run of it.
+    let (_, issue) = call(
+        &app,
+        Method::POST,
+        &format!("{}/teams/{}/issues", w.ws, w.eng),
+        &w.owner,
+        Some(json!({"title": "Ship it"})),
+    )
+    .await;
+    let issue = format!("issue:{}", issue["id"].as_str().unwrap());
+    let (status, cycle) = call(
+        &app,
+        Method::POST,
+        &format!("{}/teams/{}/cycles", w.ws, w.eng),
+        &w.owner,
+        Some(json!({"starts_on": "2026-10-19", "ends_on": "2026-10-30"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{cycle}");
+    let cycle = format!("cycle:{}", cycle["id"].as_str().unwrap());
+    let (_, made) = call(
+        &app,
+        Method::POST,
+        "/graphs",
+        &w.owner,
+        Some(json!({"name": "Launch", "team_id": w.eng})),
+    )
+    .await;
+    let gid = made["id"].as_str().unwrap().to_owned();
+    app.node(&w.owner, &gid, json!({"title": "Plan"})).await;
+    let mut rx = app.events(&gid);
+    let (_, run) = call(
+        &app,
+        Method::POST,
+        &format!("/graphs/{gid}/runs"),
+        &w.owner,
+        Some(json!({})),
+    )
+    .await;
+    collect_until(&mut rx, "run.finished").await;
+    let run = format!("run:{}", run["id"].as_str().unwrap());
+    let graph = format!("execution_graph:{gid}");
+    export::pass(&app.state).await.unwrap();
+    let things = [&issue, &cycle, &graph, &run];
+    for id in things {
+        assert_eq!(restricted(id), None, "{id} of a public team");
+    }
+    // The workspace's admins are a team only they see.
+    assert_eq!(restricted("team:admins"), Some(json!(["team:admins"])));
+
+    // The team turns private: everything of it is restricted to it, its runs included.
+    let team_url = format!("{}/teams/{}", w.ws, w.eng);
+    let (status, _) = call(
+        &app,
+        Method::PATCH,
+        &team_url,
+        &w.owner,
+        Some(json!({"private": true})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    export::pass(&app.state).await.unwrap();
+    let acl = json!([format!("team:{}", w.eng), "team:admins"]);
+    for id in things {
+        assert_eq!(restricted(id), Some(acl.clone()), "{id} of a private team");
+    }
+    // ...and public again: open to the workspace once more.
+    call(
+        &app,
+        Method::PATCH,
+        &team_url,
+        &w.owner,
+        Some(json!({"private": false})),
+    )
+    .await;
+    export::pass(&app.state).await.unwrap();
+    for id in things {
+        assert_eq!(restricted(id), None, "{id} public again");
+    }
+
+    // A deleted graph takes its runs and its vocabulary along.
+    assert!(!stub.stored_vocabulary(&tenant, &gid).unwrap().is_empty());
+    let (status, _) = call(
+        &app,
+        Method::DELETE,
+        &format!("/graphs/{gid}"),
+        &w.owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    export::pass(&app.state).await.unwrap();
+    assert!(entity(&graph).is_none() && entity(&run).is_none());
+    assert!(stub.stored_vocabulary(&tenant, &gid).unwrap().is_empty());
+
+    // A deleted team takes its cycles along, and its members are no longer in it.
+    let (status, _) = call(&app, Method::DELETE, &team_url, &w.owner, None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    export::pass(&app.state).await.unwrap();
+    assert!(entity(&cycle).is_none());
+    assert!(entity(&format!("team:{}", w.eng)).is_none());
+    assert!(
+        !stub
+            .links(&onto_ws)
+            .iter()
+            .any(|(_, _, to)| to == &format!("team:{}", w.eng))
+    );
+
+    // A deleted workspace's tenant is retired: what the projection put there goes, and the
+    // export does not stumble over what was queued for it.
+    let person = format!("person:{}", w.member_id);
+    assert!(entity(&person).is_some());
+    call(
+        &app,
+        Method::POST,
+        "/workspaces",
+        &w.owner,
+        Some(json!({"name": "Elsewhere"})),
+    )
+    .await;
+    let (status, problem) = call(&app, Method::DELETE, &w.ws, &w.owner, None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{problem}");
+    let progress = export::pass(&app.state).await.unwrap();
+    assert_eq!(progress.failed, 0, "{progress:?}");
+    assert!(entity(&person).is_none() && entity(&issue).is_none());
+    assert!(entity("team:admins").is_none());
+    let (cleared, queued): (bool, i64) = sqlx::query_as(
+        "SELECT (SELECT cleared_at IS NOT NULL FROM onto_retired_tenants WHERE workspace_id = $1),
+                (SELECT count(*) FROM onto_export_queue WHERE workspace_id = $1)",
+    )
+    .bind(w.wid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(cleared);
+    assert_eq!(queued, 0);
+    assert_eq!(export::pass(&app.state).await.unwrap().failed, 0);
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
 async fn members_get_their_own_short_lived_session_for_the_embedded_ui(pool: PgPool) {
     let stub = Arc::new(StubOntology::new());
     let app = TestApp::with_ontology(

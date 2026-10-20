@@ -52,10 +52,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `20261006000091_onto_projection`): teams, people, projects, cycles, issues, agents, graphs,
   documents and runs as entities and links (ids, names, states and links, never content), through
   the export outbox the tables fill (their triggers now queue these too), backfilled once per
-  workspace. Private teams and what belongs to them are restricted to the team and to
-  `team:admins`, the workspace's owners and admins; `onto_projection` takes back links that no
-  longer hold and deletes only what it put there. `deploy/onto/nexc-workspace.toml` names its kinds
-  and relations.
+  workspace. Private teams and what belongs to them (cycles, issues, graphs and their runs) are
+  restricted to the team and to `team:admins`, the workspace's owners and admins, which only they
+  see; a team made private or public is projected again with all of it. `onto_projection` takes
+  back links that no longer hold and deletes only what it put there, with what goes along in nexc
+  (a deleted team's cycles, a deleted graph's runs and node and relation types: migration
+  `20261006000092_onto_projection_follows` queues them before their parent goes). A deleted
+  workspace's tenant is retired (`onto_retired_tenants`): the export deletes what the projection
+  put there, and the operator drops the tenant's schema for the rest. `deploy/onto/nexc-workspace.toml`
+  names its kinds and relations.
 - The Map page embeds onto-intelli's own UI (members and above): `POST
   /workspaces/{wid}/ontology/session` mints the member's own short-lived session
   (`NEXC_ONTO_SESSION_TTL_SECS`) with the backend's token, which never reaches the browser, and the

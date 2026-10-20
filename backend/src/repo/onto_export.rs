@@ -43,6 +43,29 @@ pub async fn cursor(
 }
 
 /// Makes sure a workspace has a cursor row (at the start: nothing exported).
+/// Whether the workspace still exists.
+pub async fn workspace_exists(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM workspaces WHERE id = $1)")
+        .bind(workspace_id)
+        .fetch_one(db)
+        .await
+}
+
+/// Forgets what is queued for a workspace that is gone (its rows went with
+/// it; its tenant is retired, see `onto_retired_tenants`).
+pub async fn drop_queue(db: impl PgExecutor<'_>, workspace_id: Uuid) -> Result<u64, sqlx::Error> {
+    Ok(
+        sqlx::query("DELETE FROM onto_export_queue WHERE workspace_id = $1")
+            .bind(workspace_id)
+            .execute(db)
+            .await?
+            .rows_affected(),
+    )
+}
+
 pub async fn ensure_cursor(db: impl PgExecutor<'_>, workspace_id: Uuid) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO onto_export_cursors (workspace_id) VALUES ($1) ON CONFLICT DO NOTHING",

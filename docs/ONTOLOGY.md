@@ -154,12 +154,25 @@ workspace is projected whole once (`onto_export_cursors.projected_at`), then by 
 | agent              | `agent:<principal>` (the audit's) | `member_of` its team                                                                                                                                     |
 
 Only ids, names, states and links are projected: no description, no document text, no e-mail
-address. A private team, its cycles, issues and graphs are `visibility = "restricted"` with the team
-and `team:admins` (the workspace's owners and admins) on their `acl`; a confidential or restricted
-document is shown by its id, and a restricted one only to `team:admins`. `onto_projection` remembers
-what was put there and the links stated from each entity: a link that no longer holds is taken back,
-and only what was put there is deleted when it goes. The kinds and relations nexc adds to the
-built-in enterprise schema are in `deploy/onto/nexc-workspace.toml`.
+address. A private team, its cycles, issues and graphs and the runs of those graphs are
+`visibility = "restricted"` with the team and `team:admins` (the workspace's owners and admins) on
+their `acl`; making a team private or public projects all of them again, and so does moving a graph
+to another team for its runs. `team:admins` is restricted to its own members, so nobody else sees it
+or can link themselves to it. A confidential or restricted document is shown by its id, and a
+restricted one only to `team:admins`. `onto_projection` remembers what was put there and the links
+stated from each entity: a link that no longer holds is taken back, and only what was put there is
+deleted when it goes, with what goes along with it in nexc: a deleted team's cycles, a deleted
+graph's runs and its node and relation types (they are queued while their parent still says which
+workspace they were in). The kinds and relations nexc adds to the built-in enterprise schema are in
+`deploy/onto/nexc-workspace.toml`.
+
+**A deleted workspace's tenant** is retired (`onto_retired_tenants`): the export deletes what the
+projection put there and the vocabularies of the workspace's graphs, a few hundred entities per pass,
+and forgets what was queued for the workspace. onto-intelli has no call that drops a tenant, so the
+rest (the audit's facts and their events, the tenant's schema versions and proposals) stays in its
+PostgreSQL schema until the operator drops it on onto-intelli's database:
+`DROP SCHEMA IF EXISTS "onto_ws_<workspace id without dashes>" CASCADE`. `SELECT workspace_id,
+cleared_at FROM onto_retired_tenants` lists the tenants to drop.
 
 **The Map page** (Settings → Workspace map, members and above) embeds onto-intelli's UI at
 `NEXC_ONTO_PUBLIC_URL/ui/`. The backend mints the member's own session with

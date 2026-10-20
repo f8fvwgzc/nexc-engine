@@ -89,6 +89,17 @@ pub struct RunRow {
     pub owner_id: Uuid,
     pub status: String,
     pub started_at: Option<DateTime<Utc>>,
+    /// The team of its graph, and whether that team is private.
+    pub team_id: Option<Uuid>,
+    pub private: bool,
+}
+
+/// A deleted workspace whose tenant still holds what the projection put there.
+#[derive(Debug, Clone, FromRow)]
+pub struct RetiredTenant {
+    pub workspace_id: Uuid,
+    pub entities: Vec<String>,
+    pub graphs: Vec<Uuid>,
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -218,8 +229,10 @@ pub async fn runs(
     ids: &[Uuid],
 ) -> Result<Vec<RunRow>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT r.id, r.graph_id, r.owner_id, r.status, r.started_at
+        "SELECT r.id, r.graph_id, r.owner_id, r.status, r.started_at, g.team_id,
+                COALESCE(t.private, false) AS private
          FROM runs r JOIN graphs g ON g.id = r.graph_id
+         LEFT JOIN teams t ON t.id = g.team_id
          WHERE g.workspace_id = $1 AND r.id = ANY($2)",
     )
     .bind(workspace_id)
@@ -354,6 +367,54 @@ pub async fn mark_projected(
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         "UPDATE onto_export_cursors SET projected_at = now(), updated_at = now() WHERE workspace_id = $1",
+    )
+    .bind(workspace_id)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Tenants of deleted workspaces not cleared yet, oldest first.
+pub async fn retired(
+    db: impl PgExecutor<'_>,
+    limit: i64,
+) -> Result<Vec<RetiredTenant>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT workspace_id, entities, graphs FROM onto_retired_tenants
+         WHERE cleared_at IS NULL ORDER BY retired_at, workspace_id LIMIT $1",
+    )
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
+/// What is left to clear of a retired tenant, after some of it was.
+pub async fn retire_progress(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    entities: &[String],
+    graphs: &[Uuid],
+    error: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE onto_retired_tenants SET entities = $2, graphs = $3, last_error = $4
+         WHERE workspace_id = $1",
+    )
+    .bind(workspace_id)
+    .bind(entities)
+    .bind(graphs)
+    .bind(error.map(|e| e.chars().take(500).collect::<String>()))
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Records that a retired tenant holds nothing of the projection any more.
+pub async fn mark_cleared(db: impl PgExecutor<'_>, workspace_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE onto_retired_tenants
+         SET cleared_at = now(), entities = '{}', graphs = '{}', last_error = NULL
+         WHERE workspace_id = $1",
     )
     .bind(workspace_id)
     .execute(db)

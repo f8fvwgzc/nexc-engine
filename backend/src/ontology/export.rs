@@ -93,8 +93,16 @@ async fn run(state: AppState, shutdown: CancellationToken) {
 /// One pass: every workspace with something queued or not yet backfilled.
 pub async fn pass(state: &AppState) -> anyhow::Result<Progress> {
     let mut progress = Progress::default();
-    if state.ontology.is_none() {
+    let Some(backend) = &state.ontology else {
         return Ok(progress);
+    };
+    // Deleted workspaces first: what the projection put into their tenants goes.
+    match projection::clear_retired(state, backend.as_ref()).await {
+        Ok(records) => progress.records += records,
+        Err(err) => {
+            progress.failed += 1;
+            tracing::debug!(error = %err, "a deleted workspace's tenant was not cleared");
+        }
     }
     for workspace_id in cursors::workspaces_behind(&state.db).await? {
         progress.workspaces += 1;
@@ -121,6 +129,12 @@ pub async fn export_workspace(state: &AppState, workspace_id: Uuid) -> anyhow::R
         .ontology
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("onto-intelli is not configured"))?;
+    // A workspace deleted since its rows were queued: its tenant is retired
+    // (projection::clear_retired), and what was queued for it goes.
+    if !cursors::workspace_exists(&state.db, workspace_id).await? {
+        cursors::drop_queue(&state.db, workspace_id).await?;
+        return Ok(Progress::default());
+    }
     // The audit's facts go into the workspace's own tenant, as the backend itself.
     let service = Principal::service(&state.settings.onto_workspace_prefix, workspace_id);
     cursors::ensure_cursor(&state.db, workspace_id).await?;

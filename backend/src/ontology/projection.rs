@@ -22,6 +22,7 @@ use uuid::Uuid;
 use super::facts::{ADMINS, agent_id, short};
 use super::{OntoError, OntologyBackend, Principal, graph_entity, person_id};
 use crate::app::AppState;
+use crate::domain::ontology::Ontology;
 use crate::repo::onto_projection as repo;
 
 /// What the projection covers, in the order a backfill walks them
@@ -222,11 +223,14 @@ async fn load(
                 things.push(thing);
             }
             if admins {
+                // Shown to its own members only: nobody else can see it, so nobody else can
+                // link themselves to it and read what it is on the acl of.
                 things.push(Thing::new(
                     ADMINS.to_owned(),
                     "team",
                     "Workspace admins".to_owned(),
-                    json!({"key": "ADMINS", "private": false, "group": "owners and admins"}),
+                    json!({"key": "ADMINS", "private": true, "group": "owners and admins",
+                           "visibility": "restricted", "acl": [ADMINS]}),
                 ));
             }
         }
@@ -330,11 +334,14 @@ async fn load(
         "run_started" => {
             for r in repo::runs(db, workspace_id, ids).await? {
                 found.insert(r.id);
+                let mut props =
+                    json!({"graph_id": r.graph_id, "nexc_id": r.id, "started_at": r.started_at});
+                visibility(&mut props, r.team_id.filter(|_| r.private));
                 let mut thing = Thing::new(
                     super::facts::run_id(r.id),
                     "run",
                     format!("run {}", short(r.id)),
-                    json!({"graph_id": r.graph_id, "nexc_id": r.id, "started_at": r.started_at}),
+                    props,
                 );
                 thing.state = Some(match r.status.as_str() {
                     "running" => "running",
@@ -485,17 +492,10 @@ async fn send(
     if !batch.is_empty() {
         backend.ingest(service, batch).await?;
     }
-    // Deleted one by one: what onto-intelli lost already is not an error.
     let mut forgotten = Vec::new();
     for entity in gone.iter().filter(|g| tracked.contains_key(*g)) {
-        match backend
-            .ingest(service, vec![json!({"op": "delete", "id": entity})])
-            .await
-        {
-            Ok(_) | Err(OntoError::NotFound(_)) => forgotten.push(entity.clone()),
-            Err(err) => return Err(err.into()),
-        }
-        sent += 1;
+        sent += forget_in(backend, service, entity).await?;
+        forgotten.push(entity.clone());
     }
     let kept: Vec<(String, Vec<String>)> = things
         .iter()
@@ -503,6 +503,117 @@ async fn send(
         .collect();
     repo::record(&state.db, workspace_id, &kept).await?;
     repo::forget(&state.db, workspace_id, &forgotten).await?;
+    Ok(sent)
+}
+
+/// Deletes an entity the projection put into onto-intelli (what it lost
+/// already is not an error). A graph takes its vocabulary along: its node
+/// and relation types are removed first (`SetVocabulary` with none), or they
+/// would stay behind on their own. Returns the records sent.
+async fn forget_in(
+    backend: &dyn OntologyBackend,
+    service: &Principal,
+    entity: &str,
+) -> Result<usize, OntoError> {
+    let mut sent = 1;
+    if let Some(graph) = entity.strip_prefix("execution_graph:") {
+        match backend
+            .set_vocabulary(service, graph, &Ontology::default())
+            .await
+        {
+            Ok(_) | Err(OntoError::NotFound(_)) => sent += 1,
+            Err(err) => return Err(err),
+        }
+    }
+    match backend
+        .ingest(service, vec![json!({"op": "delete", "id": entity})])
+        .await
+    {
+        Ok(_) | Err(OntoError::NotFound(_)) => Ok(sent),
+        Err(err) => Err(err),
+    }
+}
+
+/// Entities of a retired tenant deleted per pass, so one large workspace
+/// does not hold the export up.
+const RETIRE_PER_PASS: usize = 500;
+
+/// Clears the tenants of deleted workspaces (`onto_retired_tenants`): the
+/// entities the projection put there and the vocabularies of their graphs,
+/// as the backend's service principal, a bounded number per pass. What
+/// remains in the tenant (the audit's facts and events, its schema and
+/// proposals) goes when the operator drops its schema (`docs/ONTOLOGY.md`
+/// §5). Returns the records sent.
+pub async fn clear_retired(
+    state: &AppState,
+    backend: &dyn OntologyBackend,
+) -> anyhow::Result<usize> {
+    let prefix = &state.settings.onto_workspace_prefix;
+    let mut sent = 0;
+    let mut budget = RETIRE_PER_PASS;
+    for retired in repo::retired(&state.db, 20).await? {
+        let service = Principal::service(prefix, retired.workspace_id);
+        // The graphs first: deleting a graph's entity takes its vocabulary along.
+        let mut entities: Vec<String> = retired
+            .graphs
+            .iter()
+            .map(|g| graph_entity(*g))
+            .filter(|g| !retired.entities.contains(g))
+            .chain(retired.entities.iter().cloned())
+            .collect();
+        entities.sort_by_key(|e| !e.starts_with("execution_graph:"));
+        let mut done = 0;
+        let mut error = None;
+        for entity in &entities {
+            if budget == 0 {
+                break;
+            }
+            match forget_in(backend, &service, entity).await {
+                Ok(n) => sent += n,
+                Err(err) => {
+                    error = Some(err.to_string());
+                    break;
+                }
+            }
+            done += 1;
+            budget -= 1;
+        }
+        if done == entities.len() {
+            crate::repo::onto_export::drop_queue(&state.db, retired.workspace_id).await?;
+            repo::mark_cleared(&state.db, retired.workspace_id).await?;
+            tracing::info!(
+                tenant = %super::tenant_of(retired.workspace_id),
+                "a deleted workspace's entities were removed from onto-intelli; its schema (onto_{}) holds the audit's facts until the operator drops it",
+                super::tenant_of(retired.workspace_id)
+            );
+        } else {
+            let left: Vec<String> = entities[done..]
+                .iter()
+                .filter(|e| retired.entities.contains(e))
+                .cloned()
+                .collect();
+            let graphs: Vec<Uuid> = retired
+                .graphs
+                .iter()
+                .copied()
+                .filter(|g| entities[done..].contains(&graph_entity(*g)))
+                .collect();
+            repo::retire_progress(
+                &state.db,
+                retired.workspace_id,
+                &left,
+                &graphs,
+                error.as_deref(),
+            )
+            .await?;
+            if let Some(error) = error {
+                anyhow::bail!("clearing a deleted workspace's tenant failed: {error}");
+            }
+        }
+        if budget == 0 {
+            break;
+        }
+    }
     Ok(sent)
 }
 
