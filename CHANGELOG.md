@@ -93,6 +93,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (and `vite preview`) with `frame-src` set to the origin of `NEXC_ONTO_PUBLIC_URL`, so the map's
   frame loads; the build no longer carries a meta policy. `make dev` starts it from
   `../onto-intelli` when `NEXC_ONTO_MODE=service` and says how it runs otherwise.
+  `nexc doctor` checks that `NEXC_ONTO_TOKEN` may act for members with every role nexc asserts (a
+  one-minute session for a throwaway principal), that browsers can reach `NEXC_ONTO_PUBLIC_URL`
+  (not a cluster-only host, `/ui/` answering) and says when `NEXC_ONTO_MODE=off` ignores a URL.
   `make test-onto-live` runs `backend/tests/onto_live.rs` against a real `onto serve` on a
   throwaway PostgreSQL; CI runs the same flows against the in-memory stub, which now serves
   `SchemaService`, `ExecutionService` and the session endpoint.

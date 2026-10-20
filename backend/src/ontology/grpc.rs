@@ -549,7 +549,11 @@ impl OntologyBackend for GrpcOntology {
         principal: &Principal,
         ttl_secs: u64,
     ) -> Result<OntoSession, OntoError> {
-        let mut body = json!({ "tenant": principal.tenant, "ttl_secs": ttl_secs });
+        let mut body = json!({ "ttl_secs": ttl_secs });
+        // No tenant: the server's default one.
+        if !principal.tenant.is_empty() {
+            body["tenant"] = json!(principal.tenant);
+        }
         if principal.acts() {
             body["act_as"] = json!(principal.id);
             body["roles"] = json!(principal.roles);

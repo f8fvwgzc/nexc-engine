@@ -322,7 +322,13 @@ onto-intelli expects.
   across replicas, `builtin:nexc-execution` plus `nexc-audit.toml` and `nexc-workspace.toml`, the
   governance of §2, the impersonating token, `[ui] embed_origins`). Several `onto serve` replicas can
   share the database; set the same `ONTO_SESSION_SECRET` on each.
-- **Checking it**: `nexc doctor` and Settings → Infrastructure say whether it answers.
+- **Checking it**: Settings → Infrastructure says whether it answers. `nexc doctor` also mints a
+  one-minute session for a throwaway principal with every role nexc asserts, in the default tenant
+  (nothing is created): a token without `impersonate = true`, or whose `impersonate_roles` lack one,
+  fails it, since every member, assistant and run engine call would be refused. It warns when
+  `NEXC_ONTO_PUBLIC_URL` (or `NEXC_ONTO_URL` standing in for it) names a host only the cluster
+  resolves, or `/ui/` does not answer there, and says when `NEXC_ONTO_MODE=off` leaves a set
+  `NEXC_ONTO_URL` unused.
   `make test-onto-live` runs the backend's live tests (`backend/tests/onto_live.rs`) against a real
   `onto serve` on a throwaway PostgreSQL with pgvector; CI runs the same flows against the in-memory
   stub (`backend/src/ontology/stub.rs`, `backend/tests/ontology.rs`), which serves the same gRPC
