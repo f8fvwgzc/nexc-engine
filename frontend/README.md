@@ -93,9 +93,12 @@ src/
 - **Head tags:** exactly one `<Seo>` per page. With React 19, react-helmet-async renders native
   hoisted `<title>`/`<meta>` without de-duplication, so never nest a second one.
 - **Security:** no tokens in storage, no `dangerouslySetInnerHTML` (lint-enforced), user content is
-  rendered as text (`whitespace-pre-wrap`), external links use `rel="noopener noreferrer"`, a
-  strict CSP meta tag is injected into production builds (the theme no-flash script is the static
-  `public/theme-init.js`, so `script-src 'self'` suffices).
+  rendered as text (`whitespace-pre-wrap`), external links use `rel="noopener noreferrer"`, and a
+  strict Content-Security-Policy is sent as a header by nginx (`nginx.conf`) and by `vite preview`
+  (`vite.config.ts`), the build carrying none of its own (the theme no-flash script is the static
+  `public/theme-init.js`, so `script-src 'self'` suffices). Its `frame-src` is the origin of
+  `NEXC_ONTO_PUBLIC_URL`, onto-intelli's UI that the workspace map embeds, written at the
+  container's start by `docker-entrypoint.d/40-nexc-frame-src.sh` (`'none'` without one).
 - Motion is CSS-only (Tailwind keyframes in `styles/index.css`) and disabled under
   `prefers-reduced-motion`.
 
