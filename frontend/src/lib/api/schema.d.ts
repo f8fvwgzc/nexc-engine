@@ -1272,7 +1272,12 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Replaces the graph's ontology: its node types and relation types. */
+        /**
+         * Replaces the graph's vocabulary (its node types and relation types) in
+         *     onto-intelli, as the caller: nexc checks its own rules, then plans and
+         *     applies the change there in one audited write and tells the graph's
+         *     sockets (`ontology.updated`). Read-only while onto-intelli is off.
+         */
         put: operations["replace_ontology"];
         post?: never;
         delete?: never;
@@ -2617,70 +2622,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/workspaces/{wid}/map": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * The relationship map of the workspace: its kinds of things (members,
-         *     teams, projects, issues, graphs, documents, memories, …) and the ties
-         *     between them, with today's counts.
-         */
-        get: operations["map"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/workspaces/{wid}/map/{kind}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * The things of one kind in the workspace, by name: the members, the
-         *     teams, the issues, to pick one and follow its ties. Admins and owners
-         *     only: the list spans private teams.
-         */
-        get: operations["map_items"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/workspaces/{wid}/map/{kind}/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * One thing of the workspace with everything it is tied to: a member's
-         *     teams, issues and graphs; an issue's team, project, people, sub-issues
-         *     and graph. Each tie gives its count and its first items, whose own ties
-         *     can be followed in turn. Admins and owners only.
-         */
-        get: operations["map_item"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/workspaces/{wid}/mcp-servers": {
         parameters: {
             query?: never;
@@ -2779,6 +2720,52 @@ export interface paths {
          *     one who administers the platform, does not count.
          */
         patch: operations["update_member"];
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/ontology": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * How the workspace's ontology is kept: the mode, where onto-intelli's UI
+         *     is, the workspace's tenant there, and the schema change proposals still
+         *     open, newest first, each with its link to onto-intelli's review inbox
+         *     (approval happens there). Members and above.
+         */
+        get: operations["status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/ontology/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Opens a browser session for onto-intelli's UI, for the caller in this
+         *     workspace's tenant: their own principal with the roles of their
+         *     workspace role, short-lived (`NEXC_ONTO_SESSION_TTL_SECS`). The page
+         *     hands it to the embedded UI with `postMessage` once the UI announced
+         *     itself (`onto:ready`). Members and above; 409 when onto-intelli is off,
+         *     503 when it is not reachable.
+         */
+        post: operations["session"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/workspaces/{wid}/policies": {
@@ -4003,8 +3990,13 @@ export interface components {
             created: components["schemas"]["Issue"][];
             /** @description How many memories of the workspace it was given. */
             memories_used: number;
+            /** @description Schema change proposals it filed in onto-intelli, for people to review there. */
+            proposals: components["schemas"]["FiledProposal"][];
             reply: string;
-            /** @description Drafts it could not file (unknown team, or no right to file there), as text. */
+            /**
+             * @description Drafts it could not file (unknown team, or no right to file there;
+             *     a schema change onto-intelli refused), as text.
+             */
             skipped: string[];
         };
         /** @description `POST /workspaces/{wid}/assistant` body. */
@@ -4836,6 +4828,19 @@ export interface components {
             identifier: string;
             title: string;
         };
+        /**
+         * @description A schema change proposal the assistant filed in onto-intelli, as
+         *     remembered with the conversation; people review it there.
+         */
+        FiledProposal: {
+            /** @description Whether applying it would break data or vocabulary in use. */
+            breaking: boolean;
+            /** @description onto-intelli's id (`prop_…`). */
+            id: string;
+            /** @description Where to review it in onto-intelli's UI; `null` when its address is unknown. */
+            review_url: string | null;
+            title: string;
+        };
         /** @description The status of the firewall, for the operator. */
         FirewallStatus: {
             addr: string | null;
@@ -4910,7 +4915,11 @@ export interface components {
             id: string;
             name: string;
             nodes: components["schemas"]["GraphNode"][];
-            /** @description The node types and relation types this graph is built from. */
+            /**
+             * @description The node types and relation types this graph is built from: its
+             *     execution vocabulary in onto-intelli (the read-only starter set when
+             *     onto-intelli is off).
+             */
             ontology: components["schemas"]["Ontology"];
             /**
              * Format: uuid
@@ -5475,71 +5484,6 @@ export interface components {
             email: string;
             password: string;
         };
-        /** @description One kind of thing a workspace holds, and how many of it. */
-        MapEntity: {
-            /** Format: int64 */
-            count: number;
-            /**
-             * @description `member`, `team`, `project`, `issue`, `graph`, `run`, `agent`,
-             *     `document`, `passage`, `memory`, `label`, `cycle`.
-             */
-            key: string;
-            label: string;
-        };
-        /** @description One thing of a workspace, as the map names it. */
-        MapItem: {
-            /** Format: uuid */
-            id: string;
-            /**
-             * @description A [`MapKind`] when its ties can be followed; otherwise a kind that is
-             *     only named here: `label`, `cycle`, `topic`.
-             */
-            kind: string;
-            /** @description What tells it apart at a glance: an e-mail, a team key, a state. */
-            subtitle: string;
-            /** @description A member's name, an issue's identifier and title, a graph's name. */
-            title: string;
-        };
-        /**
-         * @description A kind of thing on the workspace map whose ties can be followed.
-         * @enum {string}
-         */
-        MapKind: "member" | "team" | "project" | "issue" | "graph" | "document" | "agent";
-        /** @description One thing of a workspace with everything it is tied to. */
-        MapNeighbourhood: {
-            item: components["schemas"]["MapItem"];
-            /** @description Its ties that exist; a tie to nothing is left out. */
-            ties: components["schemas"]["MapTie"][];
-        };
-        /** @description How two kinds of things are tied together in this workspace. */
-        MapRelation: {
-            /**
-             * Format: int64
-             * @description How many such ties exist right now.
-             */
-            count: number;
-            from: string;
-            /** @description The relation, read from `from` to `to`: "belongs to", "plans", … */
-            label: string;
-            to: string;
-        };
-        /** @description What one thing is tied to in one way. */
-        MapTie: {
-            /**
-             * Format: int64
-             * @description How many there are.
-             */
-            count: number;
-            /** @description The first of them; empty for kinds that are only counted. */
-            items: components["schemas"]["MapItem"][];
-            /**
-             * @description The kind of thing at the other end (also `run`, `node`, `memory`,
-             *     `passage`, which are only counted).
-             */
-            kind: string;
-            /** @description The relation, read from the thing: "is on", "tracks", "was filed by". */
-            label: string;
-        };
         /** @description `POST /workspaces/{wid}/inbox/read` body. */
         MarkRead: {
             /** @description The notifications to mark read; all of them when left out. */
@@ -5840,10 +5784,44 @@ export interface components {
          * @enum {string}
          */
         NotificationKind: "assigned" | "comment" | "state" | "due" | "approval" | "alert";
+        /**
+         * @description How nexc reaches onto-intelli (`NEXC_ONTO_MODE`).
+         * @enum {string}
+         */
+        OntoMode: "service" | "embedded" | "off";
         /** @description The node types and relation types of one graph. */
         Ontology: {
             node_types: components["schemas"]["NodeType"][];
             relation_types: components["schemas"]["RelationType"][];
+        };
+        /**
+         * @description A browser session for onto-intelli's UI: the token is the member's own,
+         *     short-lived and bound to the workspace's tenant; the backend's service
+         *     token never reaches the page.
+         */
+        OntologySession: {
+            /** Format: date-time */
+            expires_at: string;
+            tenant: string;
+            /** @description Handed to the frame with `postMessage({type: "onto:session", token, tenant, workspace})`. */
+            token: string;
+            /** @description onto-intelli's UI to load in the frame (`…/ui/`); deep links go after `#`. */
+            ui_url: string;
+            workspace: string;
+        };
+        /** @description The workspace's ontology, as Settings → Ontology shows it. */
+        OntologyStatus: {
+            /** @description Why the proposals could not be read, when they could not. */
+            error: string | null;
+            mode: components["schemas"]["OntoMode"];
+            /** @description Open proposals, newest first (empty when off or unreachable). */
+            proposals: components["schemas"]["SchemaProposal"][];
+            /** @description The onto-intelli tenant of the workspace (`ws_…`); `null` when off. */
+            tenant: string | null;
+            /** @description onto-intelli's UI (`…/ui/`); `null` when onto-intelli is off. */
+            ui_url: string | null;
+            /** @description The onto-intelli workspace inside the tenant; `null` when off. */
+            workspace: string | null;
         };
         /** @description Live view of the orchestrator for the current user. */
         OrchestratorStatus: {
@@ -6195,6 +6173,11 @@ export interface components {
          * @enum {string}
          */
         ProjectStatus: "planned" | "started" | "paused" | "completed" | "canceled";
+        /**
+         * @description Where a schema change proposal stands in onto-intelli.
+         * @enum {string}
+         */
+        ProposalStatus: "open" | "applied" | "rejected" | "failed" | "withdrawn";
         /** @description A typed relation between two proposed nodes (by `ref`). */
         ProposedEdge: {
             /** @description Key of a relation type; empty means the ontology's dependency relation. */
@@ -6537,6 +6520,26 @@ export interface components {
          * @enum {string}
          */
         RunStatus: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+        /** @description A schema change proposal, as nexc lists it; people review it in onto-intelli. */
+        SchemaProposal: {
+            /** @description Whether applying it would break data or vocabulary in use. */
+            breaking: boolean;
+            /** @description Filed by an agent (the assistant). */
+            by_agent: boolean;
+            /** @description Changes in the change set. */
+            changes: number;
+            /** Format: date-time */
+            created_at: string;
+            /** @description onto-intelli's id (`prop_…`). */
+            id: string;
+            /** @description Who filed it: `user:{id}`, or `assistant:{user id}` for the assistant. */
+            proposer: string;
+            rationale: string;
+            /** @description Where to review it in onto-intelli's UI; `null` when its address is unknown. */
+            review_url: string | null;
+            status: components["schemas"]["ProposalStatus"];
+            title: string;
+        };
         /** @description One thing that matched a search. */
         SearchHit: {
             /** Format: uuid */
@@ -7186,6 +7189,8 @@ export interface components {
         TurnOutcome: {
             created?: components["schemas"]["FiledIssue"][];
             memories_used?: number;
+            /** @description Schema change proposals it filed. */
+            proposals?: components["schemas"]["FiledProposal"][];
             skipped?: string[];
         };
         /** @description Whether an account signs in with a second factor. */
@@ -7517,14 +7522,6 @@ export interface components {
             /** Format: uuid */
             id: string;
             role: components["schemas"]["WorkspaceRole"];
-        };
-        /**
-         * @description The relationship map of a workspace: its kinds of things and the ties
-         *     between them, with today's numbers.
-         */
-        WorkspaceMap: {
-            entities: components["schemas"]["MapEntity"][];
-            relations: components["schemas"]["MapRelation"][];
         };
         /** @description A member of a workspace. */
         WorkspaceMember: {
@@ -10674,6 +10671,15 @@ export interface operations {
                     "application/json": components["schemas"]["Graph"];
                 };
             };
+            /** @description onto-intelli refused the caller (a guest is a viewer there) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -10682,7 +10688,7 @@ export interface operations {
                     "application/json": components["schemas"]["Problem"];
                 };
             };
-            /** @description A relation made blocking would create a cycle */
+            /** @description A relation made blocking would create a cycle, or onto-intelli is off (read-only) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -10691,8 +10697,17 @@ export interface operations {
                     "application/json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Invalid, or a type still in use was removed */
+            /** @description Invalid, a type still in use was removed, or onto-intelli refused a field */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description onto-intelli is not reachable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14477,132 +14492,6 @@ export interface operations {
             };
         };
     };
-    map: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Workspace id */
-                wid: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkspaceMap"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Problem"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    map_items: {
-        parameters: {
-            query?: {
-                /** @description Part of a name, an e-mail, an identifier. */
-                q?: string | null;
-                /** @description 1-50, default 20. */
-                limit?: number | null;
-                offset?: number | null;
-            };
-            header?: never;
-            path: {
-                /** @description Workspace id */
-                wid: string;
-                /** @description Kind of thing */
-                kind: components["schemas"]["MapKind"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MapItem"][];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Problem"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    map_item: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Workspace id */
-                wid: string;
-                /** @description Kind of thing */
-                kind: components["schemas"]["MapKind"];
-                /** @description Id of the thing */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MapNeighbourhood"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Problem"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
     list: {
         parameters: {
             query?: never;
@@ -14983,6 +14872,100 @@ export interface operations {
             };
             /** @description Would leave no owner */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OntologyStatus"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    session: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OntologySession"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description onto-intelli is off (NEXC_ONTO_MODE=off) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description onto-intelli is not reachable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

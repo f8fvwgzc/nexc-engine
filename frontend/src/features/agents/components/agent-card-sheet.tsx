@@ -40,6 +40,8 @@ import { AgentA2a } from './agent-a2a';
 import { AgentStatusBadge } from './agent-status-badge';
 import { AgentTokens } from './agent-tokens';
 import { BudgetProgress } from './budget-progress';
+import { OntologyLink } from '@/features/ontology/ontology-link';
+import { ontoEntity } from '@/schemas/ontology';
 
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -474,6 +476,9 @@ export function AgentCardSheet({ agent, admin, onOpenChange, onEdit }: AgentCard
                 <span className="truncate">{shown.principal_id}</span>
                 <CopyButton value={shown.principal_id} label="Copy principal" />
               </SheetDescription>
+              <div>
+                <OntologyLink entity={ontoEntity('agent', shown.principal_id)} />
+              </div>
             </SheetHeader>
             <div className="flex-1 space-y-4 px-4 pb-4">
               {quarantined && (

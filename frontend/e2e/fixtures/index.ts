@@ -44,14 +44,13 @@ import labels from './labels.json' with { type: 'json' };
 import latency from './latency.json' with { type: 'json' };
 import llmSettings from './llm-settings.json' with { type: 'json' };
 import loginProviders from './login-providers.json' with { type: 'json' };
-import mapItems from './map-items.json' with { type: 'json' };
-import mapNeighbourhood from './map-neighbourhood.json' with { type: 'json' };
-import map from './map.json' with { type: 'json' };
 import mcpServers from './mcp-servers.json' with { type: 'json' };
 import members from './members.json' with { type: 'json' };
 import memories from './memories.json' with { type: 'json' };
 import memoryTopics from './memory-topics.json' with { type: 'json' };
 import models from './models.json' with { type: 'json' };
+import ontologySession from './ontology-session.json' with { type: 'json' };
+import ontology from './ontology.json' with { type: 'json' };
 import orchestrator from './orchestrator.json' with { type: 'json' };
 import passages from './passages.json' with { type: 'json' };
 import platformEvents from './platform-events.json' with { type: 'json' };
@@ -150,14 +149,13 @@ export const fixtures = {
   latency: typed<One<'LatencyReport'>>(latency),
   llmSettings: typed<One<'LlmSettings'>>(llmSettings),
   loginProviders: typed<One<'LoginProviders'>>(loginProviders),
-  map: typed<One<'WorkspaceMap'>>(map),
-  mapItems: typed<Many<'MapItem'>>(mapItems),
-  mapNeighbourhood: typed<One<'MapNeighbourhood'>>(mapNeighbourhood),
   mcpServers: typed<Many<'McpServer'>>(mcpServers),
   members: typed<Many<'WorkspaceMember'>>(members),
   memories: typed<Many<'Memory'>>(memories),
   memoryTopics: typed<Many<'MemoryTopic'>>(memoryTopics),
   models: typed<One<'ModelCatalog'>>(models),
+  ontology: typed<One<'OntologyStatus'>>(ontology),
+  ontologySession: typed<One<'OntologySession'>>(ontologySession),
   orchestrator: typed<One<'OrchestratorStatus'>>(orchestrator),
   passages: typed<Many<'Passage'>>(passages),
   platformEvents: typed<Many<'PlatformEvent'>>(platformEvents),

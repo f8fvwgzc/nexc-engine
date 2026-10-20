@@ -174,12 +174,13 @@ const handlers: [string, Handler][] = [
   ['GET /workspaces/:wid/timeline/days', ({ mode }) => list(mode, fixtures.timelineDays)],
   ['GET /workspaces/:wid/timeline/summary', ({ mode }) => full(mode, fixtures.daySummary, null)],
   ['GET /workspaces/:wid/timeline', ({ mode }) => list(mode, fixtures.timeline)],
+
+  /* the ontology, in onto-intelli */
   [
-    'GET /workspaces/:wid/map',
-    ({ mode }) => full(mode, fixtures.map, { entities: [], relations: [] }),
+    'GET /workspaces/:wid/ontology',
+    ({ mode }) => full(mode, fixtures.ontology, { ...fixtures.ontology, proposals: [] }),
   ],
-  ['GET /workspaces/:wid/map/:kind', ({ mode }) => list(mode, fixtures.mapItems)],
-  ['GET /workspaces/:wid/map/:kind/:id', () => fixtures.mapNeighbourhood],
+  ['POST /workspaces/:wid/ontology/session', () => fixtures.ontologySession],
 
   /* the platform console */
   [
@@ -241,6 +242,18 @@ const compiled = handlers.map(([key, handler]) => {
   return { method, regex: new RegExp(`^${pattern}$`), names, handler };
 });
 
+/** The stand-in for onto-intelli's UI: `onto:ready`, then what the console handed over. */
+const ONTO_UI = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>onto-intelli</title>
+<style>body{font:14px system-ui,sans-serif;margin:0;padding:24px;color:#111;background:#fff}</style></head>
+<body><main><h1 style="font-size:16px">onto-intelli map</h1><p id="state">Waiting for a session…</p></main>
+<script>
+addEventListener('message', (e) => {
+  if (e.data && e.data.type === 'onto:session')
+    document.getElementById('state').textContent = 'Signed in to ' + e.data.workspace;
+});
+parent.postMessage({ type: 'onto:ready' }, '*');
+</script></body></html>`;
+
 function problem(status: number, title: string) {
   return { type: 'about:blank', title, status, detail: null };
 }
@@ -294,6 +307,12 @@ export async function mockApi(page: Page, options: MockOptions): Promise<MockLog
       log.unhandled.push(`${method} ${path}`);
       return route.fulfill({ status: 404, json: problem(404, 'Not Found') });
     },
+  );
+
+  // onto-intelli's UI, embedded by the map: a stand-in page that announces itself and shows
+  // that the session reached it (the real UI is onto-intelli's to test).
+  await page.route(/^http:\/\/onto\.test\//, (route) =>
+    route.fulfill({ contentType: 'text/html', body: ONTO_UI }),
   );
 
   // The canvas's collaboration socket: opened, answered with pongs, otherwise silent.

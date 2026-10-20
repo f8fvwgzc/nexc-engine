@@ -1,3 +1,4 @@
+import { useQuery } from '@tanstack/react-query';
 import { PlusIcon, ShapesIcon, Trash2Icon } from 'lucide-react';
 import { useState } from 'react';
 
@@ -15,6 +16,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
+import { ontologyStatusQuery } from '@/features/ontology/api';
 import { errorMessage } from '@/lib/api/errors';
 import type { Graph, NodeType, Ontology, RelationType } from '@/schemas/graph';
 
@@ -74,6 +76,13 @@ function OntologyEditor({ graph, onDone }: { graph: Graph; onDone: () => void })
     graph.ontology.relation_types.map((t) => draft(t, false)),
   );
   const { mutate, isPending, error } = useReplaceOntology(graph.id);
+  // The vocabulary lives in onto-intelli; without it the starter set is read-only.
+  const { data: status } = useQuery({
+    ...ontologyStatusQuery(graph.workspace_id ?? ''),
+    enabled: Boolean(graph.workspace_id),
+    retry: false,
+  });
+  const readOnly = !graph.workspace_id || status?.mode === 'off';
 
   const nodeUse = (key: string) => graph.nodes.filter((n) => n.kind === key).length;
   const edgeUse = (key: string) => graph.edges.filter((e) => e.kind === key).length;
@@ -267,6 +276,12 @@ function OntologyEditor({ graph, onDone }: { graph: Graph; onDone: () => void })
           </p>
         </section>
       </div>
+      {readOnly && (
+        <p role="status" className="text-sm text-muted-foreground">
+          Read-only: this server runs without onto-intelli, where graph vocabularies are kept, so
+          every graph uses the starter set.
+        </p>
+      )}
       {error && (
         <p role="alert" className="text-sm text-destructive">
           {errorMessage(error)}
@@ -276,7 +291,12 @@ function OntologyEditor({ graph, onDone }: { graph: Graph; onDone: () => void })
         <Button variant="outline" onClick={onDone}>
           Cancel
         </Button>
-        <AnimatedButton onClick={save} loading={isPending} loadingText="Saving…">
+        <AnimatedButton
+          onClick={save}
+          loading={isPending}
+          loadingText="Saving…"
+          disabled={readOnly}
+        >
           Save ontology
         </AnimatedButton>
       </DialogFooter>
@@ -295,8 +315,8 @@ export function OntologyDialog({ graph }: { graph: Graph }) {
           <DialogHeader>
             <DialogTitle>Ontology</DialogTitle>
             <DialogDescription>
-              The kinds of node and relation this graph is built from. The planner reuses these and
-              proposes new ones when the goal needs them.
+              The kinds of node and relation this graph is built from, kept in onto-intelli. The
+              planner reuses these and proposes new ones when the goal needs them.
             </DialogDescription>
           </DialogHeader>
           {open && <OntologyEditor graph={graph} onDone={() => setOpen(false)} />}

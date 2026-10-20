@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowUpIcon,
+  GitPullRequestArrowIcon,
   HistoryIcon,
   MapPinIcon,
   SparklesIcon,
@@ -53,7 +54,7 @@ function fromMessages(messages: ConversationMessage[]): Turn[] {
       : {
           role: 'assistant',
           content: m.content,
-          outcome: m.outcome ?? { created: [], skipped: [], memories_used: 0 },
+          outcome: m.outcome ?? { created: [], skipped: [], memories_used: 0, proposals: [] },
         },
   );
 }
@@ -121,6 +122,7 @@ function AssistantPanel({ current }: { current: Workspace }) {
         created: reply.created.map(({ id, identifier, title }) => ({ id, identifier, title })),
         skipped: reply.skipped,
         memories_used: reply.memories_used,
+        proposals: reply.proposals,
       };
       setThread((t) => ({
         id: reply.conversation_id,
@@ -302,6 +304,21 @@ function AssistantPanel({ current }: { current: Workspace }) {
                                   {issue.identifier}
                                 </span>
                                 <span className="min-w-0 flex-1 truncate">{issue.title}</span>
+                              </Link>
+                            ))}
+                            {turn.outcome.proposals.map((proposal) => (
+                              <Link
+                                key={proposal.id}
+                                to={`/app/settings/map?view=${encodeURIComponent(`/proposals/${proposal.id}`)}`}
+                                className="flex items-center gap-2 rounded-lg border px-2.5 py-1.5 hover:bg-muted/50"
+                                title="Proposed in onto-intelli: an approver decides there"
+                              >
+                                <GitPullRequestArrowIcon
+                                  className="size-3.5 shrink-0 text-muted-foreground"
+                                  aria-hidden
+                                />
+                                <span className="min-w-0 flex-1 truncate">{proposal.title}</span>
+                                <span className="text-xs text-muted-foreground">to review</span>
                               </Link>
                             ))}
                             {turn.outcome.skipped.length > 0 && (

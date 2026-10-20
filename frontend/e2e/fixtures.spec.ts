@@ -22,11 +22,8 @@ import {
   daySummarySchema,
   infrastructureSchema,
   latencyReportSchema,
-  mapItemSchema,
-  mapNeighbourhoodSchema,
   timelineDaySchema,
   timelineEntrySchema,
-  workspaceMapSchema,
 } from '../src/schemas/insight';
 import {
   issueEventSchema,
@@ -44,6 +41,7 @@ import {
 } from '../src/schemas/knowledge';
 import { mcpServerSchema } from '../src/schemas/mcp';
 import { memorySchema, memoryTopicSchema } from '../src/schemas/memory';
+import { ontologySessionSchema, ontologyStatusSchema } from '../src/schemas/ontology';
 import { orchestratorStatusSchema } from '../src/schemas/orchestrator';
 import {
   alertSchema,
@@ -114,14 +112,13 @@ const SCHEMAS: Partial<Record<keyof Fixtures, z.ZodType>> = {
   latency: latencyReportSchema,
   llmSettings: llmSettingsSchema,
   loginProviders: loginProvidersSchema,
-  map: workspaceMapSchema,
-  mapItems: many(mapItemSchema),
-  mapNeighbourhood: mapNeighbourhoodSchema,
   mcpServers: many(mcpServerSchema),
   members: many(workspaceMemberSchema),
   memories: many(memorySchema),
   memoryTopics: many(memoryTopicSchema),
   models: modelCatalogSchema,
+  ontology: ontologyStatusSchema,
+  ontologySession: ontologySessionSchema,
   orchestrator: orchestratorStatusSchema,
   passages: many(passageSchema),
   policies: many(policySchema),
