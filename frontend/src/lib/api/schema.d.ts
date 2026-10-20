@@ -5922,7 +5922,7 @@ export interface components {
          * @description A shape of personal data the DLP classifier looks for.
          * @enum {string}
          */
-        PiiKind: "email" | "phone" | "card" | "national_id";
+        PiiKind: "email" | "phone" | "card" | "national_id" | "corporate_number";
         /** @description The PII rule of the DLP classifier. */
         PiiRule: {
             action: components["schemas"]["RuleAction"] | null;
