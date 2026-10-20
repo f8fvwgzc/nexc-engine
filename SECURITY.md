@@ -53,6 +53,11 @@ changes the text of an output the same user can already edit).
 - Set `NEXC_ENV=production`, serve over HTTPS and keep `NEXC_COOKIE_SECURE=true`.
 - Keep the agent runtime and PostgreSQL on private networks (the provided Compose file and
   Kubernetes NetworkPolicies do this) and leave `RUNTIME_ALLOW_CODE_EXEC=false` unless needed.
+  The runtime reaches the internet only through `runtime-egress`: keep its allow-list
+  (`NEXC_RUNTIME_EGRESS_ALLOW`) to the model endpoints you use.
+- Give the agent runtime public keys only (`NEXC_AGENT_TOKEN_JWKS_URL`): the backend alone signs
+  agent tokens. Back up `NEXC_AGENT_TOKEN_SIGNING_KEY` if you set one, and rotate it as
+  `docs/CONTRACT.md` §8 describes.
 - Back up `NEXC_MASTER_KEY` together with the database; rotate `NEXC_RUNTIME_TOKEN` and
   `NEXC_JWT_SECRET` if they may have leaked.
 

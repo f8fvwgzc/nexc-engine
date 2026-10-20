@@ -7,6 +7,63 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- **Only the backend can sign an agent token (breaking; see the upgrade note below).** The per-run
+  agent token was HS256 under a key derived from the runtime's bearer secret, so the runtime,
+  which the design treats as untrusted, could mint any token it liked. It is now EdDSA (Ed25519):
+  the backend signs with `NEXC_AGENT_TOKEN_SIGNING_KEY`, or a seed derived from
+  `NEXC_MASTER_KEY`, and names the key by `kid` (its RFC 7638 thumbprint). The runtime holds
+  public keys only, configured (`NEXC_AGENT_TOKEN_VERIFY_KEYS`) or fetched from the backend's new
+  public key set, `GET /api/v1/agent-tokens/jwks.json`, when a token names a key it has not seen
+  (at most every 10 s) and every 5 minutes; it accepts `EdDSA` and nothing else. The set lists the
+  signing key first, then the backend's `NEXC_AGENT_TOKEN_VERIFY_KEYS`, so keys rotate without a
+  gap (`docs/CONTRACT.md` §8). A sub-agent's narrowed authority stays in the runtime's memory and
+  is no longer signed. `nexc doctor` prints the key id and public key.
+- Agent tokens name the human the agent acts for: `on_behalf_of` `{user_id, workspace_role}`, who
+  started the run and their role in its workspace, required on both sides. The node's
+  `data_read` `context` span records it, and a `policy_mismatch` audit entry names it.
+- Creating and deleting an agent are audit actions, `agent_created` and `agent_deleted` (subject
+  the principal, detail how, the role, the owner and the policy version), written in the same
+  transaction as the change on every path: by hand, from a template, a new workspace's default
+  organisation (so a new workspace's log and timeline start with its default agents) and an A2A
+  counterpart's proxy agent.
+- The agent runtime reaches only the backend and its LLM endpoints. `nexc egress-proxy` (in the
+  backend image, no secrets) connects only to the `host:port` entries of `NEXC_EGRESS_ALLOW` and
+  answers 403 to anything else, logging every connection. Docker Compose moves the runtime off the
+  `egress` network onto the internal `agents` network, with `HTTPS_PROXY` pointing at the new
+  `runtime-egress` service (`NEXC_RUNTIME_EGRESS_ALLOW`, `api.anthropic.com:443,api.openai.com:443`
+  by default). Kubernetes (kustomize and the chart) adds `runtime-egress` and Egress
+  NetworkPolicies: the runtime may reach the backend, `runtime-egress` and DNS; `runtime-egress`
+  reaches DNS and TLS on public addresses (the chart's `networkPolicies.runtimeEgressExtra` adds a
+  local provider). Model calls still go to the provider without passing the tools gateway: an
+  open gap, recorded in `docs/AGENTSECOPS.md` §4.3.
+
+**Upgrade note for existing deployments.**
+
+1. Upgrade the backend and the runtime together, with no run in flight: an old runtime refuses the
+   new tokens and a new one refuses the old, so a node dispatched across the switch fails with
+   `agent token refused` and has to be run again.
+2. Remove `NEXC_AGENT_TOKEN_KEY` wherever you set it (`.env`, `secret.env`, the chart's
+   `secrets.values`): the backend and the runtime refuse to start while it is set, and the chart
+   refuses to render. An empty `NEXC_AGENT_TOKEN_KEY=` line is ignored. The backend needs nothing
+   new: it signs with a seed derived from `NEXC_MASTER_KEY` unless you set
+   `NEXC_AGENT_TOKEN_SIGNING_KEY` (`openssl rand -base64 32`).
+3. Give the runtime the backend's public keys: `NEXC_AGENT_TOKEN_JWKS_URL` (Compose, kustomize and
+   the chart set `http://backend:8080/api/v1/agent-tokens/jwks.json`; for `make dev` add
+   `NEXC_AGENT_TOKEN_JWKS_URL=http://localhost:8080/api/v1/agent-tokens/jwks.json` to `.env`), or
+   `NEXC_AGENT_TOKEN_VERIFY_KEYS` with the public key `nexc doctor` prints. Without either it does
+   not start.
+4. Docker Compose: a provider other than Anthropic's or OpenAI's API needs its `host:port` in
+   `NEXC_RUNTIME_EGRESS_ALLOW`; a local one on the Docker host is reached as
+   `host.docker.internal` (`NEXC_RUNTIME_EGRESS_ALLOW=host.docker.internal:11434` with
+   `NEXC_LLM_BASE_URL=http://host.docker.internal:11434/v1` for Ollama).
+5. Kubernetes: with a CNI that enforces NetworkPolicy, the same goes for `NEXC_RUNTIME_EGRESS_ALLOW`
+   in `config.env` (chart: `runtime.egress.allow`), and a provider on a private address or in the
+   cluster also needs an egress rule for `runtime-egress` (chart:
+   `networkPolicies.runtimeEgressExtra`). Cluster DNS is expected at `kube-system` /
+   `k8s-app: kube-dns` (chart: `networkPolicies.dnsNamespace`, `dnsPodLabels`).
+
 ### Added
 
 - A finished run reports back on the issues its graph executes (`docs/CONTRACT.md` §5, issue

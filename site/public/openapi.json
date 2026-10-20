@@ -1172,6 +1172,26 @@
         ]
       }
     },
+    "/api/v1/agent-tokens/jwks.json": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "The keys agent tokens verify with: the one the backend signs with first,\nthen the others it still accepts (`NEXC_AGENT_TOKEN_VERIFY_KEYS`: the\nprevious key after a rotation, the next one before it). Public: they are\npublic keys, and the runtime fetches them without credentials.",
+        "operationId": "jwks",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Jwks"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/agents": {
       "get": {
         "tags": [
@@ -1236,7 +1256,7 @@
         "tags": [
           "agents"
         ],
-        "summary": "Adds an agent to a workspace (members and above).",
+        "summary": "Adds an agent to a workspace (members and above); audited as `agent_created`.",
         "operationId": "create",
         "requestBody": {
           "content": {
@@ -1433,7 +1453,7 @@
         "tags": [
           "agents"
         ],
-        "summary": "Removes an agent (its reports no longer report to anyone).",
+        "summary": "Removes an agent (its reports no longer report to anyone); audited as\n`agent_deleted`.",
         "operationId": "delete",
         "parameters": [
           {
@@ -16140,7 +16160,9 @@
           "agent_token_revoked",
           "agent_a2a_changed",
           "a2a_counterpart_added",
-          "a2a_counterpart_removed"
+          "a2a_counterpart_removed",
+          "agent_created",
+          "agent_deleted"
         ]
       },
       "AuditAnswer": {
@@ -19243,6 +19265,59 @@
           "token": {
             "type": "string",
             "description": "What the account's holder sets a new password with\n(`POST /auth/password/reset`). It is not stored and cannot be shown again."
+          }
+        }
+      },
+      "Jwk": {
+        "type": "object",
+        "description": "One key of the set the backend publishes (RFC 7517, `kty` `OKP`, RFC 8037).",
+        "required": [
+          "kty",
+          "crv",
+          "x",
+          "kid",
+          "alg",
+          "use"
+        ],
+        "properties": {
+          "alg": {
+            "type": "string",
+            "description": "`EdDSA`."
+          },
+          "crv": {
+            "type": "string",
+            "description": "`Ed25519`."
+          },
+          "kid": {
+            "type": "string",
+            "description": "The key id tokens name in their header: the RFC 7638 thumbprint."
+          },
+          "kty": {
+            "type": "string",
+            "description": "`OKP`."
+          },
+          "use": {
+            "type": "string",
+            "description": "`sig`."
+          },
+          "x": {
+            "type": "string",
+            "description": "The public key, base64url of its 32 bytes."
+          }
+        }
+      },
+      "Jwks": {
+        "type": "object",
+        "description": "The public keys agent tokens verify with: the one the backend signs with\nfirst, then the others it still accepts (the previous one after a\nrotation, the next one before it).",
+        "required": [
+          "keys"
+        ],
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Jwk"
+            }
           }
         }
       },

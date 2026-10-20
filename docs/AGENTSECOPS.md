@@ -182,11 +182,25 @@ Five rules the design follows:
   `capabilities` (JSON): allowed tools, data scopes (knowledge topics, document labels, memory
   namespaces, onto-intelli workspaces), allowed egress hosts, allowed counterpart agents, maximum
   delegation depth and fan-out, model allow-list, budgets. `status` gains `quarantined`.
-- **Per-run token.** When a node is dispatched the backend mints a short-lived signed token (reuse
-  the JWT machinery in `security/jwt.rs`, separate key) carrying the agent principal, run id, node
-  id, the capability snapshot and the policy version. The runtime refuses to start without it and
-  checks every tool call against it. Sub-agents get a **narrowed** copy (never wider than the
-  parent), which is how delegation is bounded.
+- **Per-run token.** When a node is dispatched the backend mints a short-lived signed token
+  carrying the agent principal, the human it acts for (`on_behalf_of`: who started the run and
+  their workspace role), run id, node id, the capability snapshot and the policy version. The
+  runtime refuses to start without it and checks every tool call against it. Sub-agents get a
+  **narrowed** copy (never wider than the parent), held in the runtime's memory and never signed,
+  which is how delegation is bounded.
+- **Only the backend can sign.** The token is EdDSA (Ed25519), signed with a key the runtime
+  never sees (`NEXC_AGENT_TOKEN_SIGNING_KEY`, or derived from the master key), named in the
+  header by `kid` (its RFC 7638 thumbprint). The runtime and any outside verifier hold public
+  keys only, configured or fetched from `GET /api/v1/agent-tokens/jwks.json`, which lists the
+  signing key and the others still accepted, so keys rotate without a gap (CONTRACT §8). Until
+  2026-10-20 the token was HS256 under a key derived from the runtime's own bearer secret: the
+  runtime, which this design calls untrusted, could mint any token it liked. That key is gone,
+  and setting `NEXC_AGENT_TOKEN_KEY` now stops both sides from starting.
+- **Every principal's birth and death is on the record.** Creating an agent (by hand, from a
+  template, as a new workspace's default organisation, as an A2A counterpart's proxy) and
+  deleting one are audited as `agent_created` and `agent_deleted`, in the same transaction as the
+  change, with the actor; so are capability edits (`policy_changed`), quarantine and its release
+  (`agent_quarantined`, `agent_released`).
 - **Agent card.** The console shows what SoftBank calls the ID card: purpose, owner, team, scopes,
   model, budget left, last heartbeat, current risk score, policy version, and the agent's last
   twenty actions.
@@ -241,6 +255,20 @@ Five rules the design follows:
   sequence of a run gives "this run looks unlike anything this agent did before".
 - **Kill switches.** Pause an agent, quarantine an agent, cancel a run, revoke a token (session
   epochs already do this for humans in seconds; the same gate works for agent principals).
+- **The runtime's reach.** The backend's re-check only sees the spans the runtime reports, so a
+  compromised runtime must not be able to act on its own. It reaches the backend (for the token
+  keys) and its LLM endpoints, nothing else: in Kubernetes an Egress NetworkPolicy lets it reach
+  the backend, DNS and `runtime-egress`; in Docker Compose it sits on an internal network only.
+  `runtime-egress` (`nexc egress-proxy`, from the backend image, with no secrets) opens a
+  connection only to the `host:port` entries of `NEXC_RUNTIME_EGRESS_ALLOW` (Anthropic and OpenAI
+  by default, a local provider by name), answers 403 to the rest and logs every connection. Tools
+  that call out (`fetch_url`, MCP, A2A) were already the backend gateway's, under the policy.
+- **Open gap: LLM traffic does not go through the gateway.** The runtime still talks to the model
+  provider itself (through `runtime-egress`, which sees host names, never what is inside TLS).
+  Nothing checks a prompt on its way out or counts its bytes against the policy, and a runtime
+  that is compromised can put anything in a prompt to an allowed provider. Closing it means
+  routing model calls through the backend (which holds the keys anyway) or a gateway that
+  terminates TLS; it is not done.
 
 ### 4.4 Governance
 
@@ -311,7 +339,7 @@ with no API key; Ollama for an air-gapped one.
 | `llm_usage`                                 | `agent_id`, `node_id`, `span_id`.                                                                                                                                               |
 | `node_runs`                                 | status adds `waiting_approval`; `policy_version`.                                                                                                                               |
 | `documents`, `knowledge_topics`, `memories` | `label text` (classification).                                                                                                                                                  |
-| `audit_log`                                 | actions add `policy_changed`, `agent_quarantined`, `agent_released`, `trace_sealed`.                                                                                            |
+| `audit_log`                                 | actions add `policy_changed`, `agent_quarantined`, `agent_released`, `trace_sealed`, `agent_created`, `agent_deleted`.                                                          |
 
 All ids UUIDv7. Nothing here is updated after write except `agents` and `node_runs`.
 
@@ -319,8 +347,9 @@ All ids UUIDv7. Nothing here is updated after write except `agents` and `node_ru
 
 ## 6. Protocol changes
 
-1. **Contract §8 (now):** request gains `token` (the signed per-run agent token) and
-   `capabilities`; stream gains `{"type":"span", ...}` lines. Backwards compatible.
+1. **Contract §8 (now):** request gains `token` (the signed per-run agent token: EdDSA since
+   2026-10-20, verified with the backend's public keys) and `capabilities`; stream gains
+   `{"type":"span", ...}` lines. Backwards compatible.
 2. **gRPC between backend and runtime (phase 4):** one bidirectional stream per run,
    `Execute(stream RuntimeEvent) returns (stream BackendCommand)`. Spans, deltas, tokens and
    artifacts go up; `cancel`, `approval_granted`, `policy_update` come down. Rust side with
