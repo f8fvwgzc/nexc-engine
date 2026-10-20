@@ -192,6 +192,12 @@ it into onto-intelli, once per graph, as the backend's own principal (`InitGraph
 
 From then on `graphs.ontology` is neither read nor written: new graphs leave it `{}`.
 
+An installation that runs with `NEXC_ONTO_MODE=off` does not read the stored ontologies either:
+every graph has the starter vocabulary. Nodes and edges of types it does not have are kept and still
+run in their order (an edge keeps its `blocking` flag), but such a node runs as an unknown type (role
+`engineer` unless it names one, no artifact, no code execution), and new nodes and edges must use
+the starter types. Turn onto-intelli on to keep a graph's own types.
+
 The audit's facts move to the workspace's tenant: the migration that brings the projection resets
 the export cursors, so each workspace's facts are backfilled into its tenant once more. The facts
 already in the default tenant stay there.
