@@ -39,20 +39,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reaches nexc within the cache's lifetime: edges follow their relation's `blocking` flag (unless
   that would close a cycle) and canvases get `ontology.updated`. When onto-intelli is unreachable a
   kept vocabulary is served; without one, reads answer 503 and a run's node fails with a retryable
-  `ontology unavailable` (the attempts it spends waiting count against `NEXC_MAX_ATTEMPTS`). A reader onto-intelli does not show a private team's graph to (the run
-  engine, a member the projection has not named in the team yet) is answered as the backend's own
-  principal, and a graph is initialised only when that principal does not find it either, so a
-  graph's own types are never reset to the starter set.
+  `ontology unavailable` (the attempts it spends waiting count against `NEXC_MAX_ATTEMPTS`). A
+  reader onto-intelli does not show a private team's graph to (the run engine, a member the
+  projection has not named in the team yet) is answered as the backend's own principal, and a
+  graph is initialised only when that principal does not find it either, or finds only the entity
+  the projection stated without a type, so a graph's own types are never reset to the starter set.
 - `nexc onto migrate` (also run in the background at start, `NEXC_ONTO_MIGRATE_ON_START`) copies
   every graph's stored ontology into onto-intelli with `SetVocabulary`, once per graph, idempotent
   and resumable (`onto_vocabulary_migrations`, migration `20261006000090_onto_vocabularies`); a
-  graph read before it is copied on that read. A workspace transfer reads every graph's vocabulary
-  from onto-intelli into the copied `graphs.ontology`, so the target starts from it (and fails while
-  onto-intelli does not answer). Each copy holds the graph's advisory lock and looks
+  graph read before it is copied on that read. Each copy holds the graph's advisory lock and looks
   again under it, so a graph migrated and edited while a pass worked through its batch is never
   written over, and a graph onto-intelli already holds is only recorded; one replica runs the
-  start-up pass at a time. `graphs.ontology` is no longer read or written; its
-  drop is written down for the next release (`docs/ONTOLOGY.md` §7).
+  start-up pass at a time. `graphs.ontology` is no longer read or written, except by a workspace
+  transfer, which reads every graph's vocabulary from onto-intelli into the copied
+  `graphs.ontology` so the target starts from it (and fails while onto-intelli does not answer);
+  the column's drop is written down for the next release (`docs/ONTOLOGY.md` §7).
 - The workspace projected into onto-intelli (`docs/ONTOLOGY.md` §5, migration
   `20261006000091_onto_projection`): teams, people, projects, cycles, issues, agents, graphs,
   documents and runs as entities and links (ids, names, states and links, never content), through
@@ -64,16 +65,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (a deleted team's cycles, a deleted graph's runs and node and relation types: migration
   `20261006000092_onto_projection_follows` queues them before their parent goes). A deleted
   workspace's tenant is retired (`onto_retired_tenants`): the export deletes what the projection
-  put there, and the operator drops the tenant's schema for the rest. `deploy/onto/nexc-workspace.toml`
-  names its kinds and relations.
+  put there, and the operator drops the tenant's schema for the rest.
+  `deploy/onto/nexc-workspace.toml` names its kinds and relations.
 - The Map page embeds onto-intelli's own UI (members and above): `POST
   /workspaces/{wid}/ontology/session` mints the member's own short-lived, read-only session
   (`NEXC_ONTO_SESSION_TTL_SECS`; the console renews it at three quarters of the lifetime its
   `expires_at` gives, and on return to a tab that was away past that point) with the backend's
-  token, which never reaches the browser, and the
-  page hands it to the frame by `postMessage` after `onto:ready`, to the frame's origin only
-  (`NEXC_ONTO_PUBLIC_URL`). Issues, agents and runs link to themselves on the map
-  (`#/entities/<id>`).
+  token, which never reaches the browser, and the page hands it to the frame by `postMessage`
+  after `onto:ready`, to the frame's origin only (`NEXC_ONTO_PUBLIC_URL`). Issues, agents and runs
+  link to themselves on the map (`#/entities/<id>`).
 - The assistant reads the workspace's schema (`get_schema`), dry-runs a change
   (`plan_schema_change`) and files a proposal with its rationale (`propose_schema_change`) as the
   member's assistant, an agent that never applies or approves; its reply links each proposal.
