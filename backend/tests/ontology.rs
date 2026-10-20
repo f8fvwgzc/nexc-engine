@@ -327,6 +327,127 @@ async fn graph_vocabularies_live_in_onto_intelli_and_are_written_as_the_member(p
     assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
 }
 
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_private_teams_graph_keeps_its_own_types_whoever_reads_it(pool: PgPool) {
+    let stub = Arc::new(StubOntology::new());
+    let app = TestApp::with_ontology(
+        pool,
+        &[("NEXC_ONTO_VOCABULARY_TTL_SECS", "0")],
+        stub.clone(),
+    )
+    .await;
+    let w = world(&app).await;
+    let tenant = tenant_of(w.wid);
+    let onto_ws = workspace_name(&app.state.settings.onto_workspace_prefix, w.wid);
+
+    // A graph of the private team, with a type of its own and a node of that type.
+    let (status, made) = call(
+        &app,
+        Method::POST,
+        "/graphs",
+        &w.owner,
+        Some(json!({"name": "Reorg plan", "team_id": w.secret})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    let gid = made["id"].as_str().unwrap().to_owned();
+    let mut vocabulary = made["ontology"].clone();
+    vocabulary["node_types"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"key": "risk", "label": "Risk", "default_role": "analyst", "stage": 1}));
+    let (status, put) = call(
+        &app,
+        Method::PUT,
+        &format!("/graphs/{gid}/ontology"),
+        &w.owner,
+        Some(vocabulary),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{put}");
+    let node = app
+        .node(&w.owner, &gid, json!({"title": "Assess", "kind": "risk"}))
+        .await;
+
+    // The projection restricts the graph to the team and to team:admins...
+    export::pass(&app.state).await.unwrap();
+    let graph_entity = format!("execution_graph:{gid}");
+    assert_eq!(
+        stub.entity(&onto_ws, &graph_entity).unwrap().props["visibility"],
+        "restricted"
+    );
+    let writes = || stub.calls_to("init_graph").len() + stub.calls_to("set_vocabulary").len();
+    let written = writes();
+
+    // ...so the run engine (agent:runtime, on neither list) is told the graph is not there.
+    // It is read as the backend instead: the run goes through with the graph's own types,
+    // and nothing is written over them.
+    let mut rx = app.events(&gid);
+    let (status, run) = call(
+        &app,
+        Method::POST,
+        &format!("/graphs/{gid}/runs"),
+        &w.owner,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{run}");
+    let events = collect_until(&mut rx, "run.finished").await;
+    assert_eq!(events.last().unwrap().1["run"]["status"], "succeeded");
+    let reads = stub.calls();
+    let runtime = reads
+        .iter()
+        .position(|(m, p)| m == "vocabulary" && p.id == "agent:runtime")
+        .expect("the run engine reads as itself first");
+    assert!(
+        reads[runtime + 1..]
+            .iter()
+            .any(|(m, p)| m == "vocabulary" && !p.acts()),
+        "{reads:?}"
+    );
+    // Dependency detection after an edit reads as the run engine too.
+    let (status, _) = call(
+        &app,
+        Method::PATCH,
+        &format!("/graphs/{gid}/nodes/{node}"),
+        &w.owner,
+        Some(json!({"title": "Assess the risks"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, read) = call(&app, Method::GET, &format!("/graphs/{gid}"), &w.owner, None).await;
+    assert!(keys(&read["ontology"], "node_types").contains(&"risk".to_owned()));
+    assert_eq!(
+        writes(),
+        written,
+        "a vocabulary onto-intelli holds is never initialised again"
+    );
+    let stored = stub.stored_vocabulary(&tenant, &gid).unwrap();
+    assert_eq!(stored.node_type("risk").unwrap().default_role, "analyst");
+
+    // A member the projection has not named in the team yet is in the same place: nexc lets
+    // them work on the team's graph, onto-intelli does not show it to them yet.
+    call(
+        &app,
+        Method::PUT,
+        &format!("{}/teams/{}/members/{}", w.ws, w.secret, w.member_id),
+        &w.owner,
+        Some(json!({"role": "member"})),
+    )
+    .await;
+    let (status, seen) = call(
+        &app,
+        Method::GET,
+        &format!("/graphs/{gid}"),
+        &w.member,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{seen}");
+    assert!(keys(&seen["ontology"], "node_types").contains(&"risk".to_owned()));
+    assert_eq!(writes(), written);
+}
+
 async fn guest_id(app: &TestApp, w: &World) -> String {
     let (_, members) = call(
         app,

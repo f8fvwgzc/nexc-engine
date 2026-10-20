@@ -5,9 +5,10 @@
 //! artifacts, code execution, blocking). Reads go through an in-process
 //! cache with a short lifetime (`NEXC_ONTO_VOCABULARY_TTL_SECS`); a change
 //! made through nexc replaces the entry here and drops it on every other
-//! replica. A graph onto-intelli does not know yet is initialised on first
-//! read ([`super::migrate::ensure`]): with the ontology nexc stored for it
-//! before this release, or with the starter vocabulary.
+//! replica. A graph onto-intelli does not know yet (the backend's own
+//! principal does not find it) is initialised on first read
+//! ([`super::migrate::ensure`]): with the ontology nexc stored for it before
+//! this release, or with the starter vocabulary.
 //!
 //! With onto-intelli off (or a graph outside any workspace) every graph has
 //! the read-only starter vocabulary. When onto-intelli cannot be reached a
@@ -207,14 +208,30 @@ async fn follow(
     Ok(())
 }
 
-/// Reads the vocabulary; a graph onto-intelli does not know yet is initialised.
+/// Reads the vocabulary as `principal`.
+///
+/// onto-intelli answers "not found" both for a graph it does not hold and
+/// for one the reader may not see: a private team's graph is restricted to
+/// the team and `team:admins`, which leaves out the run engine and a member
+/// the projection has not named in the team yet. nexc decided already that
+/// the reader may work on the graph, and the cache serves every reader
+/// alike, so the vocabulary is then read as the backend's own principal.
+/// Only a graph the backend itself does not find is initialised
+/// ([`migrate::ensure`]): never one onto-intelli holds.
 async fn fetch(
     state: &AppState,
     backend: &dyn OntologyBackend,
     principal: &Principal,
     graph: GraphRef<'_>,
 ) -> Result<Ontology, OntoError> {
-    match backend.vocabulary(principal, &graph_key(graph.id)).await {
+    let key = graph_key(graph.id);
+    let found = match backend.vocabulary(principal, &key).await {
+        Err(OntoError::NotFound(_)) if principal.acts() => {
+            backend.vocabulary(&principal.as_service(), &key).await
+        }
+        found => found,
+    };
+    match found {
         Err(OntoError::NotFound(_)) => {
             migrate::ensure(state, backend, graph)
                 .await
@@ -244,7 +261,16 @@ pub async fn replace(
     let stored = match backend.set_vocabulary(&principal, &key, vocabulary).await {
         Err(OntoError::NotFound(_)) => {
             fetch(state, backend.as_ref(), &principal, graph).await?;
-            backend.set_vocabulary(&principal, &key, vocabulary).await?
+            match backend.set_vocabulary(&principal, &key, vocabulary).await {
+                // It is there (the backend read it), but not for them: a private team's
+                // graph before the projection named them a member of the team.
+                Err(OntoError::NotFound(what)) => {
+                    return Err(VocabularyError::Denied(format!(
+                        "{what} is not visible to {principal} in onto-intelli yet; try again in a moment"
+                    )));
+                }
+                other => other?,
+            }
         }
         other => other?,
     };

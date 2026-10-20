@@ -110,9 +110,16 @@ label, description, colour, icon, default role, default executor, stage, `produc
   0 asks every time). The editor reads as the member who edits, the run engine as `agent:runtime`.
   onto-intelli answers types in stage then key order, so a node without a `kind` gets the first type
   that neither frames the work, delivers it nor runs code (`task` in the starter set).
-- **A graph onto-intelli does not know yet** (new, or created while it was unreachable) is
-  initialised on its first read: with the ontology nexc stored for it before this release, when it
-  was not migrated yet, else with the starter set.
+- **A reader onto-intelli does not show the graph to**: a private team's graph is restricted to the
+  team and `team:admins` (§5), which leaves out the run engine, and a member the projection has not
+  named in the team yet. onto-intelli answers them "not found", so the read is made again as the
+  backend's own principal: nexc checked already that they may work on the graph, and the cache
+  serves every reader alike. A write that onto-intelli refuses this way answers 403 (try again once
+  the projection caught up).
+- **A graph onto-intelli does not know yet** (new, or created while it was unreachable), that is one
+  the backend's own principal does not find either, is initialised on its first read: with the
+  ontology nexc stored for it before this release, when it was not migrated yet, else with the
+  starter set. A graph onto-intelli holds is never initialised again.
 - **Writes**: `PUT /graphs/{gid}/ontology` keeps nexc's own rules (at most 40 types of each sort,
   slugged keys, a type that nodes or edges use cannot be removed: 422, a relation made blocking may
   not close a dependency cycle: 409), then plans the change against what onto-intelli holds and

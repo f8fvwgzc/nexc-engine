@@ -3,7 +3,9 @@
 //! `traverse` and `events` the way the server does for the audit's
 //! questions, and `ask` the way a test tells it to. It keeps every graph's
 //! execution vocabulary per tenant (validated as the `nexc-execution`
-//! package does, and read back in the server's order), a small live schema
+//! package does, read back in the server's order, and hidden from whoever
+//! the graph's entity is restricted from, as the server's visibility rule
+//! hides it), a small live schema
 //! with its proposals (agents propose, never apply), and mints sessions.
 //! Every call is logged with the principal it was made as, so tests can see
 //! who nexc said it was. Tests use it directly as the backend, or behind
@@ -516,6 +518,45 @@ fn validate(vocabulary: &Ontology) -> Result<(), OntoError> {
     Ok(())
 }
 
+/// Whether `principal` sees the entity `id` of its workspace, as the server's
+/// `policy::visible` decides: the backend's own principal (an admin) and
+/// admins see everything; a `restricted` (or `private`) entity only shows to
+/// whoever its `acl` names, directly or through a team they are `member_of`.
+/// An entity that is not there restricts nothing.
+fn sees(state: &State, principal: &Principal, id: &str) -> bool {
+    if !principal.acts() || principal.has_role("admin") || principal.has_role("system") {
+        return true;
+    }
+    let Some(entity) = state
+        .entities
+        .get(&principal.workspace)
+        .and_then(|e| e.get(id))
+    else {
+        return true;
+    };
+    if !matches!(
+        entity.prop_str("visibility"),
+        Some("restricted" | "private")
+    ) {
+        return true;
+    }
+    let acl: Vec<&str> = entity
+        .props
+        .get("acl")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let me = principal.entity.as_deref().unwrap_or(&principal.id);
+    acl.contains(&me)
+        || acl.contains(&principal.id.as_str())
+        || state.links.iter().any(|(ws, from, rel, to)| {
+            ws == &principal.workspace
+                && from == me
+                && rel == "member_of"
+                && acl.contains(&to.as_str())
+        })
+}
+
 /// What the server's `Write` access needs: anything but a viewer acting.
 fn may_write(principal: &Principal) -> Result<(), OntoError> {
     if principal.acts()
@@ -726,11 +767,16 @@ impl OntologyBackend for StubOntology {
 
     async fn vocabulary(&self, principal: &Principal, graph: &str) -> Result<Ontology, OntoError> {
         let state = self.enter("vocabulary", principal)?;
+        let entity = format!("execution_graph:{}", graph_key(graph));
+        // As the server: a graph the principal may not see is not there for them.
+        if !sees(&state, principal, &entity) {
+            return Err(OntoError::NotFound(entity));
+        }
         state
             .vocabularies
             .get(&(principal.tenant.clone(), graph_key(graph).to_owned()))
             .cloned()
-            .ok_or_else(|| OntoError::NotFound(format!("execution_graph:{}", graph_key(graph))))
+            .ok_or(OntoError::NotFound(entity))
     }
 
     async fn set_vocabulary(
@@ -743,7 +789,8 @@ impl OntologyBackend for StubOntology {
         may_write(principal)?;
         validate(vocabulary)?;
         let key = (principal.tenant.clone(), graph_key(graph).to_owned());
-        if !state.vocabularies.contains_key(&key) {
+        let entity = format!("execution_graph:{}", graph_key(graph));
+        if !state.vocabularies.contains_key(&key) || !sees(&state, principal, &entity) {
             return Err(OntoError::NotFound(format!(
                 "execution_graph:{}",
                 graph_key(graph)
@@ -765,6 +812,10 @@ impl OntologyBackend for StubOntology {
         may_write(principal)?;
         if let Some(vocabulary) = vocabulary {
             validate(vocabulary)?;
+        }
+        let entity = format!("execution_graph:{}", graph_key(graph));
+        if !sees(&state, principal, &entity) {
+            return Err(OntoError::Denied(format!("{entity} is restricted")));
         }
         let key = (principal.tenant.clone(), graph_key(graph).to_owned());
         let current = state.vocabularies.entry(key).or_default();

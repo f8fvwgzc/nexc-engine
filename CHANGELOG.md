@@ -34,7 +34,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reaches nexc within the cache's lifetime: edges follow their relation's `blocking` flag (unless
   that would close a cycle) and canvases get `ontology.updated`. When onto-intelli is unreachable a
   kept vocabulary is served; without one, reads answer 503 and a run's node fails with a retryable
-  `ontology unavailable`.
+  `ontology unavailable`. A reader onto-intelli does not show a private team's graph to (the run
+  engine, a member the projection has not named in the team yet) is answered as the backend's own
+  principal, and a graph is initialised only when that principal does not find it either, so a
+  graph's own types are never reset to the starter set.
 - `nexc onto migrate` (also run in the background at start, `NEXC_ONTO_MIGRATE_ON_START`) copies
   every graph's stored ontology into onto-intelli with `SetVocabulary`, once per graph, idempotent
   and resumable (`onto_vocabulary_migrations`, migration `20261006000090_onto_vocabularies`); a

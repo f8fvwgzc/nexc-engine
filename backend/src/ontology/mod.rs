@@ -210,6 +210,16 @@ impl Principal {
         }
     }
 
+    /// The backend's own service principal in the same tenant and workspace.
+    pub fn as_service(&self) -> Self {
+        Principal {
+            id: String::new(),
+            roles: Vec::new(),
+            entity: None,
+            ..self.clone()
+        }
+    }
+
     /// Whether the call is made for someone (the impersonation headers go along).
     pub fn acts(&self) -> bool {
         !self.id.is_empty()
