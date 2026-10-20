@@ -307,6 +307,14 @@ const NOT_COPIED: &[(&str, &str)] = &[
         "which instances of this server held its runs and when; the target's instances are others",
     ),
     (
+        "onto_vocabulary_migrations",
+        "which graphs this server copied into its onto-intelli; the vocabularies live in onto-intelli, not in nexc, and the target's graphs are initialised in its own",
+    ),
+    (
+        "onto_projection",
+        "what this server's projection put into its onto-intelli; the target projects the workspace into its own",
+    ),
+    (
         "sso_role_grants",
         "which roles this server's single sign-on group mapping gave; the target maps the groups of its own provider",
     ),

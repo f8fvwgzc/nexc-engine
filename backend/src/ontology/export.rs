@@ -1,7 +1,10 @@
 //! The export worker: what the tables queued for onto-intelli (spans
-//! written, runs finished, agents changed) becomes facts and goes out as one
-//! ingest stream per workspace and pass; a workspace seen for the first time
-//! is backfilled from what it already has. Queue rows are claimed with
+//! written, runs started and finished, agents changed, and every change of
+//! the projected workspace: teams, people, projects, cycles, issues, graphs,
+//! documents) becomes facts and entities and goes out as ingest streams per
+//! workspace and pass, into the workspace's tenant as the backend's service
+//! principal; a workspace seen for the first time is backfilled from what it
+//! already has, the audit's facts and the projection ([`super::projection`]). Queue rows are claimed with
 //! `SKIP LOCKED` and deleted once onto-intelli acknowledged the stream, so
 //! every span is exported at least once, instances share the work, and a
 //! crash or an unreachable server costs nothing but a retry.
@@ -14,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::facts::{Batch, ReadLabels};
-use super::{OntoError, OntologyBackend, workspace_name};
+use super::{OntoError, OntologyBackend, Principal, projection};
 use crate::app::AppState;
 use crate::domain::trace::SpanKind;
 use crate::repo::onto_export::ExportSpan;
@@ -118,7 +121,8 @@ pub async fn export_workspace(state: &AppState, workspace_id: Uuid) -> anyhow::R
         .ontology
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("onto-intelli is not configured"))?;
-    let workspace = workspace_name(&state.settings.onto_workspace_prefix, workspace_id);
+    // The audit's facts go into the workspace's own tenant, as the backend itself.
+    let service = Principal::service(&state.settings.onto_workspace_prefix, workspace_id);
     cursors::ensure_cursor(&state.db, workspace_id).await?;
     let mut progress = Progress::default();
     let cursor = cursors::cursor(&state.db, workspace_id)
@@ -136,14 +140,18 @@ pub async fn export_workspace(state: &AppState, workspace_id: Uuid) -> anyhow::R
             state,
             backend.as_ref(),
             workspace_id,
-            &workspace,
+            &service,
             cursor.span_seq,
             before,
         )
         .await?;
         progress.add(done);
     }
-    progress.add(drain(state, backend.as_ref(), workspace_id, &workspace).await?);
+    if cursor.projected_at.is_none() {
+        progress.records +=
+            projection::backfill(state, backend.as_ref(), &service, workspace_id).await?;
+    }
+    progress.add(drain(state, backend.as_ref(), workspace_id, &service).await?);
     Ok(progress)
 }
 
@@ -155,10 +163,11 @@ async fn backfill(
     state: &AppState,
     backend: &dyn OntologyBackend,
     workspace_id: Uuid,
-    workspace: &str,
+    service: &Principal,
     mut seq: i64,
     before: i64,
 ) -> anyhow::Result<Progress> {
+    let workspace = service.workspace.as_str();
     let mut progress = Progress::default();
     if seq == 0 {
         let agents = cursors::agents_of(&state.db, workspace_id).await?;
@@ -166,14 +175,14 @@ async fn backfill(
         for agent in &agents {
             batch.agent(agent, &agents, false);
         }
-        progress.records += send(backend, workspace, batch).await?;
+        progress.records += send(backend, service, batch).await?;
         let runs = cursors::runs_of(&state.db, workspace_id).await?;
         for chunk in runs.chunks(RUNS_BATCH) {
             let mut batch = Batch::new(workspace);
             for run in chunk {
                 batch.run(run, run.finished_at.is_some() && !run.queued);
             }
-            progress.records += send(backend, workspace, batch).await?;
+            progress.records += send(backend, service, batch).await?;
         }
     }
     for _ in 0..BACKFILL_STREAMS_PER_PASS {
@@ -186,7 +195,7 @@ async fn backfill(
         let last_seq = last.seq;
         let batch = spans_batch(state, workspace, &spans, &[]).await?;
         let spans_in = batch.spans;
-        let records = send(backend, workspace, batch).await?;
+        let records = send(backend, service, batch).await?;
         cursors::advance_backfill(
             &state.db,
             workspace_id,
@@ -212,8 +221,9 @@ async fn drain(
     state: &AppState,
     backend: &dyn OntologyBackend,
     workspace_id: Uuid,
-    workspace: &str,
+    service: &Principal,
 ) -> anyhow::Result<Progress> {
+    let workspace = service.workspace.as_str();
     let mut progress = Progress::default();
     loop {
         let mut tx = state.db.begin().await?;
@@ -221,6 +231,15 @@ async fn drain(
         if claimed.ids.is_empty() {
             return Ok(progress);
         }
+        // The projection first: it is idempotent, so a facts stream that fails after it
+        // costs a repeat of it, never a repeated event.
+        let mut items = claimed.projected.clone();
+        items.extend(claimed.agents.iter().map(|id| ("agent".to_owned(), *id)));
+        let projected = if items.is_empty() {
+            0
+        } else {
+            projection::project(state, backend, service, workspace_id, &items).await?
+        };
         let mut batch = Batch::new(workspace);
         if !claimed.agents.is_empty() {
             let all = cursors::agents_of(&state.db, workspace_id).await?;
@@ -234,7 +253,7 @@ async fn drain(
         let spans = cursors::spans_by_id(&state.db, &claimed.spans).await?;
         let batch = spans_batch_into(state, batch, &spans, &claimed.runs).await?;
         let spans_in = batch.spans;
-        let records = send(backend, workspace, batch).await?;
+        let records = send(backend, service, batch).await? + projected;
         cursors::finish(&mut tx, &claimed.ids).await?;
         cursors::count_exported(&mut *tx, workspace_id, spans_in as i64, records as i64).await?;
         tx.commit().await?;
@@ -353,16 +372,16 @@ async fn labels_for(
 }
 
 /// Streams a batch; the number of records that went out.
-async fn send(
+pub(super) async fn send(
     backend: &dyn OntologyBackend,
-    workspace: &str,
+    service: &Principal,
     batch: Batch,
 ) -> Result<usize, OntoError> {
     if batch.is_empty() {
         return Ok(0);
     }
     let count = batch.records.len();
-    backend.ingest(workspace, batch.records).await?;
+    backend.ingest(service, batch.records).await?;
     Ok(count)
 }
 

@@ -23,6 +23,8 @@ pub struct Cursor {
     pub records_exported: i64,
     pub last_exported_at: Option<DateTime<Utc>>,
     pub last_error: Option<String>,
+    /// Set once the workspace was projected whole into onto-intelli.
+    pub projected_at: Option<DateTime<Utc>>,
 }
 
 /// The cursor of a workspace, if it was ever exported.
@@ -32,7 +34,7 @@ pub async fn cursor(
 ) -> Result<Option<Cursor>, sqlx::Error> {
     sqlx::query_as(
         "SELECT workspace_id, span_seq, backfill_before, backfilled_at, spans_exported,
-                records_exported, last_exported_at, last_error
+                records_exported, last_exported_at, last_error, projected_at
          FROM onto_export_cursors WHERE workspace_id = $1",
     )
     .bind(workspace_id)
@@ -85,8 +87,8 @@ pub async fn set_backfill_boundary(
     .await
 }
 
-/// Workspaces with something to export: queued rows, or no completed
-/// backfill while they have spans, runs or agents.
+/// Workspaces with something to export: queued rows, no completed backfill
+/// while they have spans, runs or agents, or no projection yet.
 pub async fn workspaces_behind(db: impl PgExecutor<'_>) -> Result<Vec<Uuid>, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT DISTINCT workspace_id FROM (
@@ -94,10 +96,11 @@ pub async fn workspaces_behind(db: impl PgExecutor<'_>) -> Result<Vec<Uuid>, sql
              UNION
              SELECT w.id FROM workspaces w
               LEFT JOIN onto_export_cursors c ON c.workspace_id = w.id
-              WHERE c.backfilled_at IS NULL
-                AND (EXISTS (SELECT 1 FROM agents a WHERE a.workspace_id = w.id)
-                     OR EXISTS (SELECT 1 FROM graphs g JOIN runs r ON r.graph_id = g.id
-                                 WHERE g.workspace_id = w.id))
+              WHERE c.projected_at IS NULL
+                 OR (c.backfilled_at IS NULL
+                     AND (EXISTS (SELECT 1 FROM agents a WHERE a.workspace_id = w.id)
+                          OR EXISTS (SELECT 1 FROM graphs g JOIN runs r ON r.graph_id = g.id
+                                      WHERE g.workspace_id = w.id)))
          ) behind ORDER BY workspace_id",
     )
     .fetch_all(db)
@@ -114,6 +117,9 @@ pub struct Claimed {
     pub spans: Vec<Uuid>,
     pub runs: Vec<Uuid>,
     pub agents: Vec<Uuid>,
+    /// What the projection does: `(kind, subject)` of teams, projects,
+    /// cycles, issues, graphs, documents, people and started runs.
+    pub projected: Vec<(String, Uuid)>,
 }
 
 pub async fn claim(
@@ -134,13 +140,15 @@ pub async fn claim(
         spans: Vec::new(),
         runs: Vec::new(),
         agents: Vec::new(),
+        projected: Vec::new(),
     };
     for (id, kind, subject) in rows {
         claimed.ids.push(id);
         match kind.as_str() {
             "span" => claimed.spans.push(subject),
             "run" => claimed.runs.push(subject),
-            _ => claimed.agents.push(subject),
+            "agent" => claimed.agents.push(subject),
+            _ => claimed.projected.push((kind, subject)),
         }
     }
     Ok(claimed)
