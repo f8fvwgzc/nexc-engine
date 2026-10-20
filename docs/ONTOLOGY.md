@@ -218,7 +218,11 @@ it into onto-intelli, once per graph, as the backend's own principal (`InitGraph
   and tries failed graphs every minute until none fails. A graph read before the pass reached it is
   copied on that read.
 
-From then on `graphs.ontology` is neither read nor written: new graphs leave it `{}`.
+From then on `graphs.ontology` is neither read nor written: new graphs leave it `{}`. One exception:
+a workspace transfer (`POST /workspaces/{wid}/transfers`) reads each graph's vocabulary from
+onto-intelli into the copied row's `graphs.ontology`, since the target's onto-intelli knows nothing
+of it; there the graph is not migrated yet, so its first read copies that vocabulary in. The
+transfer fails, and moves nothing, while onto-intelli does not answer.
 
 An installation that runs with `NEXC_ONTO_MODE=off` does not read the stored ontologies either:
 every graph has the starter vocabulary. Nodes and edges of types it does not have are kept and still
