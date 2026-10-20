@@ -10,6 +10,9 @@ use std::time::Duration;
 use super::latency::Window;
 
 const LATENCY_BUCKETS: [f64; 10] = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 10.0];
+/// From a first anomalous span to its run stopped: milliseconds for a
+/// reported run, up to a session window for decisions.
+const CONTAIN_BUCKETS: [f64; 10] = [0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 30.0, 120.0, 300.0, 900.0];
 const RUN_BUCKETS: [f64; 9] = [1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 900.0, 3600.0];
 const SPAN_BUCKETS: [f64; 10] = [
     0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.05, 0.1, 1.0,
@@ -175,6 +178,12 @@ pub struct Metrics {
     /// From the first anomalous span of an external run to the run stopped
     /// by its live risk score.
     pub firewall_contained: Histogram,
+    /// From the span that took an external run's live risk score over the
+    /// threshold to the run stopped: the platform's own reaction time.
+    pub firewall_detect: Histogram,
+    /// Approvals of the Agent Firewall, by event (`requested`, `reused`,
+    /// `refused`, and the final `allow` or `deny` handed out).
+    pub firewall_approvals: LabeledCounter,
     /// Gateway calls performed, by tool kind (`fetch_url`, `mcp`) and outcome.
     pub gateway_calls: LabeledCounter,
     /// Alert deliveries attempted, by destination kind and outcome (`delivered`, `retry`, `failed`).
@@ -213,7 +222,9 @@ impl Default for Metrics {
             span_fanout: Histogram::new(&SPAN_BUCKETS),
             onto_asks: LabeledCounter::default(),
             firewall_decisions: LabeledCounter::default(),
-            firewall_contained: Histogram::new(&LATENCY_BUCKETS),
+            firewall_contained: Histogram::new(&CONTAIN_BUCKETS),
+            firewall_detect: Histogram::new(&LATENCY_BUCKETS),
+            firewall_approvals: LabeledCounter::default(),
             gateway_calls: LabeledCounter::default(),
             alert_deliveries: LabeledCounter::default(),
             a2a_tasks: LabeledCounter::default(),
@@ -396,6 +407,22 @@ impl Metrics {
         );
         self.firewall_contained
             .render(&mut out, "nexc_firewall_time_to_contain_seconds");
+        header(
+            &mut out,
+            "nexc_firewall_detect_to_contain_seconds",
+            "histogram",
+            "From the span that took an external run's live risk score over the threshold to the run stopped.",
+        );
+        self.firewall_detect
+            .render(&mut out, "nexc_firewall_detect_to_contain_seconds");
+        header(
+            &mut out,
+            "nexc_firewall_approvals_total",
+            "counter",
+            "Approvals of the Agent Firewall, by event (requested, reused, refused, allow, deny).",
+        );
+        self.firewall_approvals
+            .render(&mut out, "nexc_firewall_approvals_total");
         header(
             &mut out,
             "nexc_gateway_calls_total",

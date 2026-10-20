@@ -372,7 +372,8 @@ async fn an_external_agent_that_exfiltrates_mid_run_is_quarantined_before_its_ru
     let aid: Uuid = agent["id"].as_str().unwrap().parse().unwrap();
     let principal = format!("agent://{wid}/Courier");
     let mut client = client(&server.url()).await;
-    for (i, bytes) in [900, 1000, 1100].into_iter().enumerate() {
+    // The live score waits for a baseline of five runs before it may stop one.
+    for (i, bytes) in [900, 1000, 1100, 950, 1050].into_iter().enumerate() {
         let mut reports = vec![start(&format!("usual-{i}"))];
         reports.extend(usual_run(&principal, bytes));
         reports.push(finish());
@@ -513,7 +514,7 @@ async fn an_external_agent_that_exfiltrates_mid_run_is_quarantined_before_its_ru
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(baseline.runs, 3);
+    assert_eq!(baseline.runs, 5);
     assert!(!baseline.hosts.iter().any(|h| h.ends_with("evil.example")));
     // And it gets no allow any more.
     let refused = client
@@ -546,8 +547,8 @@ async fn a_decisions_only_agent_is_contained_by_the_decision_that_crosses(pool: 
     let aid: Uuid = agent["id"].as_str().unwrap().parse().unwrap();
     let principal = format!("agent://{wid}/Sidecar");
     let mut client = client(&server.url()).await;
-    // Three windows of usual decisions, each sealed and learned as a session.
-    for _ in 0..3 {
+    // Five windows of usual decisions, each sealed and learned as a session.
+    for _ in 0..5 {
         for subject in ["api.partner.example", "api.partner.example"] {
             let reply = client
                 .authorize_action(authed(ask(&principal, "egress", subject, None), &secret))
@@ -558,14 +559,14 @@ async fn a_decisions_only_agent_is_contained_by_the_decision_that_crosses(pool: 
         }
         app.state
             .firewall_sessions
-            .seal_idle(&app.state, Duration::ZERO)
+            .seal_idle(&app.state, Duration::from_nanos(1))
             .await;
     }
     let baseline = nexc::repo::baselines::find(&app.state.db, aid, Scope::Sessions)
         .await
         .unwrap()
         .expect("sessions are learned");
-    assert_eq!(baseline.runs, 3);
+    assert_eq!(baseline.runs, 5);
     // Then it asks to reach one new host after another: allowed by the policy, until the
     // decision that takes the live score over the threshold, which is refused and signed.
     let mut last = None;
@@ -683,7 +684,23 @@ async fn a_held_action_becomes_an_approval_the_agent_awaits_and_gets_signed(pool
     ));
     let signed: Value = serde_json::from_slice(&held.signed).unwrap();
     assert_eq!(signed["approval_id"], approval_id);
+    assert_eq!(signed["args_sha256"], digest);
     assert_eq!(signed["decision"], "require_approval");
+    // Asked again before anyone decided: the same approval answers it.
+    let again = client
+        .authorize_action(authed(
+            ask(
+                &principal,
+                "tool_call",
+                "wire_money",
+                Some(json!({"args_sha256": digest})),
+            ),
+            &secret,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(again.approval_id, approval_id);
     // A malformed digest is refused, not recorded.
     let bad = client
         .authorize_action(authed(
@@ -791,6 +808,7 @@ async fn a_held_action_becomes_an_approval_the_agent_awaits_and_gets_signed(pool
     ));
     let signed: Value = serde_json::from_slice(&decision.signed).unwrap();
     assert_eq!(signed["approval_id"], approval_id);
+    assert_eq!(signed["args_sha256"], digest);
     assert_eq!(signed["decision"], "allow");
     assert_eq!(signed["subject"], "wire_money");
     assert_eq!(signed["span_id"].as_str(), Some(decision.span_id.as_str()));
@@ -908,6 +926,42 @@ async fn a_held_action_becomes_an_approval_the_agent_awaits_and_gets_signed(pool
     assert_eq!(expiry.decision, "deny");
     assert!(expiry.reason.contains("nobody decided"), "{expiry:?}");
 
+    // A quarantine expires what is still pending: nobody can grant it any more.
+    let fourth = client
+        .authorize_action(authed(ask_again(3), &secret))
+        .await
+        .unwrap()
+        .into_inner();
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &format!("/agents/{aid}/quarantine"),
+        &owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, pending) = call(
+        &app,
+        Method::GET,
+        &format!("/approvals/{}", fourth.approval_id),
+        &owner,
+        None,
+    )
+    .await;
+    assert_eq!(pending["status"], "expired", "{pending}");
+    let refused = client
+        .await_approval(authed(
+            pb::AwaitApprovalRequest {
+                approval_id: fourth.approval_id.clone(),
+                wait_ms: 0,
+            },
+            &secret,
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), Code::PermissionDenied);
+
     // The session's trace records each decision once, as an `approval` span with its
     // signature, and verifies.
     let session = held.run_id.clone();
@@ -918,7 +972,12 @@ async fn a_held_action_becomes_an_approval_the_agent_awaits_and_gets_signed(pool
         .await;
     let spans = spans_of(&app, &owner, &session).await;
     let approvals: Vec<&Value> = spans.iter().filter(|s| s["kind"] == "approval").collect();
-    assert_eq!(approvals.len(), 3, "{approvals:?}");
+    assert!((3..=4).contains(&approvals.len()), "{approvals:?}");
+    let ids: std::collections::HashSet<&str> = approvals
+        .iter()
+        .map(|s| s["attributes"]["approval_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids.len(), approvals.len(), "each decision once");
     let first = approvals
         .iter()
         .find(|s| s["id"].as_str() == Some(decision.span_id.as_str()))
@@ -937,6 +996,113 @@ async fn a_held_action_becomes_an_approval_the_agent_awaits_and_gets_signed(pool
     )
     .await;
     assert_eq!(verified["ok"], true, "{verified}");
+    server.stop().await;
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn reported_runs_close_when_the_stream_goes_and_tell_the_agent_at_shutdown(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let server = nexc::firewall::serve(app.state.clone(), "127.0.0.1:0".parse().unwrap())
+        .await
+        .unwrap();
+    let (owner, _) = app.register("owner@example.com").await;
+    let wid = workspace(&app, &owner).await;
+    set_policy(
+        &app,
+        &owner,
+        &wid,
+        json!({"egress": {"deny": ["*.evil.example"]}}),
+    )
+    .await;
+    let (_, secret) = external_agent(&app, &owner, "Courier", json!({})).await;
+    let principal = format!("agent://{wid}/Courier");
+    let mut client = client(&server.url()).await;
+
+    // A reported call to a host the policy denies is a mismatch.
+    let summary = report(
+        &mut client,
+        &secret,
+        vec![
+            start("denied-host"),
+            span(
+                &principal,
+                "tool_call",
+                "http_post",
+                json!({"tool": "http_post", "egress_host": "drop.evil.example"}),
+            ),
+            finish(),
+        ],
+    )
+    .await;
+    assert_eq!(summary.policy_mismatches, 1, "{summary:?}");
+
+    // The client goes away mid-run: the run is closed all the same.
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut streaming = client.clone();
+    let token = secret.clone();
+    let gone = tokio::spawn(async move {
+        streaming
+            .report_span(authed(
+                tokio_stream::wrappers::UnboundedReceiverStream::new(rx),
+                &token,
+            ))
+            .await
+    });
+    tx.send(start("gone")).unwrap();
+    tx.send(span(&principal, "llm_call", "m", json!({"tokens_in": 1})))
+        .unwrap();
+    let open = || nexc::firewall::status(&app.state).open_sessions;
+    let began = Instant::now();
+    while open() == 0 && began.elapsed() < Duration::from_secs(5) {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(open(), 1, "the run is open");
+    gone.abort();
+    drop(tx);
+    drop(client);
+    let began = Instant::now();
+    while open() > 0 && began.elapsed() < Duration::from_secs(10) {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(open(), 0, "the run went with its stream");
+
+    // At shutdown, a run being reported is closed where it stood and the agent is told to
+    // try again; it is not taken for a quarantine.
+    let mut client = self::client(&server.url()).await;
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut streaming = client.clone();
+    let token = secret.clone();
+    let reply = tokio::spawn(async move {
+        streaming
+            .report_span(authed(
+                tokio_stream::wrappers::UnboundedReceiverStream::new(rx),
+                &token,
+            ))
+            .await
+    });
+    tx.send(start("shutdown")).unwrap();
+    let began = Instant::now();
+    while open() == 0 && began.elapsed() < Duration::from_secs(5) {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    app.state.firewall_sessions.seal_all(&app.state).await;
+    let refused = tokio::time::timeout(Duration::from_secs(5), reply)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(refused.code(), Code::Unavailable, "{refused:?}");
+    drop(tx);
+    // The agent is not quarantined: it asks again.
+    let allowed = client
+        .authorize_action(authed(
+            ask(&principal, "tool_call", "finish", None),
+            &secret,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(allowed.decision, "allow");
     server.stop().await;
 }
 
@@ -1042,6 +1208,11 @@ async fn prove_firewall(pool: PgPool) {
     println!(
         "prove-firewall: live risk in process, {SPANS} spans folded and scored: p50 {p50:.2} µs, p99 {p99:.2} µs, max {max:.1} µs"
     );
+    let budget: f64 = std::env::var("NEXC_PROVE_LIVE_P99_US")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50.0);
+    assert!(p99 < budget, "live risk p99 {p99:.2} µs over {budget} µs");
 
     // 2. AuthorizeAction round trips, live scoring off (no threshold) and on.
     let app = TestApp::new(pool, &[]).await;
@@ -1144,6 +1315,10 @@ async fn prove_firewall(pool: PgPool) {
         contained.push(Duration::from_millis(summary.time_to_contain_ms));
     }
     let (c50, _, cmax) = quantiles(&mut contained);
+    assert!(
+        cmax < 1e6,
+        "an exfiltrating run took {cmax:.0} µs to contain"
+    );
     println!(
         "prove-firewall: exfiltrating external run, {ROUNDS} runs: quarantined and cancelled mid-run every time; time to contain p50 {:.1} ms, max {:.1} ms",
         c50 / 1e3,

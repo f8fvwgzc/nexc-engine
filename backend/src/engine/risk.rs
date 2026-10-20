@@ -79,16 +79,11 @@ pub async fn assess_in(state: &AppState, row: &RunRow, scope: Scope) -> Assessed
             .map(|a| a.artifact.size)
             .sum::<i64>();
         let run = risk::features(&spans, artifact_bytes);
-        let mut baseline = repo::baselines::find(&state.db, agent_id, scope)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or_default();
-        let scored = risk::score(&baseline, &run);
-        baseline.learn(&run);
-        if let Err(err) = repo::baselines::upsert(&state.db, agent_id, scope, &baseline).await {
-            tracing::error!(%agent_id, error = %err, "baseline not saved");
-        }
+        let levels = policies::levels_for(&policies, agent.team_id, Some(agent.id));
+        let rules = policies::resolve(&levels, Some(&agent.capabilities)).rules;
+        let Some((scored, baseline)) = learn(state, agent_id, scope, &rules, &run).await else {
+            continue;
+        };
         if let Err(err) =
             repo::agents::set_risk(&state.db, agent_id, scored.score, &scored.reasons).await
         {
@@ -98,8 +93,6 @@ pub async fn assess_in(state: &AppState, row: &RunRow, scope: Scope) -> Assessed
             .caches
             .invalidate(crate::app::caches::Key::Agent(agent_id));
         done.agents += 1;
-        let levels = policies::levels_for(&policies, agent.team_id, Some(agent.id));
-        let rules = policies::resolve(&levels, Some(&agent.capabilities)).rules;
         let about = About {
             workspace_id,
             agent_id: Some(agent.id),
@@ -123,6 +116,45 @@ pub async fn assess_in(state: &AppState, row: &RunRow, scope: Scope) -> Assessed
         done.quarantined += usize::from(raised.1);
     }
     done
+}
+
+/// Scores `run` against the agent's baseline of `scope` and, unless it
+/// reaches the quarantine threshold, learns it: a run that gets its agent
+/// quarantined is not what the agent usually does. The baseline's row is
+/// locked meanwhile, so two runs finishing at once both count. The score,
+/// and the baseline as it now stands.
+async fn learn(
+    state: &AppState,
+    agent_id: Uuid,
+    scope: Scope,
+    rules: &Rules,
+    run: &RunFeatures,
+) -> Option<(Risk, Baseline)> {
+    let learned = async {
+        let mut tx = state.db.begin().await?;
+        let mut baseline = repo::baselines::find_for_update(&mut *tx, agent_id, scope)
+            .await?
+            .unwrap_or_default();
+        let scored = risk::score(&baseline, run);
+        let quarantines = rules
+            .alerts
+            .quarantine_risk_score
+            .is_some_and(|t| scored.score >= t);
+        if !quarantines {
+            baseline.learn(run);
+            repo::baselines::upsert(&mut *tx, agent_id, scope, &baseline).await?;
+        }
+        tx.commit().await?;
+        Ok::<_, sqlx::Error>((scored, baseline))
+    }
+    .await;
+    match learned {
+        Ok(learned) => Some(learned),
+        Err(err) => {
+            tracing::error!(%agent_id, error = %err, "run not scored against the baseline");
+            None
+        }
+    }
 }
 
 /// When a score is taken.

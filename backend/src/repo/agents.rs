@@ -233,16 +233,25 @@ pub async fn update(
 }
 
 /// Takes an agent out of service: status `quarantined`, the policy version
-/// raised. `None` when it is already quarantined or unknown.
+/// raised, its pending approvals expired. `None` when it is already
+/// quarantined or unknown.
 pub async fn quarantine(
     db: impl PgExecutor<'_>,
     workspace_id: Uuid,
     id: Uuid,
 ) -> Result<Option<Agent>, sqlx::Error> {
+    // Its pending approvals expire with it: a quarantined agent's requests are no longer
+    // anyone's to grant (an approver who said yes later would let it act).
     sqlx::query_as(
-        "UPDATE agents SET status = 'quarantined', quarantined_at = now(),
-                policy_version = policy_version + 1, updated_at = now()
-         WHERE workspace_id = $1 AND id = $2 AND status <> 'quarantined' RETURNING *",
+        "WITH quarantined AS (
+            UPDATE agents SET status = 'quarantined', quarantined_at = now(),
+                   policy_version = policy_version + 1, updated_at = now()
+             WHERE workspace_id = $1 AND id = $2 AND status <> 'quarantined' RETURNING *
+         ), expired AS (
+            UPDATE approvals SET status = 'expired', decided_at = now()
+             WHERE agent_id IN (SELECT id FROM quarantined) AND status = 'pending'
+         )
+         SELECT * FROM quarantined",
     )
     .bind(workspace_id)
     .bind(id)

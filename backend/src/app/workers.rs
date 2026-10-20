@@ -134,6 +134,7 @@ async fn housekeeping(state: &AppState) -> anyhow::Result<()> {
         .firewall_sessions
         .seal_idle(state, firewall::SESSION_IDLE)
         .await;
+    firewall::sweep(state).await;
     state.hub.prune();
     state.limiters.prune();
     state.engine.prune_dispatches();

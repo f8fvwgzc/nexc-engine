@@ -203,24 +203,36 @@ pub async fn set_decision_span(
 /// its `AwaitApproval`) names the span every signed copy of the decision
 /// points at.
 pub async fn claim_decision_span(
-    db: impl PgExecutor<'_>,
+    db: &mut sqlx::PgConnection,
     id: Uuid,
     span_id: Uuid,
 ) -> Result<Option<Uuid>, sqlx::Error> {
-    sqlx::query_scalar(
-        "UPDATE approvals SET decision_span_id = COALESCE(decision_span_id, $2)
-         WHERE id = $1 AND status <> 'pending' RETURNING decision_span_id",
+    let claimed: Option<Option<Uuid>> = sqlx::query_scalar(
+        "UPDATE approvals SET decision_span_id = $2
+         WHERE id = $1 AND status <> 'pending' AND decision_span_id IS NULL
+         RETURNING decision_span_id",
     )
     .bind(id)
     .bind(span_id)
-    .fetch_optional(db)
+    .fetch_optional(&mut *db)
+    .await?;
+    if let Some(claimed) = claimed {
+        return Ok(claimed);
+    }
+    // Noted already (a statement of its own: it sees a claim that just committed).
+    sqlx::query_scalar(
+        "SELECT decision_span_id FROM approvals WHERE id = $1 AND status <> 'pending'",
+    )
+    .bind(id)
+    .fetch_optional(&mut *db)
     .await
     .map(Option::flatten)
 }
 
-/// Uses an approval granted to `agent_id` for `tool` on the reported call
-/// `span_id`: once, and only with the same arguments when the approval names
-/// their digest. Whether it was granted and is now used.
+/// Uses an approval granted to external agent `agent_id` through the
+/// firewall for `tool` on the reported call `span_id`: once, only if it was
+/// granted before it expired, and only with the same arguments when the
+/// approval names their digest. Whether it was granted and is now used.
 pub async fn consume(
     db: impl PgExecutor<'_>,
     id: Uuid,
@@ -232,8 +244,9 @@ pub async fn consume(
     let done = sqlx::query(
         "UPDATE approvals SET consumed_span_id = $5
          WHERE id = $1 AND agent_id = $2 AND tool = $3 AND status = 'approved'
-           AND consumed_span_id IS NULL
-           AND (args_sha256 IS NULL OR args_sha256 = $4::text)",
+           AND consumed_span_id IS NULL AND decided_at <= expires_at
+           AND (args_sha256 IS NULL OR args_sha256 = $4::text)
+           AND graph_id IN (SELECT id FROM graphs WHERE external_agent_id = $2)",
     )
     .bind(id)
     .bind(agent_id)
@@ -243,6 +256,70 @@ pub async fn consume(
     .execute(db)
     .await?;
     Ok(done.rows_affected() == 1)
+}
+
+/// An approval external agent `agent_id` asked for through the firewall
+/// (one in its own graph: never a native run's).
+pub async fn find_external(
+    db: impl PgExecutor<'_>,
+    id: Uuid,
+    agent_id: Uuid,
+) -> Result<Option<Approval>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT a.* FROM approvals a JOIN graphs g ON g.id = a.graph_id
+         WHERE a.id = $1 AND a.agent_id = $2 AND g.external_agent_id = $2",
+    )
+    .bind(id)
+    .bind(agent_id)
+    .fetch_optional(db)
+    .await
+}
+
+/// The same request still pending in the same run (the agent asked again
+/// before anyone decided): it is answered by that approval.
+pub async fn find_pending_like(
+    db: impl PgExecutor<'_>,
+    run_id: Uuid,
+    agent_id: Uuid,
+    tool: &str,
+    args_sha256: Option<&str>,
+) -> Result<Option<Approval>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT * FROM approvals
+         WHERE run_id = $1 AND agent_id = $2 AND tool = $3 AND status = 'pending'
+           AND args_sha256 IS NOT DISTINCT FROM $4::text AND expires_at > now()
+         ORDER BY requested_at DESC, id DESC LIMIT 1",
+    )
+    .bind(run_id)
+    .bind(agent_id)
+    .bind(tool)
+    .bind(args_sha256)
+    .fetch_optional(db)
+    .await
+}
+
+/// How many approvals of `agent_id` are pending.
+pub async fn pending_of_agent(db: impl PgExecutor<'_>, agent_id: Uuid) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar("SELECT count(*) FROM approvals WHERE agent_id = $1 AND status = 'pending'")
+        .bind(agent_id)
+        .fetch_one(db)
+        .await
+}
+
+/// Expires the approvals external agents asked for through the firewall
+/// that are past their time (the instance that watched them may be gone);
+/// the ones it expired.
+pub async fn expire_overdue_external(
+    db: impl PgExecutor<'_>,
+) -> Result<Vec<Approval>, sqlx::Error> {
+    sqlx::query_as(
+        "UPDATE approvals SET status = 'expired', decided_at = now()
+         WHERE status = 'pending' AND expires_at < now()
+           AND graph_id IN (SELECT id FROM graphs WHERE external_agent_id IS NOT NULL)
+         RETURNING *",
+    )
+    .fetch_all(db)
+    .await
 }
 
 /// Approvals of a workspace, newest first; `status` narrows the list.

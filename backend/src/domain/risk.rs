@@ -19,6 +19,15 @@ use crate::kernel::{self, Signature};
 
 /// Runs a baseline needs before it scores anything.
 pub const MIN_RUNS: i32 = 3;
+/// Runs a baseline needs before its live score may quarantine anyone: a
+/// young baseline whose features never varied scores any change at full
+/// cap, which is too eager to stop a run with.
+pub const LIVE_MIN_RUNS: i32 = 5;
+/// Most bytes one span's `payload_bytes` counts for (reported spans say what
+/// they like; a huge value would make the baseline's spread meaningless).
+pub const PAYLOAD_BYTES_MAX: i64 = 1 << 30;
+/// Most hosts, and most tools, one run adds to its baseline's known sets.
+pub const LEARNED_PER_RUN: usize = 64;
 /// Most standard deviations one feature may add to the score.
 pub const Z_CAP: f64 = 3.0;
 /// Most the whole score may be.
@@ -107,18 +116,45 @@ pub struct Fold {
     payload_bytes: i64,
 }
 
+/// What folding one span changed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Pushed {
+    /// A count the live score watches moved.
+    pub moved: bool,
+    /// A host the run had not called before (lower case).
+    pub new_host: Option<String>,
+    /// A tool the run had not used before.
+    pub new_tool: Option<String>,
+}
+
 impl Fold {
-    /// Folds one span in; whether a count the live score watches moved.
-    pub fn push(&mut self, kind: SpanKind, name: &str, attrs: &Value) -> bool {
+    /// Folds one span in; what it changed.
+    pub fn push(&mut self, kind: SpanKind, name: &str, attrs: &Value) -> Pushed {
         let f = &mut self.features;
         let text = |key: &str| attrs.get(key).and_then(Value::as_str);
         let mut moved = false;
+        let (mut new_host, mut new_tool) = (None, None);
+        let mut host = |hosts: &mut BTreeSet<String>, host: &str| {
+            let host = host.to_ascii_lowercase();
+            if !hosts.contains(&host) {
+                hosts.insert(host.clone());
+                new_host = Some(host);
+            }
+        };
+        let mut tool = |tools: &mut BTreeSet<String>, tool: &str| {
+            if !tools.contains(tool) {
+                tools.insert(tool.to_owned());
+                new_tool = Some(tool.to_owned());
+            }
+        };
         if let Some(bytes) = attrs
             .get("payload_bytes")
             .and_then(Value::as_i64)
             .filter(|b| *b > 0)
         {
-            self.payload_bytes = self.payload_bytes.saturating_add(bytes);
+            self.payload_bytes = self
+                .payload_bytes
+                .saturating_add(bytes.min(PAYLOAD_BYTES_MAX));
             moved = true;
         }
         match kind {
@@ -129,20 +165,20 @@ impl Fold {
             }
             SpanKind::ToolCall => {
                 self.tool_calls += 1.0;
-                let tool = text("tool").unwrap_or(name);
-                moved |= f.tools.insert(tool.to_owned());
+                let called = text("tool").unwrap_or(name);
+                tool(&mut f.tools, called);
                 if !f.tool_sequence.is_empty() {
                     f.tool_sequence.push(' ');
                 }
-                f.tool_sequence.push_str(tool);
-                if let Some(host) = text("egress_host") {
-                    f.hosts.insert(host.to_ascii_lowercase());
+                f.tool_sequence.push_str(called);
+                if let Some(egress) = text("egress_host") {
+                    host(&mut f.hosts, egress);
                     f.egress_calls += 1.0;
                     moved = true;
                 }
             }
             SpanKind::Egress => {
-                f.hosts.insert(name.to_ascii_lowercase());
+                host(&mut f.hosts, name);
                 f.egress_calls += 1.0;
                 moved = true;
             }
@@ -162,14 +198,12 @@ impl Fold {
                 // the same way in every run, so its baseline absorbs it.)
                 Some("allow" | "alert") if attrs.get("firewall") == Some(&Value::Bool(true)) => {
                     match (text("action"), text("subject")) {
-                        (Some("egress"), Some(host)) => {
-                            f.hosts.insert(host.to_ascii_lowercase());
+                        (Some("egress"), Some(subject)) => {
+                            host(&mut f.hosts, subject);
                             f.egress_calls += 1.0;
                             moved = true;
                         }
-                        (Some("tool_call"), Some(tool)) => {
-                            moved |= f.tools.insert(tool.to_owned());
-                        }
+                        (Some("tool_call"), Some(subject)) => tool(&mut f.tools, subject),
                         _ => {}
                     }
                 }
@@ -177,7 +211,30 @@ impl Fold {
             },
             SpanKind::DataRead | SpanKind::Approval => {}
         }
-        moved
+        Pushed {
+            moved: moved || new_tool.is_some(),
+            new_host,
+            new_tool,
+        }
+    }
+
+    /// The counts so far, without the hosts, tools and sequence themselves
+    /// (what the live score reads, at no cost that grows with the run).
+    pub fn counts(&self) -> RunFeatures {
+        let f = &self.features;
+        let turns = f.turns.max(1.0);
+        RunFeatures {
+            turns: f.turns,
+            tool_calls_per_turn: self.tool_calls / turns,
+            tokens_per_turn: self.tokens / turns,
+            distinct_tools: f.tools.len() as f64,
+            distinct_hosts: f.hosts.len() as f64,
+            spawns: f.spawns,
+            denials: f.denials,
+            bytes_out: self.payload_bytes.max(0) as f64,
+            egress_calls: f.egress_calls,
+            ..RunFeatures::default()
+        }
     }
 
     /// The features so far; `bytes_out` is the payloads seen plus
@@ -289,7 +346,7 @@ fn ratio(value: f64, mean: f64) -> String {
 /// Scores `run` against `baseline` (before the run is folded in) and says
 /// how unlike every earlier run its tool sequence looked.
 pub fn score(baseline: &Baseline, run: &RunFeatures) -> Risk {
-    score_with(baseline, run, &FEATURES, true)
+    score_with(baseline, run, &FEATURES, true, None)
 }
 
 /// Scores a run still under way: the counts that only grow
@@ -298,10 +355,34 @@ pub fn score(baseline: &Baseline, run: &RunFeatures) -> Risk {
 /// partial run never exceeds the score the same spans get when the run ends:
 /// a run it stops is one the end-of-run score would have flagged too.
 pub fn score_live(baseline: &Baseline, run: &RunFeatures) -> Risk {
-    score_with(baseline, run, &LIVE_FEATURES, false)
+    score_with(baseline, run, &LIVE_FEATURES, false, None)
 }
 
-fn score_with(baseline: &Baseline, run: &RunFeatures, features: &[&str], novelty: bool) -> Risk {
+/// [`score_live`] from a run's counts ([`Fold::counts`]) and the hosts and
+/// tools of the run its baseline never saw, kept as they arrived: the cost
+/// does not grow with the run.
+pub fn score_live_counts(
+    baseline: &Baseline,
+    counts: &RunFeatures,
+    unseen_hosts: &[String],
+    unseen_tools: &[String],
+) -> Risk {
+    score_with(
+        baseline,
+        counts,
+        &LIVE_FEATURES,
+        false,
+        Some((unseen_hosts, unseen_tools)),
+    )
+}
+
+fn score_with(
+    baseline: &Baseline,
+    run: &RunFeatures,
+    features: &[&str],
+    novelty: bool,
+    unseen: Option<(&[String], &[String])>,
+) -> Risk {
     let novelty = if novelty {
         let signature = kernel::minhash(&run.tool_sequence);
         let closest = baseline
@@ -365,7 +446,13 @@ fn score_with(baseline: &Baseline, run: &RunFeatures, features: &[&str], novelty
             });
         }
     }
-    let new_hosts: Vec<&String> = run.hosts.difference(&baseline.hosts).collect();
+    let (new_hosts, new_tools): (Vec<&String>, Vec<&String>) = match unseen {
+        Some((hosts, tools)) => (hosts.iter().collect(), tools.iter().collect()),
+        None => (
+            run.hosts.difference(&baseline.hosts).collect(),
+            run.tools.difference(&baseline.tools).collect(),
+        ),
+    };
     if !new_hosts.is_empty() {
         total += (new_hosts.len() as f64).min(Z_CAP);
         risk.reasons.push(format!(
@@ -380,7 +467,6 @@ fn score_with(baseline: &Baseline, run: &RunFeatures, features: &[&str], novelty
                 .join(", ")
         ));
     }
-    let new_tools: Vec<&String> = run.tools.difference(&baseline.tools).collect();
     if !new_tools.is_empty() {
         total += 1.0;
         risk.reasons.push(format!(
@@ -427,8 +513,22 @@ impl Baseline {
             let extra = self.signatures.len() - SIGNATURES_KEPT;
             self.signatures.drain(..extra);
         }
-        self.hosts.extend(run.hosts.iter().cloned());
-        self.tools.extend(run.tools.iter().cloned());
+        // A run teaches at most so many new hosts and tools: one run cannot make the
+        // whole internet "usual".
+        let hosts: Vec<String> = run
+            .hosts
+            .difference(&self.hosts)
+            .take(LEARNED_PER_RUN)
+            .cloned()
+            .collect();
+        self.hosts.extend(hosts);
+        let tools: Vec<String> = run
+            .tools
+            .difference(&self.tools)
+            .take(LEARNED_PER_RUN)
+            .cloned()
+            .collect();
+        self.tools.extend(tools);
     }
 }
 
@@ -634,15 +734,24 @@ mod tests {
         }
         // Then it sends a lot, to hosts it never called: the live score climbs.
         let mut scores = Vec::new();
+        let mut unseen = Vec::new();
         for i in 0..6 {
             let host = format!("drop{i}.evil.example");
-            let moved = fold.push(
+            let pushed = fold.push(
                 SpanKind::ToolCall,
                 "http_post",
                 &json!({"tool": "http_post", "egress_host": host, "payload_bytes": 50_000}),
             );
-            assert!(moved, "an egress moves a watched count");
-            scores.push(score_live(&baseline, &fold.features(0)).score);
+            assert!(pushed.moved, "an egress moves a watched count");
+            assert_eq!(pushed.new_host.as_deref(), Some(host.as_str()));
+            unseen.push(host);
+            let live = score_live(&baseline, &fold.features(0));
+            // Scored from the counts and the unseen hosts kept as they came: the same.
+            assert_eq!(
+                score_live_counts(&baseline, &fold.counts(), &unseen, &[]),
+                live
+            );
+            scores.push(live.score);
         }
         assert!(scores.windows(2).all(|w| w[0] <= w[1]), "{scores:?}");
         let live = score_live(&baseline, &fold.features(0));
@@ -656,7 +765,30 @@ mod tests {
         let end = score(&baseline, &fold.features(0));
         assert!(end.score >= live.score, "{end:?} vs {live:?}");
         // A model turn moves nothing the live score watches.
-        assert!(!fold.push(SpanKind::LlmCall, "m", &json!({"tokens_in": 5})));
+        assert_eq!(
+            fold.push(SpanKind::LlmCall, "m", &json!({"tokens_in": 5})),
+            Pushed::default()
+        );
+    }
+
+    #[test]
+    fn one_run_teaches_a_bounded_number_of_hosts_and_bytes() {
+        let mut spans = Vec::new();
+        for i in 0..200 {
+            spans.push(span(
+                SpanKind::ToolCall,
+                "http_post",
+                json!({"tool": "http_post", "egress_host": format!("h{i:03}.example"),
+                    "payload_bytes": i64::MAX}),
+            ));
+        }
+        let run = features(&spans, 0);
+        assert_eq!(run.distinct_hosts, 200.0);
+        assert_eq!(run.bytes_out, (PAYLOAD_BYTES_MAX as f64) * 200.0);
+        let mut baseline = Baseline::default();
+        baseline.learn(&run);
+        assert_eq!(baseline.hosts.len(), LEARNED_PER_RUN);
+        assert!(baseline.features["bytes_out"].mean.is_finite());
     }
 
     #[test]

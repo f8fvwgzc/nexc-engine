@@ -32,6 +32,9 @@ pub struct Live {
     baseline: Baseline,
     resolved: Arc<Resolved>,
     fold: Fold,
+    /// Hosts and tools of the run the baseline never saw, as they came.
+    unseen_hosts: Vec<String>,
+    unseen_tools: Vec<String>,
     /// The span that first raised the score above nothing, and when it arrived.
     first_anomaly: Option<(Uuid, Instant)>,
     /// The score crossed the threshold once: the run is being contained.
@@ -70,6 +73,8 @@ impl Live {
             baseline,
             resolved,
             fold: Fold::default(),
+            unseen_hosts: Vec::new(),
+            unseen_tools: Vec::new(),
             first_anomaly: None,
             tripped: false,
             last: Risk::default(),
@@ -99,13 +104,23 @@ impl Live {
         name: &str,
         attrs: &Value,
     ) -> Option<Crossing> {
-        let moved = self.fold.push(kind, name, attrs);
+        let pushed = self.fold.push(kind, name, attrs);
+        if let Some(host) = pushed.new_host
+            && !self.baseline.hosts.contains(&host)
+        {
+            self.unseen_hosts.push(host);
+        }
+        if let Some(tool) = pushed.new_tool
+            && !self.baseline.tools.contains(&tool)
+        {
+            self.unseen_tools.push(tool);
+        }
         let threshold = self.threshold()?;
-        if !moved || self.tripped || self.baseline.runs < risk::MIN_RUNS {
+        if !pushed.moved || self.tripped || self.baseline.runs < risk::LIVE_MIN_RUNS {
             return None;
         }
-        let features = self.fold.features(0);
-        let scored = risk::score_live(&self.baseline, &features);
+        let features = self.fold.counts();
+        let scored = self.scored(&features);
         let now = Instant::now();
         if scored.score > 0.0 && self.first_anomaly.is_none() {
             self.first_anomaly = Some((id, now));
@@ -127,12 +142,21 @@ impl Live {
         })
     }
 
+    fn scored(&self, counts: &RunFeatures) -> Risk {
+        risk::score_live_counts(
+            &self.baseline,
+            counts,
+            &self.unseen_hosts,
+            &self.unseen_tools,
+        )
+    }
+
     /// The live score now (taken afresh when no threshold kept it up to date).
     pub fn score(&self) -> f64 {
-        if self.threshold().is_some() || self.baseline.runs < risk::MIN_RUNS {
+        if self.threshold().is_some() || self.baseline.runs < risk::LIVE_MIN_RUNS {
             return self.last.score;
         }
-        risk::score_live(&self.baseline, &self.fold.features(0)).score
+        self.scored(&self.fold.counts()).score
     }
 }
 
@@ -180,7 +204,7 @@ pub async fn contain(
     )
     .await;
     // Already quarantined (another run got there first): this run stops all the same.
-    run.stop.cancel();
+    run.quarantine.cancel();
     let stopped = Instant::now();
     let time_to_contain = stopped.duration_since(crossing.first_anomaly.1);
     let detect_to_contain = stopped.duration_since(crossing.detected);
@@ -221,6 +245,7 @@ pub async fn contain(
         }),
     });
     state.metrics.firewall_contained.observe(time_to_contain);
+    state.metrics.firewall_detect.observe(detect_to_contain);
     tracing::warn!(
         run_id = %run.run_id,
         agent = %caller.agent.principal_id,

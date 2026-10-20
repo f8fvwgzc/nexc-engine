@@ -253,7 +253,8 @@ fn numbers(text: &str) -> Vec<Number<'_>> {
 /// Whether a run of digits is shaped like a national id: a US SSN
 /// (`ddd-dd-dddd`), a Dutch BSN (9 digits passing the 11-test), a Japanese
 /// My Number (12 digits with its check digit, run together or as on the
-/// card, `dddd dddd dddd`), a Swedish personnummer (`yymmdd-nnnn`).
+/// card, `dddd dddd dddd`), a Swedish personnummer (`yymmdd-nnnn`, or
+/// `yyyymmdd-nnnn` and `yyyymmddnnnn` with its Luhn check digit).
 fn is_national_id(number: &Number<'_>) -> bool {
     let d = &number.digits;
     match d.len() {
@@ -291,7 +292,13 @@ fn is_national_id(number: &Number<'_>) -> bool {
             let raw = number.raw.as_bytes();
             // As the card prints it: four, four, four, one separator throughout.
             let grouped = raw.len() == 14 && matches!(raw[4], b' ' | b'-') && raw[9] == raw[4];
-            (!number.separated || grouped) && !number.plus && is_my_number(d)
+            // A Swedish personnummer with the century: yyyymmdd-nnnn or run together.
+            let century = (!number.separated || (raw.len() == 13 && raw[8] == b'-'))
+                && matches!(d[0] * 10 + d[1], 19 | 20)
+                && (1..=12).contains(&(d[4] * 10 + d[5]))
+                && (1..=31).contains(&(d[6] * 10 + d[7]))
+                && luhn(&d[2..]);
+            !number.plus && (((!number.separated || grouped) && is_my_number(d)) || century)
         }
         _ => false,
     }
@@ -347,8 +354,13 @@ pub fn classify(text: &str, kinds: &[PiiKind], keywords: &[String]) -> Findings 
         )
     }) {
         let (mut phones, mut cards, mut ids, mut corporate) = (0, 0, 0, 0);
+        // Asked for, a corporate number is one before it is a 13-digit card (both
+        // checks pass for about one valid corporate number in twenty-five).
+        let corporate_first = kinds.contains(&PiiKind::CorporateNumber);
         for number in numbers(text) {
-            if is_card(&number) {
+            if corporate_first && is_corporate(&number) {
+                corporate += 1;
+            } else if is_card(&number) {
                 cards += 1;
             } else if is_national_id(&number) {
                 ids += 1;
@@ -611,6 +623,24 @@ mod tests {
             ),
             0
         );
+        // A corporate number that also passes Luhn is still a corporate number when asked.
+        let both = (1_000_000_000_000..10_000_000_000_000u64)
+            .step_by(7_919_113)
+            .map(|n| {
+                format!("{n:013}")
+                    .bytes()
+                    .map(|b| b - b'0')
+                    .collect::<Vec<u8>>()
+            })
+            .find(|d| is_corporate_number(d) && luhn(d) && matches!(d[0], 3..=6))
+            .expect("a corporate number that passes Luhn");
+        let text: String = both.iter().map(|d| char::from(b'0' + d)).collect();
+        assert_eq!(ids(&text, PiiKind::CorporateNumber), 1, "{text}");
+        assert_eq!(ids(&text, PiiKind::Card), 1, "{text}");
+        // The Swedish personnummer with its century, run together or with its dash.
+        assert_eq!(ids("pnr 199001011239", PiiKind::NationalId), 1);
+        assert_eq!(ids("pnr 19900101-1239", PiiKind::NationalId), 1);
+        assert_eq!(ids("pnr 199001011238", PiiKind::NationalId), 0);
         // Not a personal identifier, and not looked for unless asked.
         assert_eq!(
             ids("corporate number 7000012050002", PiiKind::NationalId),

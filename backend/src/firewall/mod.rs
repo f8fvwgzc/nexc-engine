@@ -22,14 +22,13 @@ use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use chrono::{SecondsFormat, Utc};
 use dashmap::DashMap;
 use futures::StreamExt;
 use serde_json::{Value, json};
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::{Mutex, RwLock, Semaphore, oneshot};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tonic::metadata::MetadataMap;
@@ -59,17 +58,18 @@ use crate::security::api_token;
 
 /// A decisions session is sealed after this long without a call.
 pub const SESSION_IDLE: Duration = Duration::from_secs(600);
-/// A decisions session is sealed after this long, or this many decisions,
-/// even when busy (once no approval asked in it is still watched): each is
-/// a window its agent's session baseline compares with the earlier ones.
+/// A decisions session is sealed after this long even when busy: each is a
+/// window of about the same length, which its agent's session baseline
+/// compares with the earlier ones.
 pub const SESSION_WINDOW: Duration = Duration::from_secs(15 * 60);
-pub const SESSION_DECISIONS_MAX: usize = 1_000;
-/// How often a reported run looks whether its agent was quarantined or
-/// paused on another instance (here, the quarantine stops it at once), and
-/// takes up the policy in force.
+/// How often a reported run looks whether its agent was quarantined on
+/// another instance (here, the quarantine stops it at once), and takes up
+/// the policy in force.
 const STATUS_EVERY: Duration = Duration::from_secs(2);
 /// Spans accepted on one reported run.
 const SPANS_PER_RUN_MAX: usize = 20_000;
+/// Reported runs one agent may have open on one instance.
+const REPORTED_RUNS_MAX: usize = 16;
 /// Longest string taken from a request.
 const TEXT_MAX: usize = 1024;
 
@@ -107,17 +107,29 @@ pub struct OpenRun {
     sink: Mutex<Option<TraceSink>>,
     last_used: Mutex<Instant>,
     opened: Instant,
-    /// Decisions recorded in the run.
-    decisions: AtomicUsize,
-    /// Cancelled when the run must stop (its agent was quarantined) or closed.
-    stop: CancellationToken,
+    /// Cancelled when the agent is quarantined (here at once, through the
+    /// engine; elsewhere at a reported run's next look) or the run's live
+    /// score crossed the threshold: nothing more is allowed on the run.
+    quarantine: CancellationToken,
+    /// Cancelled when the run is closed (finished, sealed, shut down).
+    closed: CancellationToken,
+    /// Decisions hold it shared from the moment they pick the run until
+    /// their span is emitted; closing takes it alone and marks it `true`, so
+    /// no decision lands in a sealed run.
+    gate: Arc<RwLock<bool>>,
     live: StdMutex<live::Live>,
     /// Held while the run is contained, so it is not sealed before the record is.
     containment: Arc<Mutex<Option<live::Contained>>>,
-    /// Approvals asked for in the run that are still watched.
-    pending: AtomicUsize,
     /// Approvals whose decision the run's trace records.
     settled: StdMutex<HashSet<Uuid>>,
+}
+
+/// What folding a span into a run's live score says.
+struct Observed {
+    /// This span took the score over the quarantine threshold.
+    crossing: Option<live::Crossing>,
+    /// The score crossed it, now or before: nothing more is allowed.
+    tripped: bool,
 }
 
 impl OpenRun {
@@ -125,118 +137,138 @@ impl OpenRun {
         *self.last_used.lock().await = Instant::now();
     }
 
-    /// Folds a span into the run's live score: the crossing, if this span
-    /// took it over the quarantine threshold.
-    fn observe(
-        &self,
-        id: Uuid,
-        kind: SpanKind,
-        name: &str,
-        attrs: &Value,
-    ) -> Option<live::Crossing> {
-        self.live
-            .lock()
-            .expect("live risk")
-            .observe(id, kind, name, attrs)
+    /// Folds a span into the run's live score.
+    fn observe(&self, id: Uuid, kind: SpanKind, name: &str, attrs: &Value) -> Observed {
+        let mut live = self.live.lock().expect("live risk");
+        let crossing = live.observe(id, kind, name, attrs);
+        Observed {
+            crossing,
+            tripped: live.tripped(),
+        }
     }
 
     /// A session that has run its window and may be sealed for a new one.
     fn window_over(&self) -> bool {
-        self.scope == Scope::Sessions
-            && self.pending.load(Ordering::SeqCst) == 0
-            && (self.opened.elapsed() >= SESSION_WINDOW
-                || self.decisions.load(Ordering::SeqCst) >= SESSION_DECISIONS_MAX)
+        self.scope == Scope::Sessions && self.opened.elapsed() >= SESSION_WINDOW
+    }
+
+    /// The agent may no longer act on this run.
+    fn stopped(&self) -> bool {
+        self.quarantine.is_cancelled() || self.live.lock().expect("live risk").tripped()
     }
 }
 
-/// The runs of external agents open on this instance: decisions sessions
-/// by agent, reported runs under a key of their own.
+/// The runs of external agents open on this instance.
 #[derive(Default)]
 pub struct Sessions {
+    /// Decisions sessions, by agent.
     open: DashMap<Uuid, Arc<OpenRun>>,
+    /// Every open run (sessions and reported runs), by run.
+    runs: DashMap<Uuid, Arc<OpenRun>>,
+    /// `AwaitApproval` calls under way, by agent.
+    waits: DashMap<Uuid, Arc<Semaphore>>,
 }
 
 impl Sessions {
-    /// Seals the decisions sessions idle for `idle` or more (not those an
-    /// approval asked in is still watched for); with `idle` zero, every open
-    /// run (shutdown). Returns how many.
+    /// Seals the decisions sessions idle for `idle` or more; with `idle`
+    /// zero, every open run, unscored (shutdown: a run cut short is not what
+    /// its agent usually does, and its stream is told to try again).
+    /// Returns how many.
     pub async fn seal_idle(&self, state: &AppState, idle: Duration) -> usize {
         let all = idle.is_zero();
-        let stale: Vec<(Uuid, Arc<OpenRun>)> = self
-            .open
+        let stale: Vec<Arc<OpenRun>> = self
+            .runs
             .iter()
             .filter(|e| {
                 let run = e.value();
                 all || (run.scope == Scope::Sessions
-                    && run.pending.load(Ordering::SeqCst) == 0
                     && run
                         .last_used
                         .try_lock()
                         .is_ok_and(|at| at.elapsed() >= idle))
             })
-            .map(|e| (*e.key(), e.value().clone()))
+            .map(|e| e.value().clone())
             .collect();
         let mut sealed = 0;
-        for (key, run) in stale {
-            self.open.remove_if(&key, |_, open| Arc::ptr_eq(open, &run));
-            close_run(state, &run, RunStatus::Succeeded, None).await;
+        for run in stale {
+            self.forget(&run);
+            close_run(state, &run, RunStatus::Succeeded, None, !all).await;
             sealed += 1;
         }
         sealed
     }
 
-    /// Seals every open session (shutdown).
+    /// Seals every open run (shutdown).
     pub async fn seal_all(&self, state: &AppState) {
         self.seal_idle(state, Duration::ZERO).await;
     }
 
     /// The open run `run_id`, if it is open here.
     fn by_run(&self, run_id: Uuid) -> Option<Arc<OpenRun>> {
-        self.open
-            .iter()
-            .find(|e| e.value().run_id == run_id)
-            .map(|e| e.value().clone())
+        self.runs.get(&run_id).map(|e| e.value().clone())
+    }
+
+    /// The decisions session of `agent` open here.
+    fn session_of(&self, agent: Uuid) -> Option<Arc<OpenRun>> {
+        self.open.get(&agent).map(|e| e.value().clone())
     }
 
     /// Forgets `run` (closed).
     fn forget(&self, run: &Arc<OpenRun>) {
-        self.open.retain(|_, open| !Arc::ptr_eq(open, run));
+        self.runs.remove(&run.run_id);
+        self.open
+            .remove_if(&run.agent_id, |_, open| Arc::ptr_eq(open, run));
+    }
+
+    /// How many runs `agent` is reporting here.
+    fn reported_by(&self, agent: Uuid) -> usize {
+        self.runs
+            .iter()
+            .filter(|e| e.value().agent_id == agent && e.value().scope == Scope::Runs)
+            .count()
     }
 }
 
 /// Opens a run of an external agent in its managed graph, its live score
 /// against the agent's baseline of `scope`. Until it closes, a quarantine
-/// of the agent here cancels it.
+/// of the agent here stops it.
 async fn open_run(
     state: &AppState,
     caller: &Caller,
     title: &str,
     external_run_id: &str,
     scope: Scope,
-) -> anyhow::Result<Arc<OpenRun>> {
-    let mut tx = state.db.begin().await?;
-    let (graph_id, owner) = repo::external_runs::ensure_graph(
-        &mut tx,
-        caller.agent.id,
-        caller.workspace_id,
-        &caller.agent.name,
-    )
-    .await?;
-    let (run_id, node_id) = repo::external_runs::open_run(
-        &mut tx,
-        graph_id,
-        owner,
-        caller.agent.id,
-        &caller.agent.role,
-        title,
-        external_run_id,
-    )
-    .await?;
-    repo::runs::set_policy_versions(&mut *tx, run_id, &caller.versions).await?;
-    tx.commit().await?;
+) -> Result<Arc<OpenRun>, Status> {
+    // Read before the run exists: a run is never left open without its trace.
     let baseline = repo::baselines::find(&state.db, caller.agent.id, scope)
-        .await?
+        .await
+        .map_err(internal)?
         .unwrap_or_default();
+    let opened = async {
+        let mut tx = state.db.begin().await?;
+        let (graph_id, owner) = repo::external_runs::ensure_graph(
+            &mut tx,
+            caller.agent.id,
+            caller.workspace_id,
+            &caller.agent.name,
+        )
+        .await?;
+        let (run_id, node_id) = repo::external_runs::open_run(
+            &mut tx,
+            graph_id,
+            owner,
+            caller.agent.id,
+            &caller.agent.role,
+            title,
+            external_run_id,
+        )
+        .await?;
+        repo::runs::set_policy_versions(&mut *tx, run_id, &caller.versions).await?;
+        tx.commit().await?;
+        Ok::<_, sqlx::Error>((graph_id, owner, run_id, node_id))
+    }
+    .await;
+    let (graph_id, owner, run_id, node_id) = opened.map_err(internal)?;
     // An external agent's session is no claimed run: nothing takes it over, nothing is fenced.
     let sink = trace::start(
         state.clone(),
@@ -246,14 +278,11 @@ async fn open_run(
         trace::Tail::GENESIS,
     );
     let handle = sink.handle();
-    let stop = CancellationToken::new();
+    let quarantine = CancellationToken::new();
     state
         .engine
-        .agent_started(caller.agent.id, node_id, stop.clone());
-    if let Ok(run) = scheduler::load_run(state, run_id).await {
-        state.hub.publish(graph_id, SseEvent::RunStarted { run });
-    }
-    Ok(Arc::new(OpenRun {
+        .agent_started(caller.agent.id, node_id, quarantine.clone());
+    let run = Arc::new(OpenRun {
         run_id,
         node_id,
         graph_id,
@@ -264,38 +293,66 @@ async fn open_run(
         sink: Mutex::new(Some(sink)),
         last_used: Mutex::new(Instant::now()),
         opened: Instant::now(),
-        decisions: AtomicUsize::new(0),
-        stop,
+        quarantine,
+        closed: CancellationToken::new(),
+        gate: Arc::new(RwLock::new(false)),
         live: StdMutex::new(live::Live::new(scope, baseline, caller.resolved.clone())),
         containment: Arc::new(Mutex::new(None)),
-        pending: AtomicUsize::new(0),
         settled: StdMutex::new(HashSet::new()),
-    }))
+    });
+    // Quarantined between the caller's check and the registration above: the
+    // quarantine's cancel did not reach this run, so it stops here.
+    if quarantined(state, caller).await {
+        close_run(
+            state,
+            &run,
+            RunStatus::Cancelled,
+            Some("the agent was quarantined"),
+            false,
+        )
+        .await;
+        return Err(Status::permission_denied("the agent is quarantined"));
+    }
+    if let Ok(loaded) = scheduler::load_run(state, run_id).await {
+        state
+            .hub
+            .publish(graph_id, SseEvent::RunStarted { run: loaded });
+    }
+    Ok(run)
 }
 
-/// Seals a run's trace and closes it; returns the seal, once. Decisions on
-/// its approvals are recorded first; then it is scored and learned into its
-/// agent's baseline like a native run, unless it was contained mid-run (it
-/// was scored live, and a run that went rogue is not what the agent usually
-/// does).
+/// Whether the caller's agent is quarantined now (or gone).
+async fn quarantined(state: &AppState, caller: &Caller) -> bool {
+    match repo::agents::find(&state.db, caller.workspace_id, caller.agent.id).await {
+        Ok(Some(agent)) => agent.status == AgentStatus::Quarantined,
+        Ok(None) => true,
+        Err(_) => false,
+    }
+}
+
+/// Seals a run's trace and closes it; returns the seal, once. Decisions
+/// under way finish first, and a containment under way is recorded first.
+/// Then, when `scored`, the run is scored and learned into its agent's
+/// baseline like a native run, unless its live score crossed the threshold
+/// (scored live already, and a run that went rogue is not what the agent
+/// usually does).
 async fn close_run(
     state: &AppState,
     run: &OpenRun,
     status: RunStatus,
     output: Option<&str>,
+    scored: bool,
 ) -> Option<trace::Sealed> {
-    // A containment under way finishes (and is recorded) before the seal.
-    let contained = run.containment.lock().await.clone();
-    let tripped = run.live.lock().expect("live risk").tripped();
-    let mut slot = run.sink.lock().await;
-    if slot.is_none() {
+    let mut gate = run.gate.write().await;
+    if *gate {
         return None;
     }
-    // Stopped (not finished): its agent was quarantined.
-    approvals::close_out(state, run, run.stop.is_cancelled()).await;
-    let sink = slot.take()?;
-    drop(slot);
-    run.stop.cancel();
+    *gate = true;
+    drop(gate);
+    run.closed.cancel();
+    let contained = run.containment.lock().await.clone();
+    let tripped = run.live.lock().expect("live risk").tripped();
+    let sink = run.sink.lock().await.take()?;
     state.engine.agent_finished(run.agent_id, run.node_id);
     let sealed = sink.seal().await;
     let hash = sealed.hash;
@@ -315,7 +372,7 @@ async fn close_run(
         if let Some(hash) = hash {
             scheduler::seal_audit(state, &row, hash, sealed.spans).await;
         }
-        if contained.is_none() && !tripped {
+        if scored && contained.is_none() && !tripped {
             let assessed = crate::engine::risk::assess_in(state, &row, run.scope).await;
             if assessed.alerts > 0 || assessed.quarantined > 0 {
                 tracing::info!(run_id = %run.run_id, alerts = assessed.alerts,
@@ -329,6 +386,63 @@ async fn close_run(
             .publish(run.graph_id, SseEvent::RunFinished { run: loaded });
     }
     Some(sealed)
+}
+
+/// Expires the approvals external agents asked for that are past their time
+/// (their watching instance may be gone), and tells the destinations. Run
+/// by the maintenance worker.
+pub async fn sweep(state: &AppState) {
+    match repo::approvals::expire_overdue_external(&state.db).await {
+        Ok(expired) => {
+            for approval in &expired {
+                crate::alerting::enqueue_approval(
+                    state,
+                    approval,
+                    crate::domain::alert_routing::DeliveryEvent::ApprovalDecided,
+                )
+                .await;
+            }
+            if !expired.is_empty() {
+                tracing::info!(
+                    expired = expired.len(),
+                    "overdue firewall approvals expired"
+                );
+            }
+        }
+        Err(err) => tracing::warn!(error = %err, "overdue firewall approvals not swept"),
+    }
+}
+
+/// A reported run whose stream went away without a word (the client hung
+/// up, its deadline passed): closed all the same, unscored.
+struct Abandoned {
+    state: AppState,
+    run: Option<Arc<OpenRun>>,
+}
+
+impl Abandoned {
+    fn disarm(&mut self) {
+        self.run = None;
+    }
+}
+
+impl Drop for Abandoned {
+    fn drop(&mut self) {
+        if let Some(run) = self.run.take() {
+            let state = self.state.clone();
+            tokio::spawn(async move {
+                state.firewall_sessions.forget(&run);
+                close_run(
+                    &state,
+                    &run,
+                    RunStatus::Failed,
+                    Some("the stream went away before the run finished"),
+                    false,
+                )
+                .await;
+            });
+        }
+    }
 }
 
 /// The service.
@@ -393,22 +507,22 @@ impl FirewallService {
     /// The agent's decisions session on this instance, opened on demand;
     /// one that ran its window is sealed (and scored) and a new one opened.
     async fn session(&self, caller: &Caller) -> Result<Arc<OpenRun>, Status> {
-        let current = self
-            .sessions
-            .open
-            .get(&caller.agent.id)
-            .map(|e| e.value().clone());
-        if let Some(open) = current {
-            if !open.window_over() && !open.stop.is_cancelled() {
+        if let Some(open) = self.sessions.session_of(caller.agent.id) {
+            if open.stopped() {
+                // Stopped by a quarantine: still in force, or lifted since (the caller passed
+                // the check), in which case the agent starts a new window.
+                if quarantined(&self.state, caller).await {
+                    return Err(Status::permission_denied("the agent is quarantined"));
+                }
+            } else if !open.window_over() && !open.closed.is_cancelled() {
                 open.touch().await;
                 return Ok(open);
             }
-            self.sessions
-                .open
-                .remove_if(&caller.agent.id, |_, run| Arc::ptr_eq(run, &open));
+            self.sessions.forget(&open);
             let state = self.state.clone();
             tokio::spawn(async move {
-                close_run(&state, &open, RunStatus::Succeeded, None).await;
+                let scored = !open.stopped();
+                close_run(&state, &open, RunStatus::Succeeded, None, scored).await;
             });
         }
         let run = open_run(
@@ -418,8 +532,7 @@ impl FirewallService {
             &format!("session-{}", Uuid::now_v7()),
             Scope::Sessions,
         )
-        .await
-        .map_err(|e| internal(anyhow::anyhow!("{e}")))?;
+        .await?;
         // Two first calls at once: one session stays, the other is sealed empty.
         let kept = self
             .sessions
@@ -428,23 +541,27 @@ impl FirewallService {
             .or_insert_with(|| run.clone())
             .clone();
         if !Arc::ptr_eq(&kept, &run) {
-            close_run(&self.state, &run, RunStatus::Succeeded, None).await;
+            close_run(&self.state, &run, RunStatus::Succeeded, None, false).await;
             kept.touch().await;
             return Ok(kept);
         }
+        self.sessions.runs.insert(run.run_id, run.clone());
         // A quarantine of the agent here stops the session at once.
         let (state, watched) = (self.state.clone(), run.clone());
         tokio::spawn(async move {
-            watched.stop.cancelled().await;
+            tokio::select! {
+                () = watched.quarantine.cancelled() => {}
+                () = watched.closed.cancelled() => return,
+            }
             // A containment closes the session itself, with its reason.
-            let tripped = watched.live.lock().expect("live risk").tripped();
-            if !tripped && watched.sink.lock().await.is_some() {
+            if !watched.live.lock().expect("live risk").tripped() {
                 state.firewall_sessions.forget(&watched);
                 close_run(
                     &state,
                     &watched,
                     RunStatus::Cancelled,
                     Some("the agent was quarantined"),
+                    false,
                 )
                 .await;
             }
@@ -453,29 +570,38 @@ impl FirewallService {
     }
 
     /// Contains `run` (its live score crossed the threshold): the agent is
-    /// quarantined, the run recorded and closed as cancelled.
+    /// quarantined and the run recorded; a session is closed as cancelled
+    /// (a reported run is closed by its stream). The work runs on a task of
+    /// its own, so a caller that goes away does not stop it half way.
     async fn contain(
         &self,
         caller: &Caller,
         run: &Arc<OpenRun>,
         crossing: live::Crossing,
     ) -> live::Contained {
+        // The containment is held before anything can wake a close of the run.
         let slot = match run.containment.clone().try_lock_owned() {
             Ok(slot) => slot,
             Err(_) => run.containment.clone().lock_owned().await,
         };
-        let contained = live::contain(&self.state, caller, run, crossing, slot).await;
-        if run.scope == Scope::Sessions {
-            self.sessions.forget(run);
-            close_run(
-                &self.state,
-                run,
-                RunStatus::Cancelled,
-                Some(&format!("quarantined mid-run: {}", contained.reason)),
-            )
-            .await;
-        }
-        contained
+        run.quarantine.cancel();
+        let (state, caller, run) = (self.state.clone(), caller.clone(), run.clone());
+        let task = tokio::spawn(async move {
+            let contained = live::contain(&state, &caller, &run, crossing, slot).await;
+            if run.scope == Scope::Sessions {
+                state.firewall_sessions.forget(&run);
+                close_run(
+                    &state,
+                    &run,
+                    RunStatus::Cancelled,
+                    Some(&format!("quarantined mid-run: {}", contained.reason)),
+                    false,
+                )
+                .await;
+            }
+            contained
+        });
+        task.await.expect("the containment task does not panic")
     }
 }
 
@@ -484,7 +610,7 @@ impl FirewallService {
     /// run stops; else it takes up the policy in force.
     async fn look_again(&self, caller: &Caller, run: &OpenRun) {
         match repo::agents::find(&self.state.db, caller.workspace_id, caller.agent.id).await {
-            Ok(Some(agent)) if agent.status == AgentStatus::Quarantined => run.stop.cancel(),
+            Ok(Some(agent)) if agent.status == AgentStatus::Quarantined => run.quarantine.cancel(),
             Ok(Some(agent)) => {
                 if let Ok(effective) = self
                     .state
@@ -498,7 +624,7 @@ impl FirewallService {
                         .refresh(effective.resolved.clone());
                 }
             }
-            Ok(None) => run.stop.cancel(),
+            Ok(None) => run.quarantine.cancel(),
             Err(err) => tracing::debug!(run_id = %run.run_id, error = %err, "agent not looked at"),
         }
     }
@@ -595,17 +721,22 @@ pub struct Signed<'a> {
     /// The approval the decision asks for (`require_approval`) or settles
     /// (the final decision `AwaitApproval` hands out).
     pub approval_id: Option<Uuid>,
+    /// The digest of the tool call's arguments the decision is about, when named.
+    pub args_sha256: Option<&'a str>,
 }
 
 impl Signed<'_> {
     /// The bytes the signature covers: canonical JSON (keys sorted) of what
     /// was asked, what was decided, under which policy versions, where it is
-    /// recorded and when, and the approval it is about, if any.
+    /// recorded and when, and the approval and arguments it is about, if any.
     pub fn bytes(&self) -> Vec<u8> {
         let mut map = serde_json::Map::new();
         map.insert("action".into(), json!(self.action));
         if let Some(approval) = self.approval_id {
             map.insert("approval_id".into(), json!(approval));
+        }
+        if let Some(digest) = self.args_sha256 {
+            map.insert("args_sha256".into(), json!(digest));
         }
         for (key, value) in [
             ("decided_at", json!(self.decided_at)),
@@ -705,37 +836,48 @@ impl AgentFirewall for FirewallService {
             None => None,
         };
         let mut decision = caller.decide(&labels, &action);
-        // The run the decision is recorded in: one the agent reported, else its session.
-        let run = context
+        // The run the decision is recorded in: one the agent reported, else its session. It
+        // stays open until the decision's span is emitted.
+        let mut reported = context
             .get("run_id")
             .and_then(Value::as_str)
             .and_then(|r| r.parse::<Uuid>().ok())
             .and_then(|run_id| self.sessions.by_run(run_id))
             .filter(|run| run.agent_id == caller.agent.id);
-        let run = match run {
-            Some(run) => run,
-            None => self.session(&caller).await?,
+        let mut tries = 0;
+        let (run, gate) = loop {
+            let run = match reported.take() {
+                Some(run) => run,
+                None => self.session(&caller).await?,
+            };
+            let gate = run.gate.clone().read_owned().await;
+            if !*gate {
+                break (run, gate);
+            }
+            // Closed meanwhile (the session ran its window): the next one takes it.
+            tries += 1;
+            if tries == 3 {
+                return Err(Status::unavailable(
+                    "no run to record the decision in; try again",
+                ));
+            }
         };
-        run.decisions.fetch_add(1, Ordering::SeqCst);
-        // The agent is being stopped here (quarantined while this call was under way).
-        if run.stop.is_cancelled() && decision.verdict() != "deny" {
-            decision = Decision::deny("quarantine", "the agent is quarantined");
-        }
         let span_id = Uuid::now_v7();
         // The live score takes the decision in before it is handed out, under the policy in
-        // force now: the one that takes the agent over the quarantine threshold is refused.
+        // force now: the one that takes the agent over the quarantine threshold is refused,
+        // and so is every one after it.
         run.live
             .lock()
             .expect("live risk")
             .refresh(caller.resolved.clone());
-        let crossing = run.observe(
+        let observed = run.observe(
             span_id,
             SpanKind::Policy,
             &subject,
             &json!({"decision": decision.verdict(), "action": req.action,
                 "subject": subject, "firewall": true}),
         );
-        if let Some(crossing) = &crossing {
+        if let Some(crossing) = &observed.crossing {
             decision = Decision::deny(
                 live::RULE,
                 format!(
@@ -745,11 +887,14 @@ impl AgentFirewall for FirewallService {
                     crossing.reasons()
                 ),
             );
+        } else if observed.tripped || run.quarantine.is_cancelled() {
+            // Quarantined while this call was under way.
+            decision = Decision::deny("quarantine", "the agent is quarantined");
         }
         // Held for a human: an approval of the approvals engine, to await.
         let approval = match (&decision.effect, &action) {
             (Effect::RequireApproval { .. }, Action::Tool(tool)) => {
-                approvals::open(
+                match approvals::open(
                     &self.state,
                     approvals::Asked {
                         caller: &caller,
@@ -762,6 +907,14 @@ impl AgentFirewall for FirewallService {
                     },
                 )
                 .await
+                {
+                    approvals::Opened::Asked(approval) => Some(*approval),
+                    approvals::Opened::Refused(refusal) => {
+                        decision = refusal;
+                        None
+                    }
+                    approvals::Opened::Failed => None,
+                }
             }
             _ => None,
         };
@@ -778,6 +931,7 @@ impl AgentFirewall for FirewallService {
             run_id: run.run_id,
             decided_at: &decided_at,
             approval_id: approval.as_ref().map(|a| a.id),
+            args_sha256: args_sha256.as_deref(),
         }
         .bytes();
         let signature = self.state.firewall_signer.sign(&signed);
@@ -811,11 +965,12 @@ impl AgentFirewall for FirewallService {
                 "args_sha256": args_sha256,
             }),
         });
+        drop(gate);
         self.state
             .metrics
             .firewall_decisions
             .add(&[("decision", decision.verdict())], 1);
-        if let Some(crossing) = crossing {
+        if let Some(crossing) = observed.crossing {
             self.contain(&caller, &run, crossing).await;
         }
         Ok(Response::new(pb::AuthorizeReply {
@@ -876,6 +1031,11 @@ impl AgentFirewall for FirewallService {
         } else {
             bounded(start.title.trim())
         };
+        if self.sessions.reported_by(caller.agent.id) >= REPORTED_RUNS_MAX {
+            return Err(Status::resource_exhausted(format!(
+                "the agent already reports {REPORTED_RUNS_MAX} runs here"
+            )));
+        }
         let run = open_run(
             &self.state,
             &caller,
@@ -883,15 +1043,18 @@ impl AgentFirewall for FirewallService {
             &bounded(&start.external_run_id),
             Scope::Runs,
         )
-        .await
-        .map_err(internal)?;
-        self.sessions.open.insert(Uuid::now_v7(), run.clone());
+        .await?;
+        self.sessions.runs.insert(run.run_id, run.clone());
+        // Closed even if this handler is dropped before the run ends.
+        let mut abandoned = Abandoned {
+            state: self.state.clone(),
+            run: Some(run.clone()),
+        };
         let mut progress = Progress::new(Delivery::Http);
         let mut spans = 0usize;
         let mut mismatches = 0u32;
         let mut status = RunStatus::Succeeded;
         let mut output: Option<String> = None;
-        let mut contained: Option<live::Contained> = None;
         let own = caller.agent.principal_id.clone();
         let decide = |action: &Action<'_>| caller.decide(&[], action);
         let mut look =
@@ -900,7 +1063,8 @@ impl AgentFirewall for FirewallService {
         loop {
             let next = tokio::select! {
                 biased;
-                () = run.stop.cancelled() => break,
+                () = run.quarantine.cancelled() => break,
+                () = run.closed.cancelled() => break,
                 _ = look.tick() => {
                     self.look_again(&caller, &run).await;
                     continue;
@@ -934,10 +1098,12 @@ impl AgentFirewall for FirewallService {
                         Ok(draft) => {
                             spans += 1;
                             self.grant_reported(&caller, &progress, &draft).await;
-                            let mismatch = recheck_with(&decide, &own, &mut progress, &draft);
+                            let mismatch = recheck_with(&decide, &own, &mut progress, &draft)
+                                .or_else(|| recheck_egress(&caller, &draft));
                             let span_id = draft.id;
-                            let mut crossing =
-                                run.observe(span_id, draft.kind, &draft.name, &draft.attributes);
+                            let mut crossing = run
+                                .observe(span_id, draft.kind, &draft.name, &draft.attributes)
+                                .crossing;
                             run.handle.emit(draft);
                             if let Some((rule, detail)) = mismatch {
                                 mismatches += 1;
@@ -953,7 +1119,7 @@ impl AgentFirewall for FirewallService {
                                 crossing = crossing.or(tripped);
                             }
                             if let Some(crossing) = crossing {
-                                contained = Some(self.contain(&caller, &run, crossing).await);
+                                self.contain(&caller, &run, crossing).await;
                             }
                         }
                         Err(warning) => tracing::debug!(%warning, "external span ignored"),
@@ -973,9 +1139,18 @@ impl AgentFirewall for FirewallService {
                 Some(pb::span_report::Report::Start(_)) | None => {}
             }
         }
-        // Stopped before its end: its agent was quarantined (by this run's live score, or
-        // anywhere else) while it was open.
-        let quarantined = run.stop.is_cancelled();
+        abandoned.disarm();
+        self.sessions.forget(&run);
+        // Closed under the stream (the server is shutting down): the agent tries again.
+        if run.closed.is_cancelled() && !run.quarantine.is_cancelled() {
+            return Err(Status::unavailable(
+                "the server is shutting down; the run was closed where it stood",
+            ));
+        }
+        // Stopped before its end: its agent was quarantined (by this run's live score, by a
+        // decision recorded in it, or anywhere else) while it was open.
+        let quarantined = run.quarantine.is_cancelled();
+        let contained = run.containment.lock().await.clone();
         if quarantined {
             status = RunStatus::Cancelled;
             output = Some(match &contained {
@@ -983,9 +1158,8 @@ impl AgentFirewall for FirewallService {
                 None => "the agent was quarantined while the run was open".to_owned(),
             });
         }
-        self.sessions.forget(&run);
         let risk_score = run.live.lock().expect("live risk").score();
-        let sealed = close_run(&self.state, &run, status, output.as_deref())
+        let sealed = close_run(&self.state, &run, status, output.as_deref(), !quarantined)
             .await
             .unwrap_or(trace::Sealed {
                 hash: None,
@@ -1127,6 +1301,25 @@ fn span_to_wire(span: pb::Span) -> serde_json::Map<String, Value> {
     map
 }
 
+/// A reported call out (a `tool_call` naming its `egress_host`) to a host the
+/// policy does not allow: the rule and the detail, as a re-check gives them.
+fn recheck_egress(caller: &Caller, draft: &SpanDraft) -> Option<(&'static str, String)> {
+    if draft.kind != SpanKind::ToolCall {
+        return None;
+    }
+    let host = draft
+        .attributes
+        .get("egress_host")
+        .and_then(Value::as_str)?;
+    let decision = caller.decide(&[], &Action::Egress(host));
+    (!decision.allowed).then(|| {
+        (
+            decision.rule,
+            format!("the agent called host {host}; {}", decision.reason),
+        )
+    })
+}
+
 /// An external agent reported what its policy does not allow: a `policy`
 /// span of the run, a count on it, an audit entry. The live score counts it
 /// as a denial: the crossing, if that took it over the threshold.
@@ -1151,7 +1344,9 @@ async fn record_mismatch(
         "policy_versions": caller.versions,
         "firewall": true,
     });
-    let crossing = run.observe(id, SpanKind::Policy, "policy_mismatch", &attributes);
+    let crossing = run
+        .observe(id, SpanKind::Policy, "policy_mismatch", &attributes)
+        .crossing;
     run.handle.emit(SpanDraft {
         id,
         node_id: run.node_id,
@@ -1292,7 +1487,7 @@ pub fn status(state: &AppState) -> FirewallStatus {
         enabled: state.settings.grpc_addr.is_some(),
         addr: state.settings.grpc_addr.map(|a| a.to_string()),
         public_key: hex::encode(state.firewall_signer.public_key()),
-        open_sessions: state.firewall_sessions.open.len(),
+        open_sessions: state.firewall_sessions.runs.len(),
     }
 }
 
@@ -1320,6 +1515,7 @@ mod tests {
             run_id: run,
             decided_at: "2026-10-18T12:00:00.000000Z",
             approval_id: None,
+            args_sha256: None,
         }
         .bytes();
         let text = String::from_utf8(bytes).unwrap();
