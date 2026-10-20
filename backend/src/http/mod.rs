@@ -35,9 +35,7 @@ pub const UPLOAD_SLACK: usize = 64 * 1024;
         problem::Problem,
         crate::realtime::events::SseEvent,
         crate::realtime::events::WsMessage,
-        // Only used as a path parameter, which does not register a schema by itself.
-        crate::domain::insight::MapKind,
-        // Only used as a query parameter, likewise.
+        // Only used as a query parameter, which does not register a schema by itself.
         handlers::exports::ExportFormat,
     )),
     tags(
@@ -184,9 +182,8 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(insight::timeline))
         .routes(routes!(insight::day_summary, insight::write_day_summary))
         .routes(routes!(insight::days))
-        .routes(routes!(insight::map))
-        .routes(routes!(insight::map_items))
-        .routes(routes!(insight::map_item))
+        .routes(routes!(ontology::status))
+        .routes(routes!(ontology::session))
         .routes(routes!(workspaces::delete_invite))
         .routes(routes!(teams::list, teams::create))
         .routes(routes!(teams::get, teams::update, teams::delete))
@@ -411,7 +408,7 @@ mod tests {
     fn spec_enum_values_match_the_wire_format() {
         use crate::domain::{
             account, agent, alert, alert_routing, approval, audit, capabilities, cycle, evidence,
-            graph, insight, issue, knowledge, memory, plan, platform, policy_document, recording,
+            graph, issue, knowledge, memory, ontology, plan, platform, policy_document, recording,
             run, search, session, settings, trace, usage, user, workspace,
         };
         use serde_json::Value;
@@ -459,7 +456,8 @@ mod tests {
                 "AgentStatus" => check::<agent::AgentStatus>(values),
                 "AgentRuntime" => check::<agent::AgentRuntime>(values),
                 "PlatformAction" => check::<platform::PlatformAction>(values),
-                "MapKind" => check::<insight::MapKind>(values),
+                "OntoMode" => check::<ontology::OntoMode>(values),
+                "ProposalStatus" => check::<ontology::ProposalStatus>(values),
                 "SearchKind" => check::<search::SearchKind>(values),
                 "AccountEventKind" => check::<account::AccountEventKind>(values),
                 "SpanKind" => check::<trace::SpanKind>(values),
@@ -486,6 +484,6 @@ mod tests {
             }
             checked += 1;
         }
-        assert_eq!(checked, 49, "every string enum schema is covered");
+        assert_eq!(checked, 50, "every string enum schema is covered");
     }
 }

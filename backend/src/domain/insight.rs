@@ -1,5 +1,6 @@
 //! What a workspace's owners want to see at a glance: what happened on a
-//! day, across everything in the workspace, and how its parts relate.
+//! day, across everything in the workspace. How its parts relate is
+//! onto-intelli's map now (`docs/ONTOLOGY.md`).
 
 use std::collections::BTreeMap;
 
@@ -7,8 +8,6 @@ use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
-
-use super::string_enum;
 
 /// Name of the structured output a day summary is asked for in.
 pub const DAY_SUMMARY_SCHEMA_NAME: &str = "day_summary";
@@ -51,83 +50,6 @@ pub struct TimelineDay {
     /// The day (UTC).
     pub day: NaiveDate,
     pub events: i64,
-}
-
-/// One kind of thing a workspace holds, and how many of it.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct MapEntity {
-    /// `member`, `team`, `project`, `issue`, `graph`, `run`, `agent`,
-    /// `document`, `passage`, `memory`, `label`, `cycle`.
-    pub key: String,
-    pub label: String,
-    pub count: i64,
-}
-
-/// How two kinds of things are tied together in this workspace.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct MapRelation {
-    pub from: String,
-    pub to: String,
-    /// The relation, read from `from` to `to`: "belongs to", "plans", …
-    pub label: String,
-    /// How many such ties exist right now.
-    pub count: i64,
-}
-
-/// The relationship map of a workspace: its kinds of things and the ties
-/// between them, with today's numbers.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct WorkspaceMap {
-    pub entities: Vec<MapEntity>,
-    pub relations: Vec<MapRelation>,
-}
-
-string_enum!(
-    /// A kind of thing on the workspace map whose ties can be followed.
-    MapKind {
-        Member => "member",
-        Team => "team",
-        Project => "project",
-        Issue => "issue",
-        Graph => "graph",
-        Document => "document",
-        Agent => "agent",
-    }
-);
-
-/// One thing of a workspace, as the map names it.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct MapItem {
-    /// A [`MapKind`] when its ties can be followed; otherwise a kind that is
-    /// only named here: `label`, `cycle`, `topic`.
-    pub kind: String,
-    pub id: Uuid,
-    /// A member's name, an issue's identifier and title, a graph's name.
-    pub title: String,
-    /// What tells it apart at a glance: an e-mail, a team key, a state.
-    pub subtitle: String,
-}
-
-/// What one thing is tied to in one way.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct MapTie {
-    /// The relation, read from the thing: "is on", "tracks", "was filed by".
-    pub label: String,
-    /// The kind of thing at the other end (also `run`, `node`, `memory`,
-    /// `passage`, which are only counted).
-    pub kind: String,
-    /// How many there are.
-    pub count: i64,
-    /// The first of them; empty for kinds that are only counted.
-    pub items: Vec<MapItem>,
-}
-
-/// One thing of a workspace with everything it is tied to.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct MapNeighbourhood {
-    pub item: MapItem,
-    /// Its ties that exist; a tie to nothing is left out.
-    pub ties: Vec<MapTie>,
 }
 
 /// A day of a workspace's timeline, told in a few lines by its model.
