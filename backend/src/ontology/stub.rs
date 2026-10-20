@@ -72,6 +72,8 @@ struct State {
     /// Every call: (method, principal).
     calls: Vec<(String, Principal)>,
     failure: Option<OntoError>,
+    /// Failures for the next calls to one method: (method, calls left, error).
+    failures_next: Vec<(String, usize, OntoError)>,
     answerer: Option<Answerer>,
 }
 
@@ -100,6 +102,13 @@ impl StubOntology {
     /// Every call fails with `error` until called again with `None`.
     pub fn fail_with(&self, error: Option<OntoError>) {
         self.lock().failure = error;
+    }
+
+    /// The next `times` calls to `method` fail with `error`; the others go through.
+    pub fn fail_next(&self, method: &str, times: usize, error: OntoError) {
+        self.lock()
+            .failures_next
+            .push((method.to_owned(), times, error));
     }
 
     /// How `ask` answers from now on.
@@ -229,6 +238,14 @@ impl StubOntology {
         let mut state = self.lock();
         state.calls.push((method.to_owned(), principal.clone()));
         Self::check(&state)?;
+        if let Some((_, left, error)) = state
+            .failures_next
+            .iter_mut()
+            .find(|(m, left, _)| m == method && *left > 0)
+        {
+            *left -= 1;
+            return Err(error.clone());
+        }
         Ok(state)
     }
 

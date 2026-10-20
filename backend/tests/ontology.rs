@@ -684,6 +684,61 @@ async fn an_unreachable_onto_intelli_is_served_from_the_cache_or_fails_retryably
 }
 
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn attempts_spent_waiting_for_the_vocabulary_count_against_the_node(pool: PgPool) {
+    let stub = Arc::new(StubOntology::new());
+    let app = TestApp::with_ontology(
+        pool,
+        &[
+            ("NEXC_ONTO_VOCABULARY_TTL_SECS", "0"),
+            ("NEXC_MAX_ATTEMPTS", "2"),
+        ],
+        stub.clone(),
+    )
+    .await;
+    let w = world(&app).await;
+    let (_, made) = graph(&app, &w, &w.owner, "Flaky").await;
+    let gid = made["id"].as_str().unwrap().to_owned();
+    // A node whose first model call fails retryably: it needs both of its two attempts.
+    let node = app
+        .node(&w.owner, &gid, json!({"title": "FLAKY step"}))
+        .await;
+    // Let the dependency detection the edit scheduled read the vocabulary first.
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    app.state
+        .caches
+        .drop_local(&Key::Vocabulary(gid.parse().unwrap()));
+
+    // onto-intelli does not answer the run's first read nor the node's first attempt.
+    stub.fail_next(
+        "vocabulary",
+        2,
+        OntoError::Unavailable("connection refused".into()),
+    );
+    let mut rx = app.events(&gid);
+    let (status, run) = call(
+        &app,
+        Method::POST,
+        &format!("/graphs/{gid}/runs"),
+        &w.owner,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{run}");
+    let events = collect_until(&mut rx, "run.finished").await;
+    let finished = &events.last().unwrap().1["run"];
+    // The vocabulary came on the second attempt, which is the node's last: its retryable
+    // failure is final, and the node was not given a fresh budget.
+    assert_eq!(finished["status"], "failed", "{finished}");
+    let failed = finished["node_runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["node_id"] == node)
+        .unwrap();
+    assert_eq!(failed["attempt"], 2, "{failed}");
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
 async fn stored_ontologies_are_copied_once_idempotently_and_resumably(pool: PgPool) {
     let stub = Arc::new(StubOntology::new());
     let app = TestApp::with_ontology(

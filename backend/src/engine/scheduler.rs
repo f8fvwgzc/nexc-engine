@@ -1589,9 +1589,10 @@ async fn run_node(
         };
     };
     let node_id = node.id;
-    let vocabulary =
+    // Attempts spent waiting for the vocabulary count against the node's budget.
+    let (vocabulary, first_attempt) =
         match node_vocabulary(&state, &data, &token, node_id, first_attempt, budget).await {
-            Ok(vocabulary) => vocabulary,
+            Ok(found) => found,
             Err(status) => {
                 return NodeResult {
                     index,
@@ -1653,6 +1654,8 @@ async fn run_node(
 /// reached and nothing is kept, the node fails with a retryable "ontology
 /// unavailable" error: it is tried again with backoff within its attempts,
 /// and fails for good after the last. Any other refusal fails it at once.
+/// Returns the attempt the node runs as: the attempts spent waiting count
+/// against its budget.
 async fn node_vocabulary(
     state: &AppState,
     data: &RunData,
@@ -1660,9 +1663,9 @@ async fn node_vocabulary(
     node_id: Uuid,
     first_attempt: i32,
     budget: i32,
-) -> Result<Arc<Ontology>, NodeStatus> {
+) -> Result<(Arc<Ontology>, i32), NodeStatus> {
     if let Some(vocabulary) = &data.ontology {
-        return Ok(vocabulary.clone());
+        return Ok((vocabulary.clone(), first_attempt));
     }
     let graph = vocabulary::GraphRef {
         id: data.graph_id,
@@ -1673,7 +1676,7 @@ async fn node_vocabulary(
     let first_attempt = first_attempt.clamp(1, max_attempts);
     for attempt in first_attempt..=max_attempts {
         let error = match vocabulary::of(state, graph, Actor::Runtime).await {
-            Ok(vocabulary) => return Ok(vocabulary),
+            Ok(vocabulary) => return Ok((vocabulary, attempt)),
             Err(err @ VocabularyError::Unavailable(_)) => ExecError::transient(err.to_string()),
             Err(err) => ExecError::fatal(err.to_string()),
         };

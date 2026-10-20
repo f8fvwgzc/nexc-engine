@@ -36,7 +36,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reaches nexc within the cache's lifetime: edges follow their relation's `blocking` flag (unless
   that would close a cycle) and canvases get `ontology.updated`. When onto-intelli is unreachable a
   kept vocabulary is served; without one, reads answer 503 and a run's node fails with a retryable
-  `ontology unavailable`. A reader onto-intelli does not show a private team's graph to (the run
+  `ontology unavailable` (the attempts it spends waiting count against `NEXC_MAX_ATTEMPTS`). A reader onto-intelli does not show a private team's graph to (the run
   engine, a member the projection has not named in the team yet) is answered as the backend's own
   principal, and a graph is initialised only when that principal does not find it either, so a
   graph's own types are never reset to the starter set.
