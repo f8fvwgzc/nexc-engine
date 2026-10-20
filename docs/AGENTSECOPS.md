@@ -196,10 +196,10 @@ Five rules the design follows:
   2026-10-20 the token was HS256 under a key derived from the runtime's own bearer secret: the
   runtime, which this design calls untrusted, could mint any token it liked. That key is gone,
   and setting `NEXC_AGENT_TOKEN_KEY` now stops both sides from starting.
-- **Every principal's birth and death is on the record.** Creating an agent (by hand, from a
-  template, as a new workspace's default organisation, as an A2A counterpart's proxy) and
-  deleting one are audited as `agent_created` and `agent_deleted`, in the same transaction as the
-  change, with the actor; so are capability edits (`policy_changed`), quarantine and its release
+- **Every principal's birth and death is on the record** (since 2026-10-20; older agents have no
+  entry of their birth). Creating an agent (by hand, from a template, as a new workspace's default
+  organisation, as an A2A counterpart's proxy) and deleting one are audited as `agent_created`
+  and `agent_deleted`, in the same transaction as the change, with the actor; so are capability edits (`policy_changed`), quarantine and its release
   (`agent_quarantined`, `agent_released`).
 - **Agent card.** The console shows what SoftBank calls the ID card: purpose, owner, team, scopes,
   model, budget left, last heartbeat, current risk score, policy version, and the agent's last
@@ -256,17 +256,23 @@ Five rules the design follows:
 - **Kill switches.** Pause an agent, quarantine an agent, cancel a run, revoke a token (session
   epochs already do this for humans in seconds; the same gate works for agent principals).
 - **The runtime's reach.** The backend's re-check only sees the spans the runtime reports, so a
-  compromised runtime must not be able to act on its own. It reaches the backend (for the token
-  keys) and its LLM endpoints, nothing else: in Kubernetes an Egress NetworkPolicy lets it reach
-  the backend, DNS and `runtime-egress`; in Docker Compose it sits on an internal network only.
-  `runtime-egress` (`nexc egress-proxy`, from the backend image, with no secrets) opens a
-  connection only to the `host:port` entries of `NEXC_RUNTIME_EGRESS_ALLOW` (Anthropic and OpenAI
-  by default, a local provider by name), answers 403 to the rest and logs every connection. Tools
-  that call out (`fetch_url`, MCP, A2A) were already the backend gateway's, under the policy.
+  compromised runtime must not be able to act on its own. It reaches the backend's key set and its
+  LLM endpoints, nothing else. In Kubernetes an Egress NetworkPolicy lets it reach the backend's
+  second listener (`NEXC_KEYS_ADDR`, the key set alone, never the API) and `runtime-egress`, and
+  no DNS, since a lookup of `<data>.attacker.example` is a way out; it finds both peers by their
+  Service environment variables. In Docker Compose it sits on an internal network only, where
+  Docker's DNS answers container names alone (there it can still reach the backend's API, as it
+  always could). `runtime-egress` (`nexc egress-proxy`, from the backend image, with no secrets)
+  opens a connection only to the `host:port` entries of `NEXC_RUNTIME_EGRESS_ALLOW` (Anthropic's
+  API by default, a local provider by name), requires a tunnel to carry TLS whose server name is
+  the host it was opened to (so a CDN that routes by name cannot be asked for another site),
+  answers 403 to the rest and logs every connection. Tools that call out (`fetch_url`, MCP, A2A)
+  were already the backend gateway's, under the policy.
 - **Open gap: LLM traffic does not go through the gateway.** The runtime still talks to the model
   provider itself (through `runtime-egress`, which sees host names, never what is inside TLS).
   Nothing checks a prompt on its way out or counts its bytes against the policy, and a runtime
-  that is compromised can put anything in a prompt to an allowed provider. Closing it means
+  that is compromised can send anything to an allowed provider, even under an API key of its own
+  (an account its attacker reads): keep the allow-list to the endpoints in use. Closing it means
   routing model calls through the backend (which holds the keys anyway) or a gateway that
   terminates TLS; it is not done.
 

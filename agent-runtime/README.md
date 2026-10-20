@@ -36,7 +36,7 @@ curl -sN localhost:8090/v1/execute \
 | Variable | Default | Meaning |
 |---|---|---|
 | `NEXC_RUNTIME_TOKEN` | – (required, ≥ 32 chars) | shared bearer secret with the backend |
-| `NEXC_AGENT_TOKEN_JWKS_URL` | – | the backend's public agent-token keys (`/api/v1/agent-tokens/jwks.json`), fetched by the `kid` a token names; this or the next is required |
+| `NEXC_AGENT_TOKEN_JWKS_URL` | – | the backend's public agent-token keys (`/api/v1/agent-tokens/jwks.json`), fetched by the `kid` a token names; this or the next is required, never both |
 | `NEXC_AGENT_TOKEN_PUBLIC_KEYS` | – | the backend's Ed25519 public keys (base64url, comma separated), when they are configured rather than fetched. The runtime holds no key that signs: only the backend mints agent tokens |
 | `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` | – | where model calls go out; Compose and Kubernetes point them at `runtime-egress`, the runtime's only way out |
 | `RUNTIME_HOST` / `RUNTIME_PORT` | `0.0.0.0` / `8090` | bind address |
