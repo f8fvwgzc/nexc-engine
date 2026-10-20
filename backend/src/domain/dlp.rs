@@ -3,7 +3,11 @@
 //! that decides what happens to it. Pure functions, no IO: credentials (the
 //! guardrails' scrubber), shapes of personal data (e-mail, phone, card and
 //! national-id numbers, by hand, no regex), the workspace's own keywords, and
-//! the clearance of the data the content was derived from.
+//! the clearance of the data the content was derived from. Numbers that
+//! carry a check digit are only taken when it is right: cards (Luhn), Dutch
+//! BSNs (the 11-test), Japanese My Numbers and corporate numbers (their
+//! official check digits), so about one random number in ten of the right
+//! length is taken for one, not every one.
 
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -64,6 +68,8 @@ impl Findings {
                 (PiiKind::Card, _) => "card numbers".to_owned(),
                 (PiiKind::NationalId, 1) => "national id".to_owned(),
                 (PiiKind::NationalId, _) => "national ids".to_owned(),
+                (PiiKind::CorporateNumber, 1) => "corporate number".to_owned(),
+                (PiiKind::CorporateNumber, _) => "corporate numbers".to_owned(),
             };
             parts.push(format!("{} {what}", finding.count));
         }
@@ -128,6 +134,51 @@ fn luhn(digits: &[u8]) -> bool {
         sum += d;
     }
     sum % 10 == 0
+}
+
+/// The check digit of a Japanese My Number (individual number, 12 digits)
+/// over its first 11: with `P(n)` the n-th digit counted from the right of
+/// those 11 and `Q(n)` = n + 1 for n ≤ 6, n − 5 above, the remainder `r` of
+/// Σ P(n)·Q(n) by 11 gives 0 when r ≤ 1, else 11 − r (Cabinet Order of the
+/// My Number Act, art. 8).
+fn my_number_check(first: &[u8]) -> u8 {
+    let sum: u32 = first
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(i, p)| {
+            let n = i as u32 + 1;
+            let q = if n <= 6 { n + 1 } else { n - 5 };
+            u32::from(*p) * q
+        })
+        .sum();
+    match sum % 11 {
+        0 | 1 => 0,
+        r => (11 - r) as u8,
+    }
+}
+
+/// Whether 12 digits are a My Number: the last is the check digit of the
+/// first 11.
+fn is_my_number(d: &[u8]) -> bool {
+    d.len() == 12 && my_number_check(&d[..11]) == d[11]
+}
+
+/// Whether 13 digits are a Japanese corporate number (houjin bangou): the
+/// first is the check digit of the 12-digit base, 9 − (Σ P(n)·Q(n) mod 9)
+/// with `P(n)` the n-th base digit from the right and `Q(n)` 1 for odd n, 2
+/// for even (Ministerial Order on corporate numbers, art. 2). It is never 0.
+fn is_corporate_number(d: &[u8]) -> bool {
+    if d.len() != 13 {
+        return false;
+    }
+    let sum: u32 = d[1..]
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(i, p)| u32::from(*p) * if i % 2 == 0 { 1 } else { 2 })
+        .sum();
+    u32::from(d[0]) == 9 - sum % 9
 }
 
 /// Runs of digits with the separators numbers are written with, as `(digits,
@@ -201,7 +252,8 @@ fn numbers(text: &str) -> Vec<Number<'_>> {
 
 /// Whether a run of digits is shaped like a national id: a US SSN
 /// (`ddd-dd-dddd`), a Dutch BSN (9 digits passing the 11-test), a Japanese
-/// My Number (12 digits), a Swedish personnummer (`yymmdd-nnnn`).
+/// My Number (12 digits with its check digit, run together or as on the
+/// card, `dddd dddd dddd`), a Swedish personnummer (`yymmdd-nnnn`).
 fn is_national_id(number: &Number<'_>) -> bool {
     let d = &number.digits;
     match d.len() {
@@ -235,9 +287,20 @@ fn is_national_id(number: &Number<'_>) -> bool {
                 && (1..=12).contains(&(d[2] * 10 + d[3]))
                 && (1..=31).contains(&(d[4] * 10 + d[5]))
         }
-        12 => !number.separated && !number.plus,
+        12 => {
+            let raw = number.raw.as_bytes();
+            // As the card prints it: four, four, four, one separator throughout.
+            let grouped = raw.len() == 14 && matches!(raw[4], b' ' | b'-') && raw[9] == raw[4];
+            (!number.separated || grouped) && !number.plus && is_my_number(d)
+        }
         _ => false,
     }
+}
+
+/// Whether a run of digits is a Japanese corporate number: 13 digits run
+/// together, the first the check digit of the rest.
+fn is_corporate(number: &Number<'_>) -> bool {
+    !number.separated && !number.plus && is_corporate_number(&number.digits)
 }
 
 /// Whether a run of digits is shaped like a payment card: 13 to 19 digits
@@ -277,22 +340,27 @@ pub fn classify(text: &str, kinds: &[PiiKind], keywords: &[String]) -> Findings 
     if kinds.contains(&PiiKind::Email) {
         count(PiiKind::Email, count_emails(text));
     }
-    if kinds
-        .iter()
-        .any(|k| matches!(k, PiiKind::Phone | PiiKind::Card | PiiKind::NationalId))
-    {
-        let (mut phones, mut cards, mut ids) = (0, 0, 0);
+    if kinds.iter().any(|k| {
+        matches!(
+            k,
+            PiiKind::Phone | PiiKind::Card | PiiKind::NationalId | PiiKind::CorporateNumber
+        )
+    }) {
+        let (mut phones, mut cards, mut ids, mut corporate) = (0, 0, 0, 0);
         for number in numbers(text) {
             if is_card(&number) {
                 cards += 1;
             } else if is_national_id(&number) {
                 ids += 1;
+            } else if is_corporate(&number) {
+                corporate += 1;
             } else if is_phone(&number) {
                 phones += 1;
             }
         }
         count(PiiKind::Card, cards);
         count(PiiKind::NationalId, ids);
+        count(PiiKind::CorporateNumber, corporate);
         count(PiiKind::Phone, phones);
     }
     let lower = text.to_lowercase();
@@ -480,6 +548,124 @@ mod tests {
         assert!(classify("nothing here, 42 times", &PiiKind::ALL, &[]).is_clean());
         assert_eq!(count_emails("not@an-email, a@b.c, x@y.org and @handle"), 1);
         assert_eq!(count_emails("first.last+tag@sub.example.co.uk"), 1);
+    }
+
+    #[test]
+    fn my_numbers_and_corporate_numbers_are_taken_only_with_their_check_digit() {
+        let ids = |text: &str, kind: PiiKind| {
+            classify(text, &[kind], &[])
+                .pii
+                .first()
+                .map_or(0, |f| f.count)
+        };
+        // My Number: 12345678901 has check digit 8.
+        assert_eq!(my_number_check(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1]), 8);
+        assert_eq!(
+            ids("individual number 123456789018", PiiKind::NationalId),
+            1
+        );
+        assert_eq!(ids("as printed: 1234 5678 9018", PiiKind::NationalId), 1);
+        assert_eq!(ids("as printed: 1234-5678-9018", PiiKind::NationalId), 1);
+        assert_eq!(
+            ids("wrong check digit 123456789012", PiiKind::NationalId),
+            0
+        );
+        assert_eq!(
+            ids("other grouping 123 456 789 018", PiiKind::NationalId),
+            0
+        );
+        assert_eq!(
+            ids("mixed separators 1234 5678-9018", PiiKind::NationalId),
+            0
+        );
+        // A remainder of 0 or 1 gives check digit 0.
+        let zero = (10_000_000_000..100_000_000_000u64)
+            .step_by(7_919)
+            .map(|n| {
+                format!("{n:011}")
+                    .bytes()
+                    .map(|b| b - b'0')
+                    .collect::<Vec<u8>>()
+            })
+            .find(|d| my_number_check(d) == 0)
+            .expect("some base has check digit 0");
+        let text: String = zero.iter().map(|d| char::from(b'0' + d)).collect();
+        assert_eq!(ids(&format!("number {text}0"), PiiKind::NationalId), 1);
+        // Corporate numbers: 7000012050002 and 4000012090001 are valid.
+        assert!(is_corporate_number(&[
+            7, 0, 0, 0, 0, 1, 2, 0, 5, 0, 0, 0, 2
+        ]));
+        assert_eq!(
+            ids("corporate number 7000012050002", PiiKind::CorporateNumber),
+            1
+        );
+        assert_eq!(
+            ids("corporate number 4000012090001", PiiKind::CorporateNumber),
+            1
+        );
+        assert_eq!(ids("off by one 7000012050003", PiiKind::CorporateNumber), 0);
+        assert_eq!(
+            ids(
+                "check digit 0 never is 0000012050002",
+                PiiKind::CorporateNumber
+            ),
+            0
+        );
+        // Not a personal identifier, and not looked for unless asked.
+        assert_eq!(
+            ids("corporate number 7000012050002", PiiKind::NationalId),
+            0
+        );
+        assert!(!PiiKind::DEFAULT.contains(&PiiKind::CorporateNumber));
+        let f = classify("7000012050002 and 4000012090001", &PiiKind::ALL, &[]);
+        assert!(
+            f.describe().contains("2 corporate numbers"),
+            "{}",
+            f.describe()
+        );
+    }
+
+    /// A deterministic stream of digits (xorshift64*), for the corpus.
+    struct Digits(u64);
+
+    impl Digits {
+        fn next(&mut self) -> u8 {
+            self.0 ^= self.0 >> 12;
+            self.0 ^= self.0 << 25;
+            self.0 ^= self.0 >> 27;
+            (self.0.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 33) as u8 % 10
+        }
+
+        fn number(&mut self, len: usize) -> String {
+            (0..len).map(|_| char::from(b'0' + self.next())).collect()
+        }
+    }
+
+    /// How often random numbers of `len` digits, written alone in a
+    /// sentence, are taken for `kind`.
+    fn false_positive_rate(len: usize, kind: PiiKind, samples: usize) -> f64 {
+        let mut digits = Digits(0x9E37_79B9_7F4A_7C15 ^ len as u64);
+        let hits = (0..samples)
+            .filter(|_| {
+                let text = format!("Reference {} on file.", digits.number(len));
+                classify(&text, &[kind], &[]).pii_total() > 0
+            })
+            .count();
+        hits as f64 / samples as f64
+    }
+
+    #[test]
+    fn random_numbers_are_taken_for_identifiers_about_one_time_in_ten() {
+        // Before the check digits every 12-digit number was a My Number (100 %).
+        let my_number = false_positive_rate(12, PiiKind::NationalId, 50_000);
+        assert!((0.09..0.11).contains(&my_number), "{my_number}");
+        let corporate = false_positive_rate(13, PiiKind::CorporateNumber, 50_000);
+        assert!((0.09..0.11).contains(&corporate), "{corporate}");
+        assert_eq!(false_positive_rate(13, PiiKind::NationalId, 10_000), 0.0);
+        assert_eq!(
+            false_positive_rate(12, PiiKind::CorporateNumber, 10_000),
+            0.0
+        );
     }
 
     #[test]

@@ -72,12 +72,25 @@ string_enum!(
         Phone => "phone",
         Card => "card",
         NationalId => "national_id",
+        /// A Japanese corporate number (houjin bangou): public, but it names
+        /// the business a document is about; looked for only when asked.
+        CorporateNumber => "corporate_number",
     }
 );
 
 impl PiiKind {
     /// Every kind.
-    pub const ALL: [PiiKind; 4] = [
+    pub const ALL: [PiiKind; 5] = [
+        PiiKind::Email,
+        PiiKind::Phone,
+        PiiKind::Card,
+        PiiKind::NationalId,
+        PiiKind::CorporateNumber,
+    ];
+
+    /// The kinds looked for when a policy names none: personal data.
+    /// (Corporate numbers are published, and on every Japanese invoice.)
+    pub const DEFAULT: [PiiKind; 4] = [
         PiiKind::Email,
         PiiKind::Phone,
         PiiKind::Card,
