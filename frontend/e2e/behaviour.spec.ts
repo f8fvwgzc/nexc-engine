@@ -137,17 +137,20 @@ test.describe('the inbox unread count', () => {
   for (const width of [768, 1280]) {
     test(`is shown and named at ${width} px`, async ({ page }) => {
       await page.setViewportSize({ width, height: width === 768 ? 1024 : 800 });
-      await openRoute(page, route('dashboard'), { mode: 'full', theme: 'light' });
+      await openRoute(page, route('inbox'), { mode: 'full', theme: 'light' });
 
+      // The rail's Issues icon carries a dot and the count in its name at every width.
+      const issues = page.getByRole('link', { name: `Issues (${unread} unread)` });
+      await expect(issues).toBeVisible();
+      await expect(issues.locator('[data-slot="unread-dot"]')).toBeVisible();
       const inbox = page.getByRole('link', { name: `Inbox (${unread} unread)` });
-      await expect(inbox).toBeVisible();
       if (width === 768) {
-        // The rail has no room for the badge: a dot on the icon stands in for it.
-        await expect(inbox.locator('[data-slot="unread-dot"]')).toBeVisible();
+        // On a tablet the panel is closed to the rail: the Inbox row is not on screen.
+        await expect(inbox).toBeHidden();
       } else {
+        await expect(inbox).toBeVisible();
         const row = page.getByRole('listitem').filter({ has: inbox });
         await expect(row.locator('[data-sidebar="menu-badge"]')).toHaveText(String(unread));
-        await expect(inbox.locator('[data-slot="unread-dot"]')).toBeHidden();
       }
     });
   }

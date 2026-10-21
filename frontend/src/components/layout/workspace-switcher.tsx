@@ -28,8 +28,6 @@ import { errorMessage } from '@/lib/api/errors';
 import { qk } from '@/lib/query-keys';
 import { useWorkspaceStore } from '@/stores/workspace-store';
 
-import { BrandMark } from './brand-mark';
-
 function NewWorkspaceDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [name, setName] = useState('');
   const queryClient = useQueryClient();
@@ -104,14 +102,20 @@ export function WorkspaceSwitcher() {
               aria-label="Switch workspace"
               className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
             >
-              <BrandMark className="size-8 shrink-0" />
-              <div className="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
+              {/* The workspace's initial: the brand mark is in the rail. */}
+              <span
+                aria-hidden
+                className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-foreground/10 text-[13px] font-semibold"
+              >
+                {current?.name.trim().charAt(0).toUpperCase() || 'N'}
+              </span>
+              <div className="grid flex-1 text-left text-sm leading-tight">
                 <span className="truncate font-semibold">{current?.name ?? 'Nexc'}</span>
                 <span className="truncate text-xs text-muted-foreground capitalize">
                   {current ? current.role : 'Loading…'}
                 </span>
               </div>
-              <ChevronsUpDownIcon className="ml-auto size-4 group-data-[collapsible=icon]:hidden" />
+              <ChevronsUpDownIcon className="ml-auto size-4" />
             </SidebarMenuButton>
           </DropdownMenuTrigger>
           <DropdownMenuContent

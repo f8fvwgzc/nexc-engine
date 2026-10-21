@@ -1677,6 +1677,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The sidebar is a rail of core menus and a panel that changes with them.** The rail holds one
+  icon per core menu (Issues, Agents, Graphs, Trust; Settings and the account menu at the
+  bottom) and marks the one the open page belongs to; the panel beside it lists that menu's
+  pages, with the member's teams under Issues and the recent graphs under Graphs. The panel
+  collapses to the rail (⌘B, or the button at the left of the header) and is collapsed on a
+  tablet to start with; on a phone the drawer holds both. The settings pages open inside the
+  same shell (no "Back to app"), and their breadcrumbs name the menu they are listed under:
+  guardrails, policies, alerts, alert destinations and the audit log are listed under Trust,
+  at their old addresses. The platform console has the same rail and panel with its own menu.
+  The command palette's "Go to" list is built from the same menus, each page named by its menu.
+
 - Agent Firewall decisions carry the signing key's id: `AuthorizeReply.kid`, `kid` inside the
   signed bytes and on the `policy` span, and `firewall.kid` on `/admin/infrastructure`. The signing
   key is configured as `NEXC_SIGNING_KEY` (`NEXC_FIREWALL_SIGNING_KEY` is still read) and also signs

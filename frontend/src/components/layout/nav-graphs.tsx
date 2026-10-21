@@ -17,7 +17,7 @@ import { useWorkspaceId } from '@/features/workspaces/use-current-workspace';
 
 const MAX_GRAPHS = 8;
 
-/** Recent graphs; hovering/focusing one prefetches its data and the canvas chunk. */
+/** The graphs panel's recent graphs; hovering/focusing one prefetches its data and the canvas chunk. */
 export function NavGraphs() {
   const queryClient = useQueryClient();
   const { graphId: activeId } = useParams();
@@ -34,9 +34,9 @@ export function NavGraphs() {
   };
 
   return (
-    <SidebarGroup className="group-data-[collapsible=icon]:hidden">
+    <SidebarGroup className="py-1">
       <div className="flex items-center justify-between">
-        <SidebarGroupLabel>Recent graphs</SidebarGroupLabel>
+        <SidebarGroupLabel className="h-7">Recent</SidebarGroupLabel>
         <Link
           to="/app?new=1"
           title="New graph"

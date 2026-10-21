@@ -51,7 +51,8 @@ src/
   components/
     ui/                    shadcn/ui (generated — `shadcn add`, do not hand-edit beyond theming)
     custom-ui/             product design layer built on shadcn (see below)
-    layout/                AppShell, AppSidebar, AppHeader, PublicLayout, PrivateRoute, PublicRoute, …
+    layout/                AppShell, ShellSidebar (the rail of core menus + the panel), AppHeader,
+                           PlatformShell, PublicLayout, PrivateRoute, PublicRoute, …
     seo/                   <Seo title description />
   features/<name>/         auth, graphs (dashboard/templates), graph (canvas, panels, toolbar, hooks),
                            runs, agents, memory, settings, command (⌘K palette), landing
