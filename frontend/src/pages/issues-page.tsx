@@ -711,10 +711,13 @@ export function IssueExplorer({
   person,
   creating: creatingFromPage,
   onCreatingChange,
+  defaultTeamId,
 }: {
   workspace: Workspace;
   project?: Project;
   person?: { assignee_id?: string; creator_id?: string };
+  /** The team new issues go to while no team is filtered (a project's own team). */
+  defaultTeamId?: string;
   /** The new-issue dialog, opened from the page's header instead of the explorer's toolbar. */
   creating?: boolean;
   onCreatingChange?: (creating: boolean) => void;
@@ -988,7 +991,7 @@ export function IssueExplorer({
         key={`${creating}:${teamId}`}
         workspace={workspace}
         teams={teams}
-        defaultTeam={teamId === ALL ? undefined : teamId}
+        defaultTeam={teamId === ALL ? defaultTeamId : teamId}
         defaultProject={project?.id}
         open={creating}
         onClose={() => setCreating(false)}

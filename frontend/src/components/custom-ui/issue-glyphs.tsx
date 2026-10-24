@@ -1,4 +1,4 @@
-import type { StateCategory } from '@/schemas/issue';
+import type { ProjectStatus, StateCategory } from '@/schemas/issue';
 import { cn } from '@/lib/utils';
 
 const SIZE = 14;
@@ -53,6 +53,79 @@ export function StateGlyph({
         />
       )}
       {category === 'canceled' && (
+        <path
+          d="M5 5 9 9 M9 5 5 9"
+          fill="none"
+          stroke="var(--background)"
+          strokeWidth={1.5}
+          strokeLinecap="round"
+        />
+      )}
+    </svg>
+  );
+}
+
+/** Project statuses in the run and node status colours (styles/index.css). */
+const PROJECT_STATUS_COLOR: Record<ProjectStatus, string> = {
+  planned: 'var(--status-idle)',
+  started: 'var(--status-queued)',
+  paused: 'var(--status-cancelled)',
+  completed: 'var(--status-succeeded)',
+  canceled: 'var(--status-skipped)',
+};
+
+/**
+ * A project's status as a small ring, drawn like a workflow state: empty when planned, half full
+ * in progress, two bars when paused, full with a tick when completed and with a cross when
+ * canceled.
+ */
+export function ProjectStatusGlyph({
+  status,
+  className,
+}: {
+  status: ProjectStatus;
+  className?: string;
+}) {
+  const closed = status === 'completed' || status === 'canceled';
+  return (
+    <svg
+      width={SIZE}
+      height={SIZE}
+      viewBox={`0 0 ${SIZE} ${SIZE}`}
+      aria-hidden
+      className={cn('shrink-0', className)}
+      style={{ color: PROJECT_STATUS_COLOR[status] }}
+    >
+      <circle
+        cx={C}
+        cy={C}
+        r={R}
+        fill={closed ? 'currentColor' : 'none'}
+        stroke="currentColor"
+        strokeWidth={1.5}
+      />
+      {status === 'started' && (
+        <path d={`M${C} ${C - 3} A3 3 0 0 1 ${C} ${C + 3} Z`} fill="currentColor" />
+      )}
+      {status === 'paused' && (
+        <path
+          d="M5.9 5.2v3.6 M8.1 5.2v3.6"
+          stroke="currentColor"
+          strokeWidth={1.4}
+          strokeLinecap="round"
+        />
+      )}
+      {status === 'completed' && (
+        <path
+          d="M4.4 7.2 6.2 9 9.7 5.3"
+          fill="none"
+          stroke="var(--background)"
+          strokeWidth={1.5}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      )}
+      {status === 'canceled' && (
         <path
           d="M5 5 9 9 M9 5 5 9"
           fill="none"
@@ -161,6 +234,34 @@ export function LabelChip({
         style={{ backgroundColor: color }}
       />
       <span className="truncate">{name}</span>
+    </span>
+  );
+}
+
+/** A team as a small pill: its key and, unless `compact`, its name. */
+export function TeamChip({
+  team,
+  compact = false,
+  className,
+}: {
+  team: { key: string; name: string };
+  compact?: boolean;
+  className?: string;
+}) {
+  return (
+    <span
+      title={team.name}
+      className={cn(
+        'inline-flex h-5 max-w-full min-w-0 shrink-0 items-center gap-1.5 rounded-full border px-2 text-xs text-muted-foreground',
+        className,
+      )}
+    >
+      <span className="font-mono text-[10px] font-semibold text-foreground">{team.key}</span>
+      {compact ? (
+        <span className="sr-only">{team.name}</span>
+      ) : (
+        <span className="truncate">{team.name}</span>
+      )}
     </span>
   );
 }

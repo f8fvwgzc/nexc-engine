@@ -1,13 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeftIcon, FolderKanbanIcon, Trash2Icon } from 'lucide-react';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
 import { EmptyState } from '@/components/custom-ui/empty-state';
 import { ErrorState } from '@/components/custom-ui/error-state';
 import { IconButton } from '@/components/custom-ui/icon-button';
-import { OptionSelect } from '@/components/custom-ui/option-select';
+import { ProjectStatusGlyph, TeamChip } from '@/components/custom-ui/issue-glyphs';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
@@ -17,20 +17,38 @@ import { Progress } from '@/components/ui/progress';
 import { Textarea } from '@/components/ui/textarea';
 import { deleteProject, projectsQuery, updateProject } from '@/features/issues/api';
 import {
-  PROJECT_STATUS_OPTIONS,
-  projectProgress,
-  projectStatusLabel,
-} from '@/features/issues/project-status';
-import { membersQuery } from '@/features/workspaces/api';
+  ProjectLeadSelect,
+  ProjectStatusSelect,
+  ProjectTeamSelect,
+} from '@/features/issues/project-fields';
+import { projectProgress, projectStatusLabel } from '@/features/issues/project-status';
+import { membersQuery, teamsQuery } from '@/features/workspaces/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { errorMessage } from '@/lib/api/errors';
 import { qk } from '@/lib/query-keys';
+import { cn } from '@/lib/utils';
 import type { Project } from '@/schemas/issue';
 import { isWorkspaceAdmin, type Workspace } from '@/schemas/workspace';
 
 import { IssueExplorer } from './issues-page';
 
-const NONE = '__none__';
+/** One property of the project in the row under its name: a small label before its control. */
+function Property({
+  label,
+  className,
+  children,
+}: {
+  label: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className={cn('flex items-center gap-2', className)}>
+      <span className="text-xs text-muted-foreground">{label}</span>
+      {children}
+    </div>
+  );
+}
 
 /** The project's name, description and properties; everything saves as it is changed. */
 function ProjectHeader({ workspace, project }: { workspace: Workspace; project: Project }) {
@@ -41,6 +59,12 @@ function ProjectHeader({ workspace, project }: { workspace: Workspace; project: 
   const [deleting, setDeleting] = useState(false);
   const canEdit = workspace.role !== 'guest';
   const { data: members = [] } = useQuery({ ...membersQuery(workspace.id), enabled: canEdit });
+  const { data: teams = [] } = useQuery({ ...teamsQuery(workspace.id), enabled: canEdit });
+  // The owning team is always one the caller may see; it still names itself while the list loads.
+  const teamOptions =
+    project.team && !teams.some((t) => t.id === project.team?.id)
+      ? [...teams, project.team]
+      : teams;
   const refresh = () => queryClient.invalidateQueries({ queryKey: qk.issues.all });
   const save = useMutation({
     mutationFn: (body: Parameters<typeof updateProject>[2]) =>
@@ -68,7 +92,7 @@ function ProjectHeader({ workspace, project }: { workspace: Workspace; project: 
   const done = projectProgress(project);
 
   return (
-    <header className="space-y-3 border-b pb-4">
+    <header className="shrink-0 space-y-3 border-b pb-4">
       {/* The name is edited in place; the heading names the page for assistive technology. */}
       <h1 className="sr-only">{project.name}</h1>
       <div className="flex items-start gap-2">
@@ -107,52 +131,70 @@ function ProjectHeader({ workspace, project }: { workspace: Workspace; project: 
           </IconButton>
         )}
       </div>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px]">
-        {canEdit ? (
-          <>
-            <OptionSelect
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px]">
+        <Property label="Status">
+          {canEdit ? (
+            <ProjectStatusSelect
               value={project.status}
               onValueChange={(status) => save.mutate({ status })}
-              options={PROJECT_STATUS_OPTIONS}
-              aria-label="Status"
               className="w-36"
             />
-            <OptionSelect
-              value={project.lead_id ?? NONE}
-              onValueChange={(id) => save.mutate({ lead_id: id === NONE ? null : id })}
-              options={[
-                { value: NONE, label: 'No lead' },
-                ...members.map((m) => ({ value: m.user_id, label: m.name })),
-              ]}
-              aria-label="Lead"
+          ) : (
+            <span className="flex items-center gap-1.5">
+              <ProjectStatusGlyph status={project.status} />
+              {projectStatusLabel(project.status)}
+            </span>
+          )}
+        </Property>
+        {canEdit && (
+          <Property label="Lead">
+            <ProjectLeadSelect
+              members={members}
+              value={project.lead_id}
+              onValueChange={(lead_id) => save.mutate({ lead_id })}
               className="w-44"
             />
-            <label className="flex items-center gap-2 text-muted-foreground">
-              Target
-              <Input
-                type="date"
-                value={project.target_date ?? ''}
-                className="h-8 w-40 text-[13px] text-foreground"
-                onChange={(e) => save.mutate({ target_date: e.target.value || null })}
-              />
-            </label>
-          </>
-        ) : (
-          <span className="text-muted-foreground">
-            {projectStatusLabel(project.status)}
-            {project.target_date ? ` · target ${project.target_date}` : ''}
-          </span>
+          </Property>
         )}
-        <span className="flex w-full items-center gap-2 sm:ml-auto sm:w-56">
-          <Progress
-            value={done}
-            aria-label={`${done}% of issues closed`}
-            className="h-1.5 flex-1"
-          />
-          <span className="text-xs text-muted-foreground tabular-nums">
-            {project.closed_count}/{project.issue_count} closed
+        <Property label="Team">
+          {canEdit ? (
+            <ProjectTeamSelect
+              teams={teamOptions}
+              value={project.team_id}
+              onValueChange={(team_id) => save.mutate({ team_id })}
+              className="w-44"
+            />
+          ) : project.team ? (
+            <TeamChip team={project.team} />
+          ) : (
+            <span className="text-muted-foreground">No team</span>
+          )}
+        </Property>
+        <Property label="Target">
+          {canEdit ? (
+            <Input
+              type="date"
+              value={project.target_date ?? ''}
+              aria-label="Target date"
+              className="h-8 w-40 text-[13px]"
+              onChange={(e) => save.mutate({ target_date: e.target.value || null })}
+            />
+          ) : (
+            <span className="tabular-nums">{project.target_date ?? '—'}</span>
+          )}
+        </Property>
+        <Property label="Progress" className="sm:ml-auto">
+          <span className="flex w-36 items-center gap-2">
+            <Progress
+              value={done}
+              aria-label={`${done}% of issues closed`}
+              className="h-1.5 flex-1"
+            />
+            <span className="text-xs text-muted-foreground tabular-nums">
+              {project.closed_count}/{project.issue_count}
+            </span>
           </span>
-        </span>
+        </Property>
       </div>
       {save.error && (
         <p role="alert" className="text-sm text-destructive">
@@ -211,10 +253,19 @@ function ProjectView({ workspace, projectId }: { workspace: Workspace; projectId
     );
   }
   return (
-    <PageContainer>
+    // From md up the header stays put and the issues fill the rest of the height: a board reaches
+    // the bottom edge with columns that scroll on their own, and a list scrolls under the header.
+    <PageContainer className="flex flex-col md:min-h-0 md:flex-1">
       <Seo title={project.name} noIndex />
       <ProjectHeader key={project.id} workspace={workspace} project={project} />
-      <IssueExplorer workspace={workspace} project={project} />
+      {/* The padding, taken back by the margin, leaves room for focus rings at the edges. */}
+      <div className="flex flex-col md:-m-1 md:min-h-0 md:flex-1 md:overflow-y-auto md:p-1">
+        <IssueExplorer
+          workspace={workspace}
+          project={project}
+          defaultTeamId={project.team_id ?? undefined}
+        />
+      </div>
     </PageContainer>
   );
 }

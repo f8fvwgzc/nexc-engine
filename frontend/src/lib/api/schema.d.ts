@@ -4607,9 +4607,17 @@ export interface components {
         /** @description `POST /workspaces/{wid}/projects` body. */
         CreateProject: {
             description?: string;
+            /** Format: uuid */
+            lead_id?: string | null;
             name: string;
+            status?: components["schemas"]["ProjectStatus"] | null;
             /** Format: date */
             target_date?: string | null;
+            /**
+             * Format: uuid
+             * @description The team that owns the project (default: none).
+             */
+            team_id?: string | null;
         };
         /** @description `POST /graphs/{gid}/runs` body. */
         CreateRun: {
@@ -6454,6 +6462,12 @@ export interface components {
             status: components["schemas"]["ProjectStatus"];
             /** Format: date */
             target_date: string | null;
+            team: components["schemas"]["TeamRef"] | null;
+            /**
+             * Format: uuid
+             * @description The team that owns the project, if one does.
+             */
+            team_id: string | null;
             /** Format: uuid */
             workspace_id: string;
         };
@@ -7351,6 +7365,13 @@ export interface components {
             /** Format: uuid */
             user_id: string;
         };
+        /** @description A team, as much as a chip shows. */
+        TeamRef: {
+            /** Format: uuid */
+            id: string;
+            key: string;
+            name: string;
+        };
         /**
          * @description Role of a user in a team.
          * @enum {string}
@@ -7692,6 +7713,11 @@ export interface components {
             status?: components["schemas"]["ProjectStatus"] | null;
             /** Format: date */
             target_date?: string | null;
+            /**
+             * Format: uuid
+             * @description The owning team; `null` takes the project away from its team.
+             */
+            team_id?: string | null;
         };
         /** @description `PATCH .../states/{sid}` body (any subset). */
         UpdateState: {

@@ -10,10 +10,12 @@ import {
   WorkflowIcon,
 } from 'lucide-react';
 import { Suspense, useState } from 'react';
+import { Link } from 'react-router-dom';
 
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
 import { EmptyState } from '@/components/custom-ui/empty-state';
 import { IconButton } from '@/components/custom-ui/icon-button';
+import { ProjectStatusGlyph } from '@/components/custom-ui/issue-glyphs';
 import { OptionSelect } from '@/components/custom-ui/option-select';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
@@ -29,6 +31,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import {
@@ -40,11 +50,15 @@ import {
   teamMembersQuery,
   teamsQuery,
 } from '@/features/workspaces/api';
+import { projectsQuery, updateProject } from '@/features/issues/api';
 import { CyclesDialog } from '@/features/issues/cycles-dialog';
+import { NewProjectDialog } from '@/features/issues/new-project-dialog';
+import { projectStatusLabel } from '@/features/issues/project-status';
 import { WorkflowDialog } from '@/features/issues/workflow-dialog';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { errorMessage } from '@/lib/api/errors';
 import { qk } from '@/lib/query-keys';
+import type { Project } from '@/schemas/issue';
 import { isWorkspaceAdmin, type Team, type Workspace } from '@/schemas/workspace';
 import { useAuthStore } from '@/stores/auth-store';
 
@@ -224,7 +238,106 @@ function TeamRoster({
   );
 }
 
-function TeamCard({ workspace, team }: { workspace: Workspace; team: Team }) {
+/**
+ * The projects a team owns, each a link to its page, and for members (not guests) a way to add
+ * one: a new project for the team, or a project no team owns yet.
+ */
+function TeamProjects({
+  workspace,
+  team,
+  projects,
+  unowned,
+  onCreate,
+}: {
+  workspace: Workspace;
+  team: Team;
+  projects: Project[];
+  unowned: Project[];
+  onCreate: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const assign = useMutation({
+    mutationFn: (projectId: string) => updateProject(workspace.id, projectId, { team_id: team.id }),
+    meta: { successMessage: `Project added to ${team.name}` },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: qk.issues.projectLists(workspace.id) }),
+  });
+  return (
+    <div className="space-y-2 border-t pt-3">
+      <div className="flex items-center gap-2">
+        <h3 className="flex-1 text-xs font-medium text-muted-foreground">
+          Projects <span className="font-normal tabular-nums">{projects.length}</span>
+        </h3>
+        {workspace.role !== 'guest' && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" disabled={assign.isPending}>
+                <PlusIcon />
+                Add project
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-64">
+              <DropdownMenuItem onSelect={onCreate}>
+                <PlusIcon />
+                New project for {team.name}…
+              </DropdownMenuItem>
+              {unowned.length > 0 && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                    Projects without a team
+                  </DropdownMenuLabel>
+                  {unowned.map((project) => (
+                    <DropdownMenuItem key={project.id} onSelect={() => assign.mutate(project.id)}>
+                      <ProjectStatusGlyph status={project.status} />
+                      <span className="truncate">{project.name}</span>
+                    </DropdownMenuItem>
+                  ))}
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </div>
+      {projects.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No projects yet.</p>
+      ) : (
+        <ul className="space-y-0.5">
+          {projects.map((project) => (
+            <li key={project.id}>
+              <Link
+                to={`/app/projects/${project.id}`}
+                className="-mx-1.5 flex h-7 items-center gap-2 rounded-md px-1.5 text-[13px] outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/50"
+              >
+                <ProjectStatusGlyph status={project.status} />
+                <span className="min-w-0 flex-1 truncate">{project.name}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {projectStatusLabel(project.status)}
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function TeamCard({
+  workspace,
+  team,
+  projects,
+  unowned,
+  onCreateProject,
+}: {
+  workspace: Workspace;
+  team: Team;
+  /** The projects the team owns. */
+  projects: Project[];
+  /** The projects no team owns, which can be given to this one. */
+  unowned: Project[];
+  onCreateProject: () => void;
+}) {
   const queryClient = useQueryClient();
   const me = useAuthStore((s) => s.user?.id);
   const [open, setOpen] = useState(false);
@@ -248,11 +361,15 @@ function TeamCard({ workspace, team }: { workspace: Workspace; team: Team }) {
   const remove = useMutation({
     mutationFn: () => deleteTeam(workspace.id, team.id),
     meta: { successMessage: 'Team deleted' },
-    onSuccess: refresh,
+    onSuccess: () => {
+      void refresh();
+      // Its projects stay, without a team.
+      void queryClient.invalidateQueries({ queryKey: qk.issues.projectLists(workspace.id) });
+    },
   });
 
   return (
-    <li className="space-y-3 rounded-xl border p-4">
+    <li className="min-w-0 space-y-3 rounded-xl border p-4">
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant="outline" className="font-mono">
           {team.key}
@@ -314,6 +431,13 @@ function TeamCard({ workspace, team }: { workspace: Workspace; team: Team }) {
         )}
       </div>
       {open && <TeamRoster workspace={workspace} team={team} canManage={canManage} />}
+      <TeamProjects
+        workspace={workspace}
+        team={team}
+        projects={projects}
+        unowned={unowned}
+        onCreate={onCreateProject}
+      />
       <WorkflowDialog
         workspace={workspace}
         team={team}
@@ -343,6 +467,11 @@ function TeamCard({ workspace, team }: { workspace: Workspace; team: Team }) {
 
 function TeamList({ workspace, onCreate }: { workspace: Workspace; onCreate?: () => void }) {
   const { data: teams } = useSuspenseQuery(teamsQuery(workspace.id));
+  // One list of every project, split by team here; the teams still show when it fails.
+  const { data: projects = [] } = useQuery(projectsQuery(workspace.id));
+  // The team a new project is being created for.
+  const [creatingFor, setCreatingFor] = useState<string | null>(null);
+  const unowned = projects.filter((p) => p.team_id === null);
   if (teams.length === 0) {
     return (
       <EmptyState
@@ -358,11 +487,29 @@ function TeamList({ workspace, onCreate }: { workspace: Workspace; onCreate?: ()
     );
   }
   return (
-    <ul className="grid gap-3 md:grid-cols-2">
-      {teams.map((team) => (
-        <TeamCard key={team.id} workspace={workspace} team={team} />
-      ))}
-    </ul>
+    <>
+      <ul className="grid gap-3 md:grid-cols-2">
+        {teams.map((team) => (
+          <TeamCard
+            key={team.id}
+            workspace={workspace}
+            team={team}
+            projects={projects.filter((p) => p.team_id === team.id)}
+            unowned={unowned}
+            onCreateProject={() => setCreatingFor(team.id)}
+          />
+        ))}
+      </ul>
+      {workspace.role !== 'guest' && (
+        <NewProjectDialog
+          key={creatingFor ?? 'closed'}
+          workspace={workspace}
+          open={creatingFor !== null}
+          onClose={() => setCreatingFor(null)}
+          defaultTeam={creatingFor ?? undefined}
+        />
+      )}
+    </>
   );
 }
 

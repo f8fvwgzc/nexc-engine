@@ -144,6 +144,10 @@ export const projectSchema = z.object({
   name: z.string(),
   description: z.string(),
   status: projectStatusSchema,
+  /** The team that owns the project; null for a project of the whole workspace. */
+  team_id: idSchema.nullable(),
+  /** That team, as much as a chip shows. */
+  team: z.object({ id: idSchema, key: z.string(), name: z.string() }).nullable(),
   lead_id: idSchema.nullable(),
   target_date: z.string().nullable(),
   issue_count: z.number().int().nonnegative(),
