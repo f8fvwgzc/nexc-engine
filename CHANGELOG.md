@@ -82,6 +82,40 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Artifacts: the text files of an issue's work, kept with their history and in folders.** A new
+  Artifacts menu (`/app/artifacts`) lists folders and files. Folders nest and can be renamed,
+  moved and deleted; files can be uploaded one by one or as a whole folder, created empty,
+  renamed, moved, duplicated (`notes copy.md`), downloaded and deleted. Updating a file, by editing
+  it in place or uploading a new version, keeps every earlier version, readable on the file's
+  page (`/app/artifacts/<id>`), where Markdown is rendered, HTML is shown in a sandboxed frame
+  and code is highlighted. Only text is accepted: code, HTML, Markdown, config and data files up
+  to 1 MiB; content that holds a credential is refused. A file can belong to an issue: the
+  issue's page lists its files and the files its agents' runs produced, and keeps one of those as
+  an artifact in one click; uploads, updates, copies and deletions show on the issue's timeline
+  (`IssueEvent.kind` `artifact`). A private team's files go when its issue or the team does.
+  Endpoints: `/workspaces/{wid}/artifact-folders`, `/workspaces/{wid}/artifact-files`,
+  `/artifact-files/{id}` (`/content`, `/versions`, `/duplicate`, `/raw`),
+  `GET /issues/{iid}/run-artifacts` and `POST /issues/{iid}/run-artifacts/{aid}/keep`.
+- **Issues open on a page of their own** (`/app/issues/<id>`), laid out like Linear: the title,
+  description, the agents' work, sub-issues, artifacts and activity in the main column, the
+  properties beside it. Old `?issue=` links land there; Escape goes back to where the issue was
+  opened from inside the app.
+- An issue's activity folds away and shows everything, comments, changes, runs or files, oldest or
+  newest first; the choice is remembered.
+- The issue board fills the screen down to its bottom edge, each column scrolling on its own. A
+  `+` on each column files an issue straight into that state, and a column folds to a narrow
+  strip (remembered per team).
+- **Projects belong to a team** (`Project.team_id`, `Project.team`): one team owns any number of
+  projects, chosen when a project is created or later; a project of a private team is seen only
+  by those who see the team. `GET /workspaces/{wid}/projects?team_id=` lists one team's projects.
+  The Projects page shows them as a list grouped by status or as a board with a column per status
+  (drag a card to change its status, `+` per column), each with its team, lead, target date and
+  progress, filtered by team. The Teams settings list each team's projects and add one to it, and
+  each of your teams in the sidebar opens to its issues and its projects.
+- An issue can link a GitHub issue or pull request (`Issue.github_url`, link only): shown as
+  `owner/repo#12` on the row, the card and the issue's page, and recorded on its timeline
+  (`IssueEvent.kind` `github`).
+
 - Evidence that survives (`docs/AGENTSECOPS.md` §12). Each workspace's audit log is a hash chain
   the database writes itself (`seq`, `prev_hash`, `hash`, names as salted digests so an erased
   account's name can still leave it), checked by `GET /workspaces/{wid}/audit/verify`, which also
@@ -1677,8 +1711,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- App pages fill the width beside the sidebar instead of a centred column; settings and the
+  platform console stay narrow.
+
 - **The sidebar is a rail of core menus and a panel that changes with them.** The rail holds one
-  icon per core menu (Issues, Agents, Graphs, Trust; Settings and the account menu at the
+  icon per core menu (Issues, Artifacts, Agents, Graphs, Trust; Settings and the account menu at the
   bottom) and marks the one the open page belongs to; the panel beside it lists that menu's
   pages, with the member's teams under Issues and the recent graphs under Graphs. The panel
   collapses to the rail (⌘B, or the button at the left of the header) and is collapsed on a
