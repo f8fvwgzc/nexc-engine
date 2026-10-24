@@ -64,7 +64,7 @@ pub async fn search(
     };
     let (issues, projects, graphs, documents, teams, members) = tokio::try_join!(
         repo::issues::list(db, auth.id, wid, &filter),
-        repo::issues::projects(db, auth.id, wid),
+        repo::issues::projects(db, auth.id, wid, None),
         repo::graphs::search(db, auth.id, wid, &q, limit),
         async {
             if member {

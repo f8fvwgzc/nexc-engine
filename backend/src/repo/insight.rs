@@ -26,6 +26,8 @@ macro_rules! happenings {
          SELECT e.created_at, 'issue_' || e.kind, u.name, 'issue', i.id,
                 t.key || '-' || i.number || ' ' || i.title,
                 CASE WHEN e.kind = 'comment' THEN left(e.body, 200)
+                     -- A file of the issue: its name and what was done (`notes.md: updated:v3`).
+                     WHEN e.kind = 'artifact' THEN left(e.body, 200) || ': ' || COALESCE(e.to_value, '')
                      ELSE COALESCE(e.from_value, 'none') || ' -> ' || COALESCE(e.to_value, 'none')
                 END
          FROM issue_events e

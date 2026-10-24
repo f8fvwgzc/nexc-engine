@@ -24,6 +24,11 @@ pub const LABELS_MAX: i64 = 200;
 pub const ISSUE_LABELS_MAX: usize = 20;
 /// Priority names by value, as shown in an issue's history.
 pub const PRIORITY_NAMES: [&str; 5] = ["No priority", "Urgent", "High", "Medium", "Low"];
+/// Most characters of a link to a GitHub issue or pull request, as given.
+pub const GITHUB_URL_MAX: usize = 300;
+/// Why a GitHub link was refused (the message of the `github_url` field error).
+pub const GITHUB_URL_INVALID: &str =
+    "must be a GitHub issue or pull request URL, like https://github.com/owner/repo/issues/12";
 
 string_enum!(
     /// What a workflow state means, whatever a team calls it. Reports and
@@ -147,13 +152,25 @@ pub struct Issue {
     /// The day the issue is due, if it has one.
     #[schema(required = true)]
     pub due_date: Option<NaiveDate>,
+    /// The GitHub issue or pull request the issue is about (a link only; nothing is synced).
+    #[schema(required = true)]
+    pub github_url: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     #[schema(required = true)]
     pub completed_at: Option<DateTime<Utc>>,
 }
 
-/// A project: a body of work that issues of any team can belong to.
+/// A team, as much as a project shows of the team that owns it.
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+pub struct TeamRef {
+    pub id: Uuid,
+    pub key: String,
+    pub name: String,
+}
+
+/// A project: a body of work that issues of any team can belong to, owned
+/// by one team or by the workspace as a whole.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Project {
     pub id: Uuid,
@@ -161,6 +178,12 @@ pub struct Project {
     pub name: String,
     pub description: String,
     pub status: ProjectStatus,
+    /// The team that owns the project; `null` for a project of the whole workspace.
+    #[schema(required = true)]
+    pub team_id: Option<Uuid>,
+    /// That team's key and name, for display.
+    #[schema(required = true)]
+    pub team: Option<TeamRef>,
     #[schema(required = true)]
     pub lead_id: Option<Uuid>,
     #[schema(required = true)]
@@ -184,6 +207,12 @@ string_enum!(
         Due => "due",
         /// A run of the issue's graph finished: its result, with the run it came from.
         Run => "run",
+        /// The GitHub link was set, changed or removed (`from` and `to` are the links).
+        Github => "github",
+        /// One of the issue's files was uploaded, updated, duplicated or deleted: `body` is
+        /// the file's name, `from` the version it replaced and `to` what was done
+        /// (`uploaded`, `updated:v<N>`, `duplicated`, `deleted`).
+        Artifact => "artifact",
     }
 );
 
@@ -264,7 +293,58 @@ pub fn changes(before: &Issue, after: &Issue) -> Vec<IssueChange> {
             to: day(after),
         });
     }
+    if before.github_url != after.github_url {
+        out.push(IssueChange {
+            kind: IssueEventKind::Github,
+            from: before.github_url.clone(),
+            to: after.github_url.clone(),
+        });
+    }
     out
+}
+
+/// The canonical form of a link to a GitHub issue or pull request,
+/// `https://github.com/<owner>/<repo>/issues|pull/<number>`, or `None` for a
+/// blank one, which removes the link. A fragment, a query and trailing
+/// slashes are dropped; `http://`, `www.` and a missing scheme become
+/// `https://github.com/`. Anything else is refused with
+/// [`GITHUB_URL_INVALID`].
+pub fn github_url(raw: &str) -> Result<Option<String>, &'static str> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    if raw.chars().count() > GITHUB_URL_MAX {
+        return Err(GITHUB_URL_INVALID);
+    }
+    let cut = raw.find(['#', '?']).map_or(raw, |at| &raw[..at]);
+    let cut = cut.trim_end_matches('/');
+    let lower = cut.to_ascii_lowercase();
+    let rest = ["https://", "http://", ""]
+        .iter()
+        .flat_map(|scheme| ["github.com/", "www.github.com/"].map(|host| format!("{scheme}{host}")))
+        .find_map(|prefix| lower.starts_with(&prefix).then(|| &cut[prefix.len()..]))
+        .ok_or(GITHUB_URL_INVALID)?;
+    let parts: Vec<&str> = rest.split('/').collect();
+    let [owner, repo, kind, number] = parts.as_slice() else {
+        return Err(GITHUB_URL_INVALID);
+    };
+    let kind = kind.to_ascii_lowercase();
+    let owner_ok =
+        !owner.is_empty() && owner.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    let repo_ok = !matches!(*repo, "" | "." | "..")
+        && repo
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    let number_ok = !number.is_empty()
+        && !number.starts_with('0')
+        && number.chars().all(|c| c.is_ascii_digit());
+    if !(owner_ok && repo_ok && number_ok && matches!(kind.as_str(), "issues" | "pull")) {
+        return Err(GITHUB_URL_INVALID);
+    }
+    Ok(Some(format!(
+        "https://github.com/{owner}/{repo}/{kind}/{number}"
+    )))
 }
 
 string_enum!(
@@ -445,6 +525,108 @@ mod tests {
             cut.contains("line of the result\n\n[…"),
             "cut on a whole line"
         );
+    }
+
+    #[test]
+    fn github_links_are_kept_in_one_canonical_form() {
+        let canonical = |raw: &str| github_url(raw).unwrap();
+        assert_eq!(
+            canonical("https://github.com/acme/app/issues/12"),
+            Some("https://github.com/acme/app/issues/12".to_owned())
+        );
+        // Trailing slashes, fragments and queries go; http, www and no scheme become https.
+        for raw in [
+            "  https://github.com/acme/app/pull/7/  ",
+            "https://github.com/acme/app/pull/7#issuecomment-1",
+            "https://github.com/acme/app/pull/7?diff=split",
+            "http://github.com/acme/app/pull/7",
+            "https://www.github.com/acme/app/pull/7",
+            "HTTP://WWW.GitHub.com/acme/app/pull/7",
+            "github.com/acme/app/pull/7",
+        ] {
+            assert_eq!(
+                canonical(raw).as_deref(),
+                Some("https://github.com/acme/app/pull/7"),
+                "{raw}"
+            );
+        }
+        assert_eq!(
+            canonical("https://github.com/my-org/repo.name_x/issues/3").as_deref(),
+            Some("https://github.com/my-org/repo.name_x/issues/3")
+        );
+        // Blank removes the link.
+        assert_eq!(canonical("   "), None);
+        for bad in [
+            "https://gitlab.com/acme/app/issues/1",
+            "https://github.com.evil.com/acme/app/issues/1",
+            "https://evil.com/github.com/acme/app/issues/1",
+            "https://github.com/acme/app",
+            "https://github.com/acme/app/issues",
+            "https://github.com/acme/app/issues/abc",
+            "https://github.com/acme/app/issues/012",
+            "https://github.com/acme/app/discussions/1",
+            "https://github.com/acme/app/pull/1/files",
+            "https://github.com/ac me/app/issues/1",
+            "https://github.com/acme/../issues/1",
+            "https://user@github.com/acme/app/issues/1",
+            "javascript:alert(1)",
+        ] {
+            assert_eq!(github_url(bad), Err(GITHUB_URL_INVALID), "{bad}");
+        }
+        let long = format!("https://github.com/acme/{}/issues/1", "a".repeat(300));
+        assert_eq!(github_url(&long), Err(GITHUB_URL_INVALID));
+        // What it keeps is what the database's check accepts.
+        let kept = canonical("http://www.github.com/a-b/c.d_e-f/issues/99/").unwrap();
+        assert!(kept.starts_with("https://github.com/") && !kept.ends_with('/'));
+    }
+
+    #[test]
+    fn a_github_link_change_is_recorded() {
+        let issue = |url: Option<&str>| Issue {
+            id: Uuid::nil(),
+            workspace_id: Uuid::nil(),
+            team_id: Uuid::nil(),
+            identifier: "ENG-1".into(),
+            number: 1,
+            title: "Fix".into(),
+            description: String::new(),
+            state: IssueState {
+                id: Uuid::nil(),
+                team_id: Uuid::nil(),
+                name: "Todo".into(),
+                category: StateCategory::Unstarted,
+                color: "#64748b".into(),
+                position: 0,
+            },
+            priority: 0,
+            labels: Vec::new(),
+            parent: None,
+            sub_issues: SubIssueCount {
+                total: 0,
+                closed: 0,
+            },
+            cycle: None,
+            assignee: None,
+            agent_id: None,
+            project_id: None,
+            graph_id: None,
+            creator_id: None,
+            due_date: None,
+            github_url: url.map(str::to_owned),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            completed_at: None,
+        };
+        let link = "https://github.com/acme/app/issues/1";
+        assert_eq!(
+            changes(&issue(None), &issue(Some(link))),
+            [IssueChange {
+                kind: IssueEventKind::Github,
+                from: None,
+                to: Some(link.to_owned()),
+            }]
+        );
+        assert!(changes(&issue(Some(link)), &issue(Some(link))).is_empty());
     }
 
     #[test]

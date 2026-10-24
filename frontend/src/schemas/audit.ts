@@ -35,6 +35,8 @@ export const auditActionSchema = z.enum([
   'alert_destination_changed',
   'agent_created',
   'agent_deleted',
+  'artifact_folder_deleted',
+  'artifact_file_deleted',
 ]);
 export type AuditAction = z.infer<typeof auditActionSchema>;
 

@@ -192,6 +192,11 @@ async fn world(app: &TestApp) -> World {
         json!({"name": "Secret graph", "goal": "g", "workspace_id": wid}),
     )
     .await;
+    let folder = made(
+        format!("{ws}/artifact-folders"),
+        json!({"name": "Secret folder"}),
+    )
+    .await;
     let ids = HashMap::from([
         ("wid", wid.clone()),
         ("tid", team.clone()),
@@ -202,6 +207,7 @@ async fn world(app: &TestApp) -> World {
         ("kind", "issue".to_owned()),
         ("id", issue),
         ("pid", project),
+        ("fid", folder),
     ]);
     World {
         owner,

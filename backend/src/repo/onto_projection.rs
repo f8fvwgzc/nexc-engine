@@ -21,6 +21,10 @@ pub struct ProjectRow {
     pub name: String,
     pub status: String,
     pub lead_id: Option<Uuid>,
+    /// The team that owns the project, if one does.
+    pub team_id: Option<Uuid>,
+    /// Whether that team is private.
+    pub private: bool,
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -129,7 +133,9 @@ pub async fn projects(
     ids: &[Uuid],
 ) -> Result<Vec<ProjectRow>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT id, name, status, lead_id FROM projects WHERE workspace_id = $1 AND id = ANY($2)",
+        "SELECT p.id, p.name, p.status, p.lead_id, p.team_id, COALESCE(t.private, false) AS private
+         FROM projects p LEFT JOIN teams t ON t.id = p.team_id
+         WHERE p.workspace_id = $1 AND p.id = ANY($2)",
     )
     .bind(workspace_id)
     .bind(ids)

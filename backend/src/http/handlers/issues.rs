@@ -17,7 +17,7 @@ use crate::domain::issue::{
     COMMENT_MAX_BYTES, DESCRIPTION_MAX_BYTES, ISSUE_LABELS_MAX, Issue, IssueEvent, IssueEventKind,
     IssuePerson, IssueState, LABEL_NAME_MAX, LABELS_MAX, Label, Notification, NotificationKind,
     PRIORITY_MAX, Project, ProjectStatus, STATE_NAME_MAX, STATES_MAX, StateCategory, TITLE_MAX,
-    changes, is_hex_color,
+    changes, github_url, is_hex_color,
 };
 use crate::domain::validation::{FieldErrors, Validate, check_text};
 use crate::domain::workspace::TeamAccess;
@@ -25,10 +25,11 @@ use crate::engine::editor;
 use crate::http::extract::{AuthUser, Path, Query, ValidatedJson};
 use crate::http::problem::Problem;
 use crate::repo::audit::Subject;
-use crate::repo::issues::{IssueFilter, NewIssue};
+use crate::repo::issues::{IssueFilter, NewIssue, NewProject};
 use crate::repo::{self, OrNotFound};
 
-fn double_option<'de, T: Deserialize<'de>, D: Deserializer<'de>>(
+/// Reads a nullable PATCH field: absent is `None`, `null` is `Some(None)`.
+pub(super) fn double_option<'de, T: Deserialize<'de>, D: Deserializer<'de>>(
     d: D,
 ) -> Result<Option<Option<T>>, D::Error> {
     Option::<T>::deserialize(d).map(Some)
@@ -52,6 +53,17 @@ fn check_priority(errors: &mut FieldErrors, priority: i16) {
 fn check_label_count(errors: &mut FieldErrors, labels: &[Uuid]) {
     if labels.len() > ISSUE_LABELS_MAX {
         errors.add("label_ids", "an issue carries at most 20 labels");
+    }
+}
+
+/// The canonical form of a GitHub link as given (blank or `null` removes it).
+fn github_link(raw: Option<&str>) -> Result<Option<String>, AppError> {
+    github_url(raw.unwrap_or_default()).map_err(|message| AppError::field("github_url", message))
+}
+
+fn check_github_url(errors: &mut FieldErrors, raw: Option<&str>) {
+    if let Err(message) = github_url(raw.unwrap_or_default()) {
+        errors.add("github_url", message);
     }
 }
 
@@ -198,6 +210,9 @@ pub struct CreateIssue {
     /// Labels of the workspace to put on the issue (at most 20).
     #[serde(default)]
     pub label_ids: Vec<Uuid>,
+    /// A GitHub issue or pull request the issue is about
+    /// (`https://github.com/<owner>/<repo>/issues|pull/<number>`); blank for none.
+    pub github_url: Option<String>,
 }
 
 impl Validate for CreateIssue {
@@ -206,11 +221,12 @@ impl Validate for CreateIssue {
         check_description(errors, &self.description);
         check_priority(errors, self.priority.unwrap_or_default());
         check_label_count(errors, &self.label_ids);
+        check_github_url(errors, self.github_url.as_deref());
     }
 }
 
 /// `PATCH /issues/{iid}` body: any subset. `assignee_id`, `agent_id`,
-/// `project_id` and `due_date` accept `null` to clear them.
+/// `project_id`, `due_date` and `github_url` accept `null` to clear them.
 #[derive(Debug, Default, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateIssue {
@@ -241,10 +257,19 @@ pub struct UpdateIssue {
     pub due_date: Option<Option<chrono::NaiveDate>>,
     /// Replaces the issue's labels.
     pub label_ids: Option<Vec<Uuid>>,
+    /// A GitHub issue or pull request the issue is about; `null` or blank removes the link.
+    /// A trailing slash, a fragment or a query is dropped, and `http://` or `www.` becomes
+    /// `https://github.com/`.
+    #[serde(default, deserialize_with = "double_option")]
+    #[schema(value_type = Option<String>, nullable)]
+    pub github_url: Option<Option<String>>,
 }
 
 impl Validate for UpdateIssue {
     fn validate(&self, errors: &mut FieldErrors) {
+        if let Some(url) = &self.github_url {
+            check_github_url(errors, url.as_deref());
+        }
         if let Some(title) = &self.title {
             check_text(errors, "title", title, TITLE_MAX);
         }
@@ -324,6 +349,7 @@ pub async fn create(
     if let Some(cycle) = req.cycle_id {
         check_cycle(&state, tid, cycle).await?;
     }
+    let github = github_link(req.github_url.as_deref())?;
     let new = NewIssue {
         workspace_id: wid,
         team_id: tid,
@@ -336,6 +362,7 @@ pub async fn create(
         agent_id: req.agent_id,
         project_id: req.project_id,
         creator_id: auth.id,
+        github_url: github.as_deref(),
     };
     let mut tx = state.db.begin().await?;
     let id = repo::issues::create(&mut tx, &new).await?;
@@ -451,6 +478,9 @@ pub async fn update(
     }
     if let Some(project) = req.project_id {
         issue.project_id = project;
+    }
+    if let Some(url) = &req.github_url {
+        issue.github_url = github_link(url.as_deref())?;
     }
     let mut tx = state.db.begin().await?;
     repo::issues::save(&mut *tx, &issue).await?;
@@ -723,8 +753,9 @@ impl Validate for CommentBody {
     }
 }
 
-/// The timeline of an issue, oldest first: its comments and the changes to
-/// its state, priority, assignee and title.
+/// The timeline of an issue, oldest first: its comments, the changes to its
+/// state, priority, assignee, title, due date and GitHub link, what happened
+/// to its files, and what its runs reported.
 #[utoipa::path(get, path = "/issues/{iid}/events", tag = "issues", security(("bearer" = [])),
     params(("iid" = Uuid, Path, description = "Issue id")),
     responses((status = 200, body = [IssueEvent]), (status = 404, body = Problem)))]
@@ -1059,10 +1090,19 @@ pub struct CreateProject {
     #[serde(default)]
     pub description: String,
     pub target_date: Option<NaiveDate>,
+    /// The team that owns the project: a team of the workspace the caller can see
+    /// (default: none, the whole workspace's).
+    pub team_id: Option<Uuid>,
+    /// Default `planned`.
+    pub status: Option<ProjectStatus>,
+    /// A member of the workspace (default: the caller; `null` for no lead).
+    #[serde(default, deserialize_with = "double_option")]
+    #[schema(value_type = Option<Uuid>, nullable)]
+    pub lead_id: Option<Option<Uuid>>,
 }
 
-/// `PATCH /workspaces/{wid}/projects/{pid}` body (any subset; `lead_id` and
-/// `target_date` accept `null`).
+/// `PATCH /workspaces/{wid}/projects/{pid}` body (any subset; `lead_id`,
+/// `target_date` and `team_id` accept `null`).
 #[derive(Debug, Default, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateProject {
@@ -1075,6 +1115,18 @@ pub struct UpdateProject {
     #[serde(default, deserialize_with = "double_option")]
     #[schema(value_type = Option<NaiveDate>, nullable)]
     pub target_date: Option<Option<NaiveDate>>,
+    /// The team that owns the project; `null` gives it to the whole workspace.
+    #[serde(default, deserialize_with = "double_option")]
+    #[schema(value_type = Option<Uuid>, nullable)]
+    pub team_id: Option<Option<Uuid>>,
+}
+
+/// Query of `GET /workspaces/{wid}/projects`.
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectQuery {
+    /// Only the projects this team owns.
+    pub team_id: Option<Uuid>,
 }
 
 impl Validate for CreateProject {
@@ -1104,23 +1156,61 @@ async fn project_editor(state: &AppState, auth: AuthUser, wid: Uuid) -> Result<(
     }
 }
 
-/// Projects of a workspace, with how many of their issues the caller can see.
+/// Checks that a project's team is a team of the workspace the caller can
+/// see; a hidden team is as unknown as one that does not exist.
+async fn check_project_team(
+    state: &AppState,
+    auth: AuthUser,
+    wid: Uuid,
+    team_id: Uuid,
+) -> Result<(), AppError> {
+    match visible_team(state, auth, wid, team_id).await {
+        Ok(_) => Ok(()),
+        Err(AppError::NotFound(_)) => {
+            Err(AppError::field("team_id", "unknown team in this workspace"))
+        }
+        Err(other) => Err(other),
+    }
+}
+
+/// Checks that a project's lead is a member of the workspace.
+async fn check_project_lead(state: &AppState, wid: Uuid, lead: Uuid) -> Result<(), AppError> {
+    if repo::workspaces::role_of(&state.db, wid, lead)
+        .await?
+        .is_none()
+    {
+        return Err(AppError::field(
+            "lead_id",
+            "the lead must be a member of the workspace",
+        ));
+    }
+    Ok(())
+}
+
+/// Projects of a workspace the caller can see (a project of a private team
+/// only to those who see the team), with how many of their issues they can
+/// see: all of them, or those one team owns.
 #[utoipa::path(get, path = "/workspaces/{wid}/projects", tag = "issues", security(("bearer" = [])),
-    params(("wid" = Uuid, Path, description = "Workspace id")),
+    params(("wid" = Uuid, Path, description = "Workspace id"), ProjectQuery),
     responses((status = 200, body = [Project]), (status = 404, body = Problem)))]
 pub async fn projects(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(wid): Path<Uuid>,
+    Query(query): Query<ProjectQuery>,
 ) -> Result<Json<Vec<Project>>, AppError> {
     member_of(&state, auth, wid).await?;
-    Ok(Json(repo::issues::projects(&state.db, auth.id, wid).await?))
+    Ok(Json(
+        repo::issues::projects(&state.db, auth.id, wid, query.team_id).await?,
+    ))
 }
 
-/// Creates a project led by the caller (members and above).
+/// Creates a project (members and above), led by the caller unless another
+/// lead is given, owned by a team or by the whole workspace.
 #[utoipa::path(post, path = "/workspaces/{wid}/projects", tag = "issues", security(("bearer" = [])),
     params(("wid" = Uuid, Path, description = "Workspace id")), request_body = CreateProject,
-    responses((status = 201, body = Project), (status = 403, body = Problem), (status = 404, body = Problem)))]
+    responses((status = 201, body = Project), (status = 403, body = Problem), (status = 404, body = Problem),
+        (status = 422, body = Problem)))]
 pub async fn create_project(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -1128,15 +1218,24 @@ pub async fn create_project(
     ValidatedJson(req): ValidatedJson<CreateProject>,
 ) -> Result<(StatusCode, Json<Project>), AppError> {
     project_editor(&state, auth, wid).await?;
-    let id = repo::issues::create_project(
-        &state.db,
-        wid,
-        auth.id,
-        req.name.trim(),
-        &req.description,
-        req.target_date,
-    )
-    .await?;
+    if let Some(team) = req.team_id {
+        check_project_team(&state, auth, wid, team).await?;
+    }
+    let lead_id = req.lead_id.unwrap_or(Some(auth.id));
+    if let Some(lead) = lead_id {
+        check_project_lead(&state, wid, lead).await?;
+    }
+    let new = NewProject {
+        workspace_id: wid,
+        created_by: auth.id,
+        name: req.name.trim(),
+        description: &req.description,
+        status: req.status.unwrap_or(ProjectStatus::Planned),
+        lead_id,
+        team_id: req.team_id,
+        target_date: req.target_date,
+    };
+    let id = repo::issues::create_project(&state.db, &new).await?;
     let project = repo::issues::find_project(&state.db, auth.id, wid, id)
         .await
         .or_not_found("project")?;
@@ -1159,15 +1258,11 @@ pub async fn update_project(
     let mut project = repo::issues::find_project(&state.db, auth.id, wid, pid)
         .await
         .or_not_found("project")?;
-    if let Some(Some(lead)) = req.lead_id
-        && repo::workspaces::role_of(&state.db, wid, lead)
-            .await?
-            .is_none()
-    {
-        return Err(AppError::field(
-            "lead_id",
-            "the lead must be a member of the workspace",
-        ));
+    if let Some(Some(lead)) = req.lead_id {
+        check_project_lead(&state, wid, lead).await?;
+    }
+    if let Some(Some(team)) = req.team_id {
+        check_project_team(&state, auth, wid, team).await?;
     }
     if let Some(name) = req.name {
         project.name = name.trim().to_owned();
@@ -1183,6 +1278,9 @@ pub async fn update_project(
     }
     if let Some(target) = req.target_date {
         project.target_date = target;
+    }
+    if let Some(team) = req.team_id {
+        project.team_id = team;
     }
     repo::issues::save_project(&state.db, &project).await?;
     Ok(Json(

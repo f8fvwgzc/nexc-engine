@@ -12,7 +12,8 @@ use crate::domain::cycle::CycleRef;
 use crate::domain::issue::{
     Issue, IssueChange, IssueEvent, IssuePerson, IssueRef, IssueState, Label, NodeOutcome,
     Notification, NotificationAlert, NotificationApproval, NotificationIssue, NotificationKind,
-    Project, RUN_REPORT_MAX_CHARS, STARTER_STATES, StateCategory, SubIssueCount,
+    Project, ProjectStatus, RUN_REPORT_MAX_CHARS, STARTER_STATES, StateCategory, SubIssueCount,
+    TeamRef,
 };
 use crate::domain::run::RunStatus;
 
@@ -90,6 +91,7 @@ impl FromRow<'_, PgRow> for Issue {
             graph_id: row.try_get("graph_id")?,
             creator_id: row.try_get("creator_id")?,
             due_date: row.try_get("due_date")?,
+            github_url: row.try_get("github_url")?,
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,
             completed_at: row.try_get("completed_at")?,
@@ -99,12 +101,23 @@ impl FromRow<'_, PgRow> for Issue {
 
 impl FromRow<'_, PgRow> for Project {
     fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
+        let team_id: Option<Uuid> = row.try_get("team_id")?;
+        let team = match team_id {
+            Some(id) => Some(TeamRef {
+                id,
+                key: row.try_get("team_key")?,
+                name: row.try_get("team_name")?,
+            }),
+            None => None,
+        };
         Ok(Project {
             id: row.try_get("id")?,
             workspace_id: row.try_get("workspace_id")?,
             name: row.try_get("name")?,
             description: row.try_get("description")?,
             status: enum_col(row, "status")?,
+            team_id,
+            team,
             lead_id: row.try_get("lead_id")?,
             target_date: row.try_get("target_date")?,
             issue_count: row.try_get("issue_count")?,
@@ -121,8 +134,8 @@ macro_rules! issue_for_user {
         concat!(
             "SELECT i.id, i.workspace_id, i.team_id, t.key AS team_key, i.number, i.title,
                     i.description, i.priority, i.assignee_id, au.name AS assignee_name, i.agent_id,
-                    i.project_id, i.graph_id, i.creator_id, i.due_date, i.created_at, i.updated_at,
-                    i.completed_at, s.id AS state_id, s.name AS state_name,
+                    i.project_id, i.graph_id, i.creator_id, i.due_date, i.github_url, i.created_at,
+                    i.updated_at, i.completed_at, s.id AS state_id, s.name AS state_name,
                     s.category AS state_category, s.color AS state_color,
                     s.position AS state_position,
                     COALESCE((SELECT jsonb_agg(jsonb_build_object(
@@ -366,6 +379,8 @@ pub struct NewIssue<'a> {
     pub agent_id: Option<Uuid>,
     pub project_id: Option<Uuid>,
     pub creator_id: Uuid,
+    /// The canonical link to a GitHub issue or pull request ([`crate::domain::issue::github_url`]).
+    pub github_url: Option<&'a str>,
 }
 
 /// Inserts an issue with the team's next number. Must run in a transaction:
@@ -380,9 +395,9 @@ pub async fn create(db: &mut PgConnection, n: &NewIssue<'_>) -> Result<Uuid, sql
     .await?;
     sqlx::query_scalar(
         "INSERT INTO issues (id, workspace_id, team_id, number, title, description, state_id, priority,
-                             assignee_id, agent_id, project_id, creator_id, completed_at)
+                             assignee_id, agent_id, project_id, creator_id, completed_at, github_url)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-                 CASE WHEN $13 THEN now() END)
+                 CASE WHEN $13 THEN now() END, $14)
          RETURNING id",
     )
     .bind(Uuid::now_v7())
@@ -398,6 +413,7 @@ pub async fn create(db: &mut PgConnection, n: &NewIssue<'_>) -> Result<Uuid, sql
     .bind(n.project_id)
     .bind(n.creator_id)
     .bind(n.closed)
+    .bind(n.github_url)
     .fetch_one(&mut *db)
     .await
 }
@@ -407,7 +423,8 @@ pub async fn create(db: &mut PgConnection, n: &NewIssue<'_>) -> Result<Uuid, sql
 pub async fn save(db: impl PgExecutor<'_>, issue: &Issue) -> Result<(), sqlx::Error> {
     sqlx::query(
         "UPDATE issues SET title = $2, description = $3, state_id = $4, priority = $5,
-                assignee_id = $6, agent_id = $7, project_id = $8, updated_at = now(),
+                assignee_id = $6, agent_id = $7, project_id = $8, github_url = $10,
+                updated_at = now(),
                 completed_at = CASE WHEN NOT $9 THEN NULL
                                     ELSE COALESCE(completed_at, now()) END
          WHERE id = $1",
@@ -421,6 +438,7 @@ pub async fn save(db: impl PgExecutor<'_>, issue: &Issue) -> Result<(), sqlx::Er
     .bind(issue.agent_id)
     .bind(issue.project_id)
     .bind(issue.state.category.is_closed())
+    .bind(issue.github_url.as_deref())
     .execute(db)
     .await?;
     Ok(())
@@ -758,6 +776,32 @@ pub async fn record_changes(
         .execute(&mut *db)
         .await?;
     }
+    Ok(())
+}
+
+/// Records what happened to one of an issue's files in its timeline: `name`
+/// is the file's, `from` the version it replaced and `to` what was done
+/// (`uploaded`, `updated:v<N>`, `duplicated`, `deleted`).
+pub async fn record_artifact(
+    db: impl PgExecutor<'_>,
+    issue_id: Uuid,
+    actor_id: Uuid,
+    name: &str,
+    from: Option<&str>,
+    to: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO issue_events (id, issue_id, actor_id, kind, body, from_value, to_value)
+         VALUES ($1, $2, $3, 'artifact', $4, $5, $6)",
+    )
+    .bind(Uuid::now_v7())
+    .bind(issue_id)
+    .bind(actor_id)
+    .bind(name)
+    .bind(from)
+    .bind(to)
+    .execute(db)
+    .await?;
     Ok(())
 }
 
@@ -1100,14 +1144,19 @@ pub async fn mark_read_about_approval(
 
 // ---------- projects ----------
 
-/// A project with the counts of its issues that user `$1` can see.
+/// A project with its team and the counts of its issues that user `$1` can
+/// see, if `$1` is a member of its workspace and can see its team (a project
+/// without a team is the whole workspace's).
 macro_rules! project_for_user {
     ($tail:literal) => {
         concat!(
             "SELECT p.id, p.workspace_id, p.name, p.description, p.status, p.lead_id, p.target_date,
-                    p.created_at, COALESCE(c.issue_count, 0) AS issue_count,
+                    p.created_at, p.team_id, pt.key AS team_key, pt.name AS team_name,
+                    COALESCE(c.issue_count, 0) AS issue_count,
                     COALESCE(c.closed_count, 0) AS closed_count
              FROM projects p
+             JOIN workspace_members pm ON pm.workspace_id = p.workspace_id AND pm.user_id = $1
+             LEFT JOIN teams pt ON pt.id = p.team_id
              LEFT JOIN LATERAL (
                 SELECT count(*) AS issue_count,
                        count(*) FILTER (WHERE s.category IN ('completed', 'canceled')) AS closed_count
@@ -1117,23 +1166,29 @@ macro_rules! project_for_user {
                 JOIN workspace_members wm ON wm.workspace_id = i.workspace_id AND wm.user_id = $1
                 WHERE i.project_id = p.id AND ",
             team_visible!("t", "wm", "$1"),
-            ") c ON true WHERE ",
+            ") c ON true WHERE (p.team_id IS NULL OR ",
+            team_visible!("pt", "pm", "$1"),
+            ") AND ",
             $tail
         )
     };
 }
 
-/// Projects of a workspace, oldest first.
+/// Projects of a workspace that `user_id` can see, oldest first: all of
+/// them, or those of one team.
 pub async fn projects(
     db: impl PgExecutor<'_>,
     user_id: Uuid,
     workspace_id: Uuid,
+    team_id: Option<Uuid>,
 ) -> Result<Vec<Project>, sqlx::Error> {
     sqlx::query_as(project_for_user!(
-        "p.workspace_id = $2 ORDER BY p.created_at, p.id"
+        "p.workspace_id = $2 AND ($3::uuid IS NULL OR p.team_id = $3)
+         ORDER BY p.created_at, p.id"
     ))
     .bind(user_id)
     .bind(workspace_id)
+    .bind(team_id)
     .fetch_all(db)
     .await
 }
@@ -1153,25 +1208,38 @@ pub async fn find_project(
         .await
 }
 
+/// Fields of a project to insert.
+#[derive(Debug, Clone)]
+pub struct NewProject<'a> {
+    pub workspace_id: Uuid,
+    pub created_by: Uuid,
+    pub name: &'a str,
+    pub description: &'a str,
+    pub status: ProjectStatus,
+    pub lead_id: Option<Uuid>,
+    pub team_id: Option<Uuid>,
+    pub target_date: Option<NaiveDate>,
+}
+
 /// Inserts a project.
 pub async fn create_project(
     db: impl PgExecutor<'_>,
-    workspace_id: Uuid,
-    created_by: Uuid,
-    name: &str,
-    description: &str,
-    target_date: Option<NaiveDate>,
+    n: &NewProject<'_>,
 ) -> Result<Uuid, sqlx::Error> {
     sqlx::query_scalar(
-        "INSERT INTO projects (id, workspace_id, name, description, lead_id, target_date, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $5) RETURNING id",
+        "INSERT INTO projects (id, workspace_id, name, description, status, lead_id, team_id,
+                               target_date, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id",
     )
     .bind(Uuid::now_v7())
-    .bind(workspace_id)
-    .bind(name)
-    .bind(description)
-    .bind(created_by)
-    .bind(target_date)
+    .bind(n.workspace_id)
+    .bind(n.name)
+    .bind(n.description)
+    .bind(n.status.as_str())
+    .bind(n.lead_id)
+    .bind(n.team_id)
+    .bind(n.target_date)
+    .bind(n.created_by)
     .fetch_one(db)
     .await
 }
@@ -1180,7 +1248,7 @@ pub async fn create_project(
 pub async fn save_project(db: impl PgExecutor<'_>, p: &Project) -> Result<(), sqlx::Error> {
     sqlx::query(
         "UPDATE projects SET name = $2, description = $3, status = $4, lead_id = $5,
-                target_date = $6, updated_at = now() WHERE id = $1",
+                target_date = $6, team_id = $7, updated_at = now() WHERE id = $1",
     )
     .bind(p.id)
     .bind(&p.name)
@@ -1188,6 +1256,7 @@ pub async fn save_project(db: impl PgExecutor<'_>, p: &Project) -> Result<(), sq
     .bind(p.status.as_str())
     .bind(p.lead_id)
     .bind(p.target_date)
+    .bind(p.team_id)
     .execute(db)
     .await?;
     Ok(())

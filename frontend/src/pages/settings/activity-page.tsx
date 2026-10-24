@@ -40,6 +40,8 @@ const VERB: Record<string, string> = {
   issue_priority: 'reprioritised',
   issue_title: 'renamed',
   issue_due: 'rescheduled',
+  issue_github: 'changed the GitHub link of',
+  issue_artifact: 'changed a file of',
   graph_created: 'created the graph',
   run_succeeded: 'ran',
   run_failed: 'ran (failed)',
@@ -66,6 +68,8 @@ const VERB: Record<string, string> = {
   platform_owner_assigned: 'gave ownership of the workspace to',
   label_deleted: 'deleted the label',
   workspace_renamed: 'renamed the workspace to',
+  artifact_folder_deleted: 'deleted the artifact folder',
+  artifact_file_deleted: 'deleted the artifact',
 };
 
 /** Where an entry's subject can be opened, if anywhere. */

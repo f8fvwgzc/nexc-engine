@@ -24,7 +24,7 @@ use crate::repo::{self, OrNotFound};
 const MAX_ZIP_BYTES: i64 = 256 * 1024 * 1024;
 
 /// `Content-Disposition: attachment` with an ASCII fallback and an RFC 5987 name.
-fn attachment(file_name: &str) -> HeaderValue {
+pub(super) fn attachment(file_name: &str) -> HeaderValue {
     let ascii: String = file_name
         .chars()
         .map(|c| {

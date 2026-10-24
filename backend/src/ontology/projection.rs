@@ -237,14 +237,12 @@ async fn load(
         "project" => {
             for p in repo::projects(db, workspace_id, ids).await? {
                 found.insert(p.id);
-                let mut thing = Thing::new(
-                    project_id(p.id),
-                    "project",
-                    p.name,
-                    json!({"status": p.status, "nexc_id": p.id}),
-                );
+                let mut props = json!({"status": p.status, "nexc_id": p.id});
+                visibility(&mut props, p.team_id.filter(|_| p.private));
+                let mut thing = Thing::new(project_id(p.id), "project", p.name, props);
                 thing.state = Some(project_state(&p.status));
                 thing.link(rel::LED_BY, p.lead_id.map(person_id));
+                thing.link(rel::BELONGS_TO, p.team_id.map(team_id));
                 things.push(thing);
             }
         }

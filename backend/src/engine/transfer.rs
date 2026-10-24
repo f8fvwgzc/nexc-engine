@@ -37,6 +37,9 @@ use crate::repo;
 
 /// Rows copied per statement for the tables that can be paged by `id`.
 const BATCH: i64 = 1_000;
+/// Rows copied per statement for a table whose rows carry up to 1 MiB of
+/// text each (the versions of artifact files): a few at a time.
+const CONTENT_BATCH: i64 = 32;
 
 /// One table of the transfer: which of its rows belong to workspace `$1`.
 struct Table {
@@ -56,8 +59,8 @@ enum Page {
     Whole,
     /// By its uuid `id`, each batch starting after the last one.
     ById,
-    /// By position in this order, for a large table without an `id`.
-    ByOrder(&'static str),
+    /// By position in this order, for a large table without an `id`, so many rows at a time.
+    ByOrder(&'static str, i64),
     /// By its chain position `seq` (0, 1, 2…), each batch starting where the
     /// rows read so far end: the audit log, in chain order, from its index.
     BySeq,
@@ -78,6 +81,8 @@ const OF_ITS_GRAPHS: &str = "t.graph_id IN (SELECT id FROM graphs WHERE workspac
 const OF_ITS_RUNS: &str = "t.run_id IN (SELECT r.id FROM runs r JOIN graphs g ON g.id = r.graph_id
                                         WHERE g.workspace_id = $1)";
 const OF_ITS_ISSUES: &str = "t.issue_id IN (SELECT id FROM issues WHERE workspace_id = $1)";
+const OF_ITS_ARTIFACT_FILES: &str =
+    "t.file_id IN (SELECT id FROM artifact_files WHERE workspace_id = $1)";
 const OF_ITS_CONVERSATIONS: &str =
     "t.conversation_id IN (SELECT id FROM assistant_conversations WHERE workspace_id = $1)";
 
@@ -111,7 +116,12 @@ const REFERENCED_USERS: &str = "t.id IN (
     UNION SELECT updated_by FROM workspace_guardrails WHERE workspace_id = $1
     UNION SELECT created_by FROM day_summaries WHERE workspace_id = $1
     UNION SELECT updated_by FROM workspace_knowledge_settings WHERE workspace_id = $1
-    UNION SELECT user_id FROM assistant_conversations WHERE workspace_id = $1)";
+    UNION SELECT user_id FROM assistant_conversations WHERE workspace_id = $1
+    UNION SELECT created_by FROM artifact_folders WHERE workspace_id = $1
+    UNION SELECT created_by FROM artifact_files WHERE workspace_id = $1
+    UNION SELECT updated_by FROM artifact_files WHERE workspace_id = $1
+    UNION SELECT v.created_by FROM artifact_file_versions v JOIN artifact_files f ON f.id = v.file_id
+          WHERE f.workspace_id = $1)";
 
 /// Names of the tables a transfer copies, in the order it copies them.
 pub fn tables() -> impl Iterator<Item = &'static str> {
@@ -197,7 +207,7 @@ const TABLES: &[Table] = &[
     Table {
         name: "node_runs",
         belongs: OF_ITS_RUNS,
-        page: Page::ByOrder("t.run_id, t.node_id"),
+        page: Page::ByOrder("t.run_id, t.node_id", BATCH),
         overlay: None,
     },
     // What operators sent into runs (a sub-agent stopped) is part of their record.
@@ -215,6 +225,16 @@ const TABLES: &[Table] = &[
     table("issue_labels", OF_ITS_ISSUES, false),
     table("issue_events", OF_ITS_ISSUES, true),
     table("notifications", IN_WORKSPACE, true),
+    // Folders refer to their parents and files to the file they were copied from: each table
+    // in one statement. The versions hold the content, up to 1 MiB each.
+    table("artifact_folders", IN_WORKSPACE, false),
+    table("artifact_files", IN_WORKSPACE, false),
+    Table {
+        name: "artifact_file_versions",
+        belongs: OF_ITS_ARTIFACT_FILES,
+        page: Page::ByOrder("t.file_id, t.version", CONTENT_BATCH),
+        overlay: None,
+    },
     table("knowledge_topics", IN_WORKSPACE, false),
     table("documents", IN_WORKSPACE, true),
     table("document_chunks", IN_WORKSPACE, true),
@@ -337,7 +357,7 @@ async fn copy_table(
               ORDER BY t.id LIMIT $3"
                 .to_owned(),
         ),
-        Page::ByOrder(order) => (
+        Page::ByOrder(order, _) => (
             "NULL::uuid",
             format!(" AND $2::uuid IS NULL ORDER BY {order} LIMIT $3 OFFSET $4"),
         ),
@@ -358,13 +378,17 @@ async fn copy_table(
         read: 0,
         written: 0,
     };
+    let batch = match t.page {
+        Page::ByOrder(_, rows) => rows,
+        _ => BATCH,
+    };
     let mut after: Option<Uuid> = None;
     loop {
         let (rows, read, last): (Value, i64, Option<Uuid>) =
             sqlx::query_as(AssertSqlSafe(select.clone()))
                 .bind(workspace)
                 .bind(after)
-                .bind(BATCH)
+                .bind(batch)
                 .bind(report.read)
                 .fetch_one(source)
                 .await?;
@@ -379,7 +403,7 @@ async fn copy_table(
         report.read += read;
         report.written += i64::try_from(written).unwrap_or(i64::MAX);
         after = last;
-        if matches!(t.page, Page::Whole) || read < BATCH {
+        if matches!(t.page, Page::Whole) || read < batch {
             break;
         }
     }
@@ -765,6 +789,10 @@ mod tests {
             ("memories", "graphs"),
             ("llm_usage", "runs"),
             ("notifications", "issues"),
+            ("projects", "teams"),
+            ("artifact_files", "artifact_folders"),
+            ("artifact_files", "issues"),
+            ("artifact_file_versions", "artifact_files"),
         ] {
             assert!(position(child) > position(parent), "{child} after {parent}");
         }

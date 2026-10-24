@@ -79,7 +79,8 @@ async fn a_workspace_moves_to_its_owners_database(pool: PgPool) {
         Method::POST,
         &issues,
         &member,
-        Some(json!({"title": "Ship login", "label_ids": [label["id"]]})),
+        Some(json!({"title": "Ship login", "label_ids": [label["id"]],
+                    "github_url": "https://github.com/acme/app/issues/3"})),
     )
     .await;
     let part = json!({"title": "Form", "parent_id": parent["id"]});
@@ -102,6 +103,53 @@ async fn a_workspace_moves_to_its_owners_database(pool: PgPool) {
         )
         .await;
     assert_eq!(graph.status, StatusCode::CREATED);
+    // A project of the team, and the issue's files: in a folder, with two versions and a copy.
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &format!("{ws}/projects"),
+        &owner,
+        Some(json!({"name": "Launch", "team_id": team["id"]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (_, folder) = call(
+        &app,
+        Method::POST,
+        &format!("{ws}/artifact-folders"),
+        &owner,
+        Some(json!({"name": "Specs"})),
+    )
+    .await;
+    let upload = format!(
+        "/api/v1{ws}/artifact-files?name=spec.md&folder_id={}&issue_id={}",
+        folder["id"].as_str().unwrap(),
+        parent["id"].as_str().unwrap()
+    );
+    let spec = app.send_bytes(&upload, &member, b"first".to_vec()).await;
+    assert_eq!(spec.status, StatusCode::CREATED, "{}", spec.body);
+    let spec_path = format!(
+        "/api/v1/artifact-files/{}",
+        spec.body["id"].as_str().unwrap()
+    );
+    let saved = app
+        .send_raw(
+            Method::PUT,
+            &format!("{spec_path}/content?base_version=1"),
+            &member,
+            b"second".to_vec(),
+        )
+        .await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+    let copy = app
+        .request(
+            Method::POST,
+            &format!("{spec_path}/duplicate"),
+            Some(&member),
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(copy.status, StatusCode::CREATED, "{}", copy.body);
 
     // Only the owner starts or reads transfers; the target must be PostgreSQL.
     let transfers = format!("{ws}/transfers");
@@ -136,7 +184,12 @@ async fn a_workspace_moves_to_its_owners_database(pool: PgPool) {
     assert_eq!(copied("workspace_members"), (2, 2));
     assert_eq!(copied("issues"), (2, 2));
     assert_eq!(copied("issue_labels"), (1, 1));
-    assert_eq!(copied("issue_events"), (1, 1));
+    // The comment, and the upload, the new version and the copy of the issue's file.
+    assert_eq!(copied("issue_events"), (4, 4));
+    assert_eq!(copied("projects"), (1, 1));
+    assert_eq!(copied("artifact_folders"), (1, 1));
+    assert_eq!(copied("artifact_files"), (2, 2));
+    assert_eq!(copied("artifact_file_versions"), (3, 3));
     assert_eq!(copied("graphs"), (1, 1));
     assert_eq!(copied("day_summaries"), (1, 1));
     assert!(copied("issue_states").0 >= 6);
@@ -153,6 +206,27 @@ async fn a_workspace_moves_to_its_owners_database(pool: PgPool) {
     .await
     .unwrap();
     assert_eq!((parents, sub_issues), (1, 1));
+    let (github, owned): (Option<String>, bool) = sqlx::query_as(
+        "SELECT (SELECT github_url FROM issues WHERE workspace_id = $1 AND parent_id IS NULL),
+                (SELECT team_id IS NOT NULL FROM projects WHERE workspace_id = $1)",
+    )
+    .bind(workspace)
+    .fetch_one(&target)
+    .await
+    .unwrap();
+    assert_eq!(
+        (github.as_deref(), owned),
+        (Some("https://github.com/acme/app/issues/3"), true)
+    );
+    let text: String = sqlx::query_scalar(
+        "SELECT v.content FROM artifact_file_versions v JOIN artifact_files f ON f.id = v.file_id
+         WHERE f.workspace_id = $1 AND f.duplicated_from IS NULL AND v.version = f.current_version",
+    )
+    .bind(workspace)
+    .fetch_one(&target)
+    .await
+    .unwrap();
+    assert_eq!(text, "second", "the files travel with every version");
     let (headline, highlights): (String, Vec<String>) =
         sqlx::query_as("SELECT headline, highlights FROM day_summaries WHERE workspace_id = $1")
             .bind(workspace)
