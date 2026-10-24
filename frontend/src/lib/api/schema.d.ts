@@ -8509,7 +8509,7 @@ export interface operations {
     events: {
         parameters: {
             query?: {
-                /** @description Part of a name or e-mail address. */
+                /** @description Part of a name or e-mail address; without control characters. */
                 q?: string | null;
                 /** @description 1-100, default 25. */
                 limit?: number | null;
@@ -8635,7 +8635,7 @@ export interface operations {
     users: {
         parameters: {
             query?: {
-                /** @description Part of a name or e-mail address. */
+                /** @description Part of a name or e-mail address; without control characters. */
                 q?: string | null;
                 /** @description 1-100, default 25. */
                 limit?: number | null;
@@ -8902,7 +8902,7 @@ export interface operations {
     workspaces: {
         parameters: {
             query?: {
-                /** @description Part of a name or e-mail address. */
+                /** @description Part of a name or e-mail address; without control characters. */
                 q?: string | null;
                 /** @description 1-100, default 25. */
                 limit?: number | null;
@@ -14263,7 +14263,7 @@ export interface operations {
                 root?: boolean | null;
                 /** @description Only the files attached to this issue, in any folder. */
                 issue_id?: string | null;
-                /** @description Part of the name, any case. */
+                /** @description Part of the name, any case; without control characters. */
                 q?: string | null;
             };
             header?: never;
@@ -15021,7 +15021,7 @@ export interface operations {
     list: {
         parameters: {
             query?: {
-                /** @description Part of the file name. */
+                /** @description Part of the file name; without control characters. */
                 q?: string | null;
                 /** @description 1-100, default 20. */
                 limit?: number | null;
@@ -15508,7 +15508,7 @@ export interface operations {
                 creator_id?: string | null;
                 /** @description `true` leaves out completed and canceled issues. */
                 open?: boolean | null;
-                /** @description Matches the title, or the start of the identifier (`ENG-1`). */
+                /** @description Matches the title, or the start of the identifier (`ENG-1`); without control characters. */
                 q?: string | null;
                 /** @description 1-500, default 200. */
                 limit?: number | null;
@@ -16936,7 +16936,7 @@ export interface operations {
             query: {
                 /**
                  * @description What to look for: part of a title, a name, an e-mail, or an issue's
-                 *     identifier (`ENG-12`). At least 2 characters.
+                 *     identifier (`ENG-12`). At least 2 characters, without control characters.
                  */
                 q: string;
                 /** @description Most hits of each kind, 1-10 (default 5). */

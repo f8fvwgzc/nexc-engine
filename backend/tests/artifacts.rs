@@ -979,6 +979,11 @@ async fn deleting_a_folder_takes_everything_under_it(pool: PgPool) {
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(
+        body["detail"],
+        "this folder holds files of issues you cannot see; a workspace admin can delete it",
+        "how many is not said"
+    );
     let (status, _) = call(
         &app,
         Method::DELETE,
@@ -1513,4 +1518,509 @@ async fn what_runs_produced_is_listed_and_kept_on_the_issue(pool: PgPool) {
     .unwrap();
     let (status, _) = call(&app, Method::POST, &keep, &w.member, Some(json!({}))).await;
     assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn names_are_unique_among_the_files_of_one_issue_in_a_folder(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let w = world(&app).await;
+    let one = issue(&app, &w, &w.eng, &w.member, "One").await;
+    let two = issue(&app, &w, &w.eng, &w.member, "Two").await;
+
+    // Two issues each keep a notes.md at the top level, and so do the files of no issue.
+    let first = upload(
+        &app,
+        &w,
+        &w.member,
+        &format!("name=notes.md&issue_id={one}"),
+        b"1",
+    )
+    .await;
+    let second = upload(
+        &app,
+        &w,
+        &w.member,
+        &format!("name=notes.md&issue_id={two}"),
+        b"2",
+    )
+    .await;
+    upload(&app, &w, &w.member, "name=notes.md", b"workspace").await;
+    // The same issue, or no issue, twice is a 409.
+    for (query, detail) in [
+        (
+            format!("name=NOTES.md&issue_id={one}"),
+            "the issue already has a file with that name in this folder",
+        ),
+        (
+            "name=Notes.md".to_owned(),
+            "a file with that name is already in this folder",
+        ),
+    ] {
+        let r = send(&app, Method::POST, &w.upload(&query), &w.member, b"x").await;
+        assert_eq!(r.status, StatusCode::CONFLICT, "{query}: {}", r.body);
+        assert_eq!(r.body["detail"], detail);
+    }
+    // Moving a file to another issue, or off any, checks the names there.
+    let second_path = format!("/artifact-files/{}", second["id"].as_str().unwrap());
+    for issue_id in [json!(one), Value::Null] {
+        let (status, body) = call(
+            &app,
+            Method::PATCH,
+            &second_path,
+            &w.member,
+            Some(json!({"issue_id": issue_id})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{issue_id}: {body}");
+    }
+    let (status, moved) = call(
+        &app,
+        Method::PATCH,
+        &second_path,
+        &w.member,
+        Some(json!({"name": "todo.md", "issue_id": one})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{moved}");
+    assert_eq!(moved["issue"]["id"], one.as_str());
+    // So does moving one to another folder.
+    let drafts = folder(&app, &w, &w.member, json!({"name": "Drafts"})).await;
+    let other = upload(
+        &app,
+        &w,
+        &w.member,
+        &format!("name=notes.md&folder_id={drafts}"),
+        b"draft",
+    )
+    .await;
+    let (status, body) = call(
+        &app,
+        Method::PATCH,
+        &format!("/artifact-files/{}", other["id"].as_str().unwrap()),
+        &w.member,
+        Some(json!({"folder_id": null})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+
+    // A file of a private team's issue takes no name from someone who cannot see it: not on an
+    // upload, a rename or a copy's name.
+    let reorg = issue(&app, &w, &w.secret, &w.owner, "Reorg").await;
+    let specs = folder(&app, &w, &w.owner, json!({"name": "Specs"})).await;
+    for name in ["plan.md", "plan%20copy.md", "roadmap.md"] {
+        upload(
+            &app,
+            &w,
+            &w.owner,
+            &format!("name={name}&folder_id={specs}&issue_id={reorg}"),
+            b"secret",
+        )
+        .await;
+    }
+    let mine = upload(
+        &app,
+        &w,
+        &w.member,
+        &format!("name=PLAN.md&folder_id={specs}"),
+        b"mine",
+    )
+    .await;
+    let (status, copy) = call(
+        &app,
+        Method::POST,
+        &format!("/artifact-files/{}/duplicate", mine["id"].as_str().unwrap()),
+        &w.member,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(
+        (status, &copy["name"]),
+        (StatusCode::CREATED, &json!("PLAN copy.md"))
+    );
+    let draft = upload(
+        &app,
+        &w,
+        &w.member,
+        &format!("name=draft.md&folder_id={specs}"),
+        b"d",
+    )
+    .await;
+    let (status, renamed) = call(
+        &app,
+        Method::PATCH,
+        &format!("/artifact-files/{}", draft["id"].as_str().unwrap()),
+        &w.member,
+        Some(json!({"name": "ROADMAP.md"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{renamed}");
+    let (_, list) = call(
+        &app,
+        Method::GET,
+        &format!("{}/artifact-files?folder_id={specs}", w.ws),
+        &w.member,
+        None,
+    )
+    .await;
+    assert_eq!(names(&list), ["PLAN copy.md", "PLAN.md", "ROADMAP.md"]);
+    let (_, list) = call(
+        &app,
+        Method::GET,
+        &format!("{}/artifact-files?folder_id={specs}", w.ws),
+        &w.owner,
+        None,
+    )
+    .await;
+    assert_eq!(list.as_array().unwrap().len(), 6, "the owner sees both");
+
+    // A deleted issue of a public team, or the deleted team, leaves its files to the workspace
+    // under the first copy name free among the files of no issue there.
+    let (status, _) = call(
+        &app,
+        Method::DELETE,
+        &format!("/issues/{one}"),
+        &w.owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    for (file, name) in [(&first, "notes copy.md"), (&moved, "todo.md")] {
+        let (status, kept) = call(
+            &app,
+            Method::GET,
+            &format!("/artifact-files/{}", file["id"].as_str().unwrap()),
+            &w.member,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{kept}");
+        assert_eq!(
+            (&kept["name"], &kept["issue"]),
+            (&json!(name), &Value::Null)
+        );
+    }
+    let (_, ops) = call(
+        &app,
+        Method::POST,
+        &format!("{}/teams", w.ws),
+        &w.owner,
+        Some(json!({"name": "Operations", "key": "OPS"})),
+    )
+    .await;
+    let ops = ops["id"].as_str().unwrap().to_owned();
+    let runbook = issue(&app, &w, &ops, &w.owner, "Runbook").await;
+    let book = upload(
+        &app,
+        &w,
+        &w.owner,
+        &format!("name=Notes.md&issue_id={runbook}"),
+        b"restart it",
+    )
+    .await;
+    let (status, _) = call(
+        &app,
+        Method::DELETE,
+        &format!("{}/teams/{ops}", w.ws),
+        &w.owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, kept) = call(
+        &app,
+        Method::GET,
+        &format!("/artifact-files/{}", book["id"].as_str().unwrap()),
+        &w.member,
+        None,
+    )
+    .await;
+    assert_eq!(kept["name"], "Notes copy 2.md");
+
+    // A workspace goes with every file, whatever names they share.
+    upload(
+        &app,
+        &w,
+        &w.member,
+        &format!("name=notes.md&issue_id={two}"),
+        b"again",
+    )
+    .await;
+    let wid = w.ws.trim_start_matches("/workspaces/").parse().unwrap();
+    let owner_id = sqlx::query_scalar("SELECT id FROM users WHERE email = 'owner@example.com'")
+        .fetch_one(&app.state.db)
+        .await
+        .unwrap();
+    nexc::engine::workspaces::erase(&app.state, wid, owner_id, "deleted in a test")
+        .await
+        .unwrap();
+    let left: i64 = sqlx::query_scalar("SELECT count(*) FROM artifact_files")
+        .fetch_one(&app.state.db)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn the_database_names_copies_as_the_server_does(pool: PgPool) {
+    let names = [
+        "notes.md".to_owned(),
+        "Dockerfile".to_owned(),
+        ".gitignore".to_owned(),
+        ".env.example".to_owned(),
+        "prod.ENV.Example".to_owned(),
+        "archive.tar.json".to_owned(),
+        "spaced .md".to_owned(),
+        format!("{}.md", "x".repeat(197)),
+        format!("{}.tsx", "é".repeat(196)),
+    ];
+    for name in &names {
+        for n in [1, 2, 10, 1000] {
+            let in_db: String = sqlx::query_scalar("SELECT artifact_copy_name($1, $2)")
+                .bind(name)
+                .bind(n as i32)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(
+                in_db,
+                nexc::domain::artifact_file::copy_name(name, n),
+                "{name} {n}"
+            );
+        }
+    }
+}
+
+/// Sends a request, with its body's type and bytes if any, in a task of its
+/// own, to stand in the way of another.
+fn spawn_request(
+    app: &TestApp,
+    method: Method,
+    path: &str,
+    token: &str,
+    body: Option<(&str, Vec<u8>)>,
+) -> tokio::task::JoinHandle<(StatusCode, Value)> {
+    let mut request = axum::http::Request::builder()
+        .method(method)
+        .uri(format!("/api/v1{path}"))
+        .header(header::AUTHORIZATION, format!("Bearer {token}"));
+    let body = match body {
+        Some((kind, bytes)) => {
+            request = request.header(header::CONTENT_TYPE, kind);
+            axum::body::Body::from(bytes)
+        }
+        None => axum::body::Body::empty(),
+    };
+    let request = request.body(body).unwrap();
+    let router = app.router.clone();
+    tokio::spawn(async move {
+        let response = tower::ServiceExt::oneshot(router, request).await.unwrap();
+        let status = response.status();
+        let bytes = http_body_util::BodyExt::collect(response.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    })
+}
+
+/// Waits until a statement in this test's database waits on a lock.
+async fn until_blocked(pool: &PgPool) {
+    for _ in 0..400 {
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity
+             WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        if waiting > 0 {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    panic!("nothing waited on a lock");
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_folder_delete_counts_what_lands_in_it_meanwhile(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), &[]).await;
+    let w = world(&app).await;
+    let owner_id: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM users WHERE email = 'owner@example.com'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let reorg = issue(&app, &w, &w.secret, &w.owner, "Reorg").await;
+    let ship = issue(&app, &w, &w.eng, &w.owner, "Ship").await;
+    let keep = folder(&app, &w, &w.owner, json!({"name": "Keep"})).await;
+    let plan = upload(
+        &app,
+        &w,
+        &w.owner,
+        &format!("name=plan.md&folder_id={keep}&issue_id={reorg}"),
+        b"p",
+    )
+    .await;
+    let plan_id: uuid::Uuid = plan["id"].as_str().unwrap().parse().unwrap();
+
+    // Someone else uploads a file of the private team's issue into the folder, moves one in or
+    // attaches one in it to that issue, while the member, who cannot see it, deletes the folder:
+    // the delete waits for it, counts it and is refused.
+    for case in ["upload", "move", "attach"] {
+        let docs = folder(&app, &w, &w.member, json!({"name": format!("Docs {case}")})).await;
+        let notes = upload(
+            &app,
+            &w,
+            &w.member,
+            &format!("name=notes.md&folder_id={docs}&issue_id={ship}"),
+            b"n",
+        )
+        .await;
+        let notes_id: uuid::Uuid = notes["id"].as_str().unwrap().parse().unwrap();
+        let docs_id: uuid::Uuid = docs.parse().unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        match case {
+            "upload" => {
+                let new = nexc::repo::artifact_files::NewFile {
+                    workspace_id: w.ws.trim_start_matches("/workspaces/").parse().unwrap(),
+                    folder_id: Some(docs_id),
+                    issue_id: Some(reorg.parse().unwrap()),
+                    name: "secret.md",
+                    content: "s",
+                    sha256: "0",
+                    duplicated_from: None,
+                    created_by: owner_id,
+                };
+                nexc::repo::artifact_files::create_file(&mut tx, &new)
+                    .await
+                    .unwrap();
+            }
+            "move" => {
+                sqlx::query("UPDATE artifact_files SET folder_id = $2 WHERE id = $1")
+                    .bind(plan_id)
+                    .bind(docs_id)
+                    .execute(&mut *tx)
+                    .await
+                    .unwrap();
+            }
+            _ => {
+                sqlx::query("UPDATE artifact_files SET issue_id = $2::uuid WHERE id = $1")
+                    .bind(notes_id)
+                    .bind(&reorg)
+                    .execute(&mut *tx)
+                    .await
+                    .unwrap();
+            }
+        }
+        let delete = spawn_request(
+            &app,
+            Method::DELETE,
+            &format!("{}/artifact-folders/{docs}", w.ws),
+            &w.member,
+            None,
+        );
+        until_blocked(&pool).await;
+        tx.commit().await.unwrap();
+        let (status, body) = delete.await.unwrap();
+        assert_eq!(status, StatusCode::CONFLICT, "{case}: {body}");
+        let files: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM artifact_files WHERE folder_id = $1")
+                .bind(docs_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let expected = if case == "attach" { 1 } else { 2 };
+        assert_eq!(files, expected, "{case}: nothing went");
+    }
+
+    // A file put or moved into a folder whose delete holds it waits, then finds it gone.
+    let wid: uuid::Uuid = w.ws.trim_start_matches("/workspaces/").parse().unwrap();
+    let draft = upload(&app, &w, &w.member, "name=draft.md", b"d").await;
+    for case in ["upload", "move"] {
+        let gone = folder(&app, &w, &w.member, json!({"name": format!("Gone {case}")})).await;
+        let gone_id: uuid::Uuid = gone.parse().unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        nexc::repo::artifact_files::lock_folders(&mut *tx, wid)
+            .await
+            .unwrap();
+        nexc::repo::artifact_files::lock_under(&mut tx, gone_id)
+            .await
+            .unwrap();
+        let write = if case == "upload" {
+            spawn_request(
+                &app,
+                Method::POST,
+                &w.upload(&format!("name=late.md&folder_id={gone}")),
+                &w.member,
+                Some(("application/octet-stream", b"late".to_vec())),
+            )
+        } else {
+            let body = json!({"folder_id": gone}).to_string().into_bytes();
+            spawn_request(
+                &app,
+                Method::PATCH,
+                &format!("/artifact-files/{}", draft["id"].as_str().unwrap()),
+                &w.member,
+                Some(("application/json", body)),
+            )
+        };
+        until_blocked(&pool).await;
+        nexc::repo::artifact_files::delete_folder(&mut *tx, gone_id)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let (status, body) = write.await.unwrap();
+        assert_eq!(status, StatusCode::NOT_FOUND, "{case}: {body}");
+        assert_eq!(body["detail"], "folder not found", "{case}");
+    }
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_search_with_a_control_character_is_refused(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let w = world(&app).await;
+    upload(&app, &w, &w.member, "name=notes.md", b"n").await;
+    for list in [
+        format!("{}/artifact-files", w.ws),
+        format!("{}/issues", w.ws),
+    ] {
+        for bad in ["%00", "a%00b", "a%1Bb", "%7F"] {
+            let (status, body) = call(
+                &app,
+                Method::GET,
+                &format!("{list}?q={bad}"),
+                &w.member,
+                None,
+            )
+            .await;
+            assert_eq!(
+                status,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{list}?q={bad}: {body}"
+            );
+            assert!(body["errors"]["q"].is_array(), "{body}");
+        }
+        // Spaces around it, tabs and new lines among them, are trimmed as before.
+        let (status, body) = call(
+            &app,
+            Method::GET,
+            &format!("{list}?q=%09%20%0A"),
+            &w.member,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{list}: {body}");
+    }
+    let (_, found) = call(
+        &app,
+        Method::GET,
+        &format!("{}/artifact-files?q=%20NOTES%0A", w.ws),
+        &w.member,
+        None,
+    )
+    .await;
+    assert_eq!(names(&found), ["notes.md"]);
 }

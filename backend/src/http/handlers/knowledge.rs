@@ -16,7 +16,7 @@ use crate::domain::audit::AuditAction;
 use crate::domain::capabilities::DataLabel;
 use crate::domain::knowledge::{DOCUMENT_NAME_MAX, Document, KnowledgeSettings, Passage, Topic};
 use crate::domain::settings::key_hint;
-use crate::domain::validation::{FieldErrors, Validate};
+use crate::domain::validation::{FieldErrors, Validate, search_text};
 use crate::domain::workspace::{Workspace, WorkspaceAction};
 use crate::engine::knowledge;
 use crate::http::extract::{AuthUser, Path, Query, ValidatedJson};
@@ -41,7 +41,7 @@ fn require_member(workspace: &Workspace) -> Result<(), AppError> {
 #[derive(Debug, Deserialize, IntoParams)]
 #[serde(deny_unknown_fields)]
 pub struct DocumentQuery {
-    /// Part of the file name.
+    /// Part of the file name; without control characters.
     pub q: Option<String>,
     /// 1-100, default 20.
     pub limit: Option<i64>,
@@ -59,12 +59,7 @@ pub async fn list(
     Query(query): Query<DocumentQuery>,
 ) -> Result<Json<Vec<Document>>, AppError> {
     require_member(&member_of(&state, auth, wid).await?)?;
-    let q = query
-        .q
-        .as_deref()
-        .map(str::trim)
-        .filter(|q| !q.is_empty())
-        .map(|q| q.chars().take(100).collect::<String>());
+    let q = search_text("q", query.q, 100)?;
     Ok(Json(
         repo::knowledge::list(
             &state.db,

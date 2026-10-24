@@ -717,6 +717,74 @@ async fn no_route_fails_on_hostile_input(pool: PgPool) {
     assert_eq!(status, StatusCode::OK, "{list}");
 }
 
+/// A NUL or another control character in any one query parameter, alone, is refused or
+/// ignored, never passed on: the sweep above sends every parameter the same value at once, so a
+/// typed one (an id, a number) fails first and a free-text one is never reached that way.
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn no_query_parameter_alone_fails_on_a_control_character(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), &[("NEXC_TRUST_PROXY", "true")]).await;
+    let w = world(&app).await;
+    let tokens = members(&app, &pool, &w.wid, 6).await;
+    let mut admins = Vec::new();
+    for n in 0..2 {
+        let email = format!("root{n}@example.com");
+        let root =
+            nexc::http::handlers::auth::create_user(&app.state, &email, "Root", Role::Admin, "!")
+                .await
+                .unwrap();
+        admins.push(app.state.jwt.issue(root.id, Role::Admin, 0).unwrap());
+    }
+    let nowhere = Uuid::now_v7().to_string();
+    let mut sent = 0;
+    let mut limited = 0;
+    let mut broken = Vec::new();
+    for op in operations() {
+        // Nothing is deleted or ended: only what reads the parameter matters.
+        if op.method == Method::DELETE
+            || op.path.ends_with("/auth/sessions/end")
+            || op.path.ends_with("/auth/me/delete")
+        {
+            continue;
+        }
+        let console = op.path.starts_with("/api/v1/admin/");
+        let url = fill(&op.path, &w.ids, &nowhere);
+        for name in &op.query {
+            for value in ["%00", "a%00b", "a%1Bb"] {
+                let pool_of = if console { &admins } else { &tokens };
+                let token = &pool_of[(sent / 100) % pool_of.len()];
+                sent += 1;
+                let url = format!("{url}?{name}={value}");
+                let (status, answer) = send(&app, op.method.clone(), &url, Some(token), None).await;
+                if status == StatusCode::TOO_MANY_REQUESTS {
+                    limited += 1;
+                }
+                if status.is_server_error() {
+                    broken.push(format!("{} {url} -> {status}: {answer}", op.method));
+                }
+            }
+        }
+    }
+    assert!(sent > 200, "the parameters were read ({sent} requests)");
+    assert!(
+        limited * 20 < sent,
+        "{limited} of {sent} requests were only rate limited"
+    );
+    assert!(broken.is_empty(), "{}", broken.join("\n"));
+    // A free-text search says which parameter it refused.
+    for list in ["artifact-files", "issues", "documents"] {
+        let (status, body) = call(
+            &app,
+            Method::GET,
+            &format!("/workspaces/{}/{list}?q=%00", w.wid),
+            &w.owner,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{list}: {body}");
+        assert!(body["errors"]["q"].is_array(), "{list}: {body}");
+    }
+}
+
 /// The trace explorer's `decision=evidence` filter (CONTRACT §5) answers like the four
 /// decisions before it: a page, bounded, and 422 for anything that only looks like it.
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]

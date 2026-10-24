@@ -25,7 +25,7 @@ use crate::domain::platform::{
 };
 use crate::domain::sso::AccountIdentity;
 use crate::domain::user::{self, Role};
-use crate::domain::validation::{FieldErrors, Validate};
+use crate::domain::validation::{FieldErrors, Validate, search_text};
 use crate::domain::workspace::WorkspaceRole;
 use crate::http::extract::{Path, PlatformAdmin, Query, ValidatedJson};
 use crate::http::problem::Problem;
@@ -37,7 +37,7 @@ use crate::repo::{self, OrNotFound};
 #[derive(Debug, Deserialize, IntoParams)]
 #[serde(deny_unknown_fields)]
 pub struct PlatformQuery {
-    /// Part of a name or e-mail address.
+    /// Part of a name or e-mail address; without control characters.
     pub q: Option<String>,
     /// 1-100, default 25.
     pub limit: Option<i64>,
@@ -45,17 +45,12 @@ pub struct PlatformQuery {
 }
 
 impl PlatformQuery {
-    fn page(&self) -> Page {
-        Page {
-            q: self
-                .q
-                .as_deref()
-                .map(str::trim)
-                .filter(|q| !q.is_empty())
-                .map(|q| q.chars().take(100).collect()),
+    fn page(&self) -> Result<Page, AppError> {
+        Ok(Page {
+            q: search_text("q", self.q.clone(), 100)?,
             limit: self.limit.unwrap_or(25).clamp(1, 100),
             offset: self.offset.unwrap_or(0).clamp(0, 1_000_000),
-        }
+        })
     }
 }
 
@@ -109,7 +104,7 @@ pub async fn workspaces(
     Query(query): Query<PlatformQuery>,
 ) -> Result<Json<Vec<PlatformWorkspace>>, AppError> {
     Ok(Json(
-        repo::platform::workspaces(&state.db, &query.page()).await?,
+        repo::platform::workspaces(&state.db, &query.page()?).await?,
     ))
 }
 
@@ -270,7 +265,9 @@ pub async fn users(
     _admin: PlatformAdmin,
     Query(query): Query<PlatformQuery>,
 ) -> Result<Json<Vec<PlatformUser>>, AppError> {
-    Ok(Json(repo::platform::users(&state.db, &query.page()).await?))
+    Ok(Json(
+        repo::platform::users(&state.db, &query.page()?).await?,
+    ))
 }
 
 /// `PATCH /admin/users/{uid}` body: at least one of `role` and `suspended`.
@@ -599,6 +596,6 @@ pub async fn events(
     Query(query): Query<PlatformQuery>,
 ) -> Result<Json<Vec<PlatformEvent>>, AppError> {
     Ok(Json(
-        repo::platform::events(&state.db, &query.page()).await?,
+        repo::platform::events(&state.db, &query.page()?).await?,
     ))
 }
