@@ -281,12 +281,25 @@ describe('a project’s issues on the board', () => {
     ).toBeInTheDocument();
 
     fireEvent.change(cycle, { target: { value: sprint.id } });
-    // Only the sprint's issue is read now (not the motors, nor the other team's cover).
-    expect(await screen.findByText('Pick the wrist bus')).toBeInTheDocument();
-    expect(screen.queryByText('Size the motors')).toBeNull();
+    // Only the sprint's issue is read now (not the motors, nor the other team's cover). The
+    // last board stays on screen until the sprint's list arrives.
+    await waitFor(() => expect(screen.queryByText('Size the motors')).toBeNull());
+    expect(screen.getByText('Pick the wrist bus')).toBeInTheDocument();
     expect(screen.queryByText(/in another team/)).toBeNull();
     // The board's team stays a default: nothing narrows the address to it.
     expect(router.state.location.search).toBe('');
+  });
+
+  it('keeps the board on screen while another filter’s issues load', async () => {
+    renderProject();
+    await screen.findByText('Size the motors');
+    const cycle = await screen.findByRole('combobox', { name: 'Cycle' });
+
+    fireEvent.change(cycle, { target: { value: sprint.id } });
+    // The new list is still on its way: the last board stands in for it, not the skeleton.
+    expect(screen.queryByRole('status', { name: 'Loading issues' })).toBeNull();
+    expect(screen.getByRole('region', { name: 'Todo' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('Size the motors')).toBeNull());
   });
 
   it('shows the board’s team on the real select, with its cycle filter beside it', async () => {

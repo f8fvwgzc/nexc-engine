@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import {
   ChevronRightIcon,
   CircleDotIcon,
@@ -215,8 +215,8 @@ export function IssueExplorer({
     enabled: shownTeam !== ALL,
   });
   const activeCycle = shownTeam !== ALL && teamCycles.some((c) => c.id === cycleId) ? cycleId : ALL;
-  const issuesResult = useQuery(
-    issuesQuery(workspace.id, {
+  const issuesResult = useQuery({
+    ...issuesQuery(workspace.id, {
       team_id: teamId === ALL ? undefined : teamId,
       project_id: project?.id,
       label_id: activeLabel === ALL ? undefined : activeLabel,
@@ -226,7 +226,10 @@ export function IssueExplorer({
       open: openOnly,
       q: debouncedQ || undefined,
     }),
-  );
+    // A changed filter keeps the last list (or board) on screen until its own list arrives,
+    // instead of flashing the skeleton.
+    placeholderData: keepPreviousData,
+  });
   const issues = issuesResult.data;
   const isPending = issuesResult.isPending || teamsResult.isPending;
   // A list that could not be read is not an empty one. One that was read stays on screen when a
@@ -256,7 +259,11 @@ export function IssueExplorer({
   }, [setCreating]);
   // With no team picked every team's issues are read, and the board leaves out those of the
   // teams it does not show: a project's issues filed in other teams, say.
-  const elsewhere = showsBoard ? (issues ?? []).filter((i) => i.team_id !== boardTeam) : [];
+  // The last list, kept while another filter loads, says nothing about this board.
+  const elsewhere =
+    showsBoard && !issuesResult.isPlaceholderData
+      ? (issues ?? []).filter((i) => i.team_id !== boardTeam)
+      : [];
   const elsewhereTeams = teams
     .map((team) => ({ team, count: elsewhere.filter((i) => i.team_id === team.id).length }))
     .filter(({ count }) => count > 0);

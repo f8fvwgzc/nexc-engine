@@ -170,8 +170,13 @@ test('the issue board fills the page, files into a column and folds one away', a
 
   // The columns reach down to the page's bottom gutter, whatever they hold.
   const backlog = page.getByRole('region', { name: 'Backlog' });
-  const box = await backlog.boundingBox();
-  expect((box?.y ?? 0) + (box?.height ?? 0)).toBeGreaterThan(800 - 48);
+  // boundingBox() does not wait, so the bottom edge is read until the board has laid out.
+  await expect
+    .poll(async () => {
+      const box = await backlog.boundingBox();
+      return (box?.y ?? 0) + (box?.height ?? 0);
+    })
+    .toBeGreaterThan(800 - 48);
 
   await page.getByRole('button', { name: 'New issue in Todo' }).click();
   const dialog = page.getByRole('dialog', { name: 'New issue' });
