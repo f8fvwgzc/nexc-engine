@@ -2,9 +2,10 @@
  * What the pages do over time, against the mocked API: a list that follows a live run, a page
  * that recovers from a failed load, data kept on screen when a background refetch fails, an
  * issue that opens on its own page (and from an old `?issue=` link), the issue board's full
- * height, per-column `+` and folded columns, a filter that matches nothing, the unread count in
- * the tablet's icon rail, and the workspace map's embedded onto-intelli UI: framed under the
- * console's own Content-Security-Policy, signed in, and its session renewed by its expiry.
+ * height, per-column `+` and folded columns, a filter that matches nothing, one team's projects
+ * and a card dragged across the board, the unread count in the tablet's icon rail, and the
+ * workspace map's embedded onto-intelli UI: framed under the console's own
+ * Content-Security-Policy, signed in, and its session renewed by its expiry.
  */
 import { expect, test, type Page } from '@playwright/test';
 
@@ -185,6 +186,53 @@ test('the issue board fills the page, files into a column and folds one away', a
   await expect(backlog.getByRole('button', { name: /^Unfold Backlog/ })).toBeVisible();
   await backlog.getByRole('button', { name: /^Unfold Backlog/ }).click();
   await expect(page.getByRole('button', { name: 'Fold Backlog' })).toBeVisible();
+});
+
+test.describe('the Projects page', () => {
+  test('lists one team’s projects and moves a card to another status', async ({ page }) => {
+    const project = fixtures.projects.find((p) => p.team?.key === 'ENG');
+    if (!project?.team_id) throw new Error('the fixtures need a project owned by ENG');
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await openRoute(
+      page,
+      { ...route('projects'), path: `/app/projects?team=${project.team_id}` },
+      { mode: 'full', theme: 'light' },
+    );
+
+    // The list is asked for the team's projects only (the mock filters by team_id).
+    const main = page.getByRole('main');
+    await expect(main.getByRole('link', { name: project.name })).toBeVisible();
+    for (const other of fixtures.projects.filter((p) => p.id !== project.id)) {
+      await expect(main.getByText(other.name)).toHaveCount(0);
+    }
+
+    // The server keeps the move: the list read again after it has the project paused.
+    let moved = false;
+    await page.route(
+      (url) => url.pathname.endsWith(`/projects/${project.id}`),
+      (r) => {
+        if (r.request().method() !== 'PATCH') return r.fallback();
+        moved = true;
+        return r.fulfill({ json: { ...project, status: 'paused' } });
+      },
+    );
+    await page.route(
+      (url) => /\/workspaces\/[^/]+\/projects$/.test(url.pathname),
+      (r) => (moved ? r.fulfill({ json: [{ ...project, status: 'paused' }] }) : r.fallback()),
+    );
+
+    await page.getByRole('button', { name: 'Board view' }).click();
+    const paused = main.getByRole('region', { name: 'Paused' });
+    const patch = page.waitForRequest(
+      (r) => r.method() === 'PATCH' && r.url().endsWith(`/projects/${project.id}`),
+    );
+    await main.getByRole('link', { name: project.name }).dragTo(paused);
+    expect((await patch).postDataJSON()).toEqual({ status: 'paused' });
+    await expect(paused.getByRole('link', { name: project.name })).toBeVisible();
+    await expect(
+      main.getByRole('region', { name: 'In progress' }).getByRole('link', { name: project.name }),
+    ).toHaveCount(0);
+  });
 });
 
 test('Sessions tells a filter that matches nothing from an empty workspace', async ({ page }) => {

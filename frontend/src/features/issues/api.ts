@@ -214,18 +214,32 @@ export function deleteComment(issueId: string, commentId: string) {
   return apiSend(`/issues/${issueId}/comments/${commentId}`, { method: 'DELETE' });
 }
 
-export const projectsQuery = (workspaceId: string) =>
+/** The projects of a workspace the caller can see, or only those one team owns. */
+export const projectsQuery = (workspaceId: string, teamId?: string) =>
   queryOptions({
-    queryKey: qk.issues.projects(workspaceId),
+    queryKey: qk.issues.projects(workspaceId, teamId),
     staleTime: FRESH.list,
     queryFn: ({ signal }) =>
-      apiRequest(`/workspaces/${workspaceId}/projects`, z.array(projectSchema), { signal }),
+      apiRequest(`/workspaces/${workspaceId}/projects`, z.array(projectSchema), {
+        query: { team_id: teamId },
+        signal,
+      }),
   });
 
-export function createProject(
-  workspaceId: string,
-  body: { name: string; description?: string; target_date?: string },
-) {
+export interface ProjectInput {
+  name: string;
+  description?: string;
+  /** The owning team; left out, the project belongs to the whole workspace. */
+  team_id?: string;
+  /** `planned` when left out. */
+  status?: ProjectStatus;
+  /** Left out, the creator leads; `null` leaves the project without a lead. */
+  lead_id?: string | null;
+  /** `YYYY-MM-DD`. */
+  target_date?: string;
+}
+
+export function createProject(workspaceId: string, body: ProjectInput) {
   return apiRequest(`/workspaces/${workspaceId}/projects`, projectSchema, { method: 'POST', body });
 }
 
@@ -236,6 +250,8 @@ export function updateProject(
     status?: ProjectStatus;
     name?: string;
     description?: string;
+    /** `null` takes the project away from its team. */
+    team_id?: string | null;
     lead_id?: string | null;
     target_date?: string | null;
   },

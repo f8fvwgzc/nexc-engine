@@ -93,7 +93,16 @@ const handlers: [string, Handler][] = [
   /* issues */
   ['GET /workspaces/:wid/issues', ({ mode, url }) => list(mode, filterIssues(url))],
   ['GET /workspaces/:wid/labels', ({ mode }) => list(mode, fixtures.labels)],
-  ['GET /workspaces/:wid/projects', ({ mode }) => list(mode, fixtures.projects)],
+  [
+    'GET /workspaces/:wid/projects',
+    ({ mode, url }) => {
+      const team = url.searchParams.get('team_id');
+      return list(
+        mode,
+        fixtures.projects.filter((p) => !team || p.team_id === team),
+      );
+    },
+  ],
   ['GET /workspaces/:wid/inbox', ({ mode }) => list(mode, fixtures.inbox)],
   ['GET /issues/:iid/events', ({ mode }) => list(mode, fixtures.issueEvents)],
   ['GET /issues/:iid', ({ params }) => fixtures.issues.find((i) => i.id === params.iid)],

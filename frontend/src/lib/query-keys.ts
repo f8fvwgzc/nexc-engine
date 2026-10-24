@@ -52,7 +52,10 @@ export const qk = {
     list: (workspaceId: string, filter: object) => ['issues', workspaceId, 'list', filter] as const,
     states: (workspaceId: string, teamId: string) =>
       ['issues', workspaceId, 'states', teamId] as const,
-    projects: (workspaceId: string) => ['issues', workspaceId, 'projects'] as const,
+    /** Prefix of every project list of a workspace, whatever team it is filtered to. */
+    projectLists: (workspaceId: string) => ['issues', workspaceId, 'projects'] as const,
+    projects: (workspaceId: string, teamId?: string) =>
+      [...qk.issues.projectLists(workspaceId), teamId ?? 'all'] as const,
     events: (issueId: string) => ['issues', 'events', issueId] as const,
     cycles: (workspaceId: string, teamId: string) =>
       ['issues', workspaceId, 'cycles', teamId] as const,
