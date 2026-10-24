@@ -153,6 +153,18 @@ frontend:
   resources:
     requests: { cpu: 50m, memory: 32Mi }
     limits: { cpu: 500m, memory: 128Mi }
+  # HTTPS with HTTP/2, and HTTP/3 over QUIC, served by the frontend pods' own nginx
+  # (docs/adr/0001-http3-edge-caching-and-indexes.md). An ingress controller terminates TLS on
+  # TCP only (ingress-nginx has no HTTP/3), so browsers reach the pods through a Service of its
+  # own carrying the port on TCP and on UDP (a LoadBalancer with mixed protocols, Kubernetes
+  # 1.26+); point the host's DNS at it. secretName: a kubernetes.io/tls Secret for the host.
+  http3:
+    enabled: false
+    secretName: ""
+    port: 443
+    service:
+      type: LoadBalancer
+      annotations: {}
 
 # onto-intelli in the release (docs/ONTOLOGY.md): a Deployment and a Service on port `port`,
 # configured as nexc needs it (tenants per workspace, impersonation, governance, the UI's

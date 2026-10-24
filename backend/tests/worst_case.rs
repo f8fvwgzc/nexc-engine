@@ -273,6 +273,15 @@ async fn get_raw(
     (status, headers, bytes.to_vec())
 }
 
+/// The documents anyone may read, and a shared cache keep: the public keys
+/// and the agent cards of exposed agents.
+fn public_document(path: &str) -> bool {
+    matches!(
+        path,
+        "/.well-known/jwks.json" | "/.well-known/agent.json" | "/a2a/agents/{principal}/card"
+    )
+}
+
 /// Every read that answers JSON carries a strong `ETag` and
 /// `Cache-Control: private, no-cache`; asked again with `If-None-Match`, it
 /// answers 304 with no body; a changed resource gets a new tag; streams,
@@ -334,11 +343,22 @@ async fn reads_are_tagged_and_answer_304_to_a_matching_etag(pool: PgPool) {
             etag.starts_with('"') && etag.ends_with('"') && !etag.starts_with("W/"),
             "GET {url}: a strong, quoted tag ({etag})"
         );
+        // The public documents (the key set, the agent cards) may be kept by shared caches;
+        // everything else privately, and asked about again.
+        let policy = if public_document(&op.path) {
+            if op.path == "/.well-known/jwks.json" {
+                "public, max-age=300"
+            } else {
+                "public, max-age=30"
+            }
+        } else {
+            "private, no-cache"
+        };
         assert_eq!(
             headers
                 .get(header::CACHE_CONTROL)
                 .and_then(|v| v.to_str().ok()),
-            Some("private, no-cache"),
+            Some(policy),
             "GET {url}"
         );
         let etag = etag.to_owned();
@@ -356,7 +376,7 @@ async fn reads_are_tagged_and_answer_304_to_a_matching_etag(pool: PgPool) {
                     again
                         .get(header::CACHE_CONTROL)
                         .and_then(|v| v.to_str().ok()),
-                    Some("private, no-cache")
+                    Some(policy)
                 );
                 assert!(again.get(header::CONTENT_TYPE).is_none(), "GET {url}");
             }

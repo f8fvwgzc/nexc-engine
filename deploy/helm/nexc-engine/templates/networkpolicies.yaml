@@ -28,6 +28,12 @@ spec:
             matchLabels: { kubernetes.io/metadata.name: {{ .Values.networkPolicies.ingressNamespace }} }
       ports:
         - { port: 8080, protocol: TCP }
+    {{- if .Values.frontend.http3.enabled }}
+    # HTTPS and HTTP/3 straight from browsers, through the frontend-https load balancer.
+    - ports:
+        - { port: 8443, protocol: TCP }
+        - { port: 8443, protocol: UDP }
+    {{- end }}
 ---
 # backend: its API only from the frontend pods and the ingress controller; its key-set port
 # (NEXC_KEYS_ADDR, the agent-token public keys and nothing else) from the agent runtime; the

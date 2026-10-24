@@ -2,7 +2,7 @@
 #
 #   make init              # creates .env with generated secrets (demo LLM provider by default)
 #   docker compose up -d --build
-#   open http://localhost:8080
+#   open http://localhost:8080        # or https://localhost:8443: HTTP/2 and HTTP/3
 #
 # Only the web UI is published. The backend, the agent runtime and PostgreSQL live on internal
 # networks; the runtime reaches the internet only through runtime-egress, for the LLM endpoints
@@ -88,7 +88,7 @@ services:
       # published by this file: put it behind your own mTLS or private network.
       NEXC_SYMPHONY_URL: http://texc-symphony:4000
       NEXC_SYMPHONY_WORKFLOW: /data/symphony/WORKFLOW.md
-      NEXC_CORS_ORIGINS: http://localhost:${NEXC_HTTP_PORT:-8080}
+      NEXC_CORS_ORIGINS: http://localhost:${NEXC_HTTP_PORT:-8080},https://localhost:${NEXC_HTTPS_PORT:-8443}
       NEXC_TRUST_PROXY: "true"
       NEXC_LLM_PROVIDER: ${NEXC_LLM_PROVIDER:-demo}
       # The lease a replica holds on a run it executes (docs/HA.md); the same on every replica.
@@ -203,6 +203,16 @@ services:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api/v1}
     ports:
       - "${NEXC_HTTP_PORT:-8080}:8080"
+      # HTTPS with HTTP/2, and HTTP/3 over QUIC on the same port over UDP, once NEXC_TLS_DIR
+      # holds tls.crt and tls.key (`make init` makes a self-signed one for localhost in
+      # data/tls; `make tls-cert` again, or your own): https://localhost:8443
+      - "${NEXC_HTTPS_PORT:-8443}:8443/tcp"
+      - "${NEXC_HTTPS_PORT:-8443}:8443/udp"
+    environment:
+      # The port browsers reach HTTPS on, which Alt-Svc advertises for HTTP/3.
+      NEXC_HTTPS_PUBLIC_PORT: ${NEXC_HTTPS_PORT:-8443}
+    volumes:
+      - ${NEXC_TLS_DIR:-./data/tls}:/etc/nginx/tls:ro
     tmpfs:
       - /tmp
     depends_on:

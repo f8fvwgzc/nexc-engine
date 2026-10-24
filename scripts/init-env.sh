@@ -100,6 +100,8 @@ fi
 
 if [[ "$OUT" == ".env" ]]; then
   mkdir -p data/symphony
+  # The console's HTTPS listener (HTTP/2 and HTTP/3) on https://localhost:8443.
+  NEXC_TLS_DIR="$(get NEXC_TLS_DIR)" scripts/tls-cert.sh --if-missing
   provider="$(get NEXC_LLM_PROVIDER)"
   echo
   echo "done. LLM provider: ${provider:-anthropic}."

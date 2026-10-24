@@ -69,8 +69,13 @@ async fn card_response(state: &AppState, address: &str) -> Result<Response, AppE
         .await
         .map_err(|_| AppError::NotFound("exposed agent"))?;
     let card = a2a::card::build(state, &agent, workspace).await?;
-    Ok(Json(card).into_response())
+    // Public and the same for every caller: the edge and any other shared cache may keep it
+    // (a change shows within 30 s; the tasks themselves are checked on every call).
+    Ok(([(header::CACHE_CONTROL, CARD_CACHE_CONTROL)], Json(card)).into_response())
 }
+
+/// How long a shared cache may keep an agent card (`Cache-Control`).
+pub const CARD_CACHE_CONTROL: &str = "public, max-age=30";
 
 /// The agent card of an exposed agent, at the well-known address. Public:
 /// an agent that is not exposed is not found.

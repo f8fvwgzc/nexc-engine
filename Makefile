@@ -19,7 +19,7 @@ RUNTIME_ENV := env -u NEXC_MASTER_KEY -u NEXC_AGENT_TOKEN_SIGNING_KEY -u NEXC_FI
   -u NEXC_ONTO_TOKEN -u ONTO_SESSION_SECRET -u ONTO_POSTGRES_PASSWORD -u NEXC_ADMIN_PASSWORD \
   -u ANTHROPIC_API_KEY -u NEXC_EMBED_API_KEY -u NEXC_OIDC_CLIENT_SECRET
 
-.PHONY: help init setup dev dev-backend dev-frontend dev-runtime db-up db-down db-shell \
+.PHONY: help init tls-cert setup dev dev-backend dev-frontend dev-runtime db-up db-down db-shell \
         backup backup-check restore prove prove-trace prove-identity prove-audit prove-policy prove-agentsecops prove-gateway prove-firewall prove-api test-worst-case \
         build test test-backend test-frontend test-runtime test-onto-live e2e-ui e2e-ui-update lint fmt check \
         docker-build docker-up docker-down docker-logs demo demo-onto demo-secops seed-demo \
@@ -35,6 +35,9 @@ help: ## Show this help
 
 init: ## Create .env from .env.example and generate secrets (idempotent)
 	@scripts/init-env.sh
+
+tls-cert: ## Write the localhost certificate of the HTTPS / HTTP/3 listener (data/tls; mkcert's CA when installed)
+	@scripts/tls-cert.sh
 
 setup: ## Install dependencies: cargo fetch, frontend packages, runtime venv
 	$(CARGO) fetch --manifest-path $(BACKEND_MANIFEST)

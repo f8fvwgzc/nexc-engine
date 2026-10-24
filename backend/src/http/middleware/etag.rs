@@ -2,11 +2,13 @@
 //! over its body and `Cache-Control: private, no-cache`, so a client that
 //! keeps the body may ask again with `If-None-Match` and get a `304` with no
 //! body when nothing changed. Streams (SSE, downloads) and errors are left
-//! alone; a handler that computes its own tag keeps it.
+//! alone; a handler that computes its own tag keeps it, and one that serves a
+//! public document (a key set, an agent card) keeps its `public` policy, so
+//! the edge and any other shared cache may keep it too.
 
 use axum::body::{Body, HttpBody as _};
 use axum::extract::Request;
-use axum::http::{HeaderValue, Method, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use http_body_util::BodyExt;
@@ -20,6 +22,16 @@ pub const ETAG_MAX_BYTES: u64 = 8 * 1024 * 1024;
 /// but must ask (with `If-None-Match`) before reusing it; a shared cache
 /// may not keep it at all.
 pub const CACHE_CONTROL: &str = "private, no-cache";
+
+/// The policy a tagged read goes out with: the handler's own when it made
+/// the answer public, [`CACHE_CONTROL`] otherwise.
+fn policy(headers: &HeaderMap) -> HeaderValue {
+    headers
+        .get(header::CACHE_CONTROL)
+        .filter(|v| v.to_str().is_ok_and(|v| v.starts_with("public")))
+        .cloned()
+        .unwrap_or(HeaderValue::from_static(CACHE_CONTROL))
+}
 
 /// Strong entity tag of a body: the first 128 bits of its SHA-256, quoted.
 pub fn etag_of(body: &[u8]) -> String {
@@ -63,10 +75,8 @@ pub async fn conditional_reads(request: Request, next: Next) -> Response {
     }
     // A handler that tagged the answer itself (and answered the condition) only needs the policy.
     if response.headers().contains_key(header::ETAG) {
-        response.headers_mut().insert(
-            header::CACHE_CONTROL,
-            HeaderValue::from_static(CACHE_CONTROL),
-        );
+        let policy = policy(response.headers());
+        response.headers_mut().insert(header::CACHE_CONTROL, policy);
         return response;
     }
     if response.status() != StatusCode::OK || !is_json(&response) {
@@ -90,10 +100,8 @@ pub async fn conditional_reads(request: Request, next: Next) -> Response {
     let tag = etag_of(&bytes);
     let tag_value = HeaderValue::from_str(&tag).expect("an ETag is ASCII");
     parts.headers.insert(header::ETAG, tag_value);
-    parts.headers.insert(
-        header::CACHE_CONTROL,
-        HeaderValue::from_static(CACHE_CONTROL),
-    );
+    let policy = policy(&parts.headers);
+    parts.headers.insert(header::CACHE_CONTROL, policy);
     if if_none_match.is_some_and(|value| matches(&value, &tag)) {
         parts.status = StatusCode::NOT_MODIFIED;
         parts.headers.remove(header::CONTENT_TYPE);
@@ -146,6 +154,24 @@ mod tests {
                 get(|| async { ([(header::ETAG, "\"mine\"")], axum::Json(json!({"id": 1}))) }),
             )
             .route(
+                "/keys",
+                get(|| async {
+                    (
+                        [(header::CACHE_CONTROL, "public, max-age=300")],
+                        axum::Json(json!({"keys": []})),
+                    )
+                }),
+            )
+            .route(
+                "/private",
+                get(|| async {
+                    (
+                        [(header::CACHE_CONTROL, "no-store")],
+                        axum::Json(json!({"id": 2})),
+                    )
+                }),
+            )
+            .route(
                 "/missing",
                 get(|| async { (StatusCode::NOT_FOUND, axum::Json(json!({"status": 404}))) }),
             )
@@ -195,6 +221,29 @@ mod tests {
         let other = get_with("/thing", Some("\"stale\""), Method::GET).await;
         assert_eq!(other.status(), StatusCode::OK);
         assert_eq!(body_of(other).await, br#"{"id":7}"#);
+    }
+
+    #[tokio::test]
+    async fn a_public_document_keeps_its_policy_and_is_tagged() {
+        let first = get_with("/keys", None, Method::GET).await;
+        assert_eq!(
+            first.headers()[header::CACHE_CONTROL],
+            "public, max-age=300"
+        );
+        let tag = first.headers()[header::ETAG].to_str().unwrap().to_owned();
+        let cached = get_with("/keys", Some(&tag), Method::GET).await;
+        assert_eq!(cached.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(
+            cached.headers()[header::CACHE_CONTROL],
+            "public, max-age=300"
+        );
+
+        let private = get_with("/private", None, Method::GET).await;
+        assert_eq!(
+            private.headers()[header::CACHE_CONTROL],
+            CACHE_CONTROL,
+            "only a public policy is the handler's to choose: a JSON read is always kept privately"
+        );
     }
 
     #[tokio::test]

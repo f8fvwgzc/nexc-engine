@@ -13,6 +13,29 @@ spec:
       port: 8080
       targetPort: http
 ---
+{{- with .Values.frontend.http3 }}
+{{- if .enabled }}
+# HTTPS (HTTP/2 on TCP) and HTTP/3 (QUIC on UDP) on one port, straight to the pods' nginx.
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-https
+  labels:
+    app.kubernetes.io/name: frontend
+    {{- include "nexc.labels" $ | nindent 4 }}
+  {{- with .service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .service.type }}
+  selector: { app.kubernetes.io/name: frontend }
+  ports:
+    - { name: https, port: {{ .port }}, targetPort: https, protocol: TCP }
+    - { name: quic, port: {{ .port }}, targetPort: quic, protocol: UDP }
+---
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -32,7 +55,8 @@ spec:
     spec:
       automountServiceAccountToken: false
       securityContext:
-        {{- include "nexc.podSecurity" (dict "uid" 101 "fsGroup" false) | nindent 8 }} # nginx-unprivileged
+        {{- /* fsGroup: the TLS Secret's files are readable by the pod's group. */}}
+        {{- include "nexc.podSecurity" (dict "uid" 101 "fsGroup" .Values.frontend.http3.enabled) | nindent 8 }} # nginx-unprivileged
       containers:
         - name: frontend
           image: {{ include "nexc.image" (dict "image" .Values.images.frontend "chart" .Chart) }}
@@ -40,11 +64,22 @@ spec:
           ports:
             - name: http
               containerPort: 8080
-          {{- with include "nexc.ontoUrl" . }}
+            {{- if .Values.frontend.http3.enabled }}
+            - { name: https, containerPort: 8443, protocol: TCP }
+            - { name: quic, containerPort: 8443, protocol: UDP }
+            {{- end }}
+          {{- if or (include "nexc.ontoUrl" .) .Values.frontend.http3.enabled }}
           env:
+            {{- with include "nexc.ontoUrl" . }}
             # The Content-Security-Policy's frame-src: onto-intelli's UI, which the map embeds.
             - name: NEXC_ONTO_PUBLIC_URL
               value: {{ include "nexc.ontoPublicUrl" $ | quote }}
+            {{- end }}
+            {{- if .Values.frontend.http3.enabled }}
+            # The port browsers reach HTTPS on, which Alt-Svc advertises for HTTP/3.
+            - name: NEXC_HTTPS_PUBLIC_PORT
+              value: {{ .Values.frontend.http3.port | quote }}
+            {{- end }}
           {{- end }}
           livenessProbe:
             httpGet: { path: /healthz, port: http }
@@ -58,6 +93,16 @@ spec:
             {{- include "nexc.containerSecurity" . | nindent 12 }}
           volumeMounts:
             - { name: tmp, mountPath: /tmp }
+            {{- if .Values.frontend.http3.enabled }}
+            - { name: tls, mountPath: /etc/nginx/tls, readOnly: true }
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: { sizeLimit: 64Mi }
+        {{- if .Values.frontend.http3.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ required "frontend.http3.secretName: a kubernetes.io/tls Secret" .Values.frontend.http3.secretName }}
+            # Readable by nginx (uid 101, the pod's group), no one else.
+            defaultMode: 0440
+        {{- end }}

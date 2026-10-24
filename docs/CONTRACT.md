@@ -139,7 +139,11 @@ In Docker/K8s the frontend is served by unprivileged nginx on 8080 which proxies
 - Conditional reads. Every `GET` that answers `200` with JSON (a single resource or a list)
   carries a strong `ETag` (a hash of the body; `GET /graphs/{gid}` hashes the graph with its
   version) and `Cache-Control: private, no-cache`: a client may keep the body but must ask
-  before reusing it. A `GET` with `If-None-Match` naming the current tag (or `*`) is answered
+  before reusing it. The public documents are the exception: the key set
+  (`/.well-known/jwks.json`, `public, max-age=300`) and the agent cards of exposed agents
+  (`/.well-known/agent.json`, `/a2a/agents/{principal}/card`, `public, max-age=30`) keep their
+  `public` policy with the tag, so the edge (nginx) and any other shared cache may keep them.
+  A `GET` with `If-None-Match` naming the current tag (or `*`) is answered
   `304 Not Modified` with the `ETag`, the same `Cache-Control` and no body; a resource that
   changed gets a new tag. Streams (SSE, WebSocket), downloads, `/metrics` and errors carry no
   tag and keep `Cache-Control: no-store`. The console's fetch layer sends `If-None-Match` from
