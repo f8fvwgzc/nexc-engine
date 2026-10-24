@@ -44,6 +44,7 @@ data:
   NEXC_ONTO_PUBLIC_URL: {{ include "nexc.ontoPublicUrl" . | quote }}
   NEXC_ONTO_WORKSPACE_PREFIX: {{ .Values.backend.ontoWorkspacePrefix | quote }}
   NEXC_ONTO_VOCABULARY_TTL_SECS: {{ .Values.backend.ontoVocabularyTtlSecs | quote }}
+  NEXC_ONTO_READ_CACHE_SECS: {{ .Values.backend.ontoReadCacheSecs | quote }}
   NEXC_ONTO_SESSION_TTL_SECS: {{ .Values.backend.ontoSessionTtlSecs | quote }}
   {{- else }}
   NEXC_ONTO_MODE: "off"

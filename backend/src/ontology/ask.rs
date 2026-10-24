@@ -592,6 +592,10 @@ async fn events_since(
     target: Option<String>,
 ) -> Result<Vec<OntoEvent>, AppError> {
     let since = (days > 0).then(|| since_ms(days));
+    // Asked from the start of the minute, so the same question within it is the same read for
+    // the read cache (ontology::cached); what it returns is narrowed to `since` below, and the
+    // newest come first, so the wider window changes nothing of the answer.
+    let asked_since = since.map(|ms| ms - ms.rem_euclid(60_000));
     let mut events = backend
         .events(
             principal,
@@ -599,7 +603,7 @@ async fn events_since(
                 actor,
                 target,
                 action: Some(action.to_owned()),
-                since_ms: since,
+                since_ms: asked_since,
                 until_ms: None,
                 limit: EVENTS_MAX,
             },

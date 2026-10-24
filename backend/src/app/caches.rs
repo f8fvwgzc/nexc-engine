@@ -1,20 +1,23 @@
 //! Hot-read caches, one set per instance: agent cards, resolved policies per
-//! agent and policy version, workspace guardrails, workspace LLM settings
-//! and graph vocabularies read from onto-intelli. A write drops the entry
-//! here and tells every other replica to drop it too, over the realtime
-//! fan-out (PostgreSQL `NOTIFY`, see [`crate::realtime::fanout`]);
-//! `NEXC_CACHE_TTL_SECS` bounds how long an entry may live regardless (0
-//! turns the caches off). Vocabularies have their own lifetime
-//! (`NEXC_ONTO_VOCABULARY_TTL_SECS`), and one past it is still served while
-//! onto-intelli cannot be reached.
+//! agent and policy version, workspace guardrails, workspace LLM settings,
+//! graph vocabularies read from onto-intelli and onto-intelli's other reads
+//! ([`OntoReads`]). A write drops the entry here and tells every other
+//! replica to drop it too, over the realtime fan-out (PostgreSQL `NOTIFY`,
+//! see [`crate::realtime::fanout`]); `NEXC_CACHE_TTL_SECS` bounds how long an
+//! entry may live regardless (0 turns the caches off). Vocabularies have
+//! their own lifetime (`NEXC_ONTO_VOCABULARY_TTL_SECS`), and one past it is
+//! still served while onto-intelli cannot be reached; onto-intelli's other
+//! reads live `NEXC_ONTO_READ_CACHE_SECS` and are never served past it.
 
+use std::any::Any;
+use std::future::Future;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
-use tokio::sync::mpsc;
+use tokio::sync::{OnceCell, mpsc};
 use uuid::Uuid;
 
 use crate::domain::agent::{Agent, AgentOwner, AgentTeam};
@@ -48,6 +51,8 @@ pub enum Key {
     WorkspaceLlm(Uuid),
     /// A graph's vocabulary changed in onto-intelli through nexc.
     Vocabulary(Uuid),
+    /// nexc wrote to this onto-intelli tenant: every read kept for it.
+    Ontology(String),
 }
 
 /// The part of an agent's card that only its writes change (its recent
@@ -124,6 +129,154 @@ impl<K: Eq + std::hash::Hash + Clone, T> Cache<K, T> {
     }
 }
 
+/// What one read of onto-intelli answered, whatever its type.
+type Answer = Arc<dyn Any + Send + Sync>;
+
+/// A read of a tenant, under the tenant's generation when it was asked.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ReadKey {
+    tenant: String,
+    generation: u64,
+    /// The method, who asked and what: the whole request, compared exactly.
+    call: String,
+}
+
+/// One read: answered once, by the first caller; the others that ask the
+/// same while it is on the wire wait for that answer instead of sending
+/// their own.
+struct Slot {
+    at: Instant,
+    cell: Arc<OnceCell<Answer>>,
+}
+
+/// How a read was answered (`nexc_cache_lookups_total{cache="onto_read"}`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReadOutcome {
+    /// Kept from an earlier call.
+    Hit,
+    /// Asked onto-intelli.
+    Miss,
+    /// Waited for the same read another caller had on the wire.
+    Coalesced,
+}
+
+impl ReadOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            ReadOutcome::Hit => "hit",
+            ReadOutcome::Miss => "miss",
+            ReadOutcome::Coalesced => "coalesced",
+        }
+    }
+}
+
+/// onto-intelli's reads (find, traverse, events, schema, proposals), kept
+/// per tenant, caller and request for `NEXC_ONTO_READ_CACHE_SECS`. Every
+/// write nexc makes to a tenant moves the tenant to a new generation here
+/// and on every other replica, so a read never answers from before a write
+/// nexc made; a change made in onto-intelli itself shows within the
+/// lifetime. Errors are never kept.
+pub struct OntoReads {
+    ttl: Duration,
+    generations: DashMap<String, u64>,
+    entries: DashMap<ReadKey, Slot>,
+}
+
+impl OntoReads {
+    /// Reads kept `ttl` (zero: every read asks onto-intelli).
+    pub fn new(ttl: Duration) -> Self {
+        OntoReads {
+            ttl,
+            generations: DashMap::new(),
+            entries: DashMap::new(),
+        }
+    }
+
+    fn generation(&self, tenant: &str) -> u64 {
+        self.generations.get(tenant).map_or(0, |g| *g)
+    }
+
+    /// Moves `tenant` to a new generation: every read kept for it is gone.
+    pub fn invalidate_tenant(&self, tenant: &str) {
+        *self.generations.entry(tenant.to_owned()).or_insert(0) += 1;
+        self.entries.retain(|k, _| k.tenant != tenant);
+    }
+
+    /// Sweeps expired reads.
+    pub fn prune(&self) {
+        self.entries.retain(|_, s| s.at.elapsed() < self.ttl);
+    }
+
+    /// Reads kept right now.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether nothing is kept.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// `call` in `tenant`, answered from what is kept, from the same read
+    /// already on the wire, or by `load`. `call` must name the method, the
+    /// caller and every field of the request: it is the whole key.
+    pub async fn read<T, E, F>(
+        &self,
+        tenant: &str,
+        call: String,
+        metrics: &Metrics,
+        load: F,
+    ) -> Result<T, E>
+    where
+        T: Clone + Send + Sync + 'static,
+        F: Future<Output = Result<T, E>>,
+    {
+        if self.ttl.is_zero() {
+            return load.await;
+        }
+        let key = ReadKey {
+            tenant: tenant.to_owned(),
+            generation: self.generation(tenant),
+            call,
+        };
+        let cell = {
+            if self.entries.len() >= SWEEP_AT {
+                self.prune();
+            }
+            let mut slot = self.entries.entry(key).or_insert_with(|| Slot {
+                at: Instant::now(),
+                cell: Arc::new(OnceCell::new()),
+            });
+            if slot.at.elapsed() >= self.ttl {
+                *slot = Slot {
+                    at: Instant::now(),
+                    cell: Arc::new(OnceCell::new()),
+                };
+            }
+            slot.cell.clone()
+        };
+        let mut outcome = if cell.initialized() {
+            ReadOutcome::Hit
+        } else {
+            ReadOutcome::Coalesced
+        };
+        let answer = cell
+            .get_or_try_init(|| {
+                outcome = ReadOutcome::Miss;
+                async move { load.await.map(|value| Arc::new(value) as Answer) }
+            })
+            .await;
+        metrics
+            .cache_lookups
+            .add(&[("cache", "onto_read"), ("result", outcome.as_str())], 1);
+        let answer = answer?;
+        Ok(answer
+            .downcast_ref::<T>()
+            .expect("a call's key names its method, so its answer has the method's type")
+            .clone())
+    }
+}
+
 /// The caches of this instance.
 pub struct Caches {
     ttl: Duration,
@@ -137,6 +290,7 @@ pub struct Caches {
     /// By graph; served fresh for `vocabulary_ttl`, kept longer as a fallback.
     vocabularies: Cache<Uuid, Ontology>,
     vocabulary_ttl: Duration,
+    onto_reads: OntoReads,
     fanout: OnceLock<mpsc::Sender<Key>>,
 }
 
@@ -153,8 +307,31 @@ impl Caches {
             workspace_llm: Cache::new("workspace_llm"),
             vocabularies: Cache::new("vocabulary"),
             vocabulary_ttl: Duration::from_secs(30),
+            onto_reads: OntoReads::new(Duration::ZERO),
             fanout: OnceLock::new(),
         }
+    }
+
+    /// Keeps onto-intelli's reads for `ttl` (zero, the default: always ask).
+    pub fn with_onto_read_ttl(mut self, ttl: Duration) -> Self {
+        self.onto_reads = OntoReads::new(ttl);
+        self
+    }
+
+    /// onto-intelli's reads kept here.
+    pub fn onto_reads(&self) -> &OntoReads {
+        &self.onto_reads
+    }
+
+    /// `call` in onto-intelli `tenant`, read through [`OntoReads`].
+    pub async fn onto_read<T, E, F>(&self, tenant: &str, call: String, load: F) -> Result<T, E>
+    where
+        T: Clone + Send + Sync + 'static,
+        F: Future<Output = Result<T, E>>,
+    {
+        self.onto_reads
+            .read(tenant, call, &self.metrics, load)
+            .await
     }
 
     /// Serves graph vocabularies fresh for `ttl` (zero: always ask onto-intelli).
@@ -234,6 +411,9 @@ impl Caches {
             Key::Vocabulary(graph) => {
                 self.vocabularies.entries.remove(graph);
             }
+            Key::Ontology(tenant) => {
+                self.onto_reads.invalidate_tenant(tenant);
+            }
         }
     }
 
@@ -245,6 +425,7 @@ impl Caches {
         self.guardrails.prune(self.ttl);
         self.workspace_llm.prune(self.ttl);
         self.vocabularies.prune(VOCABULARY_KEPT);
+        self.onto_reads.prune();
     }
 
     /// What is kept right now, per cache (for tests and the operator).
@@ -256,6 +437,7 @@ impl Caches {
             (self.guardrails.name, self.guardrails.entries.len()),
             (self.workspace_llm.name, self.workspace_llm.entries.len()),
             (self.vocabularies.name, self.vocabularies.entries.len()),
+            ("onto_read", self.onto_reads.len()),
         ]
     }
 

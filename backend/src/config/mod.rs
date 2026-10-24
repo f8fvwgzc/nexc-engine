@@ -92,6 +92,10 @@ pub struct Settings {
     /// How long a graph's vocabulary is served from memory before onto-intelli is
     /// asked again (zero: every read asks); a change made through nexc drops it at once.
     pub onto_vocabulary_ttl: Duration,
+    /// How long onto-intelli's reads (find, traverse, events, schema, proposals) are
+    /// kept per caller and request (zero: every read asks); a write nexc makes to a
+    /// tenant drops its reads on every replica at once.
+    pub onto_read_cache_ttl: Duration,
     /// How long a browser session for onto-intelli's UI lasts.
     pub onto_session_ttl: Duration,
     /// Copy every graph's stored ontology into onto-intelli when the backend starts
@@ -273,6 +277,7 @@ impl Settings {
                 .or_else(|| r.optional("NEXC_ONTO_URL"))
                 .map(|u| u.trim_end_matches('/').to_owned()),
             onto_vocabulary_ttl: Duration::from_secs(r.parse("NEXC_ONTO_VOCABULARY_TTL_SECS", 30)),
+            onto_read_cache_ttl: Duration::from_secs(r.parse("NEXC_ONTO_READ_CACHE_SECS", 10)),
             onto_session_ttl: Duration::from_secs(r.parse("NEXC_ONTO_SESSION_TTL_SECS", 3600)),
             onto_migrate_on_start: r.parse("NEXC_ONTO_MIGRATE_ON_START", true),
             max_concurrency: r.parse("NEXC_MAX_CONCURRENCY", 4),
@@ -387,6 +392,9 @@ impl Settings {
         }
         if self.onto_vocabulary_ttl > Duration::from_secs(3600) {
             errors.push("NEXC_ONTO_VOCABULARY_TTL_SECS must be at most 3600".into());
+        }
+        if self.onto_read_cache_ttl > Duration::from_secs(3600) {
+            errors.push("NEXC_ONTO_READ_CACHE_SECS must be at most 3600".into());
         }
         if !(60..=43_200).contains(&self.onto_session_ttl.as_secs()) {
             errors.push("NEXC_ONTO_SESSION_TTL_SECS must be between 60 and 43200".into());

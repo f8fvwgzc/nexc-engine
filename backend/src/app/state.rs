@@ -21,6 +21,7 @@ use crate::llm::service::LlmService;
 use crate::memory::index::MemoryIndex;
 use crate::observability::metrics::Metrics;
 use crate::ontology::OntologyBackend;
+use crate::ontology::cached::CachedOntology;
 use crate::ontology::grpc::GrpcOntology;
 use crate::orchestrator::health::HealthCache;
 use crate::realtime::hub::Hub;
@@ -112,7 +113,7 @@ impl AppState {
         };
         let state = Self::with_provider_and_metrics(settings, db, http, router, metrics)?;
         Ok(match ontology {
-            Some(backend) => state.with_ontology(backend),
+            Some(backend) => state.with_cached_ontology(backend),
             None => state,
         })
     }
@@ -121,6 +122,13 @@ impl AppState {
     pub fn with_ontology(mut self, backend: Arc<dyn OntologyBackend>) -> Self {
         self.ontology = Some(backend);
         self
+    }
+
+    /// The state with `backend` as its onto-intelli, its reads kept in the
+    /// hot-read caches for `NEXC_ONTO_READ_CACHE_SECS` ([`CachedOntology`]).
+    pub fn with_cached_ontology(self, backend: Arc<dyn OntologyBackend>) -> Self {
+        let cached = CachedOntology::new(backend, self.caches.clone());
+        self.with_ontology(Arc::new(cached))
     }
 
     /// How this instance reaches onto-intelli: service whenever a backend is
@@ -186,7 +194,8 @@ impl AppState {
             oidc,
             caches: Arc::new(
                 Caches::new(settings.cache_ttl, metrics.clone())
-                    .with_vocabulary_ttl(settings.onto_vocabulary_ttl),
+                    .with_vocabulary_ttl(settings.onto_vocabulary_ttl)
+                    .with_onto_read_ttl(settings.onto_read_cache_ttl),
             ),
             runtime_grpc,
             otlp_channel,

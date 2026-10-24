@@ -27,6 +27,7 @@
 #![forbid(unsafe_code)]
 
 pub mod ask;
+pub mod cached;
 pub mod export;
 pub mod facts;
 pub mod grpc;

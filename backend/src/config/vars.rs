@@ -404,6 +404,12 @@ pub const ENV_VARS: &[EnvVar] = &[
         "how long a graph's vocabulary is served from memory (0: always ask)",
     ),
     var(
+        "NEXC_ONTO_READ_CACHE_SECS",
+        "10",
+        false,
+        "how long onto-intelli's reads (find, traverse, events, schema, proposals) are kept per caller and request; a write through nexc drops a tenant's reads on every replica (0: always ask)",
+    ),
+    var(
         "NEXC_ONTO_SESSION_TTL_SECS",
         "3600",
         false,

@@ -80,6 +80,8 @@ backend:
   ontoWorkspacePrefix: nexc-
   # How long a graph's vocabulary is served from memory (0: every read asks onto-intelli).
   ontoVocabularyTtlSecs: 30
+  # How long onto-intelli's reads are kept per caller and request (0: every read asks).
+  ontoReadCacheSecs: 10
   # Lifetime of the browser sessions the console mints for onto-intelli's UI.
   ontoSessionTtlSecs: 3600
   gateway:
