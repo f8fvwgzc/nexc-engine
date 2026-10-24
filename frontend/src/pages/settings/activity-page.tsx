@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { timelineDaysQuery, timelineQuery } from '@/features/insight/api';
 import { DaySummaryCard } from '@/features/insight/day-summary';
+import { issuePath } from '@/features/issues/links';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import type { TimelineEntry } from '@/schemas/insight';
 import { isWorkspaceAdmin, type Workspace } from '@/schemas/workspace';
@@ -75,7 +76,7 @@ const VERB: Record<string, string> = {
 /** Where an entry's subject can be opened, if anywhere. */
 function href(entry: TimelineEntry): string | null {
   if (!entry.entity_id) return null;
-  if (entry.entity_type === 'issue') return `/app/issues?issue=${entry.entity_id}`;
+  if (entry.entity_type === 'issue') return issuePath(entry.entity_id);
   if (entry.entity_type === 'graph') return `/app/graphs/${entry.entity_id}`;
   if (entry.entity_type === 'document') return '/app/settings/knowledge';
   return null;

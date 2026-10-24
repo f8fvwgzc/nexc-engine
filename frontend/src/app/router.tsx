@@ -122,7 +122,7 @@ export const routes: RouteObject[] = [
                 path: 'projects/:projectId',
                 ...page(
                   routeModules.project,
-                  crumbs({ label: 'Projects', to: '/app/projects' }, { label: 'Project' }),
+                  crumbs({ label: 'Projects', to: '/app/projects' }, { dynamic: 'project' }),
                 ),
               },
               {

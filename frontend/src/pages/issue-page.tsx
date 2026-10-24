@@ -10,6 +10,7 @@ import { PageSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { IssueArtifacts } from '@/features/artifacts/issue-artifacts';
 import { isTypingTarget } from '@/features/command/shortcuts';
 import { issueQuery } from '@/features/issues/api';
 import { IssueDetail } from '@/features/issues/issue-detail';
@@ -130,7 +131,12 @@ function IssueView({ issueId }: { issueId: string }) {
   return (
     <>
       <Seo title={`${issue.identifier} ${issue.title}`} noIndex />
-      <IssueDetail key={issue.id} workspace={workspace} issue={issue} />
+      <IssueDetail
+        key={issue.id}
+        workspace={workspace}
+        issue={issue}
+        artifacts={<IssueArtifacts workspace={workspace} issue={issue} />}
+      />
     </>
   );
 }

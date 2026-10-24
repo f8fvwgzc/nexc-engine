@@ -13,7 +13,8 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { artifactFileQuery } from '@/features/artifacts/api';
 import { graphQuery } from '@/features/graphs/api';
-import { issueQuery } from '@/features/issues/api';
+import { issueQuery, projectsQuery } from '@/features/issues/api';
+import { useWorkspaceStore } from '@/stores/workspace-store';
 
 import { isRouteHandle, type Crumb } from './route-handle';
 
@@ -52,6 +53,24 @@ function IssueCrumb() {
   );
 }
 
+function ProjectCrumb() {
+  const { projectId = '' } = useParams();
+  const workspaceId = useWorkspaceStore((s) => s.currentId) ?? '';
+  // Reads the list the project page fills; never triggers its own fetch.
+  const { data: name, status } = useQuery({
+    ...projectsQuery(workspaceId),
+    enabled: false,
+    select: (projects) => projects.find((p) => p.id === projectId)?.name,
+  });
+  if (name) return <>{name}</>;
+  if (status !== 'pending') return <>Project</>;
+  return (
+    <Skeleton className="h-4 w-24">
+      <span className="sr-only">Loading the project’s name</span>
+    </Skeleton>
+  );
+}
+
 function ArtifactCrumb() {
   const { fileId = '' } = useParams();
   // Reads the cache the file page fills; never triggers its own fetch.
@@ -78,6 +97,7 @@ function CrumbLabel({ crumb }: { crumb: Crumb }) {
   if ('label' in crumb) return <>{crumb.label}</>;
   if (crumb.dynamic === 'graph') return <GraphCrumb />;
   if (crumb.dynamic === 'issue') return <IssueCrumb />;
+  if (crumb.dynamic === 'project') return <ProjectCrumb />;
   if (crumb.dynamic === 'artifact') return <ArtifactCrumb />;
   return <RunCrumb />;
 }

@@ -3,8 +3,9 @@ import { useLocation, useMatches } from 'react-router-dom';
 
 import { artifactFileQuery } from '@/features/artifacts/api';
 import { graphQuery } from '@/features/graphs/api';
-import { issueQuery } from '@/features/issues/api';
+import { issueQuery, projectsQuery } from '@/features/issues/api';
 import type { PageContext } from '@/schemas/assistant';
+import { useWorkspaceStore } from '@/stores/workspace-store';
 
 import { isRouteHandle } from './route-handle';
 
@@ -20,7 +21,9 @@ export function usePageContext(): PageContext {
   const runId = params.runId ?? '';
   const issueId = params.issueId ?? '';
   const fileId = params.fileId ?? '';
-  // Read the caches the graph, issue and file pages fill; never trigger their own fetch.
+  const projectId = params.projectId ?? '';
+  const workspaceId = useWorkspaceStore((s) => s.currentId) ?? '';
+  // Read the caches the graph, issue, project and file pages fill; never trigger their own fetch.
   const { data: graphName } = useQuery({
     ...graphQuery(graphId),
     enabled: false,
@@ -30,6 +33,11 @@ export function usePageContext(): PageContext {
     ...issueQuery(issueId),
     enabled: false,
     select: (i) => `${i.identifier} ${i.title}`,
+  });
+  const { data: projectName } = useQuery({
+    ...projectsQuery(workspaceId),
+    enabled: false,
+    select: (projects) => projects.find((p) => p.id === projectId)?.name,
   });
   const { data: fileName } = useQuery({
     ...artifactFileQuery(fileId),
@@ -42,6 +50,7 @@ export function usePageContext(): PageContext {
       if ('label' in crumb) return crumb.label;
       if (crumb.dynamic === 'graph') return graphName ?? 'Graph';
       if (crumb.dynamic === 'issue') return issueName ?? 'Issue';
+      if (crumb.dynamic === 'project') return projectName ?? 'Project';
       if (crumb.dynamic === 'artifact') return fileName ?? 'File';
       return `Run ${runId.slice(0, 8)}`;
     });

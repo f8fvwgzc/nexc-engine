@@ -135,6 +135,8 @@ export function useFolderActions(
     meta: { successMessage: 'Folder deleted' },
     onSuccess: (_, folder) => {
       changed();
+      // Files of issues went with the folder, and each such issue's timeline says so.
+      void queryClient.invalidateQueries({ queryKey: ['issues', 'events'] });
       onDeleted?.(folder);
     },
   });
