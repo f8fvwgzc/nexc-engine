@@ -1,9 +1,11 @@
 /**
  * What the pages do over time, against the mocked API: a list that follows a live run, a page
- * that recovers from a failed load, data kept on screen when a background refetch fails, a
- * filter that matches nothing, the unread count in the tablet's icon rail, and the workspace
- * map's embedded onto-intelli UI: framed under the console's own Content-Security-Policy, signed
- * in, and its session renewed by its expiry.
+ * that recovers from a failed load, data kept on screen when a background refetch fails, an
+ * issue that opens on its own page (and from an old `?issue=` link), the issue board's full
+ * height, per-column `+` and folded columns, a filter that matches nothing, one team's projects
+ * and a card dragged across the board, the unread count in the tablet's icon rail, and the
+ * workspace map's embedded onto-intelli UI: framed under the console's own
+ * Content-Security-Policy, signed in, and its session renewed by its expiry.
  */
 import { expect, test, type Page } from '@playwright/test';
 
@@ -112,6 +114,139 @@ test.describe('a background refetch that fails', () => {
   });
 });
 
+test.describe('an issue', () => {
+  const issue = fixtures.issues[0];
+  if (!issue) throw new Error('the fixtures need an issue');
+
+  test('opens on its own page and Escape goes back to the list', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await openRoute(page, route('issues'), { mode: 'full', theme: 'light' });
+
+    await page.locator('a[data-row-link]', { hasText: issue.title }).first().click();
+    await expect(page).toHaveURL(new RegExp(`/app/issues/${issue.id}$`));
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText(
+      `${issue.identifier} ${issue.title}`,
+    );
+    await expect(page.getByRole('textbox', { name: 'Title' })).toHaveValue(issue.title);
+    await expect(page.getByRole('complementary', { name: 'Properties' })).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await expect(page).toHaveURL(/\/app\/issues$/);
+    await expect(page.getByText(issue.title).first()).toBeVisible();
+  });
+
+  test('opened from an old link (`?issue=`) lands on its page, with no list to go back to', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await openRoute(
+      page,
+      { name: 'old-issue-link', path: `/app/issues?issue=${issue.id}`, persona: 'member' },
+      { mode: 'full', theme: 'light' },
+    );
+    const here = new RegExp(`/app/issues/${issue.id}$`);
+    await expect(page).toHaveURL(here);
+    await expect(page.getByRole('textbox', { name: 'Title' })).toHaveValue(issue.title);
+
+    // The redirect is the visit's first page: Escape stays (going back would leave the app).
+    await page.keyboard.press('Escape');
+    await expect(page).toHaveURL(here);
+
+    // Deleted, it goes to the issues list.
+    await page.route(
+      (url) => url.pathname === `${API}/issues/${issue.id}`,
+      (r) => (r.request().method() === 'DELETE' ? r.fulfill({ status: 204 }) : r.fallback()),
+    );
+    await page.getByRole('button', { name: `Delete ${issue.identifier}` }).click();
+    await page.getByRole('button', { name: 'Delete issue' }).click();
+    await expect(page).toHaveURL(/\/app\/issues$/);
+  });
+});
+
+test('the issue board fills the page, files into a column and folds one away', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await openRoute(page, route('issues'), { mode: 'full', theme: 'light' });
+  await page.getByRole('button', { name: 'Board view' }).click();
+
+  // The columns reach down to the page's bottom gutter, whatever they hold.
+  const backlog = page.getByRole('region', { name: 'Backlog' });
+  // boundingBox() does not wait, so the bottom edge is read until the board has laid out.
+  await expect
+    .poll(async () => {
+      const box = await backlog.boundingBox();
+      return (box?.y ?? 0) + (box?.height ?? 0);
+    })
+    .toBeGreaterThan(800 - 48);
+
+  await page.getByRole('button', { name: 'New issue in Todo' }).click();
+  const dialog = page.getByRole('dialog', { name: 'New issue' });
+  await expect(dialog.getByRole('combobox', { name: 'Status' })).toHaveText(/Todo/);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+
+  await page.getByRole('button', { name: 'Fold Backlog' }).click();
+  await expect(backlog.getByRole('button', { name: /^Unfold Backlog/ })).toBeVisible();
+  // Remembered for the team.
+  await page.reload();
+  await expect(backlog.getByRole('button', { name: /^Unfold Backlog/ })).toBeVisible();
+  await backlog.getByRole('button', { name: /^Unfold Backlog/ }).click();
+  await expect(page.getByRole('button', { name: 'Fold Backlog' })).toBeVisible();
+
+  // From the keyboard the focus stays on the column's button as it folds and unfolds.
+  await page.getByRole('button', { name: 'Fold Backlog' }).focus();
+  await page.keyboard.press('Enter');
+  await expect(backlog.getByRole('button', { name: /^Unfold Backlog/ })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('button', { name: 'Fold Backlog' })).toBeFocused();
+});
+
+test.describe('the Projects page', () => {
+  test('lists one team’s projects and moves a card to another status', async ({ page }) => {
+    const project = fixtures.projects.find((p) => p.team?.key === 'ENG');
+    if (!project?.team_id) throw new Error('the fixtures need a project owned by ENG');
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await openRoute(
+      page,
+      { ...route('projects'), path: `/app/projects?team=${project.team_id}` },
+      { mode: 'full', theme: 'light' },
+    );
+
+    // The list is asked for the team's projects only (the mock filters by team_id).
+    const main = page.getByRole('main');
+    await expect(main.getByRole('link', { name: project.name })).toBeVisible();
+    for (const other of fixtures.projects.filter((p) => p.id !== project.id)) {
+      await expect(main.getByText(other.name)).toHaveCount(0);
+    }
+
+    // The server keeps the move: the list read again after it has the project paused.
+    let moved = false;
+    await page.route(
+      (url) => url.pathname.endsWith(`/projects/${project.id}`),
+      (r) => {
+        if (r.request().method() !== 'PATCH') return r.fallback();
+        moved = true;
+        return r.fulfill({ json: { ...project, status: 'paused' } });
+      },
+    );
+    await page.route(
+      (url) => /\/workspaces\/[^/]+\/projects$/.test(url.pathname),
+      (r) => (moved ? r.fulfill({ json: [{ ...project, status: 'paused' }] }) : r.fallback()),
+    );
+
+    await page.getByRole('button', { name: 'Board view' }).click();
+    const paused = main.getByRole('region', { name: 'Paused' });
+    const patch = page.waitForRequest(
+      (r) => r.method() === 'PATCH' && r.url().endsWith(`/projects/${project.id}`),
+    );
+    await main.getByRole('link', { name: project.name }).dragTo(paused);
+    expect((await patch).postDataJSON()).toEqual({ status: 'paused' });
+    await expect(paused.getByRole('link', { name: project.name })).toBeVisible();
+    await expect(
+      main.getByRole('region', { name: 'In progress' }).getByRole('link', { name: project.name }),
+    ).toHaveCount(0);
+  });
+});
+
 test('Sessions tells a filter that matches nothing from an empty workspace', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await openRoute(page, route('sessions'), { mode: 'full', theme: 'light' });
@@ -137,17 +272,20 @@ test.describe('the inbox unread count', () => {
   for (const width of [768, 1280]) {
     test(`is shown and named at ${width} px`, async ({ page }) => {
       await page.setViewportSize({ width, height: width === 768 ? 1024 : 800 });
-      await openRoute(page, route('dashboard'), { mode: 'full', theme: 'light' });
+      await openRoute(page, route('inbox'), { mode: 'full', theme: 'light' });
 
+      // The rail's Issues icon carries a dot and the count in its name at every width.
+      const issues = page.getByRole('link', { name: `Issues (${unread} unread)` });
+      await expect(issues).toBeVisible();
+      await expect(issues.locator('[data-slot="unread-dot"]')).toBeVisible();
       const inbox = page.getByRole('link', { name: `Inbox (${unread} unread)` });
-      await expect(inbox).toBeVisible();
       if (width === 768) {
-        // The rail has no room for the badge: a dot on the icon stands in for it.
-        await expect(inbox.locator('[data-slot="unread-dot"]')).toBeVisible();
+        // On a tablet the panel is closed to the rail: the Inbox row is not on screen.
+        await expect(inbox).toBeHidden();
       } else {
+        await expect(inbox).toBeVisible();
         const row = page.getByRole('listitem').filter({ has: inbox });
         await expect(row.locator('[data-sidebar="menu-badge"]')).toHaveText(String(unread));
-        await expect(inbox.locator('[data-slot="unread-dot"]')).toBeHidden();
       }
     });
   }

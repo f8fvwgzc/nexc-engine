@@ -27,6 +27,8 @@ export interface AppRoute {
 const graphId = fixtures.graphs[0]?.id ?? '';
 const runId = fixtures.runs[0]?.id ?? '';
 const projectId = fixtures.projects[0]?.id ?? '';
+const issueId = fixtures.issues[0]?.id ?? '';
+const artifactFileId = fixtures.artifactFiles[0]?.id ?? '';
 
 /**
  * Every route of `src/app/router.tsx` (redirects are visited at their target). The login and
@@ -53,9 +55,12 @@ export const APP_ROUTES: AppRoute[] = [
   { name: 'session', path: `/app/sessions/${runId}`, persona: 'member' },
   { name: 'inbox', path: '/app/inbox', persona: 'member', list: true, baseline: true },
   { name: 'issues', path: '/app/issues', persona: 'member', list: true, baseline: true },
+  { name: 'issue', path: `/app/issues/${issueId}`, persona: 'member' },
   { name: 'my-issues', path: '/app/my-issues', persona: 'member', list: true },
   { name: 'projects', path: '/app/projects', persona: 'member', list: true, baseline: true },
   { name: 'project', path: `/app/projects/${projectId}`, persona: 'member' },
+  { name: 'artifacts', path: '/app/artifacts', persona: 'member', list: true },
+  { name: 'artifact-file', path: `/app/artifacts/${artifactFileId}`, persona: 'member' },
   { name: 'conversations', path: '/app/conversations', persona: 'member', list: true },
   { name: 'app-not-found', path: '/app/no-such-page', persona: 'member' },
   { name: 'settings-profile', path: '/app/settings/profile', persona: 'member' },

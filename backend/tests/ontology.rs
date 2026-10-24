@@ -1182,8 +1182,20 @@ async fn the_projection_follows_privacy_and_what_goes_with_its_parent(pool: PgPo
     collect_until(&mut rx, "run.finished").await;
     let run = format!("run:{}", run["id"].as_str().unwrap());
     let graph = format!("execution_graph:{gid}");
+    // A project the team owns belongs to it.
+    let (status, project) = call(
+        &app,
+        Method::POST,
+        &format!("{}/projects", w.ws),
+        &w.owner,
+        Some(json!({"name": "Launch", "team_id": w.eng})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{project}");
+    let project = format!("project:{}", project["id"].as_str().unwrap());
     export::pass(&app.state).await.unwrap();
-    let things = [&issue, &cycle, &graph, &run];
+    assert!(stub.has_link(&onto_ws, &project, "belongs_to", &format!("team:{}", w.eng)));
+    let things = [&issue, &cycle, &graph, &run, &project];
     for id in things {
         assert_eq!(restricted(id), None, "{id} of a public team");
     }
@@ -1258,6 +1270,11 @@ async fn the_projection_follows_privacy_and_what_goes_with_its_parent(pool: PgPo
     export::pass(&app.state).await.unwrap();
     assert!(entity(&cycle).is_none());
     assert!(entity(&format!("team:{}", w.eng)).is_none());
+    assert_eq!(
+        restricted(&project),
+        None,
+        "its project stays, open to the workspace"
+    );
     assert!(
         !stub
             .links(&onto_ws)

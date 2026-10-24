@@ -85,6 +85,11 @@ string_enum!(
         /// An agent principal was deleted, by hand or with its A2A counterpart
         /// (subject: the principal; detail: its role and policy version).
         AgentDeleted => "agent_deleted",
+        /// A folder of artifacts was deleted with the folders and files in it (subject: its name).
+        ArtifactFolderDeleted => "artifact_folder_deleted",
+        /// An artifact file was deleted with its versions (subject: its name; detail: its
+        /// last version and the issue it was on).
+        ArtifactFileDeleted => "artifact_file_deleted",
     }
 );
 

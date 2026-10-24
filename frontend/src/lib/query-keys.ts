@@ -52,13 +52,31 @@ export const qk = {
     list: (workspaceId: string, filter: object) => ['issues', workspaceId, 'list', filter] as const,
     states: (workspaceId: string, teamId: string) =>
       ['issues', workspaceId, 'states', teamId] as const,
-    projects: (workspaceId: string) => ['issues', workspaceId, 'projects'] as const,
+    /** Prefix of every project list of a workspace, whatever team it is filtered to. */
+    projectLists: (workspaceId: string) => ['issues', workspaceId, 'projects'] as const,
+    projects: (workspaceId: string, teamId?: string) =>
+      [...qk.issues.projectLists(workspaceId), teamId ?? 'all'] as const,
     events: (issueId: string) => ['issues', 'events', issueId] as const,
     cycles: (workspaceId: string, teamId: string) =>
       ['issues', workspaceId, 'cycles', teamId] as const,
     labels: (workspaceId: string) => ['issues', workspaceId, 'labels'] as const,
     one: (issueId: string) => ['issues', 'detail', issueId] as const,
     inbox: (workspaceId: string) => ['issues', workspaceId, 'inbox'] as const,
+  },
+  /** Artifact folders and files: not copied to browser storage, so file contents stay on the server. */
+  artifacts: {
+    all: ['artifacts'] as const,
+    folders: (workspaceId: string) => ['artifacts', workspaceId, 'folders'] as const,
+    /** Prefix of every file list of a workspace, whatever it is filtered by. */
+    lists: (workspaceId: string) => ['artifacts', workspaceId, 'files'] as const,
+    list: (workspaceId: string, filter: object) =>
+      ['artifacts', workspaceId, 'files', filter] as const,
+    file: (fileId: string) => ['artifacts', 'file', fileId] as const,
+    versions: (fileId: string) => ['artifacts', 'file', fileId, 'versions'] as const,
+    content: (fileId: string, version: number) =>
+      ['artifacts', 'file', fileId, 'content', version] as const,
+    /** The files the runs of an issue's graph produced. */
+    runs: (issueId: string) => ['artifacts', 'runs', issueId] as const,
   },
   /** Kept out of the `workspaces` root, which is copied to browser storage. */
   audit: (workspaceId: string) => ['audit', workspaceId] as const,

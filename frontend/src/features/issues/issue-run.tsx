@@ -195,7 +195,7 @@ export function IssueRun({ issue }: { issue: Issue }) {
   if (!graphId) {
     return (
       <section aria-label="Agent work" className="space-y-2 border-t pt-4">
-        <h3 className="text-[13px] font-medium text-muted-foreground">Agent work</h3>
+        <h2 className="text-[13px] font-medium text-muted-foreground">Agent work</h2>
         <p className="text-[13px] text-muted-foreground">
           Hand this issue to agents. They plan it as steps, run them, and post the result here for
           review.
@@ -290,14 +290,18 @@ function LiveRun({
         void queryClient.invalidateQueries({
           queryKey: qk.runs.artifacts(event.data.artifact.run_id),
         });
+        // The issue's "From runs" list, where a run's file is kept.
+        void queryClient.invalidateQueries({ queryKey: qk.artifacts.runs(issue.id) });
         break;
       case 'run.finished':
         queryClient.setQueryData<Run[]>(qk.graphs.runs(graphId), (prev) =>
           (prev ?? []).map((r) => (r.id === event.data.run.id ? event.data.run : r)),
         );
-        // The run reported back: a timeline entry, maybe a new state, an inbox entry.
+        // The run reported back: a timeline entry, maybe a new state, an inbox entry, and the
+        // run's status on each file it made.
         void queryClient.invalidateQueries({ queryKey: qk.issues.all });
         void queryClient.invalidateQueries({ queryKey: qk.runs.artifacts(event.data.run.id) });
+        void queryClient.invalidateQueries({ queryKey: qk.artifacts.runs(issue.id) });
         break;
       case 'plan.started':
         break;
@@ -396,7 +400,7 @@ function LiveRun({
   return (
     <section aria-label="Agent work" className="space-y-3 border-t pt-4">
       <div className="flex items-center gap-2">
-        <h3 className="text-[13px] font-medium text-muted-foreground">Agent work</h3>
+        <h2 className="text-[13px] font-medium text-muted-foreground">Agent work</h2>
         {run && (
           <Link
             to={`/app/runs/${run.id}`}

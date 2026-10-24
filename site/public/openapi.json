@@ -271,7 +271,7 @@
           {
             "name": "q",
             "in": "query",
-            "description": "Part of a name or e-mail address.",
+            "description": "Part of a name or e-mail address; without control characters.",
             "required": false,
             "schema": {
               "type": [
@@ -468,7 +468,7 @@
           {
             "name": "q",
             "in": "query",
-            "description": "Part of a name or e-mail address.",
+            "description": "Part of a name or e-mail address; without control characters.",
             "required": false,
             "schema": {
               "type": [
@@ -881,7 +881,7 @@
           {
             "name": "q",
             "in": "query",
-            "description": "Part of a name or e-mail address.",
+            "description": "Part of a name or e-mail address; without control characters.",
             "required": false,
             "schema": {
               "type": [
@@ -2342,6 +2342,570 @@
           },
           "422": {
             "description": "Invalid fields, or an Idempotency-Key used with another request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/artifact-files/{id}": {
+      "get": {
+        "tags": [
+          "artifact-files"
+        ],
+        "summary": "One file, as of its current version.",
+        "operationId": "get_file",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "File id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactFile"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "artifact-files"
+        ],
+        "summary": "Deletes a file with its versions (everyone but guests who can see it).\nAudited as `artifact_file_deleted`.",
+        "operationId": "delete_file",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "File id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "artifact-files"
+        ],
+        "summary": "Renames a file, moves it to another folder, or attaches it to another\nissue or none (everyone but guests who can see it).",
+        "operationId": "update_file",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "File id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateFile"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactFile"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The name is taken in that folder",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Not a text file's name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/artifact-files/{id}/content": {
+      "get": {
+        "tags": [
+          "artifact-files"
+        ],
+        "summary": "The text of one version of a file (the current one by default).",
+        "operationId": "content",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "File id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "The version to read (default: the current one).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactContent"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "artifact-files"
+        ],
+        "summary": "Saves a new version of a file (everyone but guests who can see it). The\nbody is the whole new text; `base_version` is the version it was made\nfrom, and someone else's save since then is a 409. Content equal to the\ncurrent version's saves nothing and answers the file as it is.",
+        "operationId": "update_content",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "File id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "base_version",
+            "in": "query",
+            "description": "The version the new content was made from: it must still be the current one.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "The new text (`text/plain` works as well)",
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactFile"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Someone else saved a version first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Not text",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/artifact-files/{id}/duplicate": {
+      "post": {
+        "tags": [
+          "artifact-files"
+        ],
+        "summary": "Copies a file's current version into a new file of the same issue\n(everyone but guests who can see it): in the same folder unless another\nis given, named with ` copy` (` copy 2`…) unless a name is given.",
+        "operationId": "duplicate",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "File id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DuplicateFile"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactFile"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The name is taken in that folder",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Not a text file's name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/artifact-files/{id}/raw": {
+      "get": {
+        "tags": [
+          "artifact-files"
+        ],
+        "summary": "Downloads one version of a file (the current one by default) as an\nattachment of plain text; it is never served to be shown, so HTML in it\ndoes not run.",
+        "operationId": "raw",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "File id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "The version to read (default: the current one).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The text, as an attachment",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/artifact-files/{id}/versions": {
+      "get": {
+        "tags": [
+          "artifact-files"
+        ],
+        "summary": "The versions of a file, newest first.",
+        "operationId": "versions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "File id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ArtifactVersion"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
             "content": {
               "application/json": {
                 "schema": {
@@ -5377,7 +5941,7 @@
         "tags": [
           "issues"
         ],
-        "summary": "The timeline of an issue, oldest first: its comments and the changes to\nits state, priority, assignee and title.",
+        "summary": "The timeline of an issue, oldest first: its comments, the changes to its\nstate, priority, assignee, title, due date and GitHub link, what happened\nto its files, and what its runs reported.",
         "operationId": "events",
         "parameters": [
           {
@@ -5477,6 +6041,159 @@
         ]
       }
     },
+    "/api/v1/issues/{iid}/run-artifacts": {
+      "get": {
+        "tags": [
+          "artifact-files"
+        ],
+        "summary": "The files the runs of the issue's graph produced, newest run first, with\nthe run each came from; empty when the issue has no graph or the caller\ncannot read its runs. They download from `/artifacts/{aid}/download`.",
+        "operationId": "run_artifacts",
+        "parameters": [
+          {
+            "name": "iid",
+            "in": "path",
+            "description": "Issue id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RunArtifact"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/issues/{iid}/run-artifacts/{aid}/keep": {
+      "post": {
+        "tags": [
+          "artifact-files"
+        ],
+        "summary": "Keeps a file a run of the issue's graph produced among the issue's files\n(everyone but guests who can see the issue and its runs), named after\nthe file (with ` copy` when the name is taken). Only a text file of at\nmost 1 MiB can be kept, and not while it is quarantined.",
+        "operationId": "keep",
+        "parameters": [
+          {
+            "name": "iid",
+            "in": "path",
+            "description": "Issue id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "aid",
+            "in": "path",
+            "description": "Run artifact id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeepArtifact"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactFile"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Guest, or quarantined",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Not a text file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/memories": {
       "get": {
         "tags": [
@@ -5514,7 +6231,7 @@
           {
             "name": "q",
             "in": "query",
-            "description": "Hybrid search query; results then carry a `score`.",
+            "description": "Hybrid search query; results then carry a `score`. Without control characters.",
             "required": false,
             "schema": {
               "type": [
@@ -8086,6 +8803,548 @@
         ]
       }
     },
+    "/api/v1/workspaces/{wid}/artifact-files": {
+      "get": {
+        "tags": [
+          "artifact-files"
+        ],
+        "summary": "Files of a workspace the caller can see: those directly in a folder, at\nthe top level, or of an issue, by name; or every one, most recently\nsaved first. At most 1,000.",
+        "operationId": "list_files",
+        "parameters": [
+          {
+            "name": "wid",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "folder_id",
+            "in": "query",
+            "description": "Only the files directly in this folder.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "root",
+            "in": "query",
+            "description": "`true`: only the files at the top level, in no folder.",
+            "required": false,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "issue_id",
+            "in": "query",
+            "description": "Only the files attached to this issue, in any folder.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Part of the name, any case; without control characters.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ArtifactFile"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "artifact-files"
+        ],
+        "summary": "Adds a text file (everyone but guests). The body is the file itself, at\nmost 1 MiB of UTF-8 (empty for a new, empty file); it becomes version 1.\nOnly code, markup, configuration and text files are taken (415), and\nnever one that carries a credential (422).",
+        "operationId": "create_file",
+        "parameters": [
+          {
+            "name": "wid",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "description": "The file's name with its extension, which must be a text file's.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "folder_id",
+            "in": "query",
+            "description": "The folder to put it in (default: the top level).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "issue_id",
+            "in": "query",
+            "description": "An issue of the workspace to attach it to.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "The file's bytes (`text/plain` works as well)",
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactFile"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The name is taken in that folder",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Not a text file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/workspaces/{wid}/artifact-folders": {
+      "get": {
+        "tags": [
+          "artifact-files"
+        ],
+        "summary": "The folders of a workspace, flat and by name: the client builds the\ntree from `parent_id`. Guests see none.",
+        "operationId": "list_folders",
+        "parameters": [
+          {
+            "name": "wid",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ArtifactFolder"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "artifact-files"
+        ],
+        "summary": "Adds a folder (everyone but guests).",
+        "operationId": "create_folder",
+        "parameters": [
+          {
+            "name": "wid",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateFolder"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactFolder"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Name taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/workspaces/{wid}/artifact-folders/{fid}": {
+      "delete": {
+        "tags": [
+          "artifact-files"
+        ],
+        "summary": "Deletes a folder with the folders and files in it (everyone but guests).\nThe issues its files were on note that they went. Refused while it holds\nfiles the caller cannot see. Audited as `artifact_folder_deleted`.",
+        "operationId": "delete_folder",
+        "parameters": [
+          {
+            "name": "wid",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "fid",
+            "in": "path",
+            "description": "Folder id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "It holds files of issues the caller cannot see, or crossed another change to it (try again)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "artifact-files"
+        ],
+        "summary": "Renames a folder or moves it (everyone but guests); never into itself or\na folder under it.",
+        "operationId": "update_folder",
+        "parameters": [
+          {
+            "name": "wid",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "fid",
+            "in": "path",
+            "description": "Folder id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateFolder"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactFolder"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Name taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/workspaces/{wid}/assistant": {
       "post": {
         "tags": [
@@ -8809,7 +10068,7 @@
           {
             "name": "q",
             "in": "query",
-            "description": "Part of the file name.",
+            "description": "Part of the file name; without control characters.",
             "required": false,
             "schema": {
               "type": [
@@ -9665,7 +10924,7 @@
           {
             "name": "q",
             "in": "query",
-            "description": "Matches the title, or the start of the identifier (`ENG-1`).",
+            "description": "Matches the title, or the start of the identifier (`ENG-1`); without control characters.",
             "required": false,
             "schema": {
               "type": [
@@ -9804,6 +11063,7 @@
           {
             "name": "q",
             "in": "query",
+            "description": "What to look for; without control characters.",
             "required": true,
             "schema": {
               "type": "string"
@@ -11605,7 +12865,7 @@
         "tags": [
           "issues"
         ],
-        "summary": "Projects of a workspace, with how many of their issues the caller can see.",
+        "summary": "Projects of a workspace the caller can see (a project of a private team\nonly to those who see the team), with how many of their issues they can\nsee: all of them, or those one team owns.",
         "operationId": "projects",
         "parameters": [
           {
@@ -11615,6 +12875,19 @@
             "required": true,
             "schema": {
               "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "description": "Only the projects this team owns.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
               "format": "uuid"
             }
           }
@@ -11652,7 +12925,7 @@
         "tags": [
           "issues"
         ],
-        "summary": "Creates a project led by the caller (members and above).",
+        "summary": "Creates a project (members and above), led by the caller unless another\nlead is given, owned by a team or by the whole workspace.",
         "operationId": "create_project",
         "parameters": [
           {
@@ -11696,6 +12969,15 @@
             }
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
             "content": {
               "application/json": {
                 "schema": {
@@ -11874,7 +13156,7 @@
           {
             "name": "q",
             "in": "query",
-            "description": "What to look for: part of a title, a name, an e-mail, or an issue's\nidentifier (`ENG-12`). At least 2 characters.",
+            "description": "What to look for: part of a title, a name, an e-mail, or an issue's\nidentifier (`ENG-12`). At least 2 characters, without control characters.",
             "required": true,
             "schema": {
               "type": "string"
@@ -16139,6 +17421,232 @@
           }
         }
       },
+      "ArtifactContent": {
+        "type": "object",
+        "description": "The text of one version of a file.",
+        "required": [
+          "file_id",
+          "version",
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "file_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "ArtifactFile": {
+        "type": "object",
+        "description": "A text file of a workspace, as of its current version.",
+        "required": [
+          "id",
+          "workspace_id",
+          "folder_id",
+          "name",
+          "extension",
+          "kind",
+          "language",
+          "issue",
+          "current_version",
+          "size",
+          "sha256",
+          "duplicated_from",
+          "created_by",
+          "updated_by",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IssuePerson"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "current_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "duplicated_from": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The file this one was copied from, while it exists."
+          },
+          "extension": {
+            "type": "string",
+            "description": "The extension that makes it a text file (`md`, `ts`), lower case;\nempty for a name allowed as a whole (`Dockerfile`)."
+          },
+          "folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The folder it is in; `null` at the top level."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "issue": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IssueRef",
+                "description": "The issue it is attached to; who can see that issue can see the file."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ArtifactKind"
+          },
+          "language": {
+            "type": "string",
+            "description": "The highlighter's language id (`typescript`, `rust`, `plaintext`)."
+          },
+          "name": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string",
+            "description": "Hex SHA-256 of the current version."
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes of the current version."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IssuePerson",
+                "description": "Who saved the current version."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "workspace_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ArtifactFolder": {
+        "type": "object",
+        "description": "A folder of a workspace's artifacts.",
+        "required": [
+          "id",
+          "workspace_id",
+          "parent_id",
+          "name",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "parent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The folder it is in; `null` at the top level."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "workspace_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ArtifactKind": {
+        "type": "string",
+        "description": "How a file is previewed.",
+        "enum": [
+          "markdown",
+          "html",
+          "code",
+          "text"
+        ]
+      },
+      "ArtifactVersion": {
+        "type": "object",
+        "description": "One version of a file.",
+        "required": [
+          "version",
+          "size",
+          "sha256",
+          "created_by",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IssuePerson"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "AskAudit": {
         "type": "object",
         "description": "`POST /workspaces/{wid}/audit/ask` body.",
@@ -16319,7 +17827,9 @@
           "evidence_purged",
           "evidence_exported",
           "agent_created",
-          "agent_deleted"
+          "agent_deleted",
+          "artifact_folder_deleted",
+          "artifact_file_deleted"
         ]
       },
       "AuditAnswer": {
@@ -17273,6 +18783,28 @@
         },
         "additionalProperties": false
       },
+      "CreateFolder": {
+        "type": "object",
+        "description": "`POST /workspaces/{wid}/artifact-folders` body.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "1-120 characters, without `/`, `\\` or control characters; unique among its siblings."
+          },
+          "parent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The folder to put it in (default: the top level)."
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateGraph": {
         "type": "object",
         "description": "`POST /graphs` body.",
@@ -17347,6 +18879,13 @@
             ],
             "format": "date",
             "description": "The day the issue is due (`YYYY-MM-DD`)."
+          },
+          "github_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A GitHub issue or pull request the issue is about\n(`https://github.com/<owner>/<repo>/issues|pull/<number>`); blank for none."
           },
           "label_ids": {
             "type": "array",
@@ -17515,8 +19054,27 @@
           "description": {
             "type": "string"
           },
+          "lead_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "A member of the workspace (default: the caller; `null` for no lead)."
+          },
           "name": {
             "type": "string"
+          },
+          "status": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProjectStatus",
+                "description": "Default `planned`."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "target_date": {
             "type": [
@@ -17524,6 +19082,14 @@
               "null"
             ],
             "format": "date"
+          },
+          "team_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The team that owns the project: a team of the workspace the caller can see\n(default: none, the whole workspace's)."
           }
         },
         "additionalProperties": false
@@ -18224,6 +19790,28 @@
           "ready",
           "failed"
         ]
+      },
+      "DuplicateFile": {
+        "type": "object",
+        "description": "`POST /artifact-files/{id}/duplicate` body.",
+        "properties": {
+          "folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The folder to put the copy in (default: the file's own); `null` for the top level."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The copy's name (default: the file's with ` copy`, ` copy 2`… before the extension)."
+          }
+        },
+        "additionalProperties": false
       },
       "EdgeOrigin": {
         "type": "string",
@@ -19392,6 +20980,7 @@
           "graph_id",
           "creator_id",
           "due_date",
+          "github_url",
           "created_at",
           "updated_at",
           "completed_at"
@@ -19454,6 +21043,13 @@
             ],
             "format": "date",
             "description": "The day the issue is due, if it has one."
+          },
+          "github_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The GitHub issue or pull request the issue is about (a link only; nothing is synced)."
           },
           "graph_id": {
             "type": [
@@ -19616,7 +21212,9 @@
           "assignee",
           "title",
           "due",
-          "run"
+          "run",
+          "github",
+          "artifact"
         ]
       },
       "IssuePerson": {
@@ -19815,6 +21413,21 @@
             }
           }
         }
+      },
+      "KeepArtifact": {
+        "type": "object",
+        "description": "`POST /issues/{iid}/run-artifacts/{aid}/keep` body.",
+        "properties": {
+          "folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The folder to put the file in (default: the top level)."
+          }
+        },
+        "additionalProperties": false
       },
       "KeySource": {
         "type": "string",
@@ -22261,13 +23874,15 @@
       },
       "Project": {
         "type": "object",
-        "description": "A project: a body of work that issues of any team can belong to.",
+        "description": "A project: a body of work that issues of any team can belong to, owned\nby one team or by the workspace as a whole.",
         "required": [
           "id",
           "workspace_id",
           "name",
           "description",
           "status",
+          "team_id",
+          "team",
           "lead_id",
           "target_date",
           "issue_count",
@@ -22315,6 +23930,25 @@
               "null"
             ],
             "format": "date"
+          },
+          "team": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TeamRef",
+                "description": "That team's key and name, for display."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "team_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The team that owns the project; `null` for a project of the whole workspace."
           },
           "workspace_id": {
             "type": "string",
@@ -23009,6 +24643,30 @@
             "description": "Hex SHA-256 sealing the run's trace chain once it finished; `null`\nwhile it runs or when nothing was traced (`GET /runs/{id}/trace/verify`)."
           }
         }
+      },
+      "RunArtifact": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Artifact"
+          },
+          {
+            "type": "object",
+            "required": [
+              "run_status",
+              "run_created_at"
+            ],
+            "properties": {
+              "run_created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "run_status": {
+                "$ref": "#/components/schemas/RunStatus"
+              }
+            }
+          }
+        ],
+        "description": "A file a run of an issue's graph produced, with the run it came from."
       },
       "RunCounts": {
         "type": "object",
@@ -24572,6 +26230,27 @@
           }
         }
       },
+      "TeamRef": {
+        "type": "object",
+        "description": "A team, as much as a project shows of the team that owns it.",
+        "required": [
+          "id",
+          "key",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "TeamRole": {
         "type": "string",
         "description": "Role of a user in a team.",
@@ -25157,6 +26836,57 @@
         },
         "additionalProperties": false
       },
+      "UpdateFile": {
+        "type": "object",
+        "description": "`PATCH /artifact-files/{id}` body: any subset.",
+        "properties": {
+          "folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The folder to move it into; `null` moves it to the top level."
+          },
+          "issue_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "An issue of the workspace to attach it to; `null` detaches it."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A new name; its extension must be a text file's."
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpdateFolder": {
+        "type": "object",
+        "description": "`PATCH /workspaces/{wid}/artifact-folders/{fid}` body: any subset.",
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The folder to move it into; `null` moves it to the top level."
+          }
+        },
+        "additionalProperties": false
+      },
       "UpdateGraph": {
         "type": "object",
         "description": "`PATCH /graphs/{gid}` body.",
@@ -25184,7 +26914,7 @@
       },
       "UpdateIssue": {
         "type": "object",
-        "description": "`PATCH /issues/{iid}` body: any subset. `assignee_id`, `agent_id`,\n`project_id` and `due_date` accept `null` to clear them.",
+        "description": "`PATCH /issues/{iid}` body: any subset. `assignee_id`, `agent_id`,\n`project_id`, `due_date` and `github_url` accept `null` to clear them.",
         "properties": {
           "agent_id": {
             "type": [
@@ -25221,6 +26951,13 @@
             ],
             "format": "date",
             "description": "The day the issue is due (`YYYY-MM-DD`); `null` removes it."
+          },
+          "github_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A GitHub issue or pull request the issue is about; `null` or blank removes the link.\nA trailing slash, a fragment or a query is dropped, and `http://` or `www.` becomes\n`https://github.com/`."
           },
           "label_ids": {
             "type": [
@@ -25525,7 +27262,7 @@
       },
       "UpdateProject": {
         "type": "object",
-        "description": "`PATCH /workspaces/{wid}/projects/{pid}` body (any subset; `lead_id` and\n`target_date` accept `null`).",
+        "description": "`PATCH /workspaces/{wid}/projects/{pid}` body (any subset; `lead_id`,\n`target_date` and `team_id` accept `null`).",
         "properties": {
           "description": {
             "type": [
@@ -25562,6 +27299,14 @@
               "null"
             ],
             "format": "date"
+          },
+          "team_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The team that owns the project; `null` gives it to the whole workspace."
           }
         },
         "additionalProperties": false
@@ -26288,6 +28033,10 @@
     },
     {
       "name": "artifacts"
+    },
+    {
+      "name": "artifact-files",
+      "description": "Text files of a workspace (code, HTML, Markdown) kept with every version, in folders, on issues; and keeping what runs produced"
     },
     {
       "name": "templates"

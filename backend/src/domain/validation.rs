@@ -59,6 +59,28 @@ pub fn check_max_len(errors: &mut FieldErrors, field: &str, value: &str, max: us
     }
 }
 
+/// Text to search for from a URL's query: trimmed and cut to `max`
+/// characters, `None` when blank. A control character in it is a 422 on
+/// `field`, as in a name: a NUL could not even reach the database as text.
+pub fn search_text(
+    field: &str,
+    raw: Option<String>,
+    max: usize,
+) -> Result<Option<String>, AppError> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let text = raw.trim();
+    if text.chars().any(char::is_control) {
+        return Err(AppError::field(
+            field,
+            "must not contain control characters",
+        ));
+    }
+    let text: String = text.chars().take(max).collect();
+    Ok((!text.is_empty()).then_some(text))
+}
+
 /// Requires a finite coordinate within a generous canvas range.
 pub fn check_coordinate(errors: &mut FieldErrors, field: &str, value: f64) {
     if !value.is_finite() || value.abs() > 1_000_000.0 {
@@ -79,5 +101,20 @@ mod tests {
         assert_eq!(e.as_map().len(), 3);
         assert!(matches!(e.into_result(), Err(AppError::Validation(_))));
         assert!(FieldErrors::default().into_result().is_ok());
+    }
+
+    #[test]
+    fn search_text_is_trimmed_cut_and_never_a_control_character() {
+        let q = |raw: &str| search_text("q", Some(raw.to_owned()), 3);
+        assert_eq!(q("  ab\n").unwrap().as_deref(), Some("ab"));
+        assert_eq!(q("abcdef").unwrap().as_deref(), Some("abc"));
+        assert_eq!(q("   ").unwrap(), None);
+        assert_eq!(search_text("q", None, 3).unwrap(), None);
+        for bad in ["\0", "a\0b", "a\u{7f}", "a\tb"] {
+            let Err(AppError::Validation(errors)) = q(bad) else {
+                panic!("{bad:?} is refused");
+            };
+            assert!(errors.as_map().contains_key("q"));
+        }
     }
 }

@@ -1,9 +1,12 @@
 //! Artifact metadata (files live under `<data>/artifacts/<run_id>/<node_id>/`,
 //! each write in a directory of its own).
 
-use sqlx::{FromRow, PgExecutor};
+use sqlx::postgres::PgRow;
+use sqlx::{FromRow, PgExecutor, Row};
 use uuid::Uuid;
 
+use super::enum_col;
+use crate::domain::artifact_file::RunArtifact;
 use crate::domain::run::Artifact;
 
 /// An artifact with its on-disk location (relative to the artifacts directory).
@@ -216,6 +219,66 @@ pub async fn find_owned(
     ))
     .bind(id)
     .bind(owner_id)
+    .fetch_optional(db)
+    .await
+}
+
+impl FromRow<'_, PgRow> for RunArtifact {
+    fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
+        Ok(RunArtifact {
+            artifact: ArtifactRow::from_row(row)?.into(),
+            run_status: enum_col(row, "run_status")?,
+            run_created_at: row.try_get("run_created_at")?,
+        })
+    }
+}
+
+/// Most files the runs of one graph are listed with.
+const RUN_ARTIFACTS_MAX: i64 = 500;
+
+/// The files the runs of a graph produced, newest run first, if `user` may
+/// read the evidence of those runs (deleted graph or not, as
+/// [`find_readable`]); empty otherwise.
+pub async fn of_graph_runs(
+    db: impl PgExecutor<'_>,
+    user: Uuid,
+    graph_id: Uuid,
+) -> Result<Vec<RunArtifact>, sqlx::Error> {
+    sqlx::query_as(concat!(
+        "SELECT ",
+        artifact_columns!(a),
+        ", r.status AS run_status, r.created_at AS run_created_at
+         FROM artifacts a JOIN runs r ON r.id = a.run_id JOIN graphs g ON g.id = r.graph_id
+         WHERE r.graph_id = $1 AND ",
+        graph_access_any!("g", "$2"),
+        " ORDER BY r.created_at DESC, r.id, a.path, a.node_id LIMIT $3"
+    ))
+    .bind(graph_id)
+    .bind(user)
+    .bind(RUN_ARTIFACTS_MAX)
+    .fetch_all(db)
+    .await
+}
+
+/// One file a run of a graph produced, with its on-disk location, if
+/// `user` may read the evidence of that run.
+pub async fn find_of_graph(
+    db: impl PgExecutor<'_>,
+    user: Uuid,
+    graph_id: Uuid,
+    id: Uuid,
+) -> Result<Option<StoredArtifact>, sqlx::Error> {
+    sqlx::query_as(concat!(
+        "SELECT ",
+        artifact_columns!(a),
+        ", a.storage_path
+         FROM artifacts a JOIN runs r ON r.id = a.run_id JOIN graphs g ON g.id = r.graph_id
+         WHERE a.id = $1 AND r.graph_id = $3 AND ",
+        graph_access_any!("g", "$2")
+    ))
+    .bind(id)
+    .bind(user)
+    .bind(graph_id)
     .fetch_optional(db)
     .await
 }

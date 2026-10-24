@@ -24,6 +24,9 @@ pub enum AppError {
     /// 413 – request body too large.
     #[error("request body too large")]
     PayloadTooLarge,
+    /// 415 – content of a kind this resource does not take (a binary file where text goes).
+    #[error("{0}")]
+    UnsupportedMediaType(String),
     /// 422 – field validation failed.
     #[error("validation failed")]
     Validation(FieldErrors),

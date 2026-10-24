@@ -70,6 +70,11 @@ export const teamMemberSchema = z.object({
 });
 export type TeamMember = z.infer<typeof teamMemberSchema>;
 
+/** A team as menus and selects name it: its key and its name, "ENG · Engineering". */
+export function teamLabel(team: { key: string; name: string }): string {
+  return `${team.key} · ${team.name}`;
+}
+
 /** Mirrors `domain::workspace` on the server, which stays the authority. */
 export const isWorkspaceAdmin = (role: WorkspaceRole) => role === 'owner' || role === 'admin';
 

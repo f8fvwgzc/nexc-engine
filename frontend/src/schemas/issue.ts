@@ -56,6 +56,8 @@ export const issueSchema = z.object({
   creator_id: idSchema.nullable(),
   /** The calendar day the issue is due (`YYYY-MM-DD`). */
   due_date: z.string().nullable(),
+  /** The GitHub issue or pull request the issue is linked to (a link only; nothing syncs). */
+  github_url: z.string().nullable(),
   created_at: timestampSchema,
   updated_at: timestampSchema,
   completed_at: timestampSchema.nullable(),
@@ -71,6 +73,13 @@ export const issueEventKindSchema = z.enum([
   'due',
   /** A run of the issue's graph finished; `to` is its status, `body` its result. */
   'run',
+  /** The GitHub link changed; `from` and `to` are the old and new URLs. */
+  'github',
+  /**
+   * A file of the issue changed; `body` is its name, `to` what happened (`uploaded`,
+   * `updated:v<N>`, `duplicated`, `deleted`).
+   */
+  'artifact',
 ]);
 
 /** One entry of an issue's timeline: a comment, or a change to the issue. */
@@ -144,6 +153,10 @@ export const projectSchema = z.object({
   name: z.string(),
   description: z.string(),
   status: projectStatusSchema,
+  /** The team that owns the project; null for a project of the whole workspace. */
+  team_id: idSchema.nullable(),
+  /** That team, as much as a chip shows. */
+  team: z.object({ id: idSchema, key: z.string(), name: z.string() }).nullable(),
   lead_id: idSchema.nullable(),
   target_date: z.string().nullable(),
   issue_count: z.number().int().nonnegative(),
@@ -167,4 +180,6 @@ export interface IssueInput {
   cycle_id?: string | null;
   /** `YYYY-MM-DD`; `null` removes it. */
   due_date?: string | null;
+  /** A GitHub issue or pull request URL; `null` or `''` removes the link. */
+  github_url?: string | null;
 }

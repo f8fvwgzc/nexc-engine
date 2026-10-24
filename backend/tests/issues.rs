@@ -1873,3 +1873,388 @@ async fn an_assignee_is_reminded_once_when_an_issue_is_due(pool: PgPool) {
     .await;
     assert_eq!(nexc::repo::issues::remind_due(&pool).await.unwrap(), 0);
 }
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_team_owns_projects_and_hides_them_when_private(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let w = world(&app).await;
+    let projects = format!("{}/projects", w.ws);
+
+    // Created with its team, status and lead; the team's key and name come along.
+    let (status, q4) = call(
+        &app,
+        Method::POST,
+        &projects,
+        &w.member,
+        Some(
+            json!({"name": "Q4 launch", "team_id": w.eng, "status": "started",
+                    "lead_id": w.member_id}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{q4}");
+    assert_eq!(
+        (&q4["team_id"], &q4["team"], &q4["status"], &q4["lead_id"]),
+        (
+            &json!(w.eng),
+            &json!({"id": w.eng, "key": "ENG", "name": "Engineering"}),
+            &json!("started"),
+            &json!(w.member_id)
+        )
+    );
+    let (status, open) = call(
+        &app,
+        Method::POST,
+        &projects,
+        &w.member,
+        Some(json!({"name": "Open work", "lead_id": null})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{open}");
+    assert_eq!(
+        (
+            &open["team_id"],
+            &open["team"],
+            &open["status"],
+            &open["lead_id"]
+        ),
+        (&Value::Null, &Value::Null, &json!("planned"), &Value::Null),
+        "no team, no lead, planned"
+    );
+
+    // Listed per team.
+    let names = |list: &Value| -> Vec<String> {
+        list.as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["name"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let (_, list) = call(
+        &app,
+        Method::GET,
+        &format!("{projects}?team_id={}", w.eng),
+        &w.member,
+        None,
+    )
+    .await;
+    assert_eq!(names(&list), ["Q4 launch"]);
+    let (_, list) = call(&app, Method::GET, &projects, &w.member, None).await;
+    assert_eq!(names(&list), ["Q4 launch", "Open work"]);
+
+    // Only a team of the workspace the caller can see, and a lead of the workspace.
+    let (_, theirs) = call(&app, Method::GET, "/workspaces", &w.outsider, None).await;
+    let their_ws = format!("/workspaces/{}", theirs[0]["id"].as_str().unwrap());
+    let (_, their_team) = call(
+        &app,
+        Method::POST,
+        &format!("{their_ws}/teams"),
+        &w.outsider,
+        Some(json!({"name": "Theirs", "key": "THR"})),
+    )
+    .await;
+    let their_team = their_team["id"].as_str().unwrap().to_owned();
+    for (token, team) in [(&w.member, &their_team), (&w.member, &w.secret)] {
+        let (status, body) = call(
+            &app,
+            Method::POST,
+            &projects,
+            token,
+            Some(json!({"name": "Nope", "team_id": team})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(
+            body["errors"]["team_id"][0],
+            "unknown team in this workspace"
+        );
+    }
+    let q4_path = format!("{projects}/{}", q4["id"].as_str().unwrap());
+    let (status, body) = call(
+        &app,
+        Method::PATCH,
+        &q4_path,
+        &w.member,
+        Some(json!({"team_id": their_team})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &projects,
+        &w.member,
+        Some(json!({"name": "Nope", "lead_id": uuid::Uuid::now_v7()})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &projects,
+        &w.guest,
+        Some(json!({"name": "Nope", "team_id": w.eng})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // A project of the private team is seen only by those who see the team.
+    let (status, hidden) = call(
+        &app,
+        Method::POST,
+        &projects,
+        &w.owner,
+        Some(json!({"name": "Reorg", "team_id": w.secret})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{hidden}");
+    let hidden_path = format!("{projects}/{}", hidden["id"].as_str().unwrap());
+    let (_, list) = call(&app, Method::GET, &projects, &w.owner, None).await;
+    assert!(names(&list).contains(&"Reorg".to_owned()));
+    let (_, list) = call(&app, Method::GET, &projects, &w.member, None).await;
+    assert!(!names(&list).contains(&"Reorg".to_owned()));
+    let (_, list) = call(
+        &app,
+        Method::GET,
+        &format!("{projects}?team_id={}", w.secret),
+        &w.member,
+        None,
+    )
+    .await;
+    assert_eq!(list, json!([]));
+    let (status, _) = call(
+        &app,
+        Method::PATCH,
+        &hidden_path,
+        &w.member,
+        Some(json!({"name": "Mine"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (_, found) = call(
+        &app,
+        Method::GET,
+        &format!("{}/search?q=Reorg", w.ws),
+        &w.member,
+        None,
+    )
+    .await;
+    assert!(!found.to_string().contains("Reorg"), "{found}");
+
+    // Nor can the member put an issue in it: it is as unknown as a project of another workspace.
+    let hidden_id = hidden["id"].as_str().unwrap();
+    let eng_issues = format!("{}/teams/{}/issues", w.ws, w.eng);
+    let (status, body) = call(
+        &app,
+        Method::POST,
+        &eng_issues,
+        &w.member,
+        Some(json!({"title": "Sneak in", "project_id": hidden_id})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(
+        body["errors"]["project_id"][0],
+        "unknown project in this workspace"
+    );
+    let (status, mine) = call(
+        &app,
+        Method::POST,
+        &eng_issues,
+        &w.member,
+        Some(json!({"title": "Mine"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{mine}");
+    let mine_path = format!("/issues/{}", mine["id"].as_str().unwrap());
+    let (status, body) = call(
+        &app,
+        Method::PATCH,
+        &mine_path,
+        &w.member,
+        Some(json!({"project_id": hidden_id})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    let (status, filed) = call(
+        &app,
+        Method::PATCH,
+        &mine_path,
+        &w.owner,
+        Some(json!({"project_id": hidden_id})),
+    )
+    .await;
+    assert_eq!(
+        (status, &filed["project_id"]),
+        (StatusCode::OK, &json!(hidden_id)),
+        "{filed}"
+    );
+
+    // Moved to the workspace (null), it is everyone's again; a deleted team leaves its projects.
+    let (status, moved) = call(
+        &app,
+        Method::PATCH,
+        &hidden_path,
+        &w.owner,
+        Some(json!({"team_id": null})),
+    )
+    .await;
+    assert_eq!((status, &moved["team"]), (StatusCode::OK, &Value::Null));
+    let (_, list) = call(&app, Method::GET, &projects, &w.member, None).await;
+    assert!(names(&list).contains(&"Reorg".to_owned()));
+    let (status, _) = call(
+        &app,
+        Method::PATCH,
+        &hidden_path,
+        &w.owner,
+        Some(json!({"team_id": w.secret})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = call(
+        &app,
+        Method::DELETE,
+        &format!("{}/teams/{}", w.ws, w.secret),
+        &w.owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, orphan) = call(&app, Method::GET, &projects, &w.member, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let reorg = orphan
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "Reorg")
+        .expect("the project outlives its team");
+    assert_eq!(reorg["team_id"], Value::Null);
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn an_issue_links_to_github_and_its_timeline_says_so(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let w = world(&app).await;
+    let issues = format!("{}/teams/{}/issues", w.ws, w.eng);
+    let (status, issue) = call(
+        &app,
+        Method::POST,
+        &issues,
+        &w.member,
+        Some(json!({"title": "Crash on start",
+                    "github_url": "http://www.github.com/acme/app/issues/42/#top"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{issue}");
+    assert_eq!(issue["github_url"], "https://github.com/acme/app/issues/42");
+    let path = format!("/issues/{}", issue["id"].as_str().unwrap());
+    let (status, plain) = call(
+        &app,
+        Method::POST,
+        &issues,
+        &w.member,
+        Some(json!({"title": "No link", "github_url": ""})),
+    )
+    .await;
+    assert_eq!(
+        (status, &plain["github_url"]),
+        (StatusCode::CREATED, &Value::Null)
+    );
+
+    for bad in [
+        "https://gitlab.com/acme/app/issues/1",
+        "https://github.com/acme/app",
+        "not a url",
+    ] {
+        let (status, body) = call(
+            &app,
+            Method::PATCH,
+            &path,
+            &w.member,
+            Some(json!({"github_url": bad})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{bad}: {body}");
+        assert_eq!(
+            body["errors"]["github_url"][0],
+            "must be a GitHub issue or pull request URL, like https://github.com/owner/repo/issues/12"
+        );
+    }
+    let (status, body) = call(
+        &app,
+        Method::POST,
+        &issues,
+        &w.member,
+        Some(json!({"title": "Bad", "github_url": "https://github.com/acme"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+
+    let pull = "https://github.com/acme/app/pull/7";
+    let (status, linked) = call(
+        &app,
+        Method::PATCH,
+        &path,
+        &w.member,
+        Some(json!({"github_url": format!("{pull}?w=1")})),
+    )
+    .await;
+    assert_eq!(
+        (status, linked["github_url"].as_str()),
+        (StatusCode::OK, Some(pull))
+    );
+    // Other edits leave the link alone.
+    let (_, renamed) = call(
+        &app,
+        Method::PATCH,
+        &path,
+        &w.member,
+        Some(json!({"title": "Crash on start (macOS)"})),
+    )
+    .await;
+    assert_eq!(renamed["github_url"], pull);
+    let (status, cleared) = call(
+        &app,
+        Method::PATCH,
+        &path,
+        &w.member,
+        Some(json!({"github_url": null})),
+    )
+    .await;
+    assert_eq!(
+        (status, &cleared["github_url"]),
+        (StatusCode::OK, &Value::Null)
+    );
+    call(
+        &app,
+        Method::PATCH,
+        &path,
+        &w.member,
+        Some(json!({"github_url": "  "})),
+    )
+    .await;
+
+    let (_, events) = call(
+        &app,
+        Method::GET,
+        &format!("{path}/events"),
+        &w.member,
+        None,
+    )
+    .await;
+    let github: Vec<(Value, Value)> = events
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["kind"] == "github")
+        .map(|e| (e["from"].clone(), e["to"].clone()))
+        .collect();
+    assert_eq!(
+        github,
+        [
+            (json!("https://github.com/acme/app/issues/42"), json!(pull)),
+            (json!(pull), Value::Null),
+        ],
+        "a change and a removal; clearing nothing records nothing"
+    );
+}

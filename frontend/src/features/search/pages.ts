@@ -1,10 +1,12 @@
+import { issuePath } from '@/features/issues/links';
+
 import type { SearchHit } from './api';
 
 /** Where a thing the search found lives in the app. */
 export function pageOf(hit: Pick<SearchHit, 'kind' | 'id'>): string {
   switch (hit.kind) {
     case 'issue':
-      return `/app/issues?issue=${hit.id}`;
+      return issuePath(hit.id);
     case 'graph':
       return `/app/graphs/${hit.id}`;
     case 'project':

@@ -61,6 +61,7 @@ impl AppError {
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
             AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+            AppError::UnsupportedMediaType(_) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             AppError::Validation(_) | AppError::Unprocessable(_) => {
                 StatusCode::UNPROCESSABLE_ENTITY
             }

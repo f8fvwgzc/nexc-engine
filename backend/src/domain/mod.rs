@@ -11,6 +11,7 @@ pub mod agent_template;
 pub mod alert;
 pub mod alert_routing;
 pub mod approval;
+pub mod artifact_file;
 pub mod assistant;
 pub mod audit;
 pub mod audit_chain;

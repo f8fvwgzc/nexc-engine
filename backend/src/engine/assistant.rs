@@ -359,6 +359,7 @@ pub async fn reply(
             agent_id: None,
             project_id: None,
             creator_id: user,
+            github_url: None,
         };
         let mut tx = state.db.begin().await?;
         let id = repo::issues::create(&mut tx, &new).await?;

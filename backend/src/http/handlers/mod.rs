@@ -10,6 +10,7 @@ pub mod agents;
 pub mod alert_destinations;
 pub mod alerts;
 pub mod approvals;
+pub mod artifact_files;
 pub mod artifacts;
 pub mod audit;
 pub mod auth;

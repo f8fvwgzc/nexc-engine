@@ -29,6 +29,18 @@ function page(load: () => Promise<{ default: ComponentType }>, handle?: RouteHan
 
 const crumbs = (...list: RouteHandle['crumbs']): RouteHandle => ({ crumbs: list });
 
+const SETTINGS_CRUMB = { label: 'Settings', to: '/app/settings' };
+const TRUST_CRUMB = { label: 'Trust', to: '/app/secops' };
+
+/** A settings page, under the core menu it is listed in: Settings, or Trust for the trust pages. */
+function settingsPage(
+  load: () => Promise<{ default: ComponentType }>,
+  title: string,
+  parent = SETTINGS_CRUMB,
+): PageRoute {
+  return page(load, crumbs(parent, { label: title }));
+}
+
 export const routes: RouteObject[] = [
   {
     element: <RootLayout />,
@@ -91,6 +103,13 @@ export const routes: RouteObject[] = [
               { path: 'inbox', ...page(routeModules.inbox, crumbs({ label: 'Inbox' })) },
               { path: 'issues', ...page(routeModules.issues, crumbs({ label: 'Issues' })) },
               {
+                path: 'issues/:issueId',
+                ...page(
+                  routeModules.issue,
+                  crumbs({ label: 'Issues', to: '/app/issues' }, { dynamic: 'issue' }),
+                ),
+              },
+              {
                 path: 'my-issues',
                 ...page(routeModules.myIssues, crumbs({ label: 'My issues' })),
               },
@@ -103,7 +122,18 @@ export const routes: RouteObject[] = [
                 path: 'projects/:projectId',
                 ...page(
                   routeModules.project,
-                  crumbs({ label: 'Projects', to: '/app/projects' }, { label: 'Project' }),
+                  crumbs({ label: 'Projects', to: '/app/projects' }, { dynamic: 'project' }),
+                ),
+              },
+              {
+                path: 'artifacts',
+                ...page(routeModules.artifacts, crumbs({ label: 'Artifacts' })),
+              },
+              {
+                path: 'artifacts/:fileId',
+                ...page(
+                  routeModules.artifactFile,
+                  crumbs({ label: 'Artifacts', to: '/app/artifacts' }, { dynamic: 'artifact' }),
                 ),
               },
               // These pages moved into the settings area; old addresses still land there.
@@ -111,6 +141,69 @@ export const routes: RouteObject[] = [
               { path: 'members', element: <Navigate to="/app/settings/members" replace /> },
               { path: 'usage', element: <Navigate to="/app/settings/usage" replace /> },
               { path: 'audit', element: <Navigate to="/app/settings/audit" replace /> },
+              {
+                // The settings pages, in the shell like every other page; the panel lists them
+                // under Settings, and the trust pages under Trust.
+                path: 'settings',
+                children: [
+                  { index: true, element: <Navigate to="/app/settings/profile" replace /> },
+                  { path: 'profile', ...settingsPage(routeModules.settingsProfile, 'Profile') },
+                  {
+                    path: 'preferences',
+                    ...settingsPage(routeModules.settingsPreferences, 'Preferences'),
+                  },
+                  { path: 'members', ...settingsPage(routeModules.members, 'Members') },
+                  { path: 'teams', ...settingsPage(routeModules.teams, 'Teams') },
+                  { path: 'ai', ...settingsPage(routeModules.settingsAi, 'AI accounts') },
+                  {
+                    path: 'guardrails',
+                    ...settingsPage(routeModules.settingsGuardrails, 'Guardrails', TRUST_CRUMB),
+                  },
+                  {
+                    path: 'policies',
+                    ...settingsPage(routeModules.settingsPolicies, 'Policies', TRUST_CRUMB),
+                  },
+                  {
+                    path: 'alerts',
+                    ...settingsPage(routeModules.settingsAlerts, 'Alerts', TRUST_CRUMB),
+                  },
+                  {
+                    path: 'alert-destinations',
+                    ...settingsPage(
+                      routeModules.settingsAlertDestinations,
+                      'Alert destinations',
+                      TRUST_CRUMB,
+                    ),
+                  },
+                  {
+                    path: 'mcp-servers',
+                    ...settingsPage(routeModules.settingsMcpServers, 'MCP servers'),
+                  },
+                  {
+                    path: 'a2a-counterparts',
+                    ...settingsPage(routeModules.settingsA2aCounterparts, 'A2A counterparts'),
+                  },
+                  { path: 'memory', ...settingsPage(routeModules.memory, 'Memory') },
+                  {
+                    path: 'knowledge',
+                    ...settingsPage(routeModules.settingsKnowledge, 'Knowledge'),
+                  },
+                  { path: 'usage', ...settingsPage(routeModules.usage, 'Usage') },
+                  { path: 'audit', ...settingsPage(routeModules.audit, 'Audit log', TRUST_CRUMB) },
+                  { path: 'activity', ...settingsPage(routeModules.settingsActivity, 'Activity') },
+                  { path: 'map', ...settingsPage(routeModules.settingsMap, 'Workspace map') },
+                  { path: 'ontology', ...settingsPage(routeModules.settingsOntology, 'Ontology') },
+                  {
+                    path: 'transfer',
+                    ...settingsPage(routeModules.settingsTransfer, 'Data transfer'),
+                  },
+                  {
+                    path: 'infrastructure',
+                    element: <Navigate to="/app/platform/infrastructure" replace />,
+                  },
+                  { path: '*', element: <Navigate to="/app/settings/profile" replace /> },
+                ],
+              },
               { path: '*', ...page(routeModules.notFound, crumbs({ label: 'Not found' })) },
             ],
           },
@@ -126,41 +219,6 @@ export const routes: RouteObject[] = [
               { path: 'account', ...page(routeModules.platformAccount) },
               { path: 'infrastructure', ...page(routeModules.platformInfrastructure) },
               { path: '*', element: <Navigate to="/app/platform/workspaces" replace /> },
-            ],
-          },
-          {
-            // Settings are their own screen, with their own sidebar, in place of the app's.
-            path: 'settings',
-            ...page(routeModules.settingsShell),
-            children: [
-              { index: true, element: <Navigate to="/app/settings/profile" replace /> },
-              { path: 'profile', ...page(routeModules.settingsProfile) },
-              { path: 'preferences', ...page(routeModules.settingsPreferences) },
-              { path: 'members', ...page(routeModules.members) },
-              { path: 'teams', ...page(routeModules.teams) },
-              { path: 'ai', ...page(routeModules.settingsAi) },
-              { path: 'guardrails', ...page(routeModules.settingsGuardrails) },
-              { path: 'policies', ...page(routeModules.settingsPolicies) },
-              { path: 'alerts', ...page(routeModules.settingsAlerts) },
-              {
-                path: 'alert-destinations',
-                ...page(routeModules.settingsAlertDestinations),
-              },
-              { path: 'mcp-servers', ...page(routeModules.settingsMcpServers) },
-              { path: 'a2a-counterparts', ...page(routeModules.settingsA2aCounterparts) },
-              { path: 'memory', ...page(routeModules.memory) },
-              { path: 'knowledge', ...page(routeModules.settingsKnowledge) },
-              { path: 'usage', ...page(routeModules.usage) },
-              { path: 'audit', ...page(routeModules.audit) },
-              { path: 'activity', ...page(routeModules.settingsActivity) },
-              { path: 'map', ...page(routeModules.settingsMap) },
-              { path: 'ontology', ...page(routeModules.settingsOntology) },
-              { path: 'transfer', ...page(routeModules.settingsTransfer) },
-              {
-                path: 'infrastructure',
-                element: <Navigate to="/app/platform/infrastructure" replace />,
-              },
-              { path: '*', element: <Navigate to="/app/settings/profile" replace /> },
             ],
           },
         ],

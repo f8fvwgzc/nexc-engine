@@ -33,6 +33,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { inboxQuery, markInboxRead } from '@/features/issues/api';
+import { issuePath } from '@/features/issues/links';
 import { approveApproval, denyApproval } from '@/features/policies/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { errorMessage } from '@/lib/api/errors';
@@ -277,7 +278,7 @@ function List({ workspace }: { workspace: Workspace }) {
   const unread = inbox.filter((n) => n.read_at === null).length;
   const open = (n: Notification) => {
     if (n.read_at === null) read.mutate([n.id]);
-    if (n.issue) void navigate(`/app/issues?issue=${n.issue.id}`);
+    if (n.issue) void navigate(issuePath(n.issue.id));
     else if (n.alert) void navigate('/app/settings/alerts');
   };
   return (

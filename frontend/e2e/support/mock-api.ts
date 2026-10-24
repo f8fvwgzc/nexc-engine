@@ -93,10 +93,36 @@ const handlers: [string, Handler][] = [
   /* issues */
   ['GET /workspaces/:wid/issues', ({ mode, url }) => list(mode, filterIssues(url))],
   ['GET /workspaces/:wid/labels', ({ mode }) => list(mode, fixtures.labels)],
-  ['GET /workspaces/:wid/projects', ({ mode }) => list(mode, fixtures.projects)],
+  [
+    'GET /workspaces/:wid/projects',
+    ({ mode, url }) => {
+      const team = url.searchParams.get('team_id');
+      return list(
+        mode,
+        fixtures.projects.filter((p) => !team || p.team_id === team),
+      );
+    },
+  ],
   ['GET /workspaces/:wid/inbox', ({ mode }) => list(mode, fixtures.inbox)],
   ['GET /issues/:iid/events', ({ mode }) => list(mode, fixtures.issueEvents)],
+  ['GET /issues/:iid/run-artifacts', ({ mode }) => list(mode, fixtures.runArtifacts)],
   ['GET /issues/:iid', ({ params }) => fixtures.issues.find((i) => i.id === params.iid)],
+
+  /* artifacts */
+  ['GET /workspaces/:wid/artifact-folders', ({ mode }) => list(mode, fixtures.artifactFolders)],
+  ['GET /workspaces/:wid/artifact-files', ({ mode, url }) => list(mode, filterArtifactFiles(url))],
+  ['GET /artifact-files/:fid', ({ params }) => artifactFileById(params.fid)],
+  ['GET /artifact-files/:fid/versions', ({ params }) => artifactVersionsOf(params.fid)],
+  [
+    'GET /artifact-files/:fid/content',
+    ({ params, url }) => {
+      const file = artifactFileById(params.fid);
+      if (!file) return undefined;
+      // Every file reads as the fixture's text, under its own id and the version asked for.
+      const version = Number(url.searchParams.get('version') ?? file.current_version);
+      return { ...fixtures.artifactContent, file_id: file.id, version };
+    },
+  ],
 
   /* graphs and runs */
   ['GET /graphs', ({ mode }) => list(mode, fixtures.graphs)],
@@ -213,6 +239,33 @@ function filterIssues(url: URL) {
       (!q.get('label_id') || i.labels.some((l) => l.id === q.get('label_id'))) &&
       (q.get('open') !== 'true' || !['completed', 'canceled'].includes(i.state.category)),
   );
+}
+
+function filterArtifactFiles(url: URL) {
+  const q = url.searchParams;
+  const name = q.get('q')?.toLowerCase();
+  return fixtures.artifactFiles.filter(
+    (f) =>
+      (!q.get('folder_id') || f.folder_id === q.get('folder_id')) &&
+      (q.get('root') !== 'true' || f.folder_id === null) &&
+      (!q.get('issue_id') || f.issue?.id === q.get('issue_id')) &&
+      (!name || f.name.toLowerCase().includes(name)),
+  );
+}
+
+function artifactFileById(id: string | undefined) {
+  return fixtures.artifactFiles.find((f) => f.id === id);
+}
+
+/** A file's versions, newest first: as many as it has, drawn from the fixture's in turn. */
+function artifactVersionsOf(id: string | undefined) {
+  const file = artifactFileById(id);
+  if (!file) return undefined;
+  const pool = fixtures.artifactVersions;
+  return Array.from({ length: file.current_version }, (_, i) => ({
+    ...pool[i % pool.length]!,
+    version: file.current_version - i,
+  }));
 }
 
 function graphById(id: string | undefined) {

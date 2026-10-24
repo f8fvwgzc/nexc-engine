@@ -370,8 +370,13 @@ impl TestApp {
     /// Sends raw bytes as the request body (a file upload).
     #[allow(dead_code)]
     pub async fn send_bytes(&self, path: &str, token: &str, bytes: Vec<u8>) -> Resp {
+        self.send_raw(Method::POST, path, token, bytes).await
+    }
+
+    /// Sends raw bytes as the body of a request of any method (a new version of a file).
+    pub async fn send_raw(&self, method: Method, path: &str, token: &str, bytes: Vec<u8>) -> Resp {
         let req = Request::builder()
-            .method(Method::POST)
+            .method(method)
             .uri(path)
             .header(header::AUTHORIZATION, format!("Bearer {token}"))
             .header(header::CONTENT_TYPE, "application/octet-stream")

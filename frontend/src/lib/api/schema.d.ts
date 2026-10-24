@@ -700,6 +700,113 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/artifact-files/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One file, as of its current version. */
+        get: operations["get_file"];
+        put?: never;
+        post?: never;
+        /**
+         * Deletes a file with its versions (everyone but guests who can see it).
+         *     Audited as `artifact_file_deleted`.
+         */
+        delete: operations["delete_file"];
+        options?: never;
+        head?: never;
+        /**
+         * Renames a file, moves it to another folder, or attaches it to another
+         *     issue or none (everyone but guests who can see it).
+         */
+        patch: operations["update_file"];
+        trace?: never;
+    };
+    "/api/v1/artifact-files/{id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The text of one version of a file (the current one by default). */
+        get: operations["content"];
+        /**
+         * Saves a new version of a file (everyone but guests who can see it). The
+         *     body is the whole new text; `base_version` is the version it was made
+         *     from, and someone else's save since then is a 409. Content equal to the
+         *     current version's saves nothing and answers the file as it is.
+         */
+        put: operations["update_content"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifact-files/{id}/duplicate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Copies a file's current version into a new file of the same issue
+         *     (everyone but guests who can see it): in the same folder unless another
+         *     is given, named with ` copy` (` copy 2`…) unless a name is given.
+         */
+        post: operations["duplicate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifact-files/{id}/raw": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Downloads one version of a file (the current one by default) as an
+         *     attachment of plain text; it is never served to be shown, so HTML in it
+         *     does not run.
+         */
+        get: operations["raw"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifact-files/{id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The versions of a file, newest first. */
+        get: operations["versions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/artifacts/{aid}/download": {
         parameters: {
             query?: never;
@@ -1533,8 +1640,9 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The timeline of an issue, oldest first: its comments and the changes to
-         *     its state, priority, assignee and title.
+         * The timeline of an issue, oldest first: its comments, the changes to its
+         *     state, priority, assignee, title, due date and GitHub link, what happened
+         *     to its files, and what its runs reported.
          */
         get: operations["events"];
         put?: never;
@@ -1560,6 +1668,49 @@ export interface paths {
          *     returns the issue with the graph it already has.
          */
         post: operations["create_graph"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/issues/{iid}/run-artifacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The files the runs of the issue's graph produced, newest run first, with
+         *     the run each came from; empty when the issue has no graph or the caller
+         *     cannot read its runs. They download from `/artifacts/{aid}/download`.
+         */
+        get: operations["run_artifacts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/issues/{iid}/run-artifacts/{aid}/keep": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Keeps a file a run of the issue's graph produced among the issue's files
+         *     (everyone but guests who can see the issue and its runs), named after
+         *     the file (with ` copy` when the name is taken). Only a text file of at
+         *     most 1 MiB can be kept, and not while it is quarantined.
+         */
+        post: operations["keep"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2206,6 +2357,79 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/artifact-files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Files of a workspace the caller can see: those directly in a folder, at
+         *     the top level, or of an issue, by name; or every one, most recently
+         *     saved first. At most 1,000.
+         */
+        get: operations["list_files"];
+        put?: never;
+        /**
+         * Adds a text file (everyone but guests). The body is the file itself, at
+         *     most 1 MiB of UTF-8 (empty for a new, empty file); it becomes version 1.
+         *     Only code, markup, configuration and text files are taken (415), and
+         *     never one that carries a credential (422).
+         */
+        post: operations["create_file"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/artifact-folders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The folders of a workspace, flat and by name: the client builds the
+         *     tree from `parent_id`. Guests see none.
+         */
+        get: operations["list_folders"];
+        put?: never;
+        /** Adds a folder (everyone but guests). */
+        post: operations["create_folder"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/artifact-folders/{fid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Deletes a folder with the folders and files in it (everyone but guests).
+         *     The issues its files were on note that they went. Refused while it holds
+         *     files the caller cannot see. Audited as `artifact_folder_deleted`.
+         */
+        delete: operations["delete_folder"];
+        options?: never;
+        head?: never;
+        /**
+         * Renames a folder or moves it (everyone but guests); never into itself or
+         *     a folder under it.
+         */
+        patch: operations["update_folder"];
         trace?: never;
     };
     "/api/v1/workspaces/{wid}/assistant": {
@@ -2930,10 +3154,17 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Projects of a workspace, with how many of their issues the caller can see. */
+        /**
+         * Projects of a workspace the caller can see (a project of a private team
+         *     only to those who see the team), with how many of their issues they can
+         *     see: all of them, or those one team owns.
+         */
         get: operations["projects"];
         put?: never;
-        /** Creates a project led by the caller (members and above). */
+        /**
+         * Creates a project (members and above), led by the caller unless another
+         *     lead is given, owned by a team or by the whole workspace.
+         */
         post: operations["create_project"];
         delete?: never;
         options?: never;
@@ -4077,6 +4308,89 @@ export interface components {
             /** Format: int64 */
             size: number;
         };
+        /** @description The text of one version of a file. */
+        ArtifactContent: {
+            content: string;
+            /** Format: uuid */
+            file_id: string;
+            /** Format: int32 */
+            version: number;
+        };
+        /** @description A text file of a workspace, as of its current version. */
+        ArtifactFile: {
+            /** Format: date-time */
+            created_at: string;
+            created_by: components["schemas"]["IssuePerson"] | null;
+            /** Format: int32 */
+            current_version: number;
+            /**
+             * Format: uuid
+             * @description The file this one was copied from, while it exists.
+             */
+            duplicated_from: string | null;
+            /**
+             * @description The extension that makes it a text file (`md`, `ts`), lower case;
+             *     empty for a name allowed as a whole (`Dockerfile`).
+             */
+            extension: string;
+            /**
+             * Format: uuid
+             * @description The folder it is in; `null` at the top level.
+             */
+            folder_id: string | null;
+            /** Format: uuid */
+            id: string;
+            issue: components["schemas"]["IssueRef"] | null;
+            kind: components["schemas"]["ArtifactKind"];
+            /** @description The highlighter's language id (`typescript`, `rust`, `plaintext`). */
+            language: string;
+            name: string;
+            /** @description Hex SHA-256 of the current version. */
+            sha256: string;
+            /**
+             * Format: int64
+             * @description Bytes of the current version.
+             */
+            size: number;
+            /** Format: date-time */
+            updated_at: string;
+            updated_by: components["schemas"]["IssuePerson"] | null;
+            /** Format: uuid */
+            workspace_id: string;
+        };
+        /** @description A folder of a workspace's artifacts. */
+        ArtifactFolder: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /**
+             * Format: uuid
+             * @description The folder it is in; `null` at the top level.
+             */
+            parent_id: string | null;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: uuid */
+            workspace_id: string;
+        };
+        /**
+         * @description How a file is previewed.
+         * @enum {string}
+         */
+        ArtifactKind: "markdown" | "html" | "code" | "text";
+        /** @description One version of a file. */
+        ArtifactVersion: {
+            /** Format: date-time */
+            created_at: string;
+            created_by: components["schemas"]["IssuePerson"] | null;
+            sha256: string;
+            /** Format: int64 */
+            size: number;
+            /** Format: int32 */
+            version: number;
+        };
         /** @description `POST /workspaces/{wid}/audit/ask` body. */
         AskAudit: {
             /**
@@ -4139,7 +4453,7 @@ export interface components {
          * @description What an audit entry records.
          * @enum {string}
          */
-        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned" | "trace_sealed" | "policy_changed" | "policy_mismatch" | "agent_quarantined" | "agent_released" | "recording_changed" | "payload_viewed" | "agent_cancelled" | "approval_granted" | "approval_denied" | "artifact_quarantined" | "artifact_released" | "alert_raised" | "alert_destination_changed" | "classification_changed" | "mcp_server_added" | "mcp_server_removed" | "agent_token_issued" | "agent_token_revoked" | "agent_a2a_changed" | "a2a_counterpart_added" | "a2a_counterpart_removed" | "graph_deleted" | "evidence_purged" | "evidence_exported" | "agent_created" | "agent_deleted";
+        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned" | "trace_sealed" | "policy_changed" | "policy_mismatch" | "agent_quarantined" | "agent_released" | "recording_changed" | "payload_viewed" | "agent_cancelled" | "approval_granted" | "approval_denied" | "artifact_quarantined" | "artifact_released" | "alert_raised" | "alert_destination_changed" | "classification_changed" | "mcp_server_added" | "mcp_server_removed" | "agent_token_issued" | "agent_token_revoked" | "agent_a2a_changed" | "a2a_counterpart_added" | "a2a_counterpart_removed" | "graph_deleted" | "evidence_purged" | "evidence_exported" | "agent_created" | "agent_deleted" | "artifact_folder_deleted" | "artifact_file_deleted";
         /** @description An answer from the audit. */
         AuditAnswer: {
             answer: string;
@@ -4516,6 +4830,16 @@ export interface components {
             /** Format: uuid */
             target: string;
         };
+        /** @description `POST /workspaces/{wid}/artifact-folders` body. */
+        CreateFolder: {
+            /** @description 1-120 characters, without `/`, `\` or control characters; unique among its siblings. */
+            name: string;
+            /**
+             * Format: uuid
+             * @description The folder to put it in (default: the top level).
+             */
+            parent_id?: string | null;
+        };
         /** @description `POST /graphs` body. */
         CreateGraph: {
             description?: string;
@@ -4549,6 +4873,11 @@ export interface components {
              * @description The day the issue is due (`YYYY-MM-DD`).
              */
             due_date?: string | null;
+            /**
+             * @description A GitHub issue or pull request the issue is about
+             *     (`https://github.com/<owner>/<repo>/issues|pull/<number>`); blank for none.
+             */
+            github_url?: string | null;
             /** @description Labels of the workspace to put on the issue (at most 20). */
             label_ids?: string[];
             /**
@@ -4607,9 +4936,21 @@ export interface components {
         /** @description `POST /workspaces/{wid}/projects` body. */
         CreateProject: {
             description?: string;
+            /**
+             * Format: uuid
+             * @description A member of the workspace (default: the caller; `null` for no lead).
+             */
+            lead_id?: string | null;
             name: string;
+            status?: components["schemas"]["ProjectStatus"] | null;
             /** Format: date */
             target_date?: string | null;
+            /**
+             * Format: uuid
+             * @description The team that owns the project: a team of the workspace the caller can see
+             *     (default: none, the whole workspace's).
+             */
+            team_id?: string | null;
         };
         /** @description `POST /graphs/{gid}/runs` body. */
         CreateRun: {
@@ -4914,6 +5255,16 @@ export interface components {
          * @enum {string}
          */
         DocumentStatus: "pending" | "parsing" | "embedding" | "ready" | "failed";
+        /** @description `POST /artifact-files/{id}/duplicate` body. */
+        DuplicateFile: {
+            /**
+             * Format: uuid
+             * @description The folder to put the copy in (default: the file's own); `null` for the top level.
+             */
+            folder_id?: string | null;
+            /** @description The copy's name (default: the file's with ` copy`, ` copy 2`… before the extension). */
+            name?: string | null;
+        };
         /**
          * @description Who created an edge (`auto` = `[[wikilink]]` dependency detection).
          * @enum {string}
@@ -5389,6 +5740,8 @@ export interface components {
              * @description The day the issue is due, if it has one.
              */
             due_date: string | null;
+            /** @description The GitHub issue or pull request the issue is about (a link only; nothing is synced). */
+            github_url: string | null;
             /**
              * Format: uuid
              * @description The graph that plans and executes the issue, if one was created.
@@ -5451,7 +5804,7 @@ export interface components {
          * @description What an entry of an issue's timeline records.
          * @enum {string}
          */
-        IssueEventKind: "comment" | "state" | "priority" | "assignee" | "title" | "due" | "run";
+        IssueEventKind: "comment" | "state" | "priority" | "assignee" | "title" | "due" | "run" | "github" | "artifact";
         /** @description Someone an issue refers to. */
         IssuePerson: {
             name: string;
@@ -5530,6 +5883,14 @@ export interface components {
         /** @description The keys nexc signs and has signed with (`GET /.well-known/jwks.json`). */
         Jwks: {
             keys: components["schemas"]["Jwk"][];
+        };
+        /** @description `POST /issues/{iid}/run-artifacts/{aid}/keep` body. */
+        KeepArtifact: {
+            /**
+             * Format: uuid
+             * @description The folder to put the file in (default: the top level).
+             */
+            folder_id?: string | null;
         };
         /**
          * @description Where the effective API key comes from.
@@ -6431,7 +6792,10 @@ export interface components {
             /** @description Always `about:blank`. */
             type: string;
         };
-        /** @description A project: a body of work that issues of any team can belong to. */
+        /**
+         * @description A project: a body of work that issues of any team can belong to, owned
+         *     by one team or by the workspace as a whole.
+         */
         Project: {
             /**
              * Format: int64
@@ -6454,6 +6818,12 @@ export interface components {
             status: components["schemas"]["ProjectStatus"];
             /** Format: date */
             target_date: string | null;
+            team: components["schemas"]["TeamRef"] | null;
+            /**
+             * Format: uuid
+             * @description The team that owns the project; `null` for a project of the whole workspace.
+             */
+            team_id: string | null;
             /** Format: uuid */
             workspace_id: string;
         };
@@ -6792,6 +7162,12 @@ export interface components {
              *     while it runs or when nothing was traced (`GET /runs/{id}/trace/verify`).
              */
             trace_hash: string | null;
+        };
+        /** @description A file a run of an issue's graph produced, with the run it came from. */
+        RunArtifact: components["schemas"]["Artifact"] & {
+            /** Format: date-time */
+            run_created_at: string;
+            run_status: components["schemas"]["RunStatus"];
         };
         /** @description Runs in a window, by outcome. */
         RunCounts: {
@@ -7351,6 +7727,13 @@ export interface components {
             /** Format: uuid */
             user_id: string;
         };
+        /** @description A team, as much as a project shows of the team that owns it. */
+        TeamRef: {
+            /** Format: uuid */
+            id: string;
+            key: string;
+            name: string;
+        };
         /**
          * @description Role of a user in a team.
          * @enum {string}
@@ -7555,6 +7938,30 @@ export interface components {
         UpdateEdge: {
             reason: string;
         };
+        /** @description `PATCH /artifact-files/{id}` body: any subset. */
+        UpdateFile: {
+            /**
+             * Format: uuid
+             * @description The folder to move it into; `null` moves it to the top level.
+             */
+            folder_id?: string | null;
+            /**
+             * Format: uuid
+             * @description An issue of the workspace to attach it to; `null` detaches it.
+             */
+            issue_id?: string | null;
+            /** @description A new name; its extension must be a text file's. */
+            name?: string | null;
+        };
+        /** @description `PATCH /workspaces/{wid}/artifact-folders/{fid}` body: any subset. */
+        UpdateFolder: {
+            name?: string | null;
+            /**
+             * Format: uuid
+             * @description The folder to move it into; `null` moves it to the top level.
+             */
+            parent_id?: string | null;
+        };
         /** @description `PATCH /graphs/{gid}` body. */
         UpdateGraph: {
             description?: string | null;
@@ -7563,7 +7970,7 @@ export interface components {
         };
         /**
          * @description `PATCH /issues/{iid}` body: any subset. `assignee_id`, `agent_id`,
-         *     `project_id` and `due_date` accept `null` to clear them.
+         *     `project_id`, `due_date` and `github_url` accept `null` to clear them.
          */
         UpdateIssue: {
             /** Format: uuid */
@@ -7581,6 +7988,12 @@ export interface components {
              * @description The day the issue is due (`YYYY-MM-DD`); `null` removes it.
              */
             due_date?: string | null;
+            /**
+             * @description A GitHub issue or pull request the issue is about; `null` or blank removes the link.
+             *     A trailing slash, a fragment or a query is dropped, and `http://` or `www.` becomes
+             *     `https://github.com/`.
+             */
+            github_url?: string | null;
             /** @description Replaces the issue's labels. */
             label_ids?: string[] | null;
             /**
@@ -7681,8 +8094,8 @@ export interface components {
             name: string;
         };
         /**
-         * @description `PATCH /workspaces/{wid}/projects/{pid}` body (any subset; `lead_id` and
-         *     `target_date` accept `null`).
+         * @description `PATCH /workspaces/{wid}/projects/{pid}` body (any subset; `lead_id`,
+         *     `target_date` and `team_id` accept `null`).
          */
         UpdateProject: {
             description?: string | null;
@@ -7692,6 +8105,11 @@ export interface components {
             status?: components["schemas"]["ProjectStatus"] | null;
             /** Format: date */
             target_date?: string | null;
+            /**
+             * Format: uuid
+             * @description The team that owns the project; `null` gives it to the whole workspace.
+             */
+            team_id?: string | null;
         };
         /** @description `PATCH .../states/{sid}` body (any subset). */
         UpdateState: {
@@ -8091,7 +8509,7 @@ export interface operations {
     events: {
         parameters: {
             query?: {
-                /** @description Part of a name or e-mail address. */
+                /** @description Part of a name or e-mail address; without control characters. */
                 q?: string | null;
                 /** @description 1-100, default 25. */
                 limit?: number | null;
@@ -8217,7 +8635,7 @@ export interface operations {
     users: {
         parameters: {
             query?: {
-                /** @description Part of a name or e-mail address. */
+                /** @description Part of a name or e-mail address; without control characters. */
                 q?: string | null;
                 /** @description 1-100, default 25. */
                 limit?: number | null;
@@ -8484,7 +8902,7 @@ export interface operations {
     workspaces: {
         parameters: {
             query?: {
-                /** @description Part of a name or e-mail address. */
+                /** @description Part of a name or e-mail address; without control characters. */
                 q?: string | null;
                 /** @description 1-100, default 25. */
                 limit?: number | null;
@@ -9476,6 +9894,386 @@ export interface operations {
             };
             /** @description Invalid fields, or an Idempotency-Key used with another request */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_file: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description File id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactFile"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    delete_file: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description File id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    update_file: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description File id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateFile"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactFile"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The name is taken in that folder */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not a text file's name */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    content: {
+        parameters: {
+            query?: {
+                /** @description The version to read (default: the current one). */
+                version?: number | null;
+            };
+            header?: never;
+            path: {
+                /** @description File id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactContent"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    update_content: {
+        parameters: {
+            query: {
+                /** @description The version the new content was made from: it must still be the current one. */
+                base_version: number;
+            };
+            header?: never;
+            path: {
+                /** @description File id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** @description The new text (`text/plain` works as well) */
+        requestBody: {
+            content: {
+                "application/octet-stream": number[];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactFile"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Someone else saved a version first */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not text */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    duplicate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description File id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DuplicateFile"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactFile"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The name is taken in that folder */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not a text file's name */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    raw: {
+        parameters: {
+            query?: {
+                /** @description The version to read (default: the current one). */
+                version?: number | null;
+            };
+            header?: never;
+            path: {
+                /** @description File id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The text, as an attachment */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    versions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description File id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactVersion"][];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11696,6 +12494,106 @@ export interface operations {
             };
         };
     };
+    run_artifacts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Issue id */
+                iid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunArtifact"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    keep: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Issue id */
+                iid: string;
+                /** @description Run artifact id */
+                aid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KeepArtifact"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactFile"];
+                };
+            };
+            /** @description Guest, or quarantined */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not a text file */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     list: {
         parameters: {
             query?: {
@@ -11703,7 +12601,7 @@ export interface operations {
                 workspace_id?: string | null;
                 /** @description Restrict to a graph (plus the caller's user-scope memories). */
                 graph_id?: string | null;
-                /** @description Hybrid search query; results then carry a `score`. */
+                /** @description Hybrid search query; results then carry a `score`. Without control characters. */
                 q?: string | null;
                 /** @description 1–100, default 20. */
                 limit?: number | null;
@@ -13356,6 +14254,335 @@ export interface operations {
             };
         };
     };
+    list_files: {
+        parameters: {
+            query?: {
+                /** @description Only the files directly in this folder. */
+                folder_id?: string | null;
+                /** @description `true`: only the files at the top level, in no folder. */
+                root?: boolean | null;
+                /** @description Only the files attached to this issue, in any folder. */
+                issue_id?: string | null;
+                /** @description Part of the name, any case; without control characters. */
+                q?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactFile"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    create_file: {
+        parameters: {
+            query: {
+                /** @description The file's name with its extension, which must be a text file's. */
+                name: string;
+                /** @description The folder to put it in (default: the top level). */
+                folder_id?: string | null;
+                /** @description An issue of the workspace to attach it to. */
+                issue_id?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        /** @description The file's bytes (`text/plain` works as well) */
+        requestBody: {
+            content: {
+                "application/octet-stream": number[];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactFile"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The name is taken in that folder */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not a text file */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_folders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactFolder"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    create_folder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateFolder"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactFolder"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Name taken */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    delete_folder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Folder id */
+                fid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description It holds files of issues the caller cannot see, or crossed another change to it (try again) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    update_folder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Folder id */
+                fid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateFolder"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactFolder"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Name taken */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     assistant: {
         parameters: {
             query?: never;
@@ -13794,7 +15021,7 @@ export interface operations {
     list: {
         parameters: {
             query?: {
-                /** @description Part of the file name. */
+                /** @description Part of the file name; without control characters. */
                 q?: string | null;
                 /** @description 1-100, default 20. */
                 limit?: number | null;
@@ -14281,7 +15508,7 @@ export interface operations {
                 creator_id?: string | null;
                 /** @description `true` leaves out completed and canceled issues. */
                 open?: boolean | null;
-                /** @description Matches the title, or the start of the identifier (`ENG-1`). */
+                /** @description Matches the title, or the start of the identifier (`ENG-1`); without control characters. */
                 q?: string | null;
                 /** @description 1-500, default 200. */
                 limit?: number | null;
@@ -14356,6 +15583,7 @@ export interface operations {
     search: {
         parameters: {
             query: {
+                /** @description What to look for; without control characters. */
                 q: string;
                 /** @description Only passages grouped under this topic. */
                 topic_id?: string | null;
@@ -15532,7 +16760,10 @@ export interface operations {
     };
     projects: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Only the projects this team owns. */
+                team_id?: string | null;
+            };
             header?: never;
             path: {
                 /** @description Workspace id */
@@ -15593,6 +16824,14 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15698,7 +16937,7 @@ export interface operations {
             query: {
                 /**
                  * @description What to look for: part of a title, a name, an e-mail, or an issue's
-                 *     identifier (`ENG-12`). At least 2 characters.
+                 *     identifier (`ENG-12`). At least 2 characters, without control characters.
                  */
                 q: string;
                 /** @description Most hits of each kind, 1-10 (default 5). */

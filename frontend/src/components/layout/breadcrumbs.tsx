@@ -11,7 +11,10 @@ import {
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
 import { Skeleton } from '@/components/ui/skeleton';
+import { artifactFileQuery } from '@/features/artifacts/api';
 import { graphQuery } from '@/features/graphs/api';
+import { issueQuery, projectsQuery } from '@/features/issues/api';
+import { useWorkspaceStore } from '@/stores/workspace-store';
 
 import { isRouteHandle, type Crumb } from './route-handle';
 
@@ -33,6 +36,58 @@ function GraphCrumb() {
   );
 }
 
+function IssueCrumb() {
+  const { issueId = '' } = useParams();
+  // Reads the cache the issue page fills; never triggers its own fetch.
+  const { data: identifier, status } = useQuery({
+    ...issueQuery(issueId),
+    enabled: false,
+    select: (i) => i.identifier,
+  });
+  if (identifier) return <span className="font-mono">{identifier}</span>;
+  if (status === 'error') return <>Issue</>;
+  return (
+    <Skeleton className="h-4 w-16">
+      <span className="sr-only">Loading the issue’s identifier</span>
+    </Skeleton>
+  );
+}
+
+function ProjectCrumb() {
+  const { projectId = '' } = useParams();
+  const workspaceId = useWorkspaceStore((s) => s.currentId) ?? '';
+  // Reads the list the project page fills; never triggers its own fetch.
+  const { data: name, status } = useQuery({
+    ...projectsQuery(workspaceId),
+    enabled: false,
+    select: (projects) => projects.find((p) => p.id === projectId)?.name,
+  });
+  if (name) return <>{name}</>;
+  if (status !== 'pending') return <>Project</>;
+  return (
+    <Skeleton className="h-4 w-24">
+      <span className="sr-only">Loading the project’s name</span>
+    </Skeleton>
+  );
+}
+
+function ArtifactCrumb() {
+  const { fileId = '' } = useParams();
+  // Reads the cache the file page fills; never triggers its own fetch.
+  const { data: name, status } = useQuery({
+    ...artifactFileQuery(fileId),
+    enabled: false,
+    select: (f) => f.name,
+  });
+  if (name) return <>{name}</>;
+  if (status === 'error') return <>File</>;
+  return (
+    <Skeleton className="h-4 w-24">
+      <span className="sr-only">Loading the file’s name</span>
+    </Skeleton>
+  );
+}
+
 function RunCrumb() {
   const { runId = '' } = useParams();
   return <span className="font-mono">Run {runId.slice(0, 8)}</span>;
@@ -40,7 +95,11 @@ function RunCrumb() {
 
 function CrumbLabel({ crumb }: { crumb: Crumb }) {
   if ('label' in crumb) return <>{crumb.label}</>;
-  return crumb.dynamic === 'graph' ? <GraphCrumb /> : <RunCrumb />;
+  if (crumb.dynamic === 'graph') return <GraphCrumb />;
+  if (crumb.dynamic === 'issue') return <IssueCrumb />;
+  if (crumb.dynamic === 'project') return <ProjectCrumb />;
+  if (crumb.dynamic === 'artifact') return <ArtifactCrumb />;
+  return <RunCrumb />;
 }
 
 export function Breadcrumbs() {

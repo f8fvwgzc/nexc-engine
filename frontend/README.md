@@ -51,10 +51,13 @@ src/
   components/
     ui/                    shadcn/ui (generated — `shadcn add`, do not hand-edit beyond theming)
     custom-ui/             product design layer built on shadcn (see below)
-    layout/                AppShell, AppSidebar, AppHeader, PublicLayout, PrivateRoute, PublicRoute, …
+    layout/                AppShell, ShellSidebar (the rail of core menus + the panel), AppHeader,
+                           PlatformShell, PublicLayout, PrivateRoute, PublicRoute, …
     seo/                   <Seo title description />
-  features/<name>/         auth, graphs (dashboard/templates), graph (canvas, panels, toolbar, hooks),
-                           runs, agents, memory, settings, command (⌘K palette), landing
+  features/<name>/         auth, issues (issue page, board, timeline), artifacts (folders, files,
+                           versions, previews), graphs (dashboard/templates), graph (canvas, panels,
+                           toolbar, hooks), runs, agents, memory, settings, command (⌘K palette),
+                           landing
                            each with api.ts (+ query options), components/, hooks/
   lib/
     api/                   fetch client (auth + single-flight refresh), problem+json errors,
@@ -117,7 +120,7 @@ product's own vocabulary composed from them — feature code should reach for th
 | `ConfirmDialog`                                                                              | `AlertDialog`                          | destructive confirmations                                                            |
 | `EmptyState`                                                                                 | `Empty`                                | icon + copy + action                                                                 |
 | `ErrorState`                                                                                 | `Empty`                                | a failed load: the reason and Try again (never an `EmptyState` for an error)         |
-| `PageContainer`                                                                              | div                                    | a page's frame: `default`, `wide` or `narrow` width, one vertical rhythm             |
+| `PageContainer`                                                                              | div                                    | a page's frame: full width by default, `wide` or `narrow`, one vertical rhythm       |
 | `IconButton`, `WithTooltip`                                                                  | `Button`, `Tooltip`                    | an icon-only control: its label is its accessible name and its tooltip               |
 | `ScrollRegion`, `MainLandmark`                                                               | div / main                             | a box that scrolls (focusable while it does); a `main` where no shell gives one      |
 | `PageHeader`, `StatTile`, `GradientText`, `KbdHint`, `CopyButton`, `Spinner`, `NodeKindIcon` | various                                | page chrome & small affordances                                                      |

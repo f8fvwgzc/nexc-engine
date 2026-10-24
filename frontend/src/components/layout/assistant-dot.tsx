@@ -16,6 +16,7 @@ import { IconButton } from '@/components/custom-ui/icon-button';
 import { Markdown } from '@/components/custom-ui/markdown';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
+import { issuePath } from '@/features/issues/links';
 import { askAssistant, conversationQuery } from '@/features/workspaces/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { errorMessage } from '@/lib/api/errors';
@@ -204,7 +205,12 @@ function AssistantPanel({ current }: { current: Workspace }) {
             transition={spring}
             className="h-svh max-w-full shrink-0 overflow-hidden border-l bg-background text-sm"
             onKeyDown={(e) => {
-              if (e.key === 'Escape') setOpen(false);
+              // Escape is taken here, so a page's own Escape (the issue page's way back) does
+              // not also run.
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                setOpen(false);
+              }
             }}
           >
             <div className="flex h-full max-w-full flex-col" style={{ width: PANEL_WIDTH }}>
@@ -297,7 +303,7 @@ function AssistantPanel({ current }: { current: Workspace }) {
                             {turn.outcome.created.map((issue) => (
                               <Link
                                 key={issue.id}
-                                to="/app/issues"
+                                to={issuePath(issue.id)}
                                 className="flex items-center gap-2 rounded-lg border px-2.5 py-1.5 hover:bg-muted/50"
                               >
                                 <span className="font-mono text-xs text-muted-foreground">

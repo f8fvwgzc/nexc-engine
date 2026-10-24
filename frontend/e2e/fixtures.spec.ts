@@ -13,6 +13,13 @@ import {
   agentSchema,
 } from '../src/schemas/agent';
 import { alertDeliverySchema, alertDestinationSchema } from '../src/schemas/alert-routing';
+import {
+  artifactContentSchema,
+  artifactFileSchema,
+  artifactFolderSchema,
+  artifactVersionSchema,
+  runArtifactSchema,
+} from '../src/schemas/artifact';
 import { conversationDetailSchema, conversationSchema } from '../src/schemas/assistant';
 import { auditEntrySchema, cannedQuestionSchema } from '../src/schemas/audit';
 import { loginProvidersSchema, signInMethodsSchema, userSchema } from '../src/schemas/auth';
@@ -88,6 +95,10 @@ const SCHEMAS: Partial<Record<keyof Fixtures, z.ZodType>> = {
   alertDestinations: many(alertDestinationSchema),
   alerts: many(alertSchema),
   approvals: many(approvalSchema),
+  artifactContent: artifactContentSchema,
+  artifactFiles: many(artifactFileSchema),
+  artifactFolders: many(artifactFolderSchema),
+  artifactVersions: many(artifactVersionSchema),
   artifacts: many(artifactSchema),
   audit: many(auditEntrySchema),
   auditQuestions: many(cannedQuestionSchema),
@@ -125,6 +136,7 @@ const SCHEMAS: Partial<Record<keyof Fixtures, z.ZodType>> = {
   projects: many(projectSchema),
   resolvedPolicy: resolvedPolicySchema,
   run: runSchema,
+  runArtifacts: many(runArtifactSchema),
   runs: many(runSchema),
   secopsOverview: secopsOverviewSchema,
   secopsOverviewEmpty: secopsOverviewSchema,

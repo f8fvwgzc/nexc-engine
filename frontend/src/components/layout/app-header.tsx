@@ -16,12 +16,9 @@ export function AppHeader() {
   const openAssistant = useAssistantStore((s) => s.setOpen);
   return (
     <header className="sticky top-0 z-20 flex h-11 shrink-0 items-center gap-2 border-b bg-background/80 px-3 backdrop-blur-lg sm:px-4">
-      {/* Only a phone needs a way to open the sidebar; on desktop it is always there. */}
-      <SidebarTrigger className="-ml-1 md:hidden" aria-label="Open navigation" />
-      <Separator
-        orientation="vertical"
-        className="mr-1 data-[orientation=vertical]:h-4 md:hidden"
-      />
+      {/* Opens the navigation panel beside the rail; on a phone, the whole drawer. */}
+      <SidebarTrigger className="-ml-1" aria-label="Toggle navigation" />
+      <Separator orientation="vertical" className="mr-1 data-[orientation=vertical]:h-4" />
       <Breadcrumbs />
       <div className="ml-auto flex items-center gap-1">
         {/* A phone has room for the icon only: the tooltip and the name say what it opens. */}

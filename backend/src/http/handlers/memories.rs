@@ -13,7 +13,7 @@ use crate::domain::AppError;
 use crate::domain::audit::AuditAction;
 use crate::domain::capabilities::DataLabel;
 use crate::domain::memory::{Memory, MemoryTopic};
-use crate::domain::validation::{FieldErrors, Validate};
+use crate::domain::validation::{FieldErrors, Validate, search_text};
 use crate::domain::workspace::WorkspaceAction;
 use crate::engine::editor;
 use crate::http::extract::{AuthUser, Path, Query, ValidatedJson};
@@ -30,7 +30,7 @@ pub struct MemoryQuery {
     pub workspace_id: Option<Uuid>,
     /// Restrict to a graph (plus the caller's user-scope memories).
     pub graph_id: Option<Uuid>,
-    /// Hybrid search query; results then carry a `score`.
+    /// Hybrid search query; results then carry a `score`. Without control characters.
     pub q: Option<String>,
     /// 1–100, default 20.
     pub limit: Option<u32>,
@@ -61,6 +61,7 @@ pub async fn list(
     auth: AuthUser,
     Query(query): Query<MemoryQuery>,
 ) -> Result<Json<Vec<Memory>>, AppError> {
+    let q = search_text("q", query.q, 500)?;
     // A graph names its workspace; otherwise the caller does, or their first one is used.
     let workspace = match query.graph_id {
         Some(gid) => {
@@ -84,12 +85,6 @@ pub async fn list(
     let view = query.graph_id.map_or(View::All, View::Only);
     let limit = query.limit.unwrap_or(20).clamp(1, 100) as usize;
     let offset = query.offset.unwrap_or(0).min(5000) as usize;
-    let q = query
-        .q
-        .as_deref()
-        .map(str::trim)
-        .filter(|q| !q.is_empty())
-        .map(|q| q.chars().take(500).collect::<String>());
     let (index, db) = (&state.memories, &state.db);
     let memories = match q {
         Some(q) => {

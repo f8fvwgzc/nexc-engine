@@ -5,6 +5,12 @@
     "name": "EU market entry",
     "description": "Everything we need to decide on the EU launch.",
     "status": "started",
+    "team_id": "59a5a0c7-c397-74d9-8335-9438fe114555",
+    "team": {
+      "id": "59a5a0c7-c397-74d9-8335-9438fe114555",
+      "key": "ENG",
+      "name": "Engineering"
+    },
     "lead_id": "d6b5915c-4605-7bcb-805f-46f6433df656",
     "target_date": "2026-11-23",
     "issue_count": 9,
@@ -17,6 +23,12 @@
     "name": "Agent firewall hardening",
     "description": "Close the gaps the red team found.",
     "status": "planned",
+    "team_id": "bb352f84-0be2-7602-8692-4d6f1f04994e",
+    "team": {
+      "id": "bb352f84-0be2-7602-8692-4d6f1f04994e",
+      "key": "SEC",
+      "name": "Security operations"
+    },
     "lead_id": "673aeeb0-8cfb-700b-81e5-e3c60b5ba318",
     "target_date": "2026-12-28",
     "issue_count": 5,
@@ -29,6 +41,12 @@
     "name": "Design system v3 with a longer project name for truncation",
     "description": "",
     "status": "paused",
+    "team_id": "749ce328-6f34-7c68-8572-e2edf21c2ad5",
+    "team": {
+      "id": "749ce328-6f34-7c68-8572-e2edf21c2ad5",
+      "key": "DES",
+      "name": "Design"
+    },
     "lead_id": null,
     "target_date": null,
     "issue_count": 3,
@@ -41,6 +59,8 @@
     "name": "Docs migration",
     "description": "Move the handbook to the new site.",
     "status": "completed",
+    "team_id": null,
+    "team": null,
     "lead_id": "85f2ef98-7b76-74c3-8c08-1acef84e0a73",
     "target_date": "2026-10-04",
     "issue_count": 6,

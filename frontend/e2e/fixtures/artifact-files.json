@@ -1,0 +1,134 @@
+[
+  {
+    "id": "019a1b20-6e20-7b4f-8c32-6e1d8f4b2a01",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "folder_id": null,
+    "name": "tender-notes.md",
+    "extension": "md",
+    "kind": "markdown",
+    "language": "markdown",
+    "issue": {
+      "id": "6c08cc63-f95f-77d4-8576-23a9c41035ee",
+      "identifier": "ENG-43",
+      "title": "Collect EU tender data for 2025–2026"
+    },
+    "current_version": 3,
+    "size": 2148,
+    "sha256": "9f2c4e1b7a3d5f609f2c4e1b7a3d5f609f2c4e1b7a3d5f609f2c4e1b7a3d5f60",
+    "duplicated_from": null,
+    "created_by": {
+      "user_id": "d6b5915c-4605-7bcb-805f-46f6433df656",
+      "name": "Ada Lovelace"
+    },
+    "updated_by": {
+      "user_id": "d6b5915c-4605-7bcb-805f-46f6433df656",
+      "name": "Ada Lovelace"
+    },
+    "created_at": "2026-10-02T09:00:00Z",
+    "updated_at": "2026-10-11T11:20:00Z"
+  },
+  {
+    "id": "019a1b20-6e20-7b4f-8c32-6e1d8f4b2a02",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "folder_id": "019a1b20-4c10-7a3e-9b21-5d0c7e3a1f01",
+    "name": "landing.html",
+    "extension": "html",
+    "kind": "html",
+    "language": "html",
+    "issue": null,
+    "current_version": 2,
+    "size": 5320,
+    "sha256": "9f2c4e1b7a3d5f609f2c4e1b7a3d5f609f2c4e1b7a3d5f609f2c4e1b7a3d5f60",
+    "duplicated_from": null,
+    "created_by": {
+      "user_id": "673aeeb0-8cfb-700b-81e5-e3c60b5ba318",
+      "name": "Grace Hopper"
+    },
+    "updated_by": {
+      "user_id": "673aeeb0-8cfb-700b-81e5-e3c60b5ba318",
+      "name": "Grace Hopper"
+    },
+    "created_at": "2026-10-03T10:00:00Z",
+    "updated_at": "2026-10-10T08:05:00Z"
+  },
+  {
+    "id": "019a1b20-6e20-7b4f-8c32-6e1d8f4b2a03",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "folder_id": "019a1b20-4c10-7a3e-9b21-5d0c7e3a1f02",
+    "name": "pricing.ts",
+    "extension": "ts",
+    "kind": "code",
+    "language": "typescript",
+    "issue": {
+      "id": "cccce954-1033-7b22-8b6c-765225669205",
+      "identifier": "ENG-49",
+      "title": "Pricing model returns NaN for zero-capacity sites"
+    },
+    "current_version": 5,
+    "size": 8912,
+    "sha256": "9f2c4e1b7a3d5f609f2c4e1b7a3d5f609f2c4e1b7a3d5f609f2c4e1b7a3d5f60",
+    "duplicated_from": null,
+    "created_by": {
+      "user_id": "d6b5915c-4605-7bcb-805f-46f6433df656",
+      "name": "Ada Lovelace"
+    },
+    "updated_by": {
+      "user_id": "d6b5915c-4605-7bcb-805f-46f6433df656",
+      "name": "Ada Lovelace"
+    },
+    "created_at": "2026-10-04T12:00:00Z",
+    "updated_at": "2026-10-11T15:40:00Z"
+  },
+  {
+    "id": "019a1b20-6e20-7b4f-8c32-6e1d8f4b2a04",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "folder_id": "019a1b20-4c10-7a3e-9b21-5d0c7e3a1f03",
+    "name": "fetch-tenders.sh",
+    "extension": "sh",
+    "kind": "code",
+    "language": "bash",
+    "issue": {
+      "id": "6c08cc63-f95f-77d4-8576-23a9c41035ee",
+      "identifier": "ENG-43",
+      "title": "Collect EU tender data for 2025–2026"
+    },
+    "current_version": 1,
+    "size": 1210,
+    "sha256": "9f2c4e1b7a3d5f609f2c4e1b7a3d5f609f2c4e1b7a3d5f609f2c4e1b7a3d5f60",
+    "duplicated_from": null,
+    "created_by": {
+      "user_id": "673aeeb0-8cfb-700b-81e5-e3c60b5ba318",
+      "name": "Grace Hopper"
+    },
+    "updated_by": {
+      "user_id": "673aeeb0-8cfb-700b-81e5-e3c60b5ba318",
+      "name": "Grace Hopper"
+    },
+    "created_at": "2026-10-06T07:30:00Z",
+    "updated_at": "2026-10-06T07:30:00Z"
+  },
+  {
+    "id": "019a1b20-6e20-7b4f-8c32-6e1d8f4b2a05",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "folder_id": null,
+    "name": "Dockerfile",
+    "extension": "",
+    "kind": "code",
+    "language": "dockerfile",
+    "issue": null,
+    "current_version": 1,
+    "size": 412,
+    "sha256": "9f2c4e1b7a3d5f609f2c4e1b7a3d5f609f2c4e1b7a3d5f609f2c4e1b7a3d5f60",
+    "duplicated_from": null,
+    "created_by": {
+      "user_id": "d6b5915c-4605-7bcb-805f-46f6433df656",
+      "name": "Ada Lovelace"
+    },
+    "updated_by": {
+      "user_id": "d6b5915c-4605-7bcb-805f-46f6433df656",
+      "name": "Ada Lovelace"
+    },
+    "created_at": "2026-10-07T13:00:00Z",
+    "updated_at": "2026-10-07T13:00:00Z"
+  }
+]

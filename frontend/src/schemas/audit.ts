@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { idSchema, timestampSchema } from './common';
 
+/** What an audit entry records, in the backend's order (`AuditAction` in domain/audit.rs). */
 export const auditActionSchema = z.enum([
   'workspace_renamed',
   'member_added',
@@ -26,15 +27,30 @@ export const auditActionSchema = z.enum([
   'policy_mismatch',
   'agent_quarantined',
   'agent_released',
-  'classification_changed',
+  'recording_changed',
+  'payload_viewed',
+  'agent_cancelled',
   'approval_granted',
   'approval_denied',
   'artifact_quarantined',
   'artifact_released',
   'alert_raised',
   'alert_destination_changed',
+  'classification_changed',
+  'mcp_server_added',
+  'mcp_server_removed',
+  'agent_token_issued',
+  'agent_token_revoked',
+  'agent_a2a_changed',
+  'a2a_counterpart_added',
+  'a2a_counterpart_removed',
+  'graph_deleted',
+  'evidence_purged',
+  'evidence_exported',
   'agent_created',
   'agent_deleted',
+  'artifact_folder_deleted',
+  'artifact_file_deleted',
 ]);
 export type AuditAction = z.infer<typeof auditActionSchema>;
 

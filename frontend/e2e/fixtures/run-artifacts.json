@@ -1,0 +1,30 @@
+[
+  {
+    "id": "019a1b20-8f30-7c5a-9d43-7f2e9a5c3b01",
+    "run_id": "d7a0cee7-b61e-70e3-8477-6e245cfafbfb",
+    "node_id": "03842368-8a80-7226-8989-396b2e2a130f",
+    "path": "reports/tender-summary.md",
+    "size": 6210,
+    "mime": "text/markdown",
+    "created_at": "2026-10-14T11:15:00Z",
+    "quarantined_at": null,
+    "quarantine_reason": "",
+    "released_at": null,
+    "run_status": "running",
+    "run_created_at": "2026-10-14T11:00:00Z"
+  },
+  {
+    "id": "019a1b20-8f30-7c5a-9d43-7f2e9a5c3b02",
+    "run_id": "8d8ea375-8174-790c-8a32-72621ec7d1ee",
+    "node_id": "03842368-8a80-7226-8989-396b2e2a130f",
+    "path": "reports/market-overview.docx",
+    "size": 48213,
+    "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "created_at": "2026-10-12T15:15:00Z",
+    "quarantined_at": null,
+    "quarantine_reason": "",
+    "released_at": null,
+    "run_status": "failed",
+    "run_created_at": "2026-10-12T15:00:00Z"
+  }
+]

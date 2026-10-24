@@ -48,7 +48,9 @@ pub const UPLOAD_SLACK: usize = 64 * 1024;
         (name = "nodes"), (name = "edges"),
         (name = "plans", description = "LLM planning"),
         (name = "runs", description = "Execution"),
-        (name = "artifacts"), (name = "templates"), (name = "agents"), (name = "memories"),
+        (name = "artifacts"),
+        (name = "artifact-files", description = "Text files of a workspace (code, HTML, Markdown) kept with every version, in folders, on issues; and keeping what runs produced"),
+        (name = "templates"), (name = "agents"), (name = "memories"),
         (name = "mcp-servers", description = "MCP servers of a workspace, called through the tools gateway"),
         (name = "policies", description = "Versioned policies and what they resolve to"),
         (name = "approvals", description = "Tool calls that wait for a human"),
@@ -209,6 +211,34 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(issues::update_state, issues::delete_state))
         .routes(routes!(issues::projects, issues::create_project))
         .routes(routes!(issues::update_project, issues::delete_project))
+        .routes(routes!(
+            artifact_files::list_folders,
+            artifact_files::create_folder
+        ))
+        .routes(routes!(
+            artifact_files::update_folder,
+            artifact_files::delete_folder
+        ))
+        // The body of an upload or a new version is the file itself; the request body
+        // limit (1 MiB) is also the largest version, so these routes need no limit of their own.
+        .routes(routes!(
+            artifact_files::list_files,
+            artifact_files::create_file
+        ))
+        .routes(routes!(
+            artifact_files::get_file,
+            artifact_files::update_file,
+            artifact_files::delete_file
+        ))
+        .routes(routes!(artifact_files::versions))
+        .routes(routes!(
+            artifact_files::content,
+            artifact_files::update_content
+        ))
+        .routes(routes!(artifact_files::raw))
+        .routes(routes!(artifact_files::duplicate))
+        .routes(routes!(artifact_files::run_artifacts))
+        .routes(routes!(artifact_files::keep))
         .routes(routes!(graphs::list, graphs::create))
         .routes(routes!(graphs::get, graphs::update, graphs::delete))
         .routes(routes!(graphs::replace_ontology))
@@ -343,6 +373,16 @@ mod tests {
             "/api/v1/approvals/{id}/approve",
             "/api/v1/approvals/{id}/deny",
             "/api/v1/artifacts/{aid}/release",
+            "/api/v1/workspaces/{wid}/artifact-folders",
+            "/api/v1/workspaces/{wid}/artifact-folders/{fid}",
+            "/api/v1/workspaces/{wid}/artifact-files",
+            "/api/v1/artifact-files/{id}",
+            "/api/v1/artifact-files/{id}/versions",
+            "/api/v1/artifact-files/{id}/content",
+            "/api/v1/artifact-files/{id}/raw",
+            "/api/v1/artifact-files/{id}/duplicate",
+            "/api/v1/issues/{iid}/run-artifacts",
+            "/api/v1/issues/{iid}/run-artifacts/{aid}/keep",
             "/api/v1/workspaces/{wid}/alerts",
             "/api/v1/workspaces/{wid}/alerts/export",
             "/api/v1/workspaces/{wid}/audit/export",
@@ -416,9 +456,10 @@ mod tests {
     #[test]
     fn spec_enum_values_match_the_wire_format() {
         use crate::domain::{
-            account, agent, alert, alert_routing, approval, audit, capabilities, cycle, evidence,
-            graph, issue, knowledge, memory, ontology, plan, platform, policy_document, recording,
-            run, search, session, settings, trace, usage, user, workspace,
+            account, agent, alert, alert_routing, approval, artifact_file, audit, capabilities,
+            cycle, evidence, graph, issue, knowledge, memory, ontology, plan, platform,
+            policy_document, recording, run, search, session, settings, trace, usage, user,
+            workspace,
         };
         use serde_json::Value;
 
@@ -489,10 +530,11 @@ mod tests {
                 "DeliveryStatus" => check::<alert_routing::DeliveryStatus>(values),
                 "DeliveryEvent" => check::<alert_routing::DeliveryEvent>(values),
                 "ExportFormat" => check::<handlers::exports::ExportFormat>(values),
+                "ArtifactKind" => check::<artifact_file::ArtifactKind>(values),
                 _ => continue,
             }
             checked += 1;
         }
-        assert_eq!(checked, 50, "every string enum schema is covered");
+        assert_eq!(checked, 51, "every string enum schema is covered");
     }
 }

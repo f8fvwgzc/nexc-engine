@@ -1,14 +1,36 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { IssueEvent } from '@/schemas/issue';
-import type { Artifact } from '@/schemas/run';
+import type { Issue, IssueEvent } from '@/schemas/issue';
+import type { SseEvent } from '@/schemas/realtime';
+import type { Artifact, Run } from '@/schemas/run';
 
-import { RunReport } from './issue-run';
+import { IssueRun, RunReport } from './issue-run';
 
-const { files } = vi.hoisted(() => ({ files: { list: [] as Artifact[] } }));
+const { files, stream } = vi.hoisted(() => ({
+  files: { list: [] as Artifact[] },
+  /** What the run stream hands its events to; each test sends them by hand. */
+  stream: { onEvent: null as ((event: SseEvent) => void) | null },
+}));
+
+vi.mock('@/lib/realtime/sse', () => ({
+  GraphEventStream: class {
+    start = vi.fn();
+    stop = vi.fn();
+    constructor(_graphId: string, opts: { onEvent: (event: SseEvent) => void }) {
+      stream.onEvent = opts.onEvent;
+    }
+  },
+}));
+
+vi.mock('@/features/graphs/api', () => ({
+  graphQuery: (graphId: string) => ({
+    queryKey: ['graphs', 'detail', graphId],
+    queryFn: () => Promise.resolve({ id: graphId, nodes: [] }),
+  }),
+}));
 
 vi.mock('@/features/runs/api', () => ({
   artifactsQuery: (runId: string) => ({
@@ -67,6 +89,7 @@ function renderReport(event: IssueEvent) {
 
 beforeEach(() => {
   files.list = [];
+  stream.onEvent = null;
 });
 
 describe('RunReport', () => {
@@ -94,5 +117,47 @@ describe('RunReport', () => {
   it('has no link once the run is gone', () => {
     renderReport(report({ run_id: null }));
     expect(screen.queryByRole('link', { name: 'Open run' })).not.toBeInTheDocument();
+  });
+});
+
+describe('IssueRun', () => {
+  const issue = {
+    id: '0199bbbb-0000-7000-8000-00000000c001',
+    identifier: 'ENG-7',
+    title: 'Pick the bus',
+    graph_id: '0199bbbb-0000-7000-8000-00000000f001',
+  } as Issue;
+  const fromRuns = ['artifacts', 'runs', issue.id];
+
+  function renderRun() {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidated = vi.spyOn(client, 'invalidateQueries');
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <IssueRun issue={issue} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    return invalidated;
+  }
+
+  it('asks for the issue’s files from runs again when a run makes one', async () => {
+    const invalidated = renderRun();
+    await screen.findByRole('region', { name: 'Agent work' });
+
+    act(() => stream.onEvent?.({ type: 'artifact.created', id: null, data: { artifact: file } }));
+
+    expect(invalidated).toHaveBeenCalledWith({ queryKey: fromRuns });
+  });
+
+  it('asks for them again when a run finishes, so each shows the run’s end', async () => {
+    const invalidated = renderRun();
+    await screen.findByRole('region', { name: 'Agent work' });
+    const run = { id: RUN, status: 'succeeded', node_runs: [] } as unknown as Run;
+
+    act(() => stream.onEvent?.({ type: 'run.finished', id: null, data: { run } }));
+
+    expect(invalidated).toHaveBeenCalledWith({ queryKey: fromRuns });
   });
 });

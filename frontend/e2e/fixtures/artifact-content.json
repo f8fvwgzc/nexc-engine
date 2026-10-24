@@ -1,0 +1,5 @@
+{
+  "file_id": "019a1b20-6e20-7b4f-8c32-6e1d8f4b2a01",
+  "version": 3,
+  "content": "# EU tender data, 2025–2026\n\nWhat the agents collect for **ENG-43**, and where it lands.\n\n## Sources\n\n| Portal | Coverage | Refresh |\n| --- | --- | --- |\n| TED | Every member state | Daily |\n| National portals | DE, FR, NL | Weekly |\n\n## Open questions\n\n- [x] Which CPV codes count as *energy storage*?\n- [ ] Do framework agreements count once or per lot?\n\n```bash\n./scripts/fetch-tenders.sh --since 2025-01-01\n```\n"
+}
