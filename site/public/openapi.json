@@ -271,7 +271,7 @@
           {
             "name": "q",
             "in": "query",
-            "description": "Part of a name or e-mail address.",
+            "description": "Part of a name or e-mail address; without control characters.",
             "required": false,
             "schema": {
               "type": [
@@ -468,7 +468,7 @@
           {
             "name": "q",
             "in": "query",
-            "description": "Part of a name or e-mail address.",
+            "description": "Part of a name or e-mail address; without control characters.",
             "required": false,
             "schema": {
               "type": [
@@ -881,7 +881,7 @@
           {
             "name": "q",
             "in": "query",
-            "description": "Part of a name or e-mail address.",
+            "description": "Part of a name or e-mail address; without control characters.",
             "required": false,
             "schema": {
               "type": [
@@ -6231,7 +6231,7 @@
           {
             "name": "q",
             "in": "query",
-            "description": "Hybrid search query; results then carry a `score`.",
+            "description": "Hybrid search query; results then carry a `score`. Without control characters.",
             "required": false,
             "schema": {
               "type": [
@@ -8862,7 +8862,7 @@
           {
             "name": "q",
             "in": "query",
-            "description": "Part of the name, any case.",
+            "description": "Part of the name, any case; without control characters.",
             "required": false,
             "schema": {
               "type": [
@@ -9236,7 +9236,7 @@
             }
           },
           "409": {
-            "description": "It holds files of issues the caller cannot see",
+            "description": "It holds files of issues the caller cannot see, or crossed another change to it (try again)",
             "content": {
               "application/json": {
                 "schema": {
@@ -10068,7 +10068,7 @@
           {
             "name": "q",
             "in": "query",
-            "description": "Part of the file name.",
+            "description": "Part of the file name; without control characters.",
             "required": false,
             "schema": {
               "type": [
@@ -10924,7 +10924,7 @@
           {
             "name": "q",
             "in": "query",
-            "description": "Matches the title, or the start of the identifier (`ENG-1`).",
+            "description": "Matches the title, or the start of the identifier (`ENG-1`); without control characters.",
             "required": false,
             "schema": {
               "type": [
@@ -11063,6 +11063,7 @@
           {
             "name": "q",
             "in": "query",
+            "description": "What to look for; without control characters.",
             "required": true,
             "schema": {
               "type": "string"
@@ -13155,7 +13156,7 @@
           {
             "name": "q",
             "in": "query",
-            "description": "What to look for: part of a title, a name, an e-mail, or an issue's\nidentifier (`ENG-12`). At least 2 characters.",
+            "description": "What to look for: part of a title, a name, an e-mail, or an issue's\nidentifier (`ENG-12`). At least 2 characters, without control characters.",
             "required": true,
             "schema": {
               "type": "string"

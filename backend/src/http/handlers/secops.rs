@@ -176,11 +176,13 @@ impl SpanQuery {
         self.kind()?;
         for (field, value) in [("tool", &self.tool), ("host", &self.host)] {
             if let Some(value) = value
-                && (value.trim().is_empty() || value.len() > FILTER_MAX)
+                && (value.trim().is_empty()
+                    || value.len() > FILTER_MAX
+                    || value.chars().any(char::is_control))
             {
                 return Err(AppError::field(
                     field,
-                    "must be 1–200 characters when given",
+                    "must be 1–200 characters without control characters when given",
                 ));
             }
         }

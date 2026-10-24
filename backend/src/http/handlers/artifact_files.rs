@@ -29,7 +29,7 @@ use crate::domain::artifact_file::{
 use crate::domain::audit::AuditAction;
 use crate::domain::guardrails::redact_secrets;
 use crate::domain::run::Artifact;
-use crate::domain::validation::{FieldErrors, Validate};
+use crate::domain::validation::{FieldErrors, Validate, search_text};
 use crate::domain::workspace::Workspace;
 use crate::engine::artifacts;
 use crate::http::extract::{AuthUser, Path, Query, ValidatedJson};
@@ -77,11 +77,36 @@ fn sha256_hex(text: &str) -> String {
     hex::encode(Sha256::digest(text.as_bytes()))
 }
 
-fn file_name_taken(err: sqlx::Error) -> AppError {
-    match &err {
-        sqlx::Error::Database(db) if db.is_unique_violation() => {
-            AppError::Conflict("a file with that name is already in this folder".into())
+/// What a failed write of a file of an issue (or of none) tells: its name is
+/// taken by a file of the same issue in that folder (409), or the folder or
+/// the issue went in the meantime (404).
+fn file_not_saved(on_issue: bool) -> impl FnOnce(sqlx::Error) -> AppError {
+    move |err| match &err {
+        sqlx::Error::Database(db) if db.is_unique_violation() => AppError::Conflict(
+            if on_issue {
+                "the issue already has a file with that name in this folder"
+            } else {
+                "a file with that name is already in this folder"
+            }
+            .into(),
+        ),
+        sqlx::Error::Database(db) if db.constraint() == Some("artifact_files_folder_id_fkey") => {
+            AppError::NotFound("folder")
         }
+        sqlx::Error::Database(db) if db.constraint() == Some("artifact_files_issue_id_fkey") => {
+            AppError::NotFound("issue")
+        }
+        _ => err.into(),
+    }
+}
+
+/// A folder delete that Postgres stopped because it crossed another write
+/// on the same rows (a deadlock) is a 409 to try again, not a 500.
+fn crossed(err: sqlx::Error) -> AppError {
+    match &err {
+        sqlx::Error::Database(db) if db.code().as_deref() == Some("40P01") => AppError::Conflict(
+            "something under this folder changed while it was deleted; try again".into(),
+        ),
         _ => err.into(),
     }
 }
@@ -146,16 +171,19 @@ async fn writable(state: &AppState, auth: AuthUser, id: Uuid) -> Result<Artifact
     Ok(file)
 }
 
-/// The first name free in a folder: `name` itself (unless only a copy's
-/// name will do), else its first copy name nothing has taken.
+/// The first name free in a folder for a file of an issue (or of none):
+/// `name` itself (unless only a copy's name will do), else its first copy
+/// name no file of that issue there has taken.
 async fn free_name(
     state: &AppState,
     workspace_id: Uuid,
     folder_id: Option<Uuid>,
+    issue_id: Option<Uuid>,
     name: &str,
     copies_only: bool,
 ) -> Result<String, AppError> {
-    let taken = repo::artifact_files::names_in(&state.db, workspace_id, folder_id).await?;
+    let taken =
+        repo::artifact_files::names_in(&state.db, workspace_id, folder_id, issue_id).await?;
     if !copies_only && !taken.contains(&name.to_lowercase()) {
         return Ok(name.to_owned());
     }
@@ -234,21 +262,19 @@ pub async fn create_folder(
     ValidatedJson(req): ValidatedJson<CreateFolder>,
 ) -> Result<(StatusCode, Json<ArtifactFolder>), AppError> {
     require_writer(&member_of(&state, auth, wid).await?)?;
-    if repo::artifact_files::count_folders(&state.db, wid).await? >= FOLDERS_MAX {
+    let mut tx = state.db.begin().await?;
+    repo::artifact_files::lock_folders(&mut *tx, wid).await?;
+    if repo::artifact_files::count_folders(&mut *tx, wid).await? >= FOLDERS_MAX {
         return Err(AppError::Unprocessable(format!(
             "a workspace has at most {FOLDERS_MAX} folders"
         )));
     }
-    check_folder(&state.db, wid, req.parent_id, "parent_id").await?;
-    let folder = repo::artifact_files::create_folder(
-        &state.db,
-        wid,
-        req.parent_id,
-        req.name.trim(),
-        auth.id,
-    )
-    .await
-    .map_err(folder_name_taken)?;
+    check_folder(&mut *tx, wid, req.parent_id, "parent_id").await?;
+    let folder =
+        repo::artifact_files::create_folder(&mut *tx, wid, req.parent_id, req.name.trim(), auth.id)
+            .await
+            .map_err(folder_name_taken)?;
+    tx.commit().await?;
     Ok((StatusCode::CREATED, Json(folder)))
 }
 
@@ -299,7 +325,7 @@ pub async fn update_folder(
 #[utoipa::path(delete, path = "/workspaces/{wid}/artifact-folders/{fid}", tag = "artifact-files", security(("bearer" = [])),
     params(("wid" = Uuid, Path, description = "Workspace id"), ("fid" = Uuid, Path, description = "Folder id")),
     responses((status = 204, description = "Deleted"), (status = 403, body = Problem), (status = 404, body = Problem),
-        (status = 409, description = "It holds files of issues the caller cannot see", body = Problem)))]
+        (status = 409, description = "It holds files of issues the caller cannot see, or crossed another change to it (try again)", body = Problem)))]
 pub async fn delete_folder(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -311,18 +337,27 @@ pub async fn delete_folder(
     let folder = repo::artifact_files::find_folder(&mut *tx, wid, fid)
         .await
         .or_not_found("folder")?;
-    let hidden = repo::artifact_files::hidden_files_under(&mut *tx, auth.id, fid).await?;
-    if hidden > 0 {
-        return Err(AppError::Conflict(format!(
-            "this folder holds {hidden} file(s) of issues you cannot see; a workspace admin can delete it"
-        )));
+    // A file put or moved into it meanwhile is counted, or waits and then finds it gone; a
+    // team or issue delete that would take or leave its files goes first or waits.
+    repo::artifact_files::lock_under(&mut tx, fid)
+        .await
+        .map_err(crossed)?;
+    // Refused without saying how many: what the caller cannot see is not counted out to them.
+    if repo::artifact_files::hidden_files_under(&mut *tx, auth.id, fid).await? > 0 {
+        return Err(AppError::Conflict(
+            "this folder holds files of issues you cannot see; a workspace admin can delete it"
+                .into(),
+        ));
     }
     for (issue_id, name, version) in repo::artifact_files::issue_files_under(&mut *tx, fid).await? {
         let from = version.to_string();
         repo::issues::record_artifact(&mut *tx, issue_id, auth.id, &name, Some(&from), "deleted")
-            .await?;
+            .await
+            .map_err(crossed)?;
     }
-    repo::artifact_files::delete_folder(&mut *tx, fid).await?;
+    repo::artifact_files::delete_folder(&mut *tx, fid)
+        .await
+        .map_err(crossed)?;
     tx.commit().await?;
     let subject = Subject::Text(&folder.name);
     audit(
@@ -349,7 +384,7 @@ pub struct FileQuery {
     pub root: Option<bool>,
     /// Only the files attached to this issue, in any folder.
     pub issue_id: Option<Uuid>,
-    /// Part of the name, any case.
+    /// Part of the name, any case; without control characters.
     pub q: Option<String>,
 }
 
@@ -470,10 +505,7 @@ pub async fn list_files(
         by_name: folder.is_some() || query.issue_id.is_some(),
         folder,
         issue_id: query.issue_id,
-        q: query
-            .q
-            .map(|q| q.trim().chars().take(200).collect::<String>())
-            .filter(|q| !q.is_empty()),
+        q: search_text("q", query.q, 200)?,
         limit: LIST_MAX,
     };
     Ok(Json(
@@ -532,7 +564,7 @@ async fn store(
     let mut tx = state.db.begin().await?;
     let id = repo::artifact_files::create_file(&mut tx, new)
         .await
-        .map_err(file_name_taken)?;
+        .map_err(file_not_saved(new.issue_id.is_some()))?;
     if let Some(issue) = new.issue_id {
         repo::issues::record_artifact(&mut *tx, issue, auth.id, noted, None, action).await?;
     }
@@ -701,7 +733,7 @@ pub async fn update_file(
     };
     repo::artifact_files::save_file(&state.db, file.id, &name, folder_id, issue_id)
         .await
-        .map_err(file_name_taken)?;
+        .map_err(file_not_saved(issue_id.is_some()))?;
     Ok(Json(readable(&state, auth, id).await?))
 }
 
@@ -722,15 +754,25 @@ pub async fn duplicate(
     let source = writable(&state, auth, id).await?;
     let folder_id = req.folder_id.unwrap_or(source.folder_id);
     check_folder(&state.db, source.workspace_id, folder_id, "folder_id").await?;
+    let issue_id = source.issue.as_ref().map(|i| i.id);
     let name = match &req.name {
         Some(name) => checked_file_name(name)?,
-        None => free_name(&state, source.workspace_id, folder_id, &source.name, true).await?,
+        None => {
+            free_name(
+                &state,
+                source.workspace_id,
+                folder_id,
+                issue_id,
+                &source.name,
+                true,
+            )
+            .await?
+        }
     };
     let content = repo::artifact_files::content(&state.db, source.id, None)
         .await
         .or_not_found("version")?;
     let sha256 = sha256_hex(&content.content);
-    let issue_id = source.issue.as_ref().map(|i| i.id);
     let new = NewFile {
         workspace_id: source.workspace_id,
         folder_id,
@@ -857,7 +899,15 @@ pub async fn keep(
         .await
         .map_err(|_| AppError::NotFound("artifact"))?;
     let text = checked_text(&bytes)?;
-    let name = free_name(&state, issue.workspace_id, req.folder_id, &base, false).await?;
+    let name = free_name(
+        &state,
+        issue.workspace_id,
+        req.folder_id,
+        Some(issue.id),
+        &base,
+        false,
+    )
+    .await?;
     let sha256 = sha256_hex(text);
     let new = NewFile {
         workspace_id: issue.workspace_id,

@@ -15,6 +15,7 @@ use super::workspaces::member_of;
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::search::{self, PER_KIND_MAX, SearchHit, SearchKind};
+use crate::domain::validation::search_text;
 use crate::domain::workspace::{TeamAccess, WorkspaceAction, can};
 use crate::http::extract::{AuthUser, Path, Query};
 use crate::http::problem::Problem;
@@ -26,7 +27,7 @@ use crate::repo::issues::IssueFilter;
 #[serde(deny_unknown_fields)]
 pub struct SearchQuery {
     /// What to look for: part of a title, a name, an e-mail, or an issue's
-    /// identifier (`ENG-12`). At least 2 characters.
+    /// identifier (`ENG-12`). At least 2 characters, without control characters.
     pub q: String,
     /// Most hits of each kind, 1-10 (default 5).
     pub limit: Option<i64>,
@@ -46,7 +47,8 @@ pub async fn search(
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<Vec<SearchHit>>, AppError> {
     let workspace = member_of(&state, auth, wid).await?;
-    let Some(q) = search::query(&query.q) else {
+    let text = search_text("q", Some(query.q), search::QUERY_MAX)?;
+    let Some(q) = text.as_deref().and_then(search::query) else {
         return Ok(Json(Vec::new()));
     };
     let limit = query.limit.unwrap_or(5).clamp(1, PER_KIND_MAX);

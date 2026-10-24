@@ -19,7 +19,7 @@ use crate::domain::issue::{
     PRIORITY_MAX, Project, ProjectStatus, STATE_NAME_MAX, STATES_MAX, StateCategory, TITLE_MAX,
     changes, github_url, is_hex_color,
 };
-use crate::domain::validation::{FieldErrors, Validate, check_text};
+use crate::domain::validation::{FieldErrors, Validate, check_text, search_text};
 use crate::domain::workspace::TeamAccess;
 use crate::engine::editor;
 use crate::http::extract::{AuthUser, Path, Query, ValidatedJson};
@@ -183,7 +183,7 @@ pub struct IssueQuery {
     pub creator_id: Option<Uuid>,
     /// `true` leaves out completed and canceled issues.
     pub open: Option<bool>,
-    /// Matches the title, or the start of the identifier (`ENG-1`).
+    /// Matches the title, or the start of the identifier (`ENG-1`); without control characters.
     pub q: Option<String>,
     /// 1-500, default 200.
     pub limit: Option<i64>,
@@ -308,10 +308,7 @@ pub async fn list(
         cycle_id: query.cycle_id,
         creator_id: query.creator_id,
         open_only: query.open.unwrap_or(false),
-        q: query
-            .q
-            .map(|q| q.trim().chars().take(200).collect::<String>())
-            .filter(|q| !q.is_empty()),
+        q: search_text("q", query.q, 200)?,
         limit: query.limit.unwrap_or(200).clamp(1, 500),
     };
     Ok(Json(
