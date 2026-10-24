@@ -1,9 +1,10 @@
 /**
  * What the pages do over time, against the mocked API: a list that follows a live run, a page
- * that recovers from a failed load, data kept on screen when a background refetch fails, a
- * filter that matches nothing, the unread count in the tablet's icon rail, and the workspace
- * map's embedded onto-intelli UI: framed under the console's own Content-Security-Policy, signed
- * in, and its session renewed by its expiry.
+ * that recovers from a failed load, data kept on screen when a background refetch fails, an
+ * issue that opens on its own page (and from an old `?issue=` link), the issue board's full
+ * height, per-column `+` and folded columns, a filter that matches nothing, the unread count in
+ * the tablet's icon rail, and the workspace map's embedded onto-intelli UI: framed under the
+ * console's own Content-Security-Policy, signed in, and its session renewed by its expiry.
  */
 import { expect, test, type Page } from '@playwright/test';
 
@@ -110,6 +111,64 @@ test.describe('a background refetch that fails', () => {
     await expect(page.getByText('Couldn’t load the project')).toHaveCount(0);
     await expect(page.getByRole('heading', { level: 1 })).toHaveText(name);
   });
+});
+
+test.describe('an issue', () => {
+  const issue = fixtures.issues[0];
+  if (!issue) throw new Error('the fixtures need an issue');
+
+  test('opens on its own page and Escape goes back to the list', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await openRoute(page, route('issues'), { mode: 'full', theme: 'light' });
+
+    await page.locator('a[data-row-link]', { hasText: issue.title }).first().click();
+    await expect(page).toHaveURL(new RegExp(`/app/issues/${issue.id}$`));
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText(
+      `${issue.identifier} ${issue.title}`,
+    );
+    await expect(page.getByRole('textbox', { name: 'Title' })).toHaveValue(issue.title);
+    await expect(page.getByRole('complementary', { name: 'Properties' })).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await expect(page).toHaveURL(/\/app\/issues$/);
+    await expect(page.getByText(issue.title).first()).toBeVisible();
+  });
+
+  test('opened from an old link (`?issue=`) lands on its page', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await openRoute(
+      page,
+      { name: 'old-issue-link', path: `/app/issues?issue=${issue.id}`, persona: 'member' },
+      { mode: 'full', theme: 'light' },
+    );
+    await expect(page).toHaveURL(new RegExp(`/app/issues/${issue.id}$`));
+    await expect(page.getByRole('textbox', { name: 'Title' })).toHaveValue(issue.title);
+  });
+});
+
+test('the issue board fills the page, files into a column and folds one away', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await openRoute(page, route('issues'), { mode: 'full', theme: 'light' });
+  await page.getByRole('button', { name: 'Board view' }).click();
+
+  // The columns reach down to the page's bottom gutter, whatever they hold.
+  const backlog = page.getByRole('region', { name: 'Backlog' });
+  const box = await backlog.boundingBox();
+  expect((box?.y ?? 0) + (box?.height ?? 0)).toBeGreaterThan(800 - 48);
+
+  await page.getByRole('button', { name: 'New issue in Todo' }).click();
+  const dialog = page.getByRole('dialog', { name: 'New issue' });
+  await expect(dialog.getByRole('combobox', { name: 'Status' })).toHaveText(/Todo/);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+
+  await page.getByRole('button', { name: 'Fold Backlog' }).click();
+  await expect(backlog.getByRole('button', { name: /^Unfold Backlog/ })).toBeVisible();
+  // Remembered for the team.
+  await page.reload();
+  await expect(backlog.getByRole('button', { name: /^Unfold Backlog/ })).toBeVisible();
+  await backlog.getByRole('button', { name: /^Unfold Backlog/ }).click();
+  await expect(page.getByRole('button', { name: 'Fold Backlog' })).toBeVisible();
 });
 
 test('Sessions tells a filter that matches nothing from an empty workspace', async ({ page }) => {

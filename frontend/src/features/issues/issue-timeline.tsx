@@ -1,41 +1,29 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { ArrowDownUpIcon, ChevronRightIcon, ListFilterIcon } from 'lucide-react';
+import { useId, useState } from 'react';
 
 import { PersonGlyph } from '@/components/custom-ui/issue-glyphs';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { errorMessage } from '@/lib/api/errors';
 import { formatRelative } from '@/lib/format';
 import { qk } from '@/lib/query-keys';
+import { cn } from '@/lib/utils';
 import type { Issue, IssueEvent } from '@/schemas/issue';
 import { useAuthStore } from '@/stores/auth-store';
 
+import { ACTIVITY_SHOW_OPTIONS, changeText, showsEvent, useActivityPrefs } from './activity';
 import { createComment, deleteComment, issueEventsQuery, updateComment } from './api';
 import { RunReport } from './issue-run';
-
-/** What a change entry says after the actor's name. */
-function changeText(event: IssueEvent): string {
-  const { from, to } = event;
-  switch (event.kind) {
-    case 'state':
-      return `moved this from ${from ?? 'no state'} to ${to ?? 'no state'}`;
-    case 'priority':
-      return `set priority to ${to ?? 'none'}`;
-    case 'assignee':
-      if (!to) return `unassigned ${from ?? 'the assignee'}`;
-      return `assigned this to ${to}`;
-    case 'title':
-      return `renamed this to “${to ?? ''}”`;
-    case 'due':
-      if (!to) return 'removed the due date';
-      return from ? `moved the due date from ${from} to ${to}` : `set the due date to ${to}`;
-    case 'comment':
-      return 'commented';
-    case 'run':
-      return to === 'succeeded' ? 'finished the work' : 'ran the work';
-  }
-}
 
 function Comment({
   event,
@@ -137,18 +125,25 @@ function Comment({
 }
 
 /**
- * The comments on an issue, the history of its state, priority, assignee and title, and what
- * its runs reported, oldest first, with a box to add a comment.
+ * The comments on an issue, the history of its state, priority, assignee, title, GitHub link and
+ * files, and what its runs reported, with a box to add a comment. The header folds it away and
+ * picks what it shows and in which order; the choice is the member's, the same on every issue.
  */
 export function IssueTimeline({ issue, canModerate }: { issue: Issue; canModerate: boolean }) {
   const queryClient = useQueryClient();
   const me = useAuthStore((s) => s.user?.id);
+  const bodyId = useId();
   const [body, setBody] = useState('');
+  const [prefs, setPrefs] = useActivityPrefs();
   const { data: events, isPending, error } = useQuery(issueEventsQuery(issue.id));
   const reload = () => void queryClient.invalidateQueries({ queryKey: qk.issues.events(issue.id) });
   // A change nobody made in the same moment a run reported is the run's: it moved the issue.
   const reported = new Set((events ?? []).filter((e) => e.kind === 'run').map((e) => e.created_at));
   const byAgents = (event: IssueEvent) => event.actor === null && reported.has(event.created_at);
+  const shown = (events ?? []).filter((event) => showsEvent(event, prefs.show));
+  // The server sends the oldest first.
+  const ordered = prefs.order === 'desc' ? [...shown].reverse() : shown;
+  const showLabel = ACTIVITY_SHOW_OPTIONS.find((o) => o.value === prefs.show)?.label;
   const add = useMutation({
     mutationFn: () => createComment(issue.id, body.trim()),
     meta: { errorToast: false },
@@ -158,82 +153,157 @@ export function IssueTimeline({ issue, canModerate }: { issue: Issue; canModerat
     },
   });
 
+  const composer = (
+    <form
+      className="space-y-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (body.trim()) add.mutate();
+      }}
+    >
+      <Textarea
+        rows={2}
+        value={body}
+        placeholder="Leave a comment…"
+        aria-label="New comment"
+        onChange={(e) => setBody(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && body.trim()) add.mutate();
+        }}
+      />
+      {add.error && (
+        <p role="alert" className="text-sm text-destructive">
+          {errorMessage(add.error)}
+        </p>
+      )}
+      <div className="flex justify-end">
+        <Button type="submit" size="sm" disabled={!body.trim() || add.isPending}>
+          Comment
+        </Button>
+      </div>
+    </form>
+  );
+
   return (
     <section aria-label="Activity" className="space-y-3 border-t pt-4">
-      <h3 className="text-[13px] font-medium text-muted-foreground">Activity</h3>
-      {isPending ? (
-        <div className="space-y-2">
-          <Skeleton className="h-4 w-2/3" />
-          <Skeleton className="h-14 w-full" />
-        </div>
-      ) : error ? (
-        <p role="alert" className="text-sm text-destructive">
-          {errorMessage(error)}
-        </p>
-      ) : (
-        <ol className="space-y-2">
-          {events.length === 0 && (
-            <li className="text-[13px] text-muted-foreground">
-              Nothing yet. Changes to this issue and comments show up here.
-            </li>
-          )}
-          {events.map((event) =>
-            event.kind === 'run' ? (
-              <RunReport key={event.id} event={event} />
-            ) : event.kind === 'comment' ? (
-              <Comment
-                key={event.id}
-                event={event}
-                issueId={issue.id}
-                own={event.actor?.user_id === me}
-                canDelete={event.actor?.user_id === me || canModerate}
-                onChanged={reload}
-              />
-            ) : (
-              <li key={event.id} className="flex items-center gap-2 px-3 text-[13px]">
-                <PersonGlyph name={event.actor?.name ?? (byAgents(event) ? 'Agents' : undefined)} />
-                <span className="min-w-0 truncate text-muted-foreground">
-                  <span className="font-medium text-foreground">
-                    {event.actor?.name ?? (byAgents(event) ? 'Agents' : 'Someone who left')}
-                  </span>{' '}
-                  {changeText(event)}
-                </span>
-                <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-                  {formatRelative(event.created_at)}
-                </span>
-              </li>
-            ),
-          )}
-        </ol>
-      )}
-      <form
-        className="space-y-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (body.trim()) add.mutate();
-        }}
-      >
-        <Textarea
-          rows={2}
-          value={body}
-          placeholder="Leave a comment…"
-          aria-label="New comment"
-          onChange={(e) => setBody(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && body.trim()) add.mutate();
-          }}
-        />
-        {add.error && (
-          <p role="alert" className="text-sm text-destructive">
-            {errorMessage(add.error)}
+      <div className="flex items-center gap-1">
+        <h3 className="min-w-0 flex-1">
+          <button
+            type="button"
+            aria-expanded={!prefs.collapsed}
+            aria-controls={bodyId}
+            onClick={() => setPrefs({ collapsed: !prefs.collapsed })}
+            className="flex items-center gap-1.5 rounded-sm text-[13px] font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+          >
+            <ChevronRightIcon
+              aria-hidden
+              className={cn('size-3.5 transition-transform', !prefs.collapsed && 'rotate-90')}
+            />
+            Activity
+            {events && <span className="text-xs font-normal tabular-nums">{shown.length}</span>}
+          </button>
+        </h3>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label={`Show: ${showLabel}`}
+              className="h-6 gap-1.5 px-2 text-xs text-muted-foreground"
+            >
+              <ListFilterIcon className="size-3.5" />
+              {showLabel}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-40">
+            <DropdownMenuLabel>Show</DropdownMenuLabel>
+            <DropdownMenuRadioGroup
+              value={prefs.show}
+              onValueChange={(value) => {
+                const match = ACTIVITY_SHOW_OPTIONS.find((o) => o.value === value);
+                if (match) setPrefs({ show: match.value });
+              }}
+            >
+              {ACTIVITY_SHOW_OPTIONS.map((option) => (
+                <DropdownMenuRadioItem key={option.value} value={option.value}>
+                  {option.label}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <Button
+          variant="ghost"
+          size="sm"
+          title={prefs.order === 'asc' ? 'Show the newest first' : 'Show the oldest first'}
+          className="h-6 gap-1.5 px-2 text-xs text-muted-foreground"
+          onClick={() => setPrefs({ order: prefs.order === 'asc' ? 'desc' : 'asc' })}
+        >
+          <ArrowDownUpIcon className="size-3.5" />
+          {prefs.order === 'asc' ? 'Oldest first' : 'Newest first'}
+        </Button>
+      </div>
+      {prefs.collapsed ? (
+        events && (
+          <p id={bodyId} className="text-[13px] text-muted-foreground">
+            {shown.length} {shown.length === 1 ? 'entry' : 'entries'} hidden
           </p>
-        )}
-        <div className="flex justify-end">
-          <Button type="submit" size="sm" disabled={!body.trim() || add.isPending}>
-            Comment
-          </Button>
+        )
+      ) : (
+        <div id={bodyId} className="space-y-3">
+          {prefs.order === 'desc' && composer}
+          {isPending ? (
+            <div className="space-y-2">
+              <Skeleton className="h-4 w-2/3" />
+              <Skeleton className="h-14 w-full" />
+            </div>
+          ) : error ? (
+            <p role="alert" className="text-sm text-destructive">
+              {errorMessage(error)}
+            </p>
+          ) : (
+            <ol className="space-y-2">
+              {ordered.length === 0 && (
+                <li className="text-[13px] text-muted-foreground">
+                  {events.length === 0
+                    ? 'Nothing yet. Changes to this issue and comments show up here.'
+                    : 'Nothing of this kind yet. Pick All activity to see every entry.'}
+                </li>
+              )}
+              {ordered.map((event) =>
+                event.kind === 'run' ? (
+                  <RunReport key={event.id} event={event} />
+                ) : event.kind === 'comment' ? (
+                  <Comment
+                    key={event.id}
+                    event={event}
+                    issueId={issue.id}
+                    own={event.actor?.user_id === me}
+                    canDelete={event.actor?.user_id === me || canModerate}
+                    onChanged={reload}
+                  />
+                ) : (
+                  <li key={event.id} className="flex items-center gap-2 px-3 text-[13px]">
+                    <PersonGlyph
+                      name={event.actor?.name ?? (byAgents(event) ? 'Agents' : undefined)}
+                    />
+                    <span className="min-w-0 truncate text-muted-foreground">
+                      <span className="font-medium text-foreground">
+                        {event.actor?.name ?? (byAgents(event) ? 'Agents' : 'Someone who left')}
+                      </span>{' '}
+                      {changeText(event)}
+                    </span>
+                    <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                      {formatRelative(event.created_at)}
+                    </span>
+                  </li>
+                ),
+              )}
+            </ol>
+          )}
+          {prefs.order === 'asc' && composer}
         </div>
-      </form>
+      )}
     </section>
   );
 }

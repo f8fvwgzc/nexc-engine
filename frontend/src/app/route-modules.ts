@@ -14,6 +14,7 @@ export const routeModules = {
   sessions: () => import('@/pages/sessions-page'),
   session: () => import('@/pages/session-page'),
   issues: () => import('@/pages/issues-page'),
+  issue: () => import('@/pages/issue-page'),
   myIssues: () => import('@/pages/my-issues-page'),
   inbox: () => import('@/pages/inbox-page'),
   conversations: () => import('@/pages/conversations-page'),

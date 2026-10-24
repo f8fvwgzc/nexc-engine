@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/breadcrumb';
 import { Skeleton } from '@/components/ui/skeleton';
 import { graphQuery } from '@/features/graphs/api';
+import { issueQuery } from '@/features/issues/api';
 
 import { isRouteHandle, type Crumb } from './route-handle';
 
@@ -33,6 +34,23 @@ function GraphCrumb() {
   );
 }
 
+function IssueCrumb() {
+  const { issueId = '' } = useParams();
+  // Reads the cache the issue page fills; never triggers its own fetch.
+  const { data: identifier, status } = useQuery({
+    ...issueQuery(issueId),
+    enabled: false,
+    select: (i) => i.identifier,
+  });
+  if (identifier) return <span className="font-mono">{identifier}</span>;
+  if (status === 'error') return <>Issue</>;
+  return (
+    <Skeleton className="h-4 w-16">
+      <span className="sr-only">Loading the issue’s identifier</span>
+    </Skeleton>
+  );
+}
+
 function RunCrumb() {
   const { runId = '' } = useParams();
   return <span className="font-mono">Run {runId.slice(0, 8)}</span>;
@@ -40,7 +58,9 @@ function RunCrumb() {
 
 function CrumbLabel({ crumb }: { crumb: Crumb }) {
   if ('label' in crumb) return <>{crumb.label}</>;
-  return crumb.dynamic === 'graph' ? <GraphCrumb /> : <RunCrumb />;
+  if (crumb.dynamic === 'graph') return <GraphCrumb />;
+  if (crumb.dynamic === 'issue') return <IssueCrumb />;
+  return <RunCrumb />;
 }
 
 export function Breadcrumbs() {

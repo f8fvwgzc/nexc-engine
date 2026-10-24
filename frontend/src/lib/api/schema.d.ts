@@ -4549,6 +4549,8 @@ export interface components {
              * @description The day the issue is due (`YYYY-MM-DD`).
              */
             due_date?: string | null;
+            /** @description A GitHub issue or pull request URL to link the issue to. */
+            github_url?: string | null;
             /** @description Labels of the workspace to put on the issue (at most 20). */
             label_ids?: string[];
             /**
@@ -5389,6 +5391,8 @@ export interface components {
              * @description The day the issue is due, if it has one.
              */
             due_date: string | null;
+            /** @description The GitHub issue or pull request the issue is linked to. */
+            github_url: string | null;
             /**
              * Format: uuid
              * @description The graph that plans and executes the issue, if one was created.
@@ -5451,7 +5455,7 @@ export interface components {
          * @description What an entry of an issue's timeline records.
          * @enum {string}
          */
-        IssueEventKind: "comment" | "state" | "priority" | "assignee" | "title" | "due" | "run";
+        IssueEventKind: "comment" | "state" | "priority" | "assignee" | "title" | "due" | "run" | "github" | "artifact";
         /** @description Someone an issue refers to. */
         IssuePerson: {
             name: string;
@@ -7581,6 +7585,8 @@ export interface components {
              * @description The day the issue is due (`YYYY-MM-DD`); `null` removes it.
              */
             due_date?: string | null;
+            /** @description A GitHub issue or pull request URL; `null` or `""` removes the link. */
+            github_url?: string | null;
             /** @description Replaces the issue's labels. */
             label_ids?: string[] | null;
             /**

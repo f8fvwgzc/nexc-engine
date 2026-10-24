@@ -42,6 +42,7 @@
     "graph_id": "d4803e17-ed18-73d4-8de0-582d5192eca3",
     "creator_id": "d6b5915c-4605-7bcb-805f-46f6433df656",
     "due_date": "2026-10-17",
+    "github_url": "https://github.com/acme/platform/issues/198",
     "created_at": "2026-09-14T12:00:00Z",
     "updated_at": "2026-10-14T11:45:00Z",
     "completed_at": null
@@ -94,6 +95,7 @@
     "graph_id": null,
     "creator_id": "673aeeb0-8cfb-700b-81e5-e3c60b5ba318",
     "due_date": "2026-10-13",
+    "github_url": null,
     "created_at": "2026-09-15T12:00:00Z",
     "updated_at": "2026-10-14T10:15:00Z",
     "completed_at": null
@@ -141,6 +143,7 @@
     "graph_id": null,
     "creator_id": "85f2ef98-7b76-74c3-8c08-1acef84e0a73",
     "due_date": "2026-10-15",
+    "github_url": "https://github.com/acme/platform/issues/212",
     "created_at": "2026-09-16T12:00:00Z",
     "updated_at": "2026-10-14T08:45:00Z",
     "completed_at": null
@@ -181,6 +184,7 @@
     "graph_id": null,
     "creator_id": "492ab00b-be71-7b09-8c80-c473346ab211",
     "due_date": null,
+    "github_url": "https://github.com/acme/agent-runtime/pull/87",
     "created_at": "2026-09-17T12:00:00Z",
     "updated_at": "2026-10-14T07:15:00Z",
     "completed_at": null
@@ -232,6 +236,7 @@
     "graph_id": null,
     "creator_id": "d6b5915c-4605-7bcb-805f-46f6433df656",
     "due_date": "2026-10-21",
+    "github_url": null,
     "created_at": "2026-09-18T12:00:00Z",
     "updated_at": "2026-10-14T05:45:00Z",
     "completed_at": null
@@ -284,6 +289,7 @@
     "graph_id": null,
     "creator_id": "673aeeb0-8cfb-700b-81e5-e3c60b5ba318",
     "due_date": "2026-10-26",
+    "github_url": null,
     "created_at": "2026-09-19T12:00:00Z",
     "updated_at": "2026-10-14T04:15:00Z",
     "completed_at": null
@@ -332,6 +338,7 @@
     "graph_id": null,
     "creator_id": "85f2ef98-7b76-74c3-8c08-1acef84e0a73",
     "due_date": null,
+    "github_url": null,
     "created_at": "2026-09-20T12:00:00Z",
     "updated_at": "2026-10-14T02:45:00Z",
     "completed_at": "2026-10-13T12:00:00Z"
@@ -372,6 +379,7 @@
     "graph_id": null,
     "creator_id": "492ab00b-be71-7b09-8c80-c473346ab211",
     "due_date": null,
+    "github_url": null,
     "created_at": "2026-09-21T12:00:00Z",
     "updated_at": "2026-10-14T01:15:00Z",
     "completed_at": null
@@ -413,6 +421,7 @@
     "graph_id": null,
     "creator_id": "d6b5915c-4605-7bcb-805f-46f6433df656",
     "due_date": "2026-10-14",
+    "github_url": null,
     "created_at": "2026-09-22T12:00:00Z",
     "updated_at": "2026-10-13T23:45:00Z",
     "completed_at": null
@@ -456,6 +465,7 @@
     "graph_id": null,
     "creator_id": "673aeeb0-8cfb-700b-81e5-e3c60b5ba318",
     "due_date": null,
+    "github_url": null,
     "created_at": "2026-09-23T12:00:00Z",
     "updated_at": "2026-10-13T22:15:00Z",
     "completed_at": null
@@ -503,6 +513,7 @@
     "graph_id": null,
     "creator_id": "85f2ef98-7b76-74c3-8c08-1acef84e0a73",
     "due_date": "2026-10-11",
+    "github_url": null,
     "created_at": "2026-09-24T12:00:00Z",
     "updated_at": "2026-10-13T20:45:00Z",
     "completed_at": "2026-10-13T12:00:00Z"
@@ -555,6 +566,7 @@
     "graph_id": null,
     "creator_id": "492ab00b-be71-7b09-8c80-c473346ab211",
     "due_date": "2026-11-03",
+    "github_url": null,
     "created_at": "2026-09-25T12:00:00Z",
     "updated_at": "2026-10-13T19:15:00Z",
     "completed_at": null

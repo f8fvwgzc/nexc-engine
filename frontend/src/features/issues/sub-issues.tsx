@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PlusIcon } from 'lucide-react';
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 
 import { PersonGlyph, StateGlyph } from '@/components/custom-ui/issue-glyphs';
 import { Button } from '@/components/ui/button';
@@ -12,20 +13,13 @@ import type { Workspace } from '@/schemas/workspace';
 
 import { createIssue, issuesQuery } from './api';
 import { SubIssueRun } from './issue-run';
+import { issuePath } from './links';
 
 /**
  * The parts an issue is split into, with how many are closed, where the agents' latest run of
  * each stands, and a field to add one. A new part is filed with the same team as the issue.
  */
-export function SubIssues({
-  workspace,
-  issue,
-  onOpen,
-}: {
-  workspace: Workspace;
-  issue: Issue;
-  onOpen: (issueId: string) => void;
-}) {
+export function SubIssues({ workspace, issue }: { workspace: Workspace; issue: Issue }) {
   const queryClient = useQueryClient();
   const [title, setTitle] = useState('');
   const [adding, setAdding] = useState(false);
@@ -71,9 +65,8 @@ export function SubIssues({
         <ul className="divide-y rounded-md border">
           {parts.map((part) => (
             <li key={part.id}>
-              <button
-                type="button"
-                onClick={() => onOpen(part.id)}
+              <Link
+                to={issuePath(part.id)}
                 className="flex h-8 w-full items-center gap-2.5 px-3 text-left text-[13px] outline-none hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
               >
                 <StateGlyph category={part.state.category} color={part.state.color} />
@@ -83,7 +76,7 @@ export function SubIssues({
                 <span className="min-w-0 flex-1 truncate">{part.title}</span>
                 {part.graph_id && <SubIssueRun graphId={part.graph_id} />}
                 <PersonGlyph name={part.assignee?.name} />
-              </button>
+              </Link>
             </li>
           ))}
         </ul>

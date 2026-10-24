@@ -103,6 +103,13 @@ export const routes: RouteObject[] = [
               { path: 'inbox', ...page(routeModules.inbox, crumbs({ label: 'Inbox' })) },
               { path: 'issues', ...page(routeModules.issues, crumbs({ label: 'Issues' })) },
               {
+                path: 'issues/:issueId',
+                ...page(
+                  routeModules.issue,
+                  crumbs({ label: 'Issues', to: '/app/issues' }, { dynamic: 'issue' }),
+                ),
+              },
+              {
                 path: 'my-issues',
                 ...page(routeModules.myIssues, crumbs({ label: 'My issues' })),
               },
