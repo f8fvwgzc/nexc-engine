@@ -13,7 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { isTypingTarget } from '@/features/command/shortcuts';
 import { issueQuery } from '@/features/issues/api';
 import { IssueDetail } from '@/features/issues/issue-detail';
-import { useLeaveIssue } from '@/features/issues/links';
+import { cameFromApp, useLeaveIssue } from '@/features/issues/links';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { ApiError } from '@/lib/api/errors';
 import type { Issue } from '@/schemas/issue';
@@ -61,7 +61,7 @@ function IssueSkeleton() {
 function IssueView({ issueId }: { issueId: string }) {
   const queryClient = useQueryClient();
   const { current, all } = useCurrentWorkspace();
-  const { cameFromApp, leave } = useLeaveIssue();
+  const leave = useLeaveIssue();
   const {
     data: issue,
     error,
@@ -75,9 +75,9 @@ function IssueView({ issueId }: { issueId: string }) {
   });
 
   // Escape goes back to the list the issue was opened from, unless something else takes it (a
-  // menu, a dialog, a field being typed in).
+  // menu, a dialog, a field being typed in). Opened straight from a link, there is none.
   const onKey = useEffectEvent((e: KeyboardEvent) => {
-    if (e.key !== 'Escape' || e.defaultPrevented || !cameFromApp || isTypingTarget(e.target)) {
+    if (e.key !== 'Escape' || e.defaultPrevented || isTypingTarget(e.target) || !cameFromApp()) {
       return;
     }
     leave();

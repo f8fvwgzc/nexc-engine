@@ -19,7 +19,7 @@ import type { Workspace } from '@/schemas/workspace';
 import { statesQuery, updateIssue } from './api';
 import { useFoldedColumns } from './board-prefs';
 import { DueChip } from './due-chip';
-import { issuePath } from './links';
+import { issueLinkTitle, issuePath } from './links';
 
 /**
  * One column per state of the team's workflow, as tall as the space the board is given: each
@@ -150,7 +150,8 @@ export function IssueBoard({
 
 /**
  * One issue on the board. The whole card opens the issue (its title is the link, stretched over
- * the card) and drags it; the GitHub chip opens GitHub instead.
+ * the card, and its tooltip names what the glyphs under it show) and drags it; the GitHub chip
+ * opens GitHub instead.
  */
 function BoardCard({ issue }: { issue: Issue }) {
   return (
@@ -172,6 +173,7 @@ function BoardCard({ issue }: { issue: Issue }) {
         to={issuePath(issue.id)}
         draggable={false}
         data-card-link
+        title={issueLinkTitle(issue)}
         className="line-clamp-2 text-[13px] outline-none after:absolute after:inset-0 after:rounded-lg"
       >
         <span className="sr-only">{issue.identifier} </span>

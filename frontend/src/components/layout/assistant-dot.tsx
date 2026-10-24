@@ -16,6 +16,7 @@ import { IconButton } from '@/components/custom-ui/icon-button';
 import { Markdown } from '@/components/custom-ui/markdown';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
+import { issuePath } from '@/features/issues/links';
 import { askAssistant, conversationQuery } from '@/features/workspaces/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { errorMessage } from '@/lib/api/errors';
@@ -297,7 +298,7 @@ function AssistantPanel({ current }: { current: Workspace }) {
                             {turn.outcome.created.map((issue) => (
                               <Link
                                 key={issue.id}
-                                to="/app/issues"
+                                to={issuePath(issue.id)}
                                 className="flex items-center gap-2 rounded-lg border px-2.5 py-1.5 hover:bg-muted/50"
                               >
                                 <span className="font-mono text-xs text-muted-foreground">

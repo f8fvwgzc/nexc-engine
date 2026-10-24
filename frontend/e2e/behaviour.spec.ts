@@ -134,15 +134,31 @@ test.describe('an issue', () => {
     await expect(page.getByText(issue.title).first()).toBeVisible();
   });
 
-  test('opened from an old link (`?issue=`) lands on its page', async ({ page }) => {
+  test('opened from an old link (`?issue=`) lands on its page, with no list to go back to', async ({
+    page,
+  }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await openRoute(
       page,
       { name: 'old-issue-link', path: `/app/issues?issue=${issue.id}`, persona: 'member' },
       { mode: 'full', theme: 'light' },
     );
-    await expect(page).toHaveURL(new RegExp(`/app/issues/${issue.id}$`));
+    const here = new RegExp(`/app/issues/${issue.id}$`);
+    await expect(page).toHaveURL(here);
     await expect(page.getByRole('textbox', { name: 'Title' })).toHaveValue(issue.title);
+
+    // The redirect is the visit's first page: Escape stays (going back would leave the app).
+    await page.keyboard.press('Escape');
+    await expect(page).toHaveURL(here);
+
+    // Deleted, it goes to the issues list.
+    await page.route(
+      (url) => url.pathname === `${API}/issues/${issue.id}`,
+      (r) => (r.request().method() === 'DELETE' ? r.fulfill({ status: 204 }) : r.fallback()),
+    );
+    await page.getByRole('button', { name: `Delete ${issue.identifier}` }).click();
+    await page.getByRole('button', { name: 'Delete issue' }).click();
+    await expect(page).toHaveURL(/\/app\/issues$/);
   });
 });
 

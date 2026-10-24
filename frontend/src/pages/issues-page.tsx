@@ -33,7 +33,7 @@ import { Switch } from '@/components/ui/switch';
 import { cyclesQuery, issuesQuery, labelsQuery } from '@/features/issues/api';
 import { DueChip } from '@/features/issues/due-chip';
 import { IssueBoard } from '@/features/issues/issue-board';
-import { issuePath, legacyIssuePath } from '@/features/issues/links';
+import { issueLinkTitle, issuePath, legacyIssuePath } from '@/features/issues/links';
 import { NewIssueDialog } from '@/features/issues/new-issue-dialog';
 import { teamsQuery } from '@/features/workspaces/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
@@ -68,7 +68,8 @@ const CATEGORY_ORDER: StateCategory[] = [
 
 /**
  * One issue in the list. The whole row opens the issue's page (its title is the link, stretched
- * over the row); the GitHub chip opens GitHub instead.
+ * over the row, and its tooltip names what the glyphs under it show); the GitHub chip opens
+ * GitHub instead.
  */
 function IssueRow({ issue }: { issue: Issue }) {
   return (
@@ -81,7 +82,7 @@ function IssueRow({ issue }: { issue: Issue }) {
       <Link
         to={issuePath(issue.id)}
         data-row-link
-        title={`${issue.identifier} ${issue.title}`}
+        title={issueLinkTitle(issue)}
         className="min-w-0 flex-1 truncate outline-none after:absolute after:inset-0 focus-visible:after:ring-2 focus-visible:after:ring-ring/50 focus-visible:after:ring-inset"
       >
         <span className="sr-only">{issue.identifier} </span>

@@ -187,7 +187,7 @@ export function IssueTimeline({ issue, canModerate }: { issue: Issue; canModerat
   return (
     <section aria-label="Activity" className="space-y-3 border-t pt-4">
       <div className="flex items-center gap-1">
-        <h3 className="min-w-0 flex-1">
+        <h2 className="min-w-0 flex-1">
           <button
             type="button"
             aria-expanded={!prefs.collapsed}
@@ -202,7 +202,7 @@ export function IssueTimeline({ issue, canModerate }: { issue: Issue; canModerat
             Activity
             {events && <span className="text-xs font-normal tabular-nums">{shown.length}</span>}
           </button>
-        </h3>
+        </h2>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button

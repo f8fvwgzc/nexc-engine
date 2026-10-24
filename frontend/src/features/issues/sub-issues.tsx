@@ -43,7 +43,7 @@ export function SubIssues({ workspace, issue }: { workspace: Workspace; issue: I
   return (
     <section aria-label="Sub-issues" className="space-y-2 border-t pt-4">
       <div className="flex items-center gap-2">
-        <h3 className="text-[13px] font-medium text-muted-foreground">Sub-issues</h3>
+        <h2 className="text-[13px] font-medium text-muted-foreground">Sub-issues</h2>
         {total > 0 && (
           <span className="text-xs text-muted-foreground tabular-nums">
             {closed}/{total} closed

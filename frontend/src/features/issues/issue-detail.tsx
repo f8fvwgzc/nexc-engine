@@ -59,18 +59,26 @@ function GithubLink({ issue }: { issue: Issue }) {
       void queryClient.invalidateQueries({ queryKey: qk.issues.all });
     },
   });
+  const failure = link.error && (
+    <p role="alert" className="text-xs text-destructive">
+      {githubUrlError(link.error)}
+    </p>
+  );
   if (issue.github_url) {
     return (
-      <div className="flex min-w-0 items-center gap-1">
-        <GithubChip url={issue.github_url} form="repo" className="min-w-0 shrink" />
-        <IconButton
-          label="Remove the GitHub link"
-          className="size-6 text-muted-foreground"
-          disabled={link.isPending}
-          onClick={() => link.mutate(null)}
-        >
-          <XIcon />
-        </IconButton>
+      <div className="w-full min-w-0 space-y-1">
+        <div className="flex min-w-0 items-center gap-1">
+          <GithubChip url={issue.github_url} form="repo" className="min-w-0 shrink" />
+          <IconButton
+            label="Remove the GitHub link"
+            className="size-6 text-muted-foreground"
+            disabled={link.isPending}
+            onClick={() => link.mutate(null)}
+          >
+            <XIcon />
+          </IconButton>
+        </div>
+        {failure}
       </div>
     );
   }
@@ -101,13 +109,48 @@ function GithubLink({ issue }: { issue: Issue }) {
           }
         }}
       />
-      {link.error && (
-        <p role="alert" className="text-xs text-destructive">
-          {githubUrlError(link.error)}
-        </p>
-      )}
+      {failure}
     </div>
   );
+}
+
+/**
+ * The title or the description, edited in place. The field shows the issue as last read until
+ * the member types; what they type is kept until it is saved, when the field is left. Leaving
+ * sends that one field, and only if it differs from what the field showed when they began typing.
+ * So a field that is only focused and left sends nothing, and a newer copy of the issue (a
+ * teammate's or an agent's change, or the fresh read that replaces a list's copy) is never written
+ * over with an older one.
+ */
+function useInlineText(issue: Issue, field: 'title' | 'description') {
+  const queryClient = useQueryClient();
+  const value = issue[field];
+  // A title is saved trimmed and is never blank; a description is saved as typed.
+  const clean = (text: string) => (field === 'title' ? text.trim() : text);
+  // What the member typed, and the issue's value when they began.
+  const [draft, setDraft] = useState<{ from: string; text: string } | null>(null);
+  const save = useMutation({
+    mutationFn: (text: string) =>
+      updateIssue(issue.id, field === 'title' ? { title: text } : { description: text }),
+    onSuccess: (updated, text) => {
+      queryClient.setQueryData(qk.issues.one(updated.id), updated);
+      void queryClient.invalidateQueries({ queryKey: qk.issues.all });
+      // Typing that went on while it saved stays, measured from what was saved.
+      setDraft((d) => (d && clean(d.text) !== text ? { ...d, from: text } : null));
+    },
+  });
+  return {
+    value: draft?.text ?? value,
+    error: save.error,
+    onChange: (text: string) => setDraft((d) => ({ from: d?.from ?? value, text })),
+    // A save that fails keeps the text, and leaving the field again tries again.
+    commit: () => {
+      if (!draft) return;
+      const text = clean(draft.text);
+      if (text === draft.from || (field === 'title' && !text)) setDraft(null);
+      else if (!(save.isPending && save.variables === text)) save.mutate(text);
+    },
+  };
 }
 
 /**
@@ -127,9 +170,9 @@ export function IssueDetail({
   artifacts?: ReactNode;
 }) {
   const queryClient = useQueryClient();
-  const { leave } = useLeaveIssue();
-  const [title, setTitle] = useState(issue.title);
-  const [description, setDescription] = useState(issue.description);
+  const leave = useLeaveIssue();
+  const title = useInlineText(issue, 'title');
+  const description = useInlineText(issue, 'description');
   const [confirming, setConfirming] = useState(false);
   const { data: states = [] } = useQuery(statesQuery(workspace.id, issue.team_id));
   const { data: projects = [] } = useQuery(projectsQuery(workspace.id));
@@ -160,17 +203,7 @@ export function IssueDetail({
       });
     },
   });
-  // Text saves when the field is left, like every other property saves when it is picked.
-  const commitText = () => {
-    const next = title.trim();
-    if (!next) {
-      setTitle(issue.title);
-      return;
-    }
-    if (next !== issue.title || description !== issue.description) {
-      save.mutate({ title: next, description });
-    }
-  };
+  const saveError = title.error ?? description.error ?? save.error;
 
   return (
     <div className="flex flex-col md:min-h-0 md:flex-1">
@@ -223,15 +256,16 @@ export function IssueDetail({
       <div className="flex flex-col md:min-h-0 md:flex-1 md:flex-row">
         <div className="min-w-0 flex-1 md:overflow-y-auto">
           <div className="mx-auto w-full max-w-[52rem] space-y-4 px-4 py-6 sm:px-8">
+            {/* Text saves when the field is left, like every property saves when it is picked. */}
             <textarea
-              value={title}
+              value={title.value}
               rows={1}
               maxLength={200}
               aria-label="Title"
               placeholder="Issue title"
               className="field-sizing-content w-full resize-none bg-transparent text-xl font-semibold tracking-tight outline-none placeholder:text-muted-foreground"
-              onChange={(e) => setTitle(e.target.value)}
-              onBlur={commitText}
+              onChange={(e) => title.onChange(e.target.value)}
+              onBlur={title.commit}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault();
@@ -240,21 +274,21 @@ export function IssueDetail({
               }}
             />
             <Textarea
-              value={description}
+              value={description.value}
               aria-label="Description"
               placeholder="Add a description. Agents work from it when the issue is handed to them."
               className="min-h-24 resize-none rounded-none border-0 bg-transparent px-0 shadow-none focus-visible:ring-0 dark:bg-transparent"
-              onChange={(e) => setDescription(e.target.value)}
-              onBlur={commitText}
+              onChange={(e) => description.onChange(e.target.value)}
+              onBlur={description.commit}
             />
             {issue.github_url && (
               <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
                 Linked to <GithubChip url={issue.github_url} />
               </p>
             )}
-            {save.error && (
+            {saveError && (
               <p role="alert" className="text-sm text-destructive">
-                {errorMessage(save.error)}
+                {errorMessage(saveError)}
               </p>
             )}
             <IssueRun issue={issue} />
