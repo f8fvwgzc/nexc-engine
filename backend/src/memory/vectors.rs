@@ -32,6 +32,10 @@ pub async fn ensure(db: &PgPool) -> Result<bool, sqlx::Error> {
              ALTER TABLE memories ADD COLUMN IF NOT EXISTS embedding_vec vector(256);
              CREATE INDEX IF NOT EXISTS memories_embedding_hnsw
                ON memories USING hnsw (embedding_vec vector_cosine_ops);
+             -- What the backfill reads at every start: the memories still without a vector
+             -- (none once it caught up, so the start reads nothing instead of every memory).
+             CREATE INDEX IF NOT EXISTS memories_unembedded_idx
+               ON memories (id) WHERE embedding_vec IS NULL;
            END IF;
          EXCEPTION WHEN insufficient_privilege THEN
            RAISE NOTICE 'pgvector is installed but this role may not enable it';

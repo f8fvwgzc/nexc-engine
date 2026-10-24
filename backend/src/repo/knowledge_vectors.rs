@@ -43,6 +43,10 @@ pub async fn ensure(db: &PgPool, support: &Support) -> Result<bool, sqlx::Error>
              PERFORM pg_advisory_xact_lock(hashtext('nexc.knowledge.vectors'));
              CREATE EXTENSION IF NOT EXISTS vector;
              ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS embedding_vec vector;
+             -- What the backfill reads at every start: the embedded passages still without a
+             -- vector (none once it caught up, so the start reads nothing instead of every one).
+             CREATE INDEX IF NOT EXISTS document_chunks_unembedded_idx
+               ON document_chunks (id) WHERE embedding IS NOT NULL AND embedding_vec IS NULL;
            END IF;
          EXCEPTION WHEN insufficient_privilege THEN
            RAISE NOTICE 'pgvector is installed but this role may not enable it';
