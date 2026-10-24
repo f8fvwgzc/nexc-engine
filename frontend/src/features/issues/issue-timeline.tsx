@@ -25,20 +25,30 @@ import { ACTIVITY_SHOW_OPTIONS, changeText, showsEvent, useActivityPrefs } from 
 import { createComment, deleteComment, issueEventsQuery, updateComment } from './api';
 import { RunReport } from './issue-run';
 
+/**
+ * One comment, with Edit for its author and Delete for its author and moderators. The edit in
+ * progress is the timeline's (`draft`, null while not editing), so it outlasts this comment being
+ * folded away or filtered out.
+ */
 function Comment({
   event,
   issueId,
   own,
   canDelete,
+  draft,
+  setDraft,
   onChanged,
 }: {
   event: IssueEvent;
   issueId: string;
   own: boolean;
   canDelete: boolean;
+  draft: string | null;
+  setDraft: (draft: string | null) => void;
   onChanged: () => void;
 }) {
-  const [draft, setDraft] = useState<string | null>(null);
+  // The field takes focus when Edit is clicked, not when an edit in progress comes back into view.
+  const [focusEdit, setFocusEdit] = useState(false);
   const edit = useMutation({
     mutationFn: (body: string) => updateComment(issueId, event.id, body),
     onSuccess: () => {
@@ -48,7 +58,10 @@ function Comment({
   });
   const remove = useMutation({
     mutationFn: () => deleteComment(issueId, event.id),
-    onSuccess: onChanged,
+    onSuccess: () => {
+      setDraft(null);
+      onChanged();
+    },
   });
   const name = event.actor?.name ?? 'Someone who left';
   return (
@@ -66,7 +79,10 @@ function Comment({
               variant="ghost"
               size="sm"
               className="h-6 px-2 text-xs"
-              onClick={() => setDraft(event.body)}
+              onClick={() => {
+                setFocusEdit(true);
+                setDraft(event.body);
+              }}
             >
               Edit
             </Button>
@@ -96,7 +112,7 @@ function Comment({
           }}
         >
           <Textarea
-            autoFocus
+            autoFocus={focusEdit}
             rows={3}
             value={draft}
             aria-label="Edit comment"
@@ -134,6 +150,10 @@ export function IssueTimeline({ issue, canModerate }: { issue: Issue; canModerat
   const me = useAuthStore((s) => s.user?.id);
   const bodyId = useId();
   const [body, setBody] = useState('');
+  // Comment edits in progress, by comment id (null once saved or given up).
+  const [drafts, setDrafts] = useState<Record<string, string | null>>({});
+  const setDraft = (eventId: string) => (draft: string | null) =>
+    setDrafts((current) => ({ ...current, [eventId]: draft }));
   const [prefs, setPrefs] = useActivityPrefs();
   const { data: events, isPending, error } = useQuery(issueEventsQuery(issue.id));
   const reload = () => void queryClient.invalidateQueries({ queryKey: qk.issues.events(issue.id) });
@@ -149,6 +169,8 @@ export function IssueTimeline({ issue, canModerate }: { issue: Issue; canModerat
     meta: { errorToast: false },
     onSuccess: () => {
       setBody('');
+      // Posted while the filter hides comments, it would seem to vanish: show everything instead.
+      if (prefs.show !== 'all' && prefs.show !== 'comments') setPrefs({ show: 'all' });
       reload();
     },
   });
@@ -280,6 +302,8 @@ export function IssueTimeline({ issue, canModerate }: { issue: Issue; canModerat
                     issueId={issue.id}
                     own={event.actor?.user_id === me}
                     canDelete={event.actor?.user_id === me || canModerate}
+                    draft={drafts[event.id] ?? null}
+                    setDraft={setDraft(event.id)}
                     onChanged={reload}
                   />
                 ) : (

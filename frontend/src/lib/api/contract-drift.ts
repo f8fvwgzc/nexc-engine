@@ -15,7 +15,7 @@ import type {
   ArtifactVersion,
   RunArtifact,
 } from '@/schemas/artifact';
-import type { AuditAnswer, AuditFact, CannedQuestion } from '@/schemas/audit';
+import type { AuditAnswer, AuditEntry, AuditFact, CannedQuestion } from '@/schemas/audit';
 import type { AuthResponse, LoginProviders, SignInMethods, User } from '@/schemas/auth';
 import type {
   EdgeSuggestion,
@@ -82,6 +82,7 @@ export type ContractDrift = [
   Assert<Matches<'SessionSummary', SessionSummary>>,
   Assert<Matches<'AgentCancel', AgentCancel>>,
   Assert<Matches<'SpanPayloads', SpanPayloads>>,
+  Assert<Matches<'AuditEntry', AuditEntry>>,
   Assert<Matches<'AuditAnswer', AuditAnswer>>,
   Assert<Matches<'AuditFact', AuditFact>>,
   Assert<Matches<'CannedQuestion', CannedQuestion>>,

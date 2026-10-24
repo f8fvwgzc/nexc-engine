@@ -205,7 +205,12 @@ function AssistantPanel({ current }: { current: Workspace }) {
             transition={spring}
             className="h-svh max-w-full shrink-0 overflow-hidden border-l bg-background text-sm"
             onKeyDown={(e) => {
-              if (e.key === 'Escape') setOpen(false);
+              // Escape is taken here, so a page's own Escape (the issue page's way back) does
+              // not also run.
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                setOpen(false);
+              }
             }}
           >
             <div className="flex h-full max-w-full flex-col" style={{ width: PANEL_WIDTH }}>

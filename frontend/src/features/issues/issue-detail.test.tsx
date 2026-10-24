@@ -1,22 +1,25 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { qk } from '@/lib/query-keys';
 import type { Issue } from '@/schemas/issue';
 import type { Workspace } from '@/schemas/workspace';
 
 import { IssueDetail } from './issue-detail';
 
-const { updateIssue, empty } = vi.hoisted(() => ({
+const { updateIssue, deleteIssue, empty } = vi.hoisted(() => ({
   updateIssue: vi.fn(),
+  deleteIssue: vi.fn(),
   /** A query that reads an empty list, under its own key. */
   empty: (key: string) => () => ({ queryKey: [key], queryFn: () => Promise.resolve([]) }),
 }));
 
 vi.mock('./api', () => ({
   updateIssue,
-  deleteIssue: vi.fn(),
+  deleteIssue,
   statesQuery: empty('states'),
   projectsQuery: empty('projects'),
   cyclesQuery: empty('cycles'),
@@ -84,12 +87,12 @@ const fresh: Issue = {
   updated_at: '2026-10-20T10:00:00Z',
 };
 
-function renderDetail(first: Issue) {
+function renderDetail(first: Issue, artifacts?: ReactNode) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const ui = (copy: Issue) => (
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <IssueDetail workspace={workspace} issue={copy} />
+        <IssueDetail workspace={workspace} issue={copy} artifacts={artifacts} />
       </MemoryRouter>
     </QueryClientProvider>
   );
@@ -162,5 +165,29 @@ describe('the title and description of an issue', () => {
     expect(await screen.findByRole('alert')).toBeInTheDocument();
     expect(updateIssue).toHaveBeenCalledWith(listed.id, { description: 'Use EtherCAT.' });
     expect(descriptionField()).toHaveValue('Use EtherCAT.');
+  });
+});
+
+describe('deleting an issue', () => {
+  const listFiles = vi.fn();
+  const filesKey = qk.artifacts.list(workspace.id, { issue_id: listed.id });
+
+  /** The issue's files, as its page shows them. */
+  function Files() {
+    useQuery({ queryKey: filesKey, queryFn: listFiles, staleTime: 60_000 });
+    return null;
+  }
+
+  it('marks every file list stale, to be read where it is next shown, not on the way out', async () => {
+    deleteIssue.mockResolvedValue(undefined);
+    listFiles.mockResolvedValue([]);
+    const { client } = renderDetail(listed, <Files />);
+    await waitFor(() => expect(listFiles).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole('button', { name: `Delete ${listed.identifier}` }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete issue' }));
+    await waitFor(() => expect(client.getQueryState(filesKey)?.isInvalidated).toBe(true));
+    expect(deleteIssue).toHaveBeenCalledWith(listed.id);
+    expect(listFiles).toHaveBeenCalledTimes(1);
   });
 });

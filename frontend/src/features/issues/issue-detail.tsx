@@ -201,6 +201,9 @@ export function IssueDetail({
         queryKey: qk.issues.all,
         predicate: (query) => !query.queryKey.includes(issue.id),
       });
+      // Its files went with it (a private team's) or lost their issue: every file list and file
+      // is read again where it is next shown, not here on the way out.
+      void queryClient.invalidateQueries({ queryKey: qk.artifacts.all, refetchType: 'none' });
     },
   });
   const saveError = title.error ?? description.error ?? save.error;

@@ -186,6 +186,13 @@ test('the issue board fills the page, files into a column and folds one away', a
   await expect(backlog.getByRole('button', { name: /^Unfold Backlog/ })).toBeVisible();
   await backlog.getByRole('button', { name: /^Unfold Backlog/ }).click();
   await expect(page.getByRole('button', { name: 'Fold Backlog' })).toBeVisible();
+
+  // From the keyboard the focus stays on the column's button as it folds and unfolds.
+  await page.getByRole('button', { name: 'Fold Backlog' }).focus();
+  await page.keyboard.press('Enter');
+  await expect(backlog.getByRole('button', { name: /^Unfold Backlog/ })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('button', { name: 'Fold Backlog' })).toBeFocused();
 });
 
 test.describe('the Projects page', () => {

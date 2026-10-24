@@ -151,7 +151,8 @@ function IssueListSkeleton() {
  * The issues of a workspace as a list grouped by state or as a team's board, with filters. Given
  * a `project` it shows only that project's issues and files new ones in it; given a `person` it
  * shows only what is assigned to, or was filed by, that member, under the caller's own heading.
- * An issue opens on its own page.
+ * An issue opens on its own page. On the board the Team select names the board's team, and a note
+ * above it counts the issues read that belong to other teams, with a way to show each of them.
  *
  * The board fills the height under the header and scrolls inside itself. Embedded in another
  * page, the explorer then needs a parent that is a flex column as tall as the space left: a
@@ -250,6 +251,14 @@ export function IssueExplorer({
   // A board shows one team's workflow, so it needs a team.
   const boardTeam = teamId === ALL ? (fallbackTeam ?? teams[0]?.id) : teamId;
   const board = view === 'board';
+  const showsBoard = board && boardTeam !== undefined;
+  // With no team picked every team's issues are read, and the board leaves out those of the
+  // teams it does not show: a project's issues filed in other teams, say.
+  const elsewhere = showsBoard ? (issues ?? []).filter((i) => i.team_id !== boardTeam) : [];
+  const elsewhereTeams = teams
+    .map((team) => ({ team, count: elsewhere.filter((i) => i.team_id === team.id).length }))
+    .filter(({ count }) => count > 0);
+  const teamOptions = teams.map((t) => ({ value: t.id, label: `${t.key} · ${t.name}` }));
   const chooseView = (next: View) => {
     setView(next);
     // With a default team the board shows it without narrowing the list to it.
@@ -301,13 +310,11 @@ export function IssueExplorer({
         />
       )}
       <div className="flex shrink-0 flex-wrap items-center gap-2">
+        {/* A board is one team's: the select names the team it shows, and offers no "All teams". */}
         <OptionSelect
-          value={teamId}
+          value={showsBoard ? boardTeam : teamId}
           onValueChange={setTeamId}
-          options={[
-            { value: ALL, label: 'All teams' },
-            ...teams.map((t) => ({ value: t.id, label: `${t.key} · ${t.name}` })),
-          ]}
+          options={showsBoard ? teamOptions : [{ value: ALL, label: 'All teams' }, ...teamOptions]}
           aria-label="Team"
           className="w-52"
         />
@@ -399,18 +406,38 @@ export function IssueExplorer({
             </Button>
           }
         />
-      ) : board && boardTeam ? (
-        <IssueBoard
-          key={boardTeam}
-          workspace={workspace}
-          teamId={boardTeam}
-          issues={(issues ?? []).filter((i) => i.team_id === boardTeam)}
-          hideClosed={openOnly}
-          onCreate={(stateId) => {
-            setCreatingIn(stateId);
-            setCreating(true);
-          }}
-        />
+      ) : showsBoard ? (
+        <div className="flex min-h-0 flex-1 flex-col gap-2">
+          {elsewhere.length > 0 && (
+            <p className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-muted-foreground">
+              {elsewhere.length === 1
+                ? '1 issue here is in another team, not on this board.'
+                : `${elsewhere.length} issues here are in other teams, not on this board.`}
+              {elsewhereTeams.map(({ team, count }) => (
+                <Button
+                  key={team.id}
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0 text-[13px]"
+                  onClick={() => setTeamId(team.id)}
+                >
+                  Show {team.key} ({count})
+                </Button>
+              ))}
+            </p>
+          )}
+          <IssueBoard
+            key={boardTeam}
+            workspace={workspace}
+            teamId={boardTeam}
+            issues={(issues ?? []).filter((i) => i.team_id === boardTeam)}
+            hideClosed={openOnly}
+            onCreate={(stateId) => {
+              setCreatingIn(stateId);
+              setCreating(true);
+            }}
+          />
+        </div>
       ) : ordered.length === 0 ? (
         <EmptyState
           icon={CircleDotIcon}
