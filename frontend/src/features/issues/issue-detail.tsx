@@ -255,7 +255,7 @@ export function IssueDetail({
       </div>
       <div className="flex flex-col md:min-h-0 md:flex-1 md:flex-row">
         <div className="min-w-0 flex-1 md:overflow-y-auto">
-          <div className="mx-auto w-full max-w-[52rem] space-y-4 px-4 py-6 sm:px-8">
+          <div className="w-full space-y-4 px-4 py-6 sm:px-8">
             {/* Text saves when the field is left, like every property saves when it is picked. */}
             <textarea
               value={title.value}

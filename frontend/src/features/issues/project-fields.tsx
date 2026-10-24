@@ -58,7 +58,7 @@ export function ProjectTeamSelect({
         { value: NONE, label: 'No team' },
         ...teams.map((team) => ({ value: team.id, label: teamLabel(team) })),
       ]}
-      aria-label="Team"
+      aria-label="Owning team"
       className={className}
     />
   );

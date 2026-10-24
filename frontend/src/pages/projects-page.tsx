@@ -249,7 +249,7 @@ function ProjectBoard({
 function Projects({ workspace }: { workspace: Workspace }) {
   // The team is part of the address, so the sidebar's team rows and reloads land on it.
   const [params, setParams] = useSearchParams();
-  const teamId = params.get('team') ?? ALL;
+  const teamId = params.get('team') || ALL;
   const setTeamId = (id: string) => setParams(id === ALL ? {} : { team: id }, { replace: true });
   const [view, setView] = useState<View>(rememberedView);
   // The new-project dialog, with the status it starts in (a board column's).

@@ -44,7 +44,7 @@ function IssueSkeleton() {
         <Skeleton className="h-4 w-40" />
       </div>
       <div className="flex flex-col md:min-h-0 md:flex-1 md:flex-row">
-        <div className="mx-auto w-full max-w-[52rem] flex-1 space-y-3 px-4 py-6 sm:px-8">
+        <div className="w-full flex-1 space-y-3 px-4 py-6 sm:px-8">
           <Skeleton className="h-7 w-2/3" />
           <Skeleton className="h-4 w-full" />
           <Skeleton className="h-4 w-5/6" />

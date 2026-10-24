@@ -182,7 +182,7 @@ export function IssueExplorer({
 }) {
   // The team is part of the address, so the sidebar's team links and reloads land on it.
   const [params, setParams] = useSearchParams();
-  const teamId = params.get('team') ?? ALL;
+  const teamId = params.get('team') || ALL;
   const setTeamId = (id: string) => setParams(id === ALL ? {} : { team: id }, { replace: true });
   const [openOnly, setOpenOnly] = useState(true);
   const [labelId, setLabelId] = useState(ALL);
