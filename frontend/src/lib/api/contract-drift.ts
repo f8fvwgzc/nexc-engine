@@ -8,6 +8,13 @@
  */
 import type { A2aCounterpart } from '@/schemas/a2a';
 import type { A2aTask, Agent, AgentCard, Capabilities } from '@/schemas/agent';
+import type {
+  ArtifactContent,
+  ArtifactFile,
+  ArtifactFolder,
+  ArtifactVersion,
+  RunArtifact,
+} from '@/schemas/artifact';
 import type { AuditAnswer, AuditFact, CannedQuestion } from '@/schemas/audit';
 import type { AuthResponse, LoginProviders, SignInMethods, User } from '@/schemas/auth';
 import type {
@@ -57,6 +64,11 @@ export type ContractDrift = [
   Assert<Matches<'NodeRun', NodeRun>>,
   Assert<Matches<'Run', Run>>,
   Assert<Matches<'Artifact', Artifact>>,
+  Assert<Matches<'ArtifactFolder', ArtifactFolder>>,
+  Assert<Matches<'ArtifactFile', ArtifactFile>>,
+  Assert<Matches<'ArtifactVersion', ArtifactVersion>>,
+  Assert<Matches<'ArtifactContent', ArtifactContent>>,
+  Assert<Matches<'RunArtifact', RunArtifact>>,
   Assert<Matches<'Agent', Agent>>,
   Assert<Matches<'AgentCard', AgentCard>>,
   Assert<Matches<'Capabilities', Capabilities>>,

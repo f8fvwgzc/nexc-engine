@@ -4077,6 +4077,73 @@ export interface components {
             /** Format: int64 */
             size: number;
         };
+        /** @description The text of one version of an artifact file. */
+        ArtifactContent: {
+            content: string;
+            /** Format: uuid */
+            file_id: string;
+            /** Format: int32 */
+            version: number;
+        };
+        /** @description A text file kept with the work: code, HTML or Markdown, with versions. */
+        ArtifactFile: {
+            /** Format: date-time */
+            created_at: string;
+            created_by: components["schemas"]["IssuePerson"] | null;
+            /** Format: int32 */
+            current_version: number;
+            /** Format: uuid */
+            duplicated_from: string | null;
+            /** @description Lower-case, without the dot; empty for names like `Dockerfile`. */
+            extension: string;
+            /** Format: uuid */
+            folder_id: string | null;
+            /** Format: uuid */
+            id: string;
+            issue: components["schemas"]["IssueRef"] | null;
+            kind: components["schemas"]["ArtifactKind"];
+            /** @description The highlighter's language id (`typescript`, `rust`, `plaintext`). */
+            language: string;
+            name: string;
+            sha256: string;
+            /** Format: int64 */
+            size: number;
+            /** Format: date-time */
+            updated_at: string;
+            updated_by: components["schemas"]["IssuePerson"] | null;
+            /** Format: uuid */
+            workspace_id: string;
+        };
+        /** @description A folder of a workspace's artifacts. */
+        ArtifactFolder: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** Format: uuid */
+            parent_id: string | null;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: uuid */
+            workspace_id: string;
+        };
+        /**
+         * @description How the UI previews an artifact file.
+         * @enum {string}
+         */
+        ArtifactKind: "markdown" | "html" | "code" | "text";
+        /** @description One saved version of an artifact file. */
+        ArtifactVersion: {
+            /** Format: date-time */
+            created_at: string;
+            created_by: components["schemas"]["IssuePerson"] | null;
+            sha256: string;
+            /** Format: int64 */
+            size: number;
+            /** Format: int32 */
+            version: number;
+        };
         /** @description `POST /workspaces/{wid}/audit/ask` body. */
         AskAudit: {
             /**
@@ -6808,6 +6875,29 @@ export interface components {
             succeeded: number;
             /** Format: int64 */
             total: number;
+        };
+        /** @description A file a run of an issue's graph produced, with where that run stands. */
+        RunArtifact: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            mime: string;
+            /** Format: uuid */
+            node_id: string;
+            path: string;
+            quarantine_reason: string;
+            /** Format: date-time */
+            quarantined_at: string | null;
+            /** Format: date-time */
+            released_at: string | null;
+            /** Format: date-time */
+            run_created_at: string;
+            /** Format: uuid */
+            run_id: string;
+            run_status: components["schemas"]["RunStatus"];
+            /** Format: int64 */
+            size: number;
         };
         /**
          * @description Lifecycle of a run.

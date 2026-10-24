@@ -9,7 +9,9 @@ import {
   CircleDotIcon,
   CircleUserIcon,
   DatabaseIcon,
+  FilesIcon,
   FolderKanbanIcon,
+  FolderOpenIcon,
   GavelIcon,
   HandshakeIcon,
   HistoryIcon,
@@ -75,9 +77,10 @@ export interface CoreMenu {
 const SETTINGS = '/app/settings';
 
 /**
- * The workspace's core menus: what needs you and the issues agents work on, the agents and the
- * proof of what they did, the graphs they run, the trust layer over all of it, and the settings.
- * Trust pages live at settings addresses; they are listed where they belong.
+ * The workspace's core menus: what needs you and the issues agents work on, the files kept with
+ * that work, the agents and the proof of what they did, the graphs they run, the trust layer over
+ * all of it, and the settings. Trust pages live at settings addresses; they are listed where they
+ * belong.
  */
 export const WORKSPACE_MENUS: CoreMenu[] = [
   {
@@ -95,6 +98,13 @@ export const WORKSPACE_MENUS: CoreMenu[] = [
         ],
       },
     ],
+  },
+  {
+    id: 'artifacts',
+    title: 'Artifacts',
+    icon: FolderOpenIcon,
+    home: '/app/artifacts',
+    groups: [{ items: [{ title: 'All files', to: '/app/artifacts', icon: FilesIcon }] }],
   },
   {
     id: 'agents',

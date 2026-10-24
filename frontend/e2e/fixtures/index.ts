@@ -20,6 +20,10 @@ import agents from './agents.json' with { type: 'json' };
 import alertDestinations from './alert-destinations.json' with { type: 'json' };
 import alerts from './alerts.json' with { type: 'json' };
 import approvals from './approvals.json' with { type: 'json' };
+import artifactContent from './artifact-content.json' with { type: 'json' };
+import artifactFiles from './artifact-files.json' with { type: 'json' };
+import artifactFolders from './artifact-folders.json' with { type: 'json' };
+import artifactVersions from './artifact-versions.json' with { type: 'json' };
 import artifacts from './artifacts.json' with { type: 'json' };
 import auditQuestions from './audit-questions.json' with { type: 'json' };
 import audit from './audit.json' with { type: 'json' };
@@ -60,6 +64,7 @@ import platformWorkspaces from './platform-workspaces.json' with { type: 'json' 
 import policies from './policies.json' with { type: 'json' };
 import projects from './projects.json' with { type: 'json' };
 import resolvedPolicy from './resolved-policy.json' with { type: 'json' };
+import runArtifacts from './run-artifacts.json' with { type: 'json' };
 import run from './run.json' with { type: 'json' };
 import runs from './runs.json' with { type: 'json' };
 import search from './search.json' with { type: 'json' };
@@ -125,6 +130,10 @@ export const fixtures = {
   alertDestinations: typed<Many<'AlertDestination'>>(alertDestinations),
   alerts: typed<Many<'Alert'>>(alerts),
   approvals: typed<Many<'Approval'>>(approvals),
+  artifactContent: typed<One<'ArtifactContent'>>(artifactContent),
+  artifactFiles: typed<Many<'ArtifactFile'>>(artifactFiles),
+  artifactFolders: typed<Many<'ArtifactFolder'>>(artifactFolders),
+  artifactVersions: typed<Many<'ArtifactVersion'>>(artifactVersions),
   artifacts: typed<Many<'Artifact'>>(artifacts),
   audit: typed<Many<'AuditEntry'>>(audit),
   auditQuestions: typed<Many<'CannedQuestion'>>(auditQuestions),
@@ -166,6 +175,7 @@ export const fixtures = {
   projects: typed<Many<'Project'>>(projects),
   resolvedPolicy: typed<One<'Resolved'>>(resolvedPolicy),
   run: typed<One<'Run'>>(run),
+  runArtifacts: typed<Many<'RunArtifact'>>(runArtifacts),
   runs: typed<Many<'Run'>>(runs),
   search: typed<Many<'SearchHit'>>(search),
   secopsOverview: typed<One<'SecopsOverview'>>(secopsOverview),

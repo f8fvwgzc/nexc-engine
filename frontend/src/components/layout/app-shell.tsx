@@ -13,6 +13,7 @@ import { useAuthStore } from '@/stores/auth-store';
 import { AppHeader } from './app-header';
 import { AssistantDot } from './assistant-dot';
 import { DemoBanner } from './demo-banner';
+import { NavArtifactFolders } from './nav-artifact-folders';
 import { NavGraphs } from './nav-graphs';
 import { WORKSPACE_MENUS } from './nav-items';
 import { NavTeams } from './nav-teams';
@@ -50,7 +51,11 @@ export default function AppShell() {
         header={<WorkspaceSwitcher />}
         admin={current ? isWorkspaceAdmin(current.role) : false}
         badges={{ '/app/inbox': unread }}
-        extras={{ issues: <NavTeams />, graphs: <NavGraphs /> }}
+        extras={{
+          issues: <NavTeams />,
+          artifacts: <NavArtifactFolders />,
+          graphs: <NavGraphs />,
+        }}
       />
       {/* SidebarInset renders the page's <main> landmark. It is exactly one viewport tall:
           pages scroll inside it, so a full-height page (the canvas) never scrolls the window. */}

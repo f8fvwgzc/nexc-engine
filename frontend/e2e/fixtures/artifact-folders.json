@@ -1,0 +1,26 @@
+[
+  {
+    "id": "019a1b20-4c10-7a3e-9b21-5d0c7e3a1f01",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "parent_id": null,
+    "name": "design",
+    "created_at": "2026-09-30T08:00:00Z",
+    "updated_at": "2026-10-08T09:30:00Z"
+  },
+  {
+    "id": "019a1b20-4c10-7a3e-9b21-5d0c7e3a1f02",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "parent_id": "019a1b20-4c10-7a3e-9b21-5d0c7e3a1f01",
+    "name": "specs",
+    "created_at": "2026-09-30T08:05:00Z",
+    "updated_at": "2026-10-09T14:10:00Z"
+  },
+  {
+    "id": "019a1b20-4c10-7a3e-9b21-5d0c7e3a1f03",
+    "workspace_id": "70a37d8f-972f-7494-837f-9dba8364cbb4",
+    "parent_id": null,
+    "name": "scripts",
+    "created_at": "2026-10-01T10:00:00Z",
+    "updated_at": "2026-10-10T16:45:00Z"
+  }
+]

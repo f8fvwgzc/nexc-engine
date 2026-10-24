@@ -7,11 +7,17 @@ import { cn } from '@/lib/utils';
 /**
  * Renders model/agent output as GitHub-flavoured markdown, safely: raw HTML is never rendered
  * (react-markdown's default), images are dropped (no remote fetches from untrusted output), and
- * links open in a new tab without an opener.
+ * links open in a new tab without an opener. A task list's boxes say whether each is done.
  */
 const components: Components = {
   a: ({ node: _node, ...props }: ComponentProps<'a'> & { node?: unknown }) => (
     <a {...props} target="_blank" rel="noopener noreferrer nofollow" />
+  ),
+  input: ({ node: _node, ...props }: ComponentProps<'input'> & { node?: unknown }) => (
+    <input
+      {...props}
+      aria-label={props.type === 'checkbox' ? (props.checked ? 'Done' : 'Not done') : undefined}
+    />
   ),
 };
 
