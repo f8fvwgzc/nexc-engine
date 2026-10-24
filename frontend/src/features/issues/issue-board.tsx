@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FoldHorizontalIcon, NetworkIcon, PlusIcon } from 'lucide-react';
-import { useState, type DragEvent } from 'react';
+import { useRef, useState, type DragEvent, type MouseEvent } from 'react';
 import { Link } from 'react-router-dom';
 
 import { GithubChip } from '@/components/custom-ui/github-chip';
@@ -48,9 +48,42 @@ export function IssueBoard({
   const { data: states = [] } = useQuery(statesQuery(workspace.id, teamId));
   const [folded, toggleFolded] = useFoldedColumns(teamId);
   const [over, setOver] = useState<string | null>(null);
+  // The column just folded or unfolded from the keyboard: its new button takes the focus the old
+  // one had. A click from the keyboard (Enter or Space) has `detail` 0; a pointer's click leaves
+  // the focus be, so no tooltip pops up where the pointer is not.
+  const refocus = useRef<string | null>(null);
+  const toggle = (stateId: string, e: MouseEvent) => {
+    refocus.current = e.detail === 0 ? stateId : null;
+    toggleFolded(stateId);
+  };
+  const focusIfToggled = (stateId: string) => (element: HTMLButtonElement | null) => {
+    if (element && refocus.current === stateId) {
+      refocus.current = null;
+      element.focus();
+    }
+  };
+  // Every issue list of the workspace, whatever it is filtered by.
+  const lists = [...qk.issues.all, workspace.id, 'list'] as const;
   const move = useMutation({
     mutationFn: ({ id, state_id }: { id: string; state_id: string }) =>
       updateIssue(id, { state_id }),
+    // The card lands in its new column at once; the lists are read again either way, and put
+    // back as they were if the move fails. A read still in flight is dropped first, so it
+    // cannot put the card back in its old column.
+    onMutate: async ({ id, state_id }) => {
+      await queryClient.cancelQueries({ queryKey: lists });
+      const before = queryClient.getQueriesData<Issue[]>({ queryKey: lists });
+      const state = states.find((s) => s.id === state_id);
+      if (state) {
+        queryClient.setQueriesData<Issue[]>({ queryKey: lists }, (list) =>
+          list?.map((i) => (i.id === id ? { ...i, state } : i)),
+        );
+      }
+      return { before };
+    },
+    onError: (_error, _move, context) => {
+      for (const [key, list] of context?.before ?? []) queryClient.setQueryData(key, list);
+    },
     onSettled: () => queryClient.invalidateQueries({ queryKey: qk.issues.all }),
   });
   const columns = states.filter(
@@ -75,7 +108,12 @@ export function IssueBoard({
   });
 
   return (
-    <ScrollRegion label="Board" className="flex min-h-64 flex-1 gap-2 overflow-x-auto pb-1">
+    <ScrollRegion
+      label="Board"
+      // Columns come and go, and fold, inside a box whose own size stays the same.
+      measureKey={`${columns.length}:${folded.join()}`}
+      className="flex min-h-64 flex-1 gap-2 overflow-x-auto pb-1"
+    >
       {columns.map((state) => {
         const cards = issues.filter((i) => i.state.id === state.id);
         if (folded.includes(state.id)) {
@@ -87,9 +125,10 @@ export function IssueBoard({
               {...dropTarget(state)}
             >
               <button
+                ref={focusIfToggled(state.id)}
                 type="button"
                 aria-label={`Unfold ${state.name} (${cards.length})`}
-                onClick={() => toggleFolded(state.id)}
+                onClick={(e) => toggle(state.id, e)}
                 className="flex w-full flex-col items-center gap-2 rounded-xl py-3 text-[13px] font-medium outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/50"
               >
                 <StateGlyph category={state.category} color={state.color} />
@@ -117,9 +156,10 @@ export function IssueBoard({
                 </span>
               </h2>
               <IconButton
+                ref={focusIfToggled(state.id)}
                 label={`Fold ${state.name}`}
                 className="size-6 text-muted-foreground"
-                onClick={() => toggleFolded(state.id)}
+                onClick={(e) => toggle(state.id, e)}
               >
                 <FoldHorizontalIcon />
               </IconButton>

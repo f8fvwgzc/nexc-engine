@@ -390,6 +390,9 @@ function TeamCard({
       void refresh();
       // Its projects stay, without a team.
       void queryClient.invalidateQueries({ queryKey: qk.issues.projectLists(workspace.id) });
+      // Its issues went, with a private team's files; the rest lost their issue. Every file
+      // list and file is read again where it is next shown.
+      void queryClient.invalidateQueries({ queryKey: qk.artifacts.all, refetchType: 'none' });
     },
   });
   // What deleting the team does to the projects it owns.

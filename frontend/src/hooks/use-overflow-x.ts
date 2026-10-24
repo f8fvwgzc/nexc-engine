@@ -3,12 +3,18 @@ import { useEffect, useState, type RefObject } from 'react';
 /**
  * Whether the element's content is larger than the element along `axis`, so it scrolls. A region
  * that scrolls must be reachable by keyboard (WCAG 2.1.1): callers make it focusable while it does.
+ *
+ * It measures again when the element or its children change size. Content that changes without
+ * resizing the element (children added or removed in a box of fixed size) needs a `measureKey`
+ * that changes with it.
  */
 export function useOverflow(
   ref: RefObject<HTMLElement | null>,
   axis: 'x' | 'y' | 'both' = 'x',
+  measureKey?: string | number,
 ): boolean {
   const [overflows, setOverflows] = useState(false);
+  // A new `measureKey` measures again and watches the children the element has by then.
   useEffect(() => {
     const element = ref.current;
     if (!element || typeof ResizeObserver === 'undefined') return;
@@ -22,7 +28,7 @@ export function useOverflow(
     for (const child of element.children) observer.observe(child);
     measure();
     return () => observer.disconnect();
-  }, [ref, axis]);
+  }, [ref, axis, measureKey]);
   return overflows;
 }
 
