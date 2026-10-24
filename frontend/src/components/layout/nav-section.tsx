@@ -14,6 +14,9 @@ import { itemMatches, type NavItem } from './nav-items';
 /** Compact rows: 28px tall, 13px text. */
 export const ROW = 'h-7 text-[13px]';
 
+/** Lists that a `?team=` narrows to one team's (see nav-teams.tsx). */
+const TEAM_LISTS = ['/app/issues', '/app/projects'];
+
 interface NavSectionProps {
   label?: string;
   items: NavItem[];
@@ -24,8 +27,8 @@ interface NavSectionProps {
 /** One group of the panel's rows. */
 export function NavSection({ label, items, badges = {} }: NavSectionProps) {
   const { pathname, search } = useLocation();
-  // A team's issue list is highlighted under "Your teams", not as all the issues.
-  const teamOpen = pathname === '/app/issues' && new URLSearchParams(search).has('team');
+  // A team's issues or projects are highlighted under "Your teams", not as everyone's.
+  const teamOpen = TEAM_LISTS.includes(pathname) && new URLSearchParams(search).has('team');
   if (items.length === 0) return null;
   return (
     <SidebarGroup className="py-1">
@@ -33,7 +36,7 @@ export function NavSection({ label, items, badges = {} }: NavSectionProps) {
       <SidebarMenu className="gap-0.5">
         {items.map((item) => {
           const count = badges[item.to] ?? 0;
-          const active = itemMatches(item, pathname) && !(item.to === '/app/issues' && teamOpen);
+          const active = itemMatches(item, pathname) && !(teamOpen && item.to === pathname);
           return (
             <SidebarMenuItem key={item.to}>
               <SidebarMenuButton asChild isActive={active} className={ROW}>
