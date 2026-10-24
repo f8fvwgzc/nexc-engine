@@ -2041,6 +2041,55 @@ async fn a_team_owns_projects_and_hides_them_when_private(pool: PgPool) {
     .await;
     assert!(!found.to_string().contains("Reorg"), "{found}");
 
+    // Nor can the member put an issue in it: it is as unknown as a project of another workspace.
+    let hidden_id = hidden["id"].as_str().unwrap();
+    let eng_issues = format!("{}/teams/{}/issues", w.ws, w.eng);
+    let (status, body) = call(
+        &app,
+        Method::POST,
+        &eng_issues,
+        &w.member,
+        Some(json!({"title": "Sneak in", "project_id": hidden_id})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(
+        body["errors"]["project_id"][0],
+        "unknown project in this workspace"
+    );
+    let (status, mine) = call(
+        &app,
+        Method::POST,
+        &eng_issues,
+        &w.member,
+        Some(json!({"title": "Mine"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{mine}");
+    let mine_path = format!("/issues/{}", mine["id"].as_str().unwrap());
+    let (status, body) = call(
+        &app,
+        Method::PATCH,
+        &mine_path,
+        &w.member,
+        Some(json!({"project_id": hidden_id})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    let (status, filed) = call(
+        &app,
+        Method::PATCH,
+        &mine_path,
+        &w.owner,
+        Some(json!({"project_id": hidden_id})),
+    )
+    .await;
+    assert_eq!(
+        (status, &filed["project_id"]),
+        (StatusCode::OK, &json!(hidden_id)),
+        "{filed}"
+    );
+
     // Moved to the workspace (null), it is everyone's again; a deleted team leaves its projects.
     let (status, moved) = call(
         &app,

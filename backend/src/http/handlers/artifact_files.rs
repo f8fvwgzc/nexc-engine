@@ -12,6 +12,7 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use sqlx::PgExecutor;
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
@@ -96,13 +97,13 @@ fn folder_name_taken(err: sqlx::Error) -> AppError {
 
 /// Checks that `folder_id`, when given, is a folder of the workspace.
 async fn check_folder(
-    state: &AppState,
+    db: impl PgExecutor<'_>,
     workspace_id: Uuid,
     folder_id: Option<Uuid>,
     field: &str,
 ) -> Result<(), AppError> {
     if let Some(id) = folder_id
-        && repo::artifact_files::find_folder(&state.db, workspace_id, id)
+        && repo::artifact_files::find_folder(db, workspace_id, id)
             .await?
             .is_none()
     {
@@ -238,7 +239,7 @@ pub async fn create_folder(
             "a workspace has at most {FOLDERS_MAX} folders"
         )));
     }
-    check_folder(&state, wid, req.parent_id, "parent_id").await?;
+    check_folder(&state.db, wid, req.parent_id, "parent_id").await?;
     let folder = repo::artifact_files::create_folder(
         &state.db,
         wid,
@@ -265,12 +266,14 @@ pub async fn update_folder(
     ValidatedJson(req): ValidatedJson<UpdateFolder>,
 ) -> Result<Json<ArtifactFolder>, AppError> {
     require_writer(&member_of(&state, auth, wid).await?)?;
-    let mut folder = repo::artifact_files::find_folder(&state.db, wid, fid)
+    let mut tx = state.db.begin().await?;
+    repo::artifact_files::lock_folders(&mut *tx, wid).await?;
+    let mut folder = repo::artifact_files::find_folder(&mut *tx, wid, fid)
         .await
         .or_not_found("folder")?;
     if let Some(Some(parent)) = req.parent_id {
-        check_folder(&state, wid, Some(parent), "parent_id").await?;
-        if repo::artifact_files::folder_is_within(&state.db, fid, parent).await? {
+        check_folder(&mut *tx, wid, Some(parent), "parent_id").await?;
+        if repo::artifact_files::folder_is_within(&mut *tx, fid, parent).await? {
             return Err(AppError::field(
                 "parent_id",
                 "a folder cannot be moved into itself or a folder under it",
@@ -283,11 +286,11 @@ pub async fn update_folder(
     if let Some(parent) = req.parent_id {
         folder.parent_id = parent;
     }
-    Ok(Json(
-        repo::artifact_files::save_folder(&state.db, &folder)
-            .await
-            .map_err(folder_name_taken)?,
-    ))
+    let folder = repo::artifact_files::save_folder(&mut *tx, &folder)
+        .await
+        .map_err(folder_name_taken)?;
+    tx.commit().await?;
+    Ok(Json(folder))
 }
 
 /// Deletes a folder with the folders and files in it (everyone but guests).
@@ -303,16 +306,17 @@ pub async fn delete_folder(
     Path((wid, fid)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, AppError> {
     require_writer(&member_of(&state, auth, wid).await?)?;
-    let folder = repo::artifact_files::find_folder(&state.db, wid, fid)
+    let mut tx = state.db.begin().await?;
+    repo::artifact_files::lock_folders(&mut *tx, wid).await?;
+    let folder = repo::artifact_files::find_folder(&mut *tx, wid, fid)
         .await
         .or_not_found("folder")?;
-    let hidden = repo::artifact_files::hidden_files_under(&state.db, auth.id, fid).await?;
+    let hidden = repo::artifact_files::hidden_files_under(&mut *tx, auth.id, fid).await?;
     if hidden > 0 {
         return Err(AppError::Conflict(format!(
             "this folder holds {hidden} file(s) of issues you cannot see; a workspace admin can delete it"
         )));
     }
-    let mut tx = state.db.begin().await?;
     for (issue_id, name, version) in repo::artifact_files::issue_files_under(&mut *tx, fid).await? {
         let from = version.to_string();
         repo::issues::record_artifact(&mut *tx, issue_id, auth.id, &name, Some(&from), "deleted")
@@ -499,7 +503,7 @@ pub async fn create_file(
     require_writer(&member_of(&state, auth, wid).await?)?;
     let name = checked_file_name(&query.name)?;
     let text = checked_text(&body)?;
-    check_folder(&state, wid, query.folder_id, "folder_id").await?;
+    check_folder(&state.db, wid, query.folder_id, "folder_id").await?;
     check_issue(&state, auth, wid, query.issue_id).await?;
     let sha256 = sha256_hex(text);
     let new = NewFile {
@@ -687,7 +691,7 @@ pub async fn update_file(
         None => file.name.clone(),
     };
     let folder_id = req.folder_id.unwrap_or(file.folder_id);
-    check_folder(&state, file.workspace_id, folder_id, "folder_id").await?;
+    check_folder(&state.db, file.workspace_id, folder_id, "folder_id").await?;
     let issue_id = match req.issue_id {
         Some(issue) => {
             check_issue(&state, auth, file.workspace_id, issue).await?;
@@ -717,7 +721,7 @@ pub async fn duplicate(
 ) -> Result<(StatusCode, Json<ArtifactFile>), AppError> {
     let source = writable(&state, auth, id).await?;
     let folder_id = req.folder_id.unwrap_or(source.folder_id);
-    check_folder(&state, source.workspace_id, folder_id, "folder_id").await?;
+    check_folder(&state.db, source.workspace_id, folder_id, "folder_id").await?;
     let name = match &req.name {
         Some(name) => checked_file_name(name)?,
         None => free_name(&state, source.workspace_id, folder_id, &source.name, true).await?,
@@ -847,7 +851,7 @@ pub async fn keep(
     if usize::try_from(artifact.size).unwrap_or(usize::MAX) > FILE_MAX_BYTES {
         return Err(AppError::PayloadTooLarge);
     }
-    check_folder(&state, issue.workspace_id, req.folder_id, "folder_id").await?;
+    check_folder(&state.db, issue.workspace_id, req.folder_id, "folder_id").await?;
     let path = artifacts::resolve(&state, &stored.storage_path)?;
     let bytes = tokio::fs::read(&path)
         .await

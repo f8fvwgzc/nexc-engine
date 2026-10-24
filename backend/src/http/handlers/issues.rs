@@ -124,9 +124,11 @@ fn require_issue_rights(access: TeamAccess) -> Result<(), AppError> {
 }
 
 /// Checks that what an issue points at exists where the issue lives: the
-/// assignee in the workspace, the agent and the project in the workspace.
+/// assignee and the agent in the workspace, the project in the workspace and
+/// where the caller can see it.
 async fn check_references(
     state: &AppState,
+    auth: AuthUser,
     workspace_id: Uuid,
     assignee_id: Option<Uuid>,
     agent_id: Option<Uuid>,
@@ -152,7 +154,7 @@ async fn check_references(
         ));
     }
     if let Some(project) = project_id
-        && !repo::issues::project_in_workspace(db, workspace_id, project).await?
+        && !repo::issues::project_in_workspace(db, auth.id, workspace_id, project).await?
     {
         return Err(AppError::field(
             "project_id",
@@ -341,7 +343,15 @@ pub async fn create(
             .await?
             .ok_or_else(|| AppError::Unprocessable("this team has no workflow states".into()))?,
     };
-    check_references(&state, wid, req.assignee_id, req.agent_id, req.project_id).await?;
+    check_references(
+        &state,
+        auth,
+        wid,
+        req.assignee_id,
+        req.agent_id,
+        req.project_id,
+    )
+    .await?;
     let labels = known_labels(&state, wid, &req.label_ids).await?;
     if let Some(parent) = req.parent_id {
         check_parent(&state, auth, wid, parent).await?;
@@ -435,6 +445,7 @@ pub async fn update(
     }
     check_references(
         &state,
+        auth,
         issue.workspace_id,
         req.assignee_id.flatten(),
         req.agent_id.flatten(),

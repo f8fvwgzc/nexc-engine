@@ -1271,15 +1271,25 @@ pub async fn delete_project(db: impl PgExecutor<'_>, id: Uuid) -> Result<(), sql
     Ok(())
 }
 
-/// Whether a project belongs to a workspace.
+/// Whether a project belongs to a workspace and `user_id` can see it (one of
+/// a private team only those who see the team can).
 pub async fn project_in_workspace(
     db: impl PgExecutor<'_>,
+    user_id: Uuid,
     workspace_id: Uuid,
     id: Uuid,
 ) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM projects WHERE workspace_id = $1 AND id = $2)")
-        .bind(workspace_id)
-        .bind(id)
-        .fetch_one(db)
-        .await
+    sqlx::query_scalar(concat!(
+        "SELECT EXISTS (SELECT 1 FROM projects p
+             JOIN workspace_members pm ON pm.workspace_id = p.workspace_id AND pm.user_id = $1
+             LEFT JOIN teams pt ON pt.id = p.team_id
+             WHERE p.workspace_id = $2 AND p.id = $3 AND (p.team_id IS NULL OR ",
+        team_visible!("pt", "pm", "$1"),
+        "))"
+    ))
+    .bind(user_id)
+    .bind(workspace_id)
+    .bind(id)
+    .fetch_one(db)
+    .await
 }

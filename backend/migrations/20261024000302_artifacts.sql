@@ -52,6 +52,30 @@ CREATE TABLE artifact_file_versions (
     PRIMARY KEY (file_id, version)
 );
 
+-- A file on an issue is read as the issue is; without one, by every member but guests. So a
+-- deleted issue leaves the files of a public team's issue to the workspace (no one new reads
+-- them), but takes those of a private team's issue along: they must not become readable by the
+-- whole workspace. A team deleted takes its issues along after it is gone, when the issue can no
+-- longer tell whether the team was private, so the team takes those files first.
+CREATE FUNCTION artifact_files_private_drop() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_TABLE_NAME = 'teams' THEN
+        IF OLD.private THEN
+            DELETE FROM artifact_files f USING issues i
+             WHERE f.issue_id = i.id AND i.team_id = OLD.id;
+        END IF;
+    ELSE
+        DELETE FROM artifact_files f USING teams t
+         WHERE f.issue_id = OLD.id AND t.id = OLD.team_id AND t.private;
+    END IF;
+    RETURN OLD;
+END $$;
+CREATE TRIGGER teams_artifact_files_private_drop BEFORE DELETE ON teams
+    FOR EACH ROW EXECUTE FUNCTION artifact_files_private_drop();
+CREATE TRIGGER issues_artifact_files_private_drop BEFORE DELETE ON issues
+    FOR EACH ROW EXECUTE FUNCTION artifact_files_private_drop();
+
 -- What happens to an issue's files is an `artifact` entry in its timeline: the file's name, the
 -- version it replaced, and what was done (`uploaded`, `updated:v<N>`, `duplicated`, `deleted`).
 ALTER TABLE issue_events DROP CONSTRAINT issue_events_kind_check;

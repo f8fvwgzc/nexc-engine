@@ -847,9 +847,40 @@ async fn files_are_copied_moved_renamed_and_deleted(pool: PgPool) {
         (StatusCode::OK, &Value::Null)
     );
 
+    // Someone outside the workspace finds the file nowhere and changes nothing.
+    for (method, path, body) in [
+        (Method::GET, file.clone(), None),
+        (Method::GET, format!("{file}/versions"), None),
+        (Method::GET, format!("{file}/content"), None),
+        (Method::GET, format!("{file}/content?version=1"), None),
+        (Method::GET, format!("{file}/raw"), None),
+        (
+            Method::PATCH,
+            file.clone(),
+            Some(json!({"name": "theirs.md"})),
+        ),
+        (Method::POST, format!("{file}/duplicate"), Some(json!({}))),
+        (Method::DELETE, file.clone(), None),
+    ] {
+        let (status, _) = call(&app, method.clone(), &path, &w.outsider, body).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{method} {path}");
+    }
+    let r = send(
+        &app,
+        Method::PUT,
+        &format!("{file}/content?base_version=1"),
+        &w.outsider,
+        b"theirs",
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+    let (_, unchanged) = call(&app, Method::GET, &file, &w.member, None).await;
+    assert_eq!(
+        (&unchanged["name"], &unchanged["current_version"]),
+        (&json!("spec.md"), &json!(1))
+    );
+
     // Deleting a file takes its versions; its copies stay, no longer pointing at it.
-    let (status, _) = call(&app, Method::DELETE, &file, &w.outsider, None).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
     let (status, _) = call(&app, Method::DELETE, &file, &w.member, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     let (status, _) = call(&app, Method::GET, &file, &w.member, None).await;
@@ -1188,7 +1219,7 @@ async fn the_files_of_an_issue_are_seen_as_the_issue_is(pool: PgPool) {
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 
-    // Detached, a file is the workspace's; a deleted issue leaves its files detached.
+    // Detached, a file is the workspace's.
     let (status, detached) = call(
         &app,
         Method::PATCH,
@@ -1204,6 +1235,29 @@ async fn the_files_of_an_issue_are_seen_as_the_issue_is(pool: PgPool) {
         StatusCode::NOT_FOUND,
         "no longer the guest's to see"
     );
+
+    // A deleted issue of a public team leaves its files to the workspace; one of a private team
+    // takes them along, as does a deleted private team, so they never fall to everyone.
+    let spec = upload(
+        &app,
+        &w,
+        &w.member,
+        &format!("name=spec.md&issue_id={iid}"),
+        b"spec",
+    )
+    .await;
+    let spec_path = format!("/artifact-files/{}", spec["id"].as_str().unwrap());
+    let (status, _) = call(
+        &app,
+        Method::DELETE,
+        &format!("/issues/{iid}"),
+        &w.owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, kept) = call(&app, Method::GET, &spec_path, &w.member, None).await;
+    assert_eq!((status, &kept["issue"]), (StatusCode::OK, &Value::Null));
     let (status, _) = call(
         &app,
         Method::DELETE,
@@ -1213,7 +1267,77 @@ async fn the_files_of_an_issue_are_seen_as_the_issue_is(pool: PgPool) {
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
-    let (status, kept) = call(&app, Method::GET, &plan_path, &w.member, None).await;
+    for token in [&w.member, &w.owner] {
+        let (status, _) = call(&app, Method::GET, &plan_path, token, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "the private file went");
+    }
+    let budget = issue(&app, &w, &w.secret, &w.owner, "Budget").await;
+    let sheet = upload(
+        &app,
+        &w,
+        &w.owner,
+        &format!("name=budget.csv&issue_id={budget}"),
+        b"q4,1",
+    )
+    .await;
+    let sheet_path = format!("/artifact-files/{}", sheet["id"].as_str().unwrap());
+    let (status, _) = call(
+        &app,
+        Method::DELETE,
+        &format!("{}/teams/{}", w.ws, w.secret),
+        &w.owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    for token in [&w.member, &w.owner] {
+        let (status, _) = call(&app, Method::GET, &sheet_path, token, None).await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "the private team's file went"
+        );
+    }
+    let (status, _) = call(&app, Method::GET, &spec_path, &w.member, None).await;
+    assert_eq!(status, StatusCode::OK, "the public file stays");
+
+    // A deleted public team leaves its issues' files to the workspace.
+    let (status, ops) = call(
+        &app,
+        Method::POST,
+        &format!("{}/teams", w.ws),
+        &w.owner,
+        Some(json!({"name": "Operations", "key": "OPS"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{ops}");
+    let ops = ops["id"].as_str().unwrap().to_owned();
+    let runbook = issue(&app, &w, &ops, &w.owner, "Runbook").await;
+    let book = upload(
+        &app,
+        &w,
+        &w.owner,
+        &format!("name=runbook.md&issue_id={runbook}"),
+        b"restart it",
+    )
+    .await;
+    let (status, _) = call(
+        &app,
+        Method::DELETE,
+        &format!("{}/teams/{ops}", w.ws),
+        &w.owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, kept) = call(
+        &app,
+        Method::GET,
+        &format!("/artifact-files/{}", book["id"].as_str().unwrap()),
+        &w.member,
+        None,
+    )
+    .await;
     assert_eq!((status, &kept["issue"]), (StatusCode::OK, &Value::Null));
 }
 

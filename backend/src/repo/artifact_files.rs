@@ -2,6 +2,8 @@
 //! content is a column of its version, so cascades clean up and nothing is
 //! on disk. A file attached to an issue is read as the issue is (its team's
 //! visibility); any other file, and every folder, by members but guests.
+//! A private team's issue, or the team, takes its files along when it goes
+//! (a trigger), so they never fall to the whole workspace.
 
 use std::collections::HashSet;
 
@@ -190,6 +192,20 @@ pub async fn create_folder(
     .bind(created_by)
     .fetch_one(db)
     .await
+}
+
+/// Holds the folder tree of a workspace still until the transaction ends, so
+/// two moves that cross (A into B while B goes into A) cannot both pass the
+/// loop check, and nothing moves into a folder while its delete checks what
+/// it takes.
+pub async fn lock_folders(db: impl PgExecutor<'_>, workspace_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(hashtext('nexc.artifact_folders'), hashtext($1::text))",
+    )
+    .bind(workspace_id)
+    .execute(db)
+    .await?;
+    Ok(())
 }
 
 /// Renames or moves a folder.
