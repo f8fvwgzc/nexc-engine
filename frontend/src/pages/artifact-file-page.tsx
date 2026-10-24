@@ -235,23 +235,40 @@ function Versions({
 interface Draft {
   /** The version the edit started from: saving over any other is a conflict. */
   base: number;
+  /** The file's text as it was loaded, line endings and all. */
+  original: string;
   /** The text as the edit started, to tell whether anything was changed. */
   start: string;
   text: string;
   /**
-   * Whether the file's lines end in CRLF. A textarea only ever gives back LF, so the CRs are put
-   * back on save; otherwise one changed character would rewrite every line ending.
+   * Whether every line of the file ends in CRLF. A textarea only ever gives back LF, so the CRs
+   * are put back on save; otherwise one changed character would rewrite every line ending. A file
+   * that mixes its line endings is saved with LF once it is changed.
    */
   crlf: boolean;
 }
 
+/** Whether the text has line breaks and every one is CRLF (no lone CR, no lone LF). */
+const allCrlf = (content: string) =>
+  content.includes('\r\n') && !/\r(?!\n)|(?<!\r)\n/.test(content);
+
 function startDraft(base: number, content: string): Draft {
   const text = content.replace(/\r\n?/g, '\n');
-  return { base, start: text, text, crlf: content.includes('\r\n') };
+  return { base, original: content, start: text, text, crlf: allCrlf(content) };
 }
 
-/** The bytes a draft saves as, with its line endings as the file had them. */
-const draftBody = (draft: Draft) => (draft.crlf ? draft.text.replace(/\n/g, '\r\n') : draft.text);
+/** Whether the text was changed since the edit started. */
+const edited = (draft: Draft) => draft.text !== draft.start;
+
+/**
+ * The bytes a draft saves as: the file's own while nothing was changed, otherwise the text with
+ * CRLF put back when every line had it.
+ */
+const draftBody = (draft: Draft) =>
+  !edited(draft) ? draft.original : draft.crlf ? draft.text.replace(/\n/g, '\r\n') : draft.text;
+
+/** Said when a save made no new version: the content is the current version's. */
+const NOTHING_CHANGED = 'Nothing changed, so no new version was saved';
 
 /** Puts the text being edited on the clipboard, for when it cannot be saved here. */
 function copyText(text: string) {
@@ -261,13 +278,23 @@ function copyText(text: string) {
     .catch(() => toast.error('Couldn’t copy the text'));
 }
 
-/** The text being edited, with Save (⌘S) and Cancel, and what to do when someone saved first. */
+/** What a save sent: the version it went over and the bytes. */
+interface Sent {
+  base: number;
+  body: string;
+}
+
+/**
+ * The text being edited, with Save (⌘S) and Cancel, and what to do when someone saved first.
+ * Saving with nothing changed asks nothing of the server: no new version is made.
+ */
 function Editor({
   file,
   draft,
   onChange,
   onCancel,
   onSaved,
+  onUnchanged,
   onReload,
 }: {
   file: ArtifactFile;
@@ -275,14 +302,16 @@ function Editor({
   onChange: (text: string) => void;
   onCancel: () => void;
   onSaved: (saved: ArtifactFile, base: number, text: string) => void;
+  onUnchanged: () => void;
   onReload: () => Promise<void>;
 }) {
   const queryClient = useQueryClient();
   const body = draftBody(draft);
+  // What was sent travels with the save: its answer records those bytes, not the text by then.
   const save = useMutation({
-    mutationFn: () => saveArtifactContent(file.id, draft.base, body),
+    mutationFn: (sent: Sent) => saveArtifactContent(file.id, sent.base, sent.body),
     meta: { errorToast: false },
-    onSuccess: (saved) => onSaved(saved, draft.base, body),
+    onSuccess: (saved, sent) => onSaved(saved, sent.base, sent.body),
     // Someone saved first: fetch the file again, so the message can say which version they made.
     onError: (error) => {
       if (error instanceof ApiError && error.status === 409) {
@@ -292,7 +321,9 @@ function Editor({
   });
   const conflict = save.error instanceof ApiError && save.error.status === 409;
   const submit = () => {
-    if (!save.isPending) save.mutate();
+    if (save.isPending) return;
+    if (edited(draft)) save.mutate({ base: draft.base, body });
+    else onUnchanged();
   };
   return (
     <form
@@ -305,6 +336,8 @@ function Editor({
       <Textarea
         autoFocus
         value={draft.text}
+        // Held while saving: what is typed then would be in no version.
+        readOnly={save.isPending}
         spellCheck={false}
         aria-label={`Content of ${file.name}`}
         className="min-h-[60svh] resize-y font-mono text-[13px] leading-relaxed"
@@ -449,9 +482,7 @@ function FileView({ file, gone }: { file: ArtifactFile; gone: boolean }) {
     setDraft(null);
     view(null);
     toast.success(
-      next.current_version === base
-        ? 'Nothing changed, so no new version was saved'
-        : `Saved v${next.current_version}`,
+      next.current_version === base ? NOTHING_CHANGED : `Saved v${next.current_version}`,
     );
   };
 
@@ -498,6 +529,10 @@ function FileView({ file, gone }: { file: ArtifactFile; gone: boolean }) {
         onChange={(text) => setDraft({ ...draft, text })}
         onCancel={() => setDraft(null)}
         onSaved={saved}
+        onUnchanged={() => {
+          setDraft(null);
+          toast.success(NOTHING_CHANGED);
+        }}
         onReload={reload}
       />
     );

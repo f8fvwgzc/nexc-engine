@@ -9,6 +9,7 @@ import type { Workspace } from '@/schemas/workspace';
 import ArtifactsPage from './artifacts-page';
 
 interface Call {
+  method: string;
   path: string;
   query: Record<string, unknown>;
 }
@@ -37,8 +38,12 @@ const docs: ArtifactFolder = {
 };
 
 vi.mock('@/lib/api/client', () => ({
-  apiRequest: (path: string, _schema: unknown, opts: { query?: Record<string, unknown> } = {}) => {
-    server.calls.push({ path, query: opts.query ?? {} });
+  apiRequest: (
+    path: string,
+    _schema: unknown,
+    opts: { method?: string; query?: Record<string, unknown> } = {},
+  ) => {
+    server.calls.push({ method: opts.method ?? 'GET', path, query: opts.query ?? {} });
     if (path === '/workspaces') return Promise.resolve([workspace]);
     if (path.endsWith('/artifact-folders')) return Promise.resolve([docs]);
     return Promise.resolve([]);
@@ -47,10 +52,10 @@ vi.mock('@/lib/api/client', () => ({
   apiDownload: vi.fn(),
 }));
 
-function renderPage() {
+function renderPage(at = '/app/artifacts') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createMemoryRouter([{ path: '/app/artifacts', element: <ArtifactsPage /> }], {
-    initialEntries: ['/app/artifacts'],
+    initialEntries: [at],
   });
   render(
     <QueryClientProvider client={client}>
@@ -61,6 +66,21 @@ function renderPage() {
 }
 
 const fileLists = () => server.calls.filter((c) => c.path.endsWith('/artifact-files'));
+const uploads = () => server.calls.filter((c) => c.method === 'POST');
+
+/** Drags a file from the desktop over the page and drops it there. */
+function dropFile(on: HTMLElement) {
+  const dataTransfer = {
+    types: ['Files'],
+    items: [],
+    files: [new File(['# Notes'], 'notes.md')],
+    dropEffect: 'none',
+  };
+  fireEvent.dragOver(on, { dataTransfer });
+  const overlay = screen.queryByText(/^Drop to upload into/);
+  fireEvent.drop(on, { dataTransfer });
+  return overlay;
+}
 
 beforeEach(() => {
   server.calls = [];
@@ -97,5 +117,27 @@ describe('ArtifactsPage', () => {
 
     expect(box).toHaveValue('');
     expect(within(trail).queryByText('Search results')).toBeNull();
+  });
+
+  it('uploads a file dropped on a folder’s page into that folder', async () => {
+    renderPage(`/app/artifacts?folder=${docs.id}`);
+    const header = await screen.findByRole('heading', { name: 'Artifacts' });
+    await waitFor(() => expect(screen.getByRole('button', { name: /New file/ })).toBeEnabled());
+
+    expect(dropFile(header)).toHaveTextContent('Drop to upload into docs');
+
+    await waitFor(() => expect(uploads()).toHaveLength(1));
+    expect(uploads()[0]?.query).toMatchObject({ name: 'notes.md', folder_id: docs.id });
+  });
+
+  it('takes no drop on the page of a folder that is not there', async () => {
+    renderPage('/app/artifacts?folder=0199cccc-0000-7000-8000-0000000000ff');
+    expect(await screen.findByText('This folder is not here')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Upload files/ })).toBeDisabled();
+
+    expect(dropFile(screen.getByRole('heading', { name: 'Artifacts' }))).toBeNull();
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(uploads()).toEqual([]);
   });
 });

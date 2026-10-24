@@ -47,7 +47,7 @@ describe('the extension allow-list', () => {
     }
   });
 
-  it('knows the names that are their own kind, exactly as written', () => {
+  it('knows the names that are their own kind', () => {
     expect(isArtifactName('Dockerfile')).toBe(true);
     expect(isArtifactName('Makefile')).toBe(true);
     expect(isArtifactName('.gitignore')).toBe(true);
@@ -56,6 +56,14 @@ describe('the extension allow-list', () => {
     expect(isArtifactName('README')).toBe(false);
     expect(isArtifactName('.bashrc')).toBe(false);
     expect(isArtifactName('.env')).toBe(false);
+  });
+
+  it('takes those names in any case, as the API does', () => {
+    for (const name of ['makefile', 'DOCKERFILE', '.GITIGNORE', '.EditorConfig', '.ENV.EXAMPLE']) {
+      expect(isArtifactName(name), name).toBe(true);
+      expect(artifactFileProblem({ name, size: 10 }), name).toBeNull();
+    }
+    expect(isArtifactName('MAKEFILES')).toBe(false);
   });
 
   it('reads the extension after the last dot, but not a leading one', () => {
@@ -172,6 +180,16 @@ describe('planning a folder upload', () => {
       { path: 'site/img/logo.png', reason: NOT_TEXT_MESSAGE },
       { path: 'site/big.json', reason: 'Larger than 1 MB, the most a file may hold' },
     ]);
+  });
+
+  it('sends a lower-case makefile or dockerfile rather than skipping it', () => {
+    const plan = planFolderUpload([
+      { file: file('makefile'), path: 'repo/makefile' },
+      { file: file('dockerfile'), path: 'repo/dockerfile' },
+      { file: file('.GITIGNORE'), path: 'repo/.GITIGNORE' },
+    ]);
+    expect(plan.files.map((f) => f.file.name)).toEqual(['makefile', 'dockerfile', '.GITIGNORE']);
+    expect(plan.skipped).toEqual([]);
   });
 
   it('takes a file without a relative path as one for the open folder', () => {

@@ -177,21 +177,74 @@ describe('ArtifactFilePage editor', () => {
     expect(sent).toEqual(['a\r\nc\r\n']);
   });
 
-  it('saves the bytes it loaded when nothing was changed, so no version is made', async () => {
+  it('makes no version when nothing was changed, without asking the server', async () => {
     server.contents = { 3: 'a\r\nb\r\n' };
-    const sent: string[] = [];
-    server.save = async (call) => {
-      sent.push(await (call.body as Blob).text());
-      return file(3);
-    };
-    await openEditor();
+    const { editor } = await openEditor();
+    fireEvent.change(editor, { target: { value: 'a\nc\n' } });
+    // Typed back as it was: still nothing to save.
+    fireEvent.change(editor, { target: { value: 'a\nb\n' } });
 
     fireEvent.click(screen.getByRole('button', { name: 'Save as v4' }));
 
-    await waitFor(() =>
-      expect(toast.success).toHaveBeenCalledWith('Nothing changed, so no new version was saved'),
-    );
-    expect(sent).toEqual(['a\r\nb\r\n']);
+    expect(toast.success).toHaveBeenCalledWith('Nothing changed, so no new version was saved');
+    expect(editor).not.toBeInTheDocument();
+    expect(server.calls.filter((c) => c.method === 'PUT')).toEqual([]);
+  });
+
+  it.each([
+    ['mixes CRLF and LF', 'a\r\nb\nc\r\n', '8 B'],
+    ['ends its lines in a lone CR', 'a\rb\rc\r', '6 B'],
+  ])(
+    'keeps a file that %s as it is until it is changed, then saves LF',
+    async (_, content, size) => {
+      server.contents = { 3: content };
+      const sent: string[] = [];
+      server.save = async (call) => {
+        sent.push(await (call.body as Blob).text());
+        return file(4);
+      };
+      const { editor } = await openEditor();
+      expect(editor).toHaveValue('a\nb\nc\n');
+      // Its own bytes are what it holds while untouched.
+      expect(screen.getByText(`${size} of 1.0 MB`)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Save as v4' }));
+      expect(toast.success).toHaveBeenCalledWith('Nothing changed, so no new version was saved');
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+      fireEvent.change(await screen.findByRole('textbox', { name: 'Content of notes.md' }), {
+        target: { value: 'a\nb\nd\n' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Save as v4' }));
+
+      await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Saved v4'));
+      expect(sent).toEqual(['a\nb\nd\n']);
+    },
+  );
+
+  it('records the text it sent, and holds the editor while the save is out', async () => {
+    let answer: (saved: ArtifactFile) => void = () => {};
+    const sent: string[] = [];
+    server.save = async (call) => {
+      sent.push(await (call.body as Blob).text());
+      return new Promise((resolve) => (answer = resolve));
+    };
+    const { client, editor } = await openEditor();
+    fireEvent.change(editor, { target: { value: 'hello\n' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save as v4' }));
+
+    await waitFor(() => expect(sent).toEqual(['hello\n']));
+    expect(editor).toHaveAttribute('readonly');
+    expect(screen.getByRole('button', { name: 'Save as v4' })).toBeDisabled();
+    // Were something typed meanwhile anyway, v4 is still what was sent.
+    fireEvent.change(editor, { target: { value: 'hello world\n' } });
+    server.file = file(4);
+    act(() => answer(file(4)));
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Saved v4'));
+    expect(client.getQueryData(qk.artifacts.content(ids.file, 4))).toMatchObject({
+      content: 'hello\n',
+    });
   });
 
   it('keeps the draft on screen when the file is deleted meanwhile', async () => {

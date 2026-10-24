@@ -495,9 +495,11 @@ function Browser({ workspace }: { workspace: Workspace }) {
     void navigate(`/app/artifacts/${file.id}?edit=1`);
   };
 
+  // Like the upload buttons, a drop takes nothing into a folder that is not there.
+  const takesDrops = canWrite && !missing;
   const dropFiles = {
     onDragOver: (e: DragEvent) => {
-      if (!canWrite || !dragHasFiles(e.dataTransfer)) return;
+      if (!takesDrops || !dragHasFiles(e.dataTransfer)) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
       setOverPage(true);
@@ -507,7 +509,7 @@ function Browser({ workspace }: { workspace: Workspace }) {
     },
     onDrop: (e: DragEvent) => {
       setOverPage(false);
-      if (!canWrite || !dragHasFiles(e.dataTransfer)) return;
+      if (!takesDrops || !dragHasFiles(e.dataTransfer)) return;
       e.preventDefault();
       // A drop during an upload waits its turn in the hook.
       entriesFromDrop(e.dataTransfer)

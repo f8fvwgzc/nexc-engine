@@ -6,10 +6,11 @@ import {
   LockIcon,
   MoreHorizontalIcon,
   PlusIcon,
+  RotateCcwIcon,
   Trash2Icon,
   UploadIcon,
 } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -23,6 +24,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Skeleton } from '@/components/ui/skeleton';
 import { downloadArtifact } from '@/features/runs/api';
 import { errorMessage } from '@/lib/api/errors';
 import { formatBytes, formatDateTime, formatRelative } from '@/lib/format';
@@ -129,13 +131,15 @@ function FromRuns({ workspace, issue }: { workspace: Workspace; issue: Issue }) 
 /**
  * The issue's artifacts: the text files attached to it (each opens on its own page) with
  * Upload, New file, duplicate and delete, and the files its runs produced, which can be kept as
- * artifacts. Nothing is drawn until the issue's files have arrived.
+ * artifacts. The heading, Upload and New file are there while the files load and when they could
+ * not be read. A name the issue already has is refused: the server's word shows in the New file
+ * dialog, or in the upload's toast.
  */
 export function IssueArtifacts({ workspace, issue }: { workspace: Workspace; issue: Issue }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const canWrite = workspace.role !== 'guest';
-  const { data: files } = useQuery(artifactFilesQuery(workspace.id, { issue_id: issue.id }));
+  const files = useQuery(artifactFilesQuery(workspace.id, { issue_id: issue.id }));
   const actions = useFileActions(workspace.id);
   const uploads = useArtifactUpload(workspace.id, { folderId: null, issueId: issue.id });
   const [naming, setNaming] = useState(false);
@@ -147,13 +151,97 @@ export function IssueArtifacts({ workspace, issue }: { workspace: Workspace; iss
     void navigate(`/app/artifacts/${file.id}?edit=1`);
   };
 
-  if (!files) return null;
+  // A list that could not be read is not an empty one. A failed refetch keeps the list it had.
+  let list: ReactNode;
+  if (files.isPending) {
+    list = (
+      <div role="status" aria-busy aria-label="Loading the files">
+        <Skeleton className="h-8 w-full" />
+      </div>
+    );
+  } else if (files.data === undefined) {
+    list = (
+      <div role="alert" className="flex items-center gap-2 text-sm text-muted-foreground">
+        <span className="flex-1">Couldn’t load the files.</span>
+        <Button variant="ghost" size="sm" onClick={() => void files.refetch()}>
+          <RotateCcwIcon />
+          Try again
+        </Button>
+      </div>
+    );
+  } else if (files.data.length > 0) {
+    list = (
+      <ul className="divide-y rounded-md border">
+        {files.data.map((file) => (
+          <li
+            key={file.id}
+            className="relative flex h-8 items-center gap-2.5 px-3 text-[13px] hover:bg-muted/60"
+          >
+            <ArtifactGlyph kind={file.kind} />
+            <Link
+              to={`/app/artifacts/${file.id}`}
+              title={file.name}
+              className="min-w-0 flex-1 truncate outline-none after:absolute after:inset-0 focus-visible:underline"
+            >
+              {file.name}
+            </Link>
+            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+              v{file.current_version}
+            </span>
+            <span
+              className="hidden w-24 shrink-0 truncate text-right text-xs text-muted-foreground sm:block"
+              title={formatDateTime(file.updated_at)}
+            >
+              {formatRelative(file.updated_at)}
+            </span>
+            <span className="relative z-10">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <IconButton label={`Actions for ${file.name}`} size="icon-xs">
+                    <MoreHorizontalIcon />
+                  </IconButton>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {canWrite && (
+                    <DropdownMenuItem onSelect={() => actions.duplicate(file)}>
+                      <CopyIcon />
+                      Duplicate
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem onSelect={() => actions.download(file)}>
+                    <DownloadIcon />
+                    Download
+                  </DropdownMenuItem>
+                  {canWrite && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem variant="destructive" onSelect={() => actions.remove(file)}>
+                        <Trash2Icon />
+                        Delete
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </span>
+          </li>
+        ))}
+      </ul>
+    );
+  } else {
+    list = (
+      <p className="text-xs text-muted-foreground">
+        No files yet. Code, HTML and Markdown attached here keep every version.
+      </p>
+    );
+  }
+
   return (
     <section aria-label="Artifacts" className="space-y-2 border-t pt-4">
       <div className="flex items-center gap-2">
         <h3 className="text-[13px] font-medium text-muted-foreground">Artifacts</h3>
-        {files.length > 0 && (
-          <span className="text-xs text-muted-foreground tabular-nums">{files.length}</span>
+        {files.data && files.data.length > 0 && (
+          <span className="text-xs text-muted-foreground tabular-nums">{files.data.length}</span>
         )}
         {canWrite && (
           <div className="ml-auto flex items-center gap-1">
@@ -191,71 +279,7 @@ export function IssueArtifacts({ workspace, issue }: { workspace: Workspace; iss
           </div>
         )}
       </div>
-      {files.length > 0 ? (
-        <ul className="divide-y rounded-md border">
-          {files.map((file) => (
-            <li
-              key={file.id}
-              className="relative flex h-8 items-center gap-2.5 px-3 text-[13px] hover:bg-muted/60"
-            >
-              <ArtifactGlyph kind={file.kind} />
-              <Link
-                to={`/app/artifacts/${file.id}`}
-                title={file.name}
-                className="min-w-0 flex-1 truncate outline-none after:absolute after:inset-0 focus-visible:underline"
-              >
-                {file.name}
-              </Link>
-              <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                v{file.current_version}
-              </span>
-              <span
-                className="hidden w-24 shrink-0 truncate text-right text-xs text-muted-foreground sm:block"
-                title={formatDateTime(file.updated_at)}
-              >
-                {formatRelative(file.updated_at)}
-              </span>
-              <span className="relative z-10">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <IconButton label={`Actions for ${file.name}`} size="icon-xs">
-                      <MoreHorizontalIcon />
-                    </IconButton>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    {canWrite && (
-                      <DropdownMenuItem onSelect={() => actions.duplicate(file)}>
-                        <CopyIcon />
-                        Duplicate
-                      </DropdownMenuItem>
-                    )}
-                    <DropdownMenuItem onSelect={() => actions.download(file)}>
-                      <DownloadIcon />
-                      Download
-                    </DropdownMenuItem>
-                    {canWrite && (
-                      <>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          variant="destructive"
-                          onSelect={() => actions.remove(file)}
-                        >
-                          <Trash2Icon />
-                          Delete
-                        </DropdownMenuItem>
-                      </>
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </span>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="text-xs text-muted-foreground">
-          No files yet. Code, HTML and Markdown attached here keep every version.
-        </p>
-      )}
+      {list}
       <FromRuns workspace={workspace} issue={issue} />
       {naming && (
         <NameDialog
