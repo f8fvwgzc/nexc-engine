@@ -5,6 +5,8 @@ import { createMemoryRouter, RouterProvider, useLocation, useParams } from 'reac
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { issuePath, legacyIssuePath } from '@/features/issues/links';
+import type * as OptionSelectModule from '@/components/custom-ui/option-select';
+import type { Cycle } from '@/schemas/cycle';
 import type { Issue, IssueState, Project } from '@/schemas/issue';
 import type { Team, Workspace } from '@/schemas/workspace';
 
@@ -12,25 +14,39 @@ import IssuesPage, { IssueExplorer } from './issues-page';
 
 const id = '6c08cc63-f95f-77d4-8576-23a9c41035ee';
 
-/** What the mocked server answers: the teams, the issues, and each team's states. */
-const { server } = vi.hoisted(() => {
-  const server: { teams: Team[]; issues: Issue[]; states: Record<string, IssueState[]> } = {
-    teams: [],
-    issues: [],
-    states: {},
-  };
-  return { server };
+/**
+ * What the mocked server answers (the teams, the issues, each team's states and cycles), and
+ * whether the selects are the real ones rather than native stand-ins.
+ */
+const { server, ui } = vi.hoisted(() => {
+  const server: {
+    teams: Team[];
+    issues: Issue[];
+    states: Record<string, IssueState[]>;
+    cycles: Record<string, Cycle[]>;
+  } = { teams: [], issues: [], states: {}, cycles: {} };
+  return { server, ui: { realSelects: false } };
 });
 
 vi.mock('@/lib/api/client', () => ({
-  apiRequest: (path: string, _schema: unknown, opts: { query?: { team_id?: string } } = {}) => {
+  apiRequest: (
+    path: string,
+    _schema: unknown,
+    opts: { query?: { team_id?: string; cycle_id?: string } } = {},
+  ) => {
     if (path.endsWith('/teams')) return Promise.resolve(server.teams);
     if (path.endsWith('/issues')) {
-      const team = opts.query?.team_id;
-      return Promise.resolve(server.issues.filter((i) => !team || i.team_id === team));
+      const { team_id: team, cycle_id: cycle } = opts.query ?? {};
+      return Promise.resolve(
+        server.issues.filter(
+          (i) => (!team || i.team_id === team) && (!cycle || i.cycle?.id === cycle),
+        ),
+      );
     }
     const states = /\/teams\/([^/]+)\/states$/.exec(path);
     if (states) return Promise.resolve(server.states[states[1] ?? ''] ?? []);
+    const cycles = /\/teams\/([^/]+)\/cycles$/.exec(path);
+    if (cycles) return Promise.resolve(server.cycles[cycles[1] ?? ''] ?? []);
     return Promise.resolve([]);
   },
   apiSend: vi.fn(),
@@ -38,28 +54,34 @@ vi.mock('@/lib/api/client', () => ({
 }));
 // The dialog is not what these tests are about.
 vi.mock('@/features/issues/new-issue-dialog', () => ({ NewIssueDialog: () => null }));
-// A native select, so the options offered can be read without opening a popup.
-vi.mock('@/components/custom-ui/option-select', () => ({
-  OptionSelect: ({
-    value,
-    onValueChange,
-    options,
-    'aria-label': label,
-  }: {
-    value: string;
-    onValueChange: (value: string) => void;
-    options: { value: string; label: ReactNode }[];
-    'aria-label'?: string;
-  }) => (
-    <select aria-label={label} value={value} onChange={(e) => onValueChange(e.target.value)}>
-      {options.map((o) => (
-        <option key={o.value} value={o.value}>
-          {typeof o.label === 'string' ? o.label : o.value}
-        </option>
-      ))}
-    </select>
-  ),
-}));
+// A native select, so the options offered can be read without opening a popup; or the real one,
+// for what a member actually sees on the trigger.
+vi.mock('@/components/custom-ui/option-select', async (importOriginal) => {
+  const real = await importOriginal<typeof OptionSelectModule>();
+  return {
+    OptionSelect: (props: {
+      value: string;
+      onValueChange: (value: string) => void;
+      options: { value: string; label: ReactNode }[];
+      'aria-label'?: string;
+    }) =>
+      ui.realSelects ? (
+        <real.OptionSelect {...props} />
+      ) : (
+        <select
+          aria-label={props['aria-label']}
+          value={props.value}
+          onChange={(e) => props.onValueChange(e.target.value)}
+        >
+          {props.options.map((o) => (
+            <option key={o.value} value={o.value}>
+              {typeof o.label === 'string' ? o.label : o.value}
+            </option>
+          ))}
+        </select>
+      ),
+  };
+});
 
 function IssueProbe() {
   const { issueId } = useParams();
@@ -168,14 +190,32 @@ describe('a project’s issues on the board', () => {
     completed_at: null,
   });
 
+  const sprint: Cycle = {
+    id: '0199aaaa-0000-7000-8000-000000000501',
+    team_id: eng.id,
+    number: 4,
+    name: 'Wrist sprint',
+    starts_on: '2026-10-19',
+    ends_on: '2026-11-01',
+    status: 'active',
+    issue_count: 1,
+    closed_count: 0,
+    created_at: at,
+  };
+
   beforeEach(() => {
     server.teams = [eng, des];
     server.states = states;
+    server.cycles = { [eng.id]: [sprint] };
     server.issues = [
-      issueOf(eng, 1, 'Pick the wrist bus'),
+      {
+        ...issueOf(eng, 1, 'Pick the wrist bus'),
+        cycle: { id: sprint.id, number: sprint.number, name: sprint.name },
+      },
       issueOf(eng, 2, 'Size the motors'),
       issueOf(des, 3, 'Draw the wrist cover'),
     ];
+    ui.realSelects = false;
     localStorage.clear();
     localStorage.setItem('nexc.issues.view', 'board');
   });
@@ -230,6 +270,31 @@ describe('a project’s issues on the board', () => {
     );
     expect(teamSelect()).toHaveValue(des.id);
     expect(screen.queryByText(/in another team/)).toBeNull();
+  });
+
+  it('filters by the cycles of the team it shows, with no team picked', async () => {
+    const router = renderProject();
+    await screen.findByText('Size the motors');
+    const cycle = await screen.findByRole('combobox', { name: 'Cycle' });
+    expect(
+      within(cycle).getByRole('option', { name: 'Wrist sprint (#4) · active' }),
+    ).toBeInTheDocument();
+
+    fireEvent.change(cycle, { target: { value: sprint.id } });
+    // Only the sprint's issue is read now (not the motors, nor the other team's cover).
+    expect(await screen.findByText('Pick the wrist bus')).toBeInTheDocument();
+    expect(screen.queryByText('Size the motors')).toBeNull();
+    expect(screen.queryByText(/in another team/)).toBeNull();
+    // The board's team stays a default: nothing narrows the address to it.
+    expect(router.state.location.search).toBe('');
+  });
+
+  it('shows the board’s team on the real select, with its cycle filter beside it', async () => {
+    ui.realSelects = true;
+    renderProject();
+    await screen.findByRole('region', { name: 'Todo' });
+    expect(teamSelect()).toHaveTextContent('ENG · Engineering');
+    expect(await screen.findByRole('combobox', { name: 'Cycle' })).toHaveTextContent('Any cycle');
   });
 
   it('says nothing when every issue is on the board', async () => {

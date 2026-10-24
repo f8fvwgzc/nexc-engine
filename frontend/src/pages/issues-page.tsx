@@ -201,12 +201,20 @@ export function IssueExplorer({
   const { data: labels = [] } = useQuery(labelsQuery(workspace.id));
   // A label deleted elsewhere stops filtering.
   const activeLabel = labels.some((l) => l.id === labelId) ? labelId : ALL;
+  // A team the caller cannot see (or that is gone) is no default.
+  const fallbackTeam = teams.some((t) => t.id === defaultTeamId) ? defaultTeamId : undefined;
+  // A board shows one team's workflow, so it needs a team.
+  const boardTeam = teamId === ALL ? (fallbackTeam ?? teams[0]?.id) : teamId;
+  const board = view === 'board';
+  const showsBoard = board && boardTeam !== undefined;
+  // The team on screen: the board's even while none is picked, otherwise the picked one (or all).
+  const shownTeam = showsBoard ? boardTeam : teamId;
   // Cycles belong to a team, so the cycle filter exists only while one team is shown.
   const { data: teamCycles = [] } = useQuery({
-    ...cyclesQuery(workspace.id, teamId),
-    enabled: teamId !== ALL,
+    ...cyclesQuery(workspace.id, shownTeam),
+    enabled: shownTeam !== ALL,
   });
-  const activeCycle = teamId !== ALL && teamCycles.some((c) => c.id === cycleId) ? cycleId : ALL;
+  const activeCycle = shownTeam !== ALL && teamCycles.some((c) => c.id === cycleId) ? cycleId : ALL;
   const issuesResult = useQuery(
     issuesQuery(workspace.id, {
       team_id: teamId === ALL ? undefined : teamId,
@@ -246,12 +254,6 @@ export function IssueExplorer({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [setCreating]);
-  // A team the caller cannot see (or that is gone) is no default.
-  const fallbackTeam = teams.some((t) => t.id === defaultTeamId) ? defaultTeamId : undefined;
-  // A board shows one team's workflow, so it needs a team.
-  const boardTeam = teamId === ALL ? (fallbackTeam ?? teams[0]?.id) : teamId;
-  const board = view === 'board';
-  const showsBoard = board && boardTeam !== undefined;
   // With no team picked every team's issues are read, and the board leaves out those of the
   // teams it does not show: a project's issues filed in other teams, say.
   const elsewhere = showsBoard ? (issues ?? []).filter((i) => i.team_id !== boardTeam) : [];
@@ -312,13 +314,13 @@ export function IssueExplorer({
       <div className="flex shrink-0 flex-wrap items-center gap-2">
         {/* A board is one team's: the select names the team it shows, and offers no "All teams". */}
         <OptionSelect
-          value={showsBoard ? boardTeam : teamId}
+          value={shownTeam}
           onValueChange={setTeamId}
           options={showsBoard ? teamOptions : [{ value: ALL, label: 'All teams' }, ...teamOptions]}
           aria-label="Team"
           className="w-52"
         />
-        {teamId !== ALL && teamCycles.length > 0 && (
+        {shownTeam !== ALL && teamCycles.length > 0 && (
           <OptionSelect
             value={activeCycle}
             onValueChange={setCycleId}
