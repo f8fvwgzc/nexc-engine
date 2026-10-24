@@ -233,7 +233,8 @@ export interface ProjectInput {
   team_id?: string;
   /** `planned` when left out. */
   status?: ProjectStatus;
-  lead_id?: string;
+  /** Left out, the creator leads; `null` leaves the project without a lead. */
+  lead_id?: string | null;
   /** `YYYY-MM-DD`. */
   target_date?: string;
 }

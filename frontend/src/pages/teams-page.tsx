@@ -5,6 +5,7 @@ import {
   LogOutIcon,
   PlusIcon,
   RefreshCwIcon,
+  RotateCcwIcon,
   Trash2Icon,
   UsersRoundIcon,
   WorkflowIcon,
@@ -40,6 +41,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import {
   createTeam,
@@ -238,6 +240,9 @@ function TeamRoster({
   );
 }
 
+/** Whether the workspace's projects have been read yet, or could not be. */
+type ProjectsState = 'loading' | 'failed' | 'ready';
+
 /**
  * The projects a team owns, each a link to its page, and for members (not guests) a way to add
  * one: a new project for the team, or a project no team owns yet.
@@ -247,12 +252,16 @@ function TeamProjects({
   team,
   projects,
   unowned,
+  state,
+  onRetry,
   onCreate,
 }: {
   workspace: Workspace;
   team: Team;
   projects: Project[];
   unowned: Project[];
+  state: ProjectsState;
+  onRetry: () => void;
   onCreate: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -266,7 +275,8 @@ function TeamProjects({
     <div className="space-y-2 border-t pt-3">
       <div className="flex items-center gap-2">
         <h3 className="flex-1 text-xs font-medium text-muted-foreground">
-          Projects <span className="font-normal tabular-nums">{projects.length}</span>
+          Projects{' '}
+          {state === 'ready' && <span className="font-normal tabular-nums">{projects.length}</span>}
         </h3>
         {workspace.role !== 'guest' && (
           <DropdownMenu>
@@ -299,7 +309,18 @@ function TeamProjects({
           </DropdownMenu>
         )}
       </div>
-      {projects.length === 0 ? (
+      {/* A list that could not be read is not an empty one. */}
+      {state === 'loading' ? (
+        <Skeleton className="h-7 w-full" />
+      ) : state === 'failed' ? (
+        <div role="alert" className="flex items-center gap-2 text-sm text-muted-foreground">
+          <span className="flex-1">Couldn’t load the projects.</span>
+          <Button variant="ghost" size="sm" onClick={onRetry}>
+            <RotateCcwIcon />
+            Try again
+          </Button>
+        </div>
+      ) : projects.length === 0 ? (
         <p className="text-sm text-muted-foreground">No projects yet.</p>
       ) : (
         <ul className="space-y-0.5">
@@ -328,6 +349,8 @@ function TeamCard({
   team,
   projects,
   unowned,
+  projectsState,
+  onRetryProjects,
   onCreateProject,
 }: {
   workspace: Workspace;
@@ -336,6 +359,8 @@ function TeamCard({
   projects: Project[];
   /** The projects no team owns, which can be given to this one. */
   unowned: Project[];
+  projectsState: ProjectsState;
+  onRetryProjects: () => void;
   onCreateProject: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -367,6 +392,13 @@ function TeamCard({
       void queryClient.invalidateQueries({ queryKey: qk.issues.projectLists(workspace.id) });
     },
   });
+  // What deleting the team does to the projects it owns.
+  const projectsNote =
+    projects.length === 0
+      ? ''
+      : projects.length === 1
+        ? ' Its project stays, without a team.'
+        : ` Its ${projects.length} projects stay, without a team.`;
 
   return (
     <li className="min-w-0 space-y-3 rounded-xl border p-4">
@@ -436,6 +468,8 @@ function TeamCard({
         team={team}
         projects={projects}
         unowned={unowned}
+        state={projectsState}
+        onRetry={onRetryProjects}
         onCreate={onCreateProject}
       />
       <WorkflowDialog
@@ -456,7 +490,7 @@ function TeamCard({
         open={deleting}
         onOpenChange={setDeleting}
         title={`Delete ${team.name}?`}
-        description="The team and its memberships are removed. A team that still has graphs cannot be deleted."
+        description={`The team and its memberships are removed.${projectsNote} A team that still has graphs cannot be deleted.`}
         confirmLabel="Delete team"
         destructive
         onConfirm={() => remove.mutate()}
@@ -468,7 +502,13 @@ function TeamCard({
 function TeamList({ workspace, onCreate }: { workspace: Workspace; onCreate?: () => void }) {
   const { data: teams } = useSuspenseQuery(teamsQuery(workspace.id));
   // One list of every project, split by team here; the teams still show when it fails.
-  const { data: projects = [] } = useQuery(projectsQuery(workspace.id));
+  const projectsResult = useQuery(projectsQuery(workspace.id));
+  const projects = projectsResult.data ?? [];
+  const projectsState: ProjectsState = projectsResult.data
+    ? 'ready'
+    : projectsResult.isError
+      ? 'failed'
+      : 'loading';
   // The team a new project is being created for.
   const [creatingFor, setCreatingFor] = useState<string | null>(null);
   const unowned = projects.filter((p) => p.team_id === null);
@@ -496,6 +536,8 @@ function TeamList({ workspace, onCreate }: { workspace: Workspace; onCreate?: ()
             team={team}
             projects={projects.filter((p) => p.team_id === team.id)}
             unowned={unowned}
+            projectsState={projectsState}
+            onRetryProjects={() => void projectsResult.refetch()}
             onCreateProject={() => setCreatingFor(team.id)}
           />
         ))}

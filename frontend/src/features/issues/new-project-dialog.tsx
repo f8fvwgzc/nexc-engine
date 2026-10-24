@@ -17,13 +17,15 @@ import { errorMessage } from '@/lib/api/errors';
 import { qk } from '@/lib/query-keys';
 import type { ProjectStatus } from '@/schemas/issue';
 import type { Workspace } from '@/schemas/workspace';
+import { useAuthStore } from '@/stores/auth-store';
 
 import { createProject } from './api';
 import { ProjectLeadSelect, ProjectStatusSelect, ProjectTeamSelect } from './project-fields';
 
 /**
  * Names a new project; its team, status, lead, target date and summary are optional. Opened from
- * a team or a board column, it starts with that team or status chosen.
+ * a team or a board column, it starts with that team or status chosen. The creator leads unless
+ * another lead, or none, is picked.
  */
 export function NewProjectDialog({
   workspace,
@@ -39,6 +41,7 @@ export function NewProjectDialog({
   defaultStatus?: ProjectStatus;
 }) {
   const queryClient = useQueryClient();
+  const me = useAuthStore((s) => s.user?.id);
   const { data: teams = [] } = useQuery(teamsQuery(workspace.id));
   // Guests cannot list members; they cannot create projects either.
   const { data: members = [] } = useQuery({
@@ -48,7 +51,7 @@ export function NewProjectDialog({
   const [name, setName] = useState('');
   const [teamId, setTeamId] = useState<string | null>(defaultTeam ?? null);
   const [status, setStatus] = useState<ProjectStatus>(defaultStatus);
-  const [leadId, setLeadId] = useState<string | null>(null);
+  const [leadId, setLeadId] = useState<string | null>(me ?? null);
   const [targetDate, setTargetDate] = useState('');
   const [description, setDescription] = useState('');
   const create = useMutation({
@@ -58,7 +61,8 @@ export function NewProjectDialog({
         description: description.trim() || undefined,
         team_id: teamId ?? undefined,
         status,
-        lead_id: leadId ?? undefined,
+        // Sent as null for "No lead": left out, the backend makes the creator the lead.
+        lead_id: leadId,
         target_date: targetDate || undefined,
       }),
     meta: { errorToast: false, successMessage: 'Project created' },

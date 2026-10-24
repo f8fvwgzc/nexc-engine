@@ -150,8 +150,10 @@ function ProjectBoard({
   const move = useMutation({
     mutationFn: ({ id, status }: { id: string; status: ProjectStatus }) =>
       updateProject(workspace.id, id, { status }),
-    // The card lands in its new column at once; the lists are read again either way.
-    onMutate: ({ id, status }) => {
+    // The card lands in its new column at once; the lists are read again either way. A read
+    // still in flight is dropped first, so it cannot put the card back in its old column.
+    onMutate: async ({ id, status }) => {
+      await queryClient.cancelQueries({ queryKey: lists });
       queryClient.setQueriesData<Project[]>({ queryKey: lists }, (list) =>
         list?.map((p) => (p.id === id ? { ...p, status } : p)),
       );

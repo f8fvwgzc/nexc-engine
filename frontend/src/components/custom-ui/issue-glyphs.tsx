@@ -238,14 +238,12 @@ export function LabelChip({
   );
 }
 
-/** A team as a small pill: its key and, unless `compact`, its name. */
+/** A team as a small pill: its key and its name. */
 export function TeamChip({
   team,
-  compact = false,
   className,
 }: {
   team: { key: string; name: string };
-  compact?: boolean;
   className?: string;
 }) {
   return (
@@ -257,11 +255,7 @@ export function TeamChip({
       )}
     >
       <span className="font-mono text-[10px] font-semibold text-foreground">{team.key}</span>
-      {compact ? (
-        <span className="sr-only">{team.name}</span>
-      ) : (
-        <span className="truncate">{team.name}</span>
-      )}
+      <span className="truncate">{team.name}</span>
     </span>
   );
 }
