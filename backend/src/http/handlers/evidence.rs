@@ -16,6 +16,7 @@ use crate::domain::audit_chain::{AuditVerification, ChainCheck};
 use crate::domain::bundle::{BundleRun, EvidenceBundle};
 use crate::domain::workspace::WorkspaceAction;
 use crate::http::extract::{AuthUser, Path};
+use crate::http::middleware::etag::PUBLIC_CACHE_CONTROL;
 use crate::http::problem::Problem;
 use crate::repo::{self, OrNotFound, audit::Subject};
 use crate::security::signing::Jwks;
@@ -134,13 +135,14 @@ pub async fn audit_verify(
 
 /// The public keys everything nexc signs verifies with, as a JWK set: the
 /// current key and the keys it replaced, each under its `kid` (the RFC 7638
-/// thumbprint of the key). Public. Run seals, firewall decisions and
-/// evidence bundles name the key they are signed with.
+/// thumbprint of the key). Public, and kept by any cache for five minutes
+/// (`PUBLIC_CACHE_CONTROL`). Run seals, firewall decisions and evidence
+/// bundles name the key they are signed with.
 #[utoipa::path(get, path = "/.well-known/jwks.json", tag = "runs",
     responses((status = 200, body = Jwks)))]
 pub async fn jwks(State(state): State<AppState>) -> Response {
     (
-        [(header::CACHE_CONTROL, "public, max-age=300")],
+        [(header::CACHE_CONTROL, PUBLIC_CACHE_CONTROL)],
         Json(state.signing_keys.jwks()),
     )
         .into_response()

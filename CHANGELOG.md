@@ -82,6 +82,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Indexes for the polls and lists that read whole tables** (migrations `20261024100000` to
+  `20261024100019`, `docs/DATABASE.md`): an agent's pending approvals, what an agent spent today,
+  the upstream labels as a node starts, a graph's memories, the approvals list, the console's open
+  alerts, quarantined artifacts, outputs by verdict, last seal and span counts (a BRIN index on
+  `agent_spans.started_at`), and the sweeps of refresh tokens, stale plans and due reminders.
+  Indexes on the tables agents write are built `CONCURRENTLY`, one per `-- no-transaction` file,
+  and a server whose concurrent build did not finish refuses to start, naming the
+  `REINDEX INDEX CONCURRENTLY` statements to run first. Unique indexes now hold one live managed
+  graph per agent and one A2A task per run, created only where the data already allows it (a
+  warning in the server's log otherwise). `backend/tests/schema.rs` also fails on two copies of
+  one partial, expression or unique index
+  (`docs/adr/0004-poll-indexes-hot-updates-and-concurrent-builds.md`). Upgrading a large
+  installation: run `nexc migrate` with the new image before rolling the deployment, since the
+  startup probe allows 150 s.
+- Architecture decision records 0002 to 0004 in `docs/adr/`, each extending 0001: the tighter
+  edge with adaptive gRPC windows, what no cache keeps with the narrower refreshes, and the poll
+  indexes with concurrent builds. The documentation site has a page for each under Operate, after
+  HTTP/3, caching and indexes.
 - **HTTP/3 to the console.** The frontend's nginx serves the site a second time on 8443: TLS with
   HTTP/2 over TCP and HTTP/3 over QUIC on UDP, the same port, advertised by `Alt-Svc`; on
   whenever a certificate is mounted at `/etc/nginx/tls`. Compose publishes `NEXC_HTTPS_PORT`
@@ -1743,6 +1761,48 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   broke generating the client types; a test now checks that every reference resolves.
 
 ### Changed
+
+- **Secrets are never kept, and two more documents are public** (CONTRACT §3). Sign-in and the
+  account (`/auth/*` except `/auth/providers`), the LLM credentials, the knowledge settings,
+  agent tokens, realtime tickets, span payloads, the SIEM exports and every download are
+  `no-store` and carry no `ETag`, whatever their handler says (`middleware::etag`). The caller's
+  own JSON keeps its `ETag` and `private, no-cache` and gains `Vary: Authorization`. The handlers
+  of the key sets (`/.well-known/jwks.json`, which was `public, max-age=300`, and
+  `/api/v1/agent-tokens/jwks.json`, now tagged on `NEXC_KEYS_ADDR` too) and of
+  `/api/openapi.json` send `public, max-age=300, stale-while-revalidate=60`
+  (`docs/adr/0003-no-store-secrets-and-narrower-refreshes.md`).
+- The console: a query that names no kind of resource is fresh for 60 s (was 30 s), a window
+  focus refetches only lists and live state, and a run that finishes on an issue refreshes that
+  issue, its parent, the issue lists, projects, the team's cycles and the inbox instead of every
+  issue query.
+- The frontend's nginx: hashed assets are `immutable` for a year only when they are found
+  (`no-store` on a miss, which a rolling deploy can cause); `index.html` is `no-cache` instead of
+  `no-cache, no-store, must-revalidate`, and the unhashed `favicon.svg` and `theme-init.js` are
+  `no-cache` too. The agent-token key set is kept at the edge like the other public documents,
+  for the backend's `max-age` and never for a request with an `Authorization` header, and a kept
+  copy no longer carries the `X-Request-Id` of the request that filled it. On the HTTPS listener
+  TLS 1.2 takes forward-secret AEAD suites only and the scheme passed to the backend is always
+  `https`; `/a2a/` and the well-known documents now reuse the keepalive connections to the
+  backend, and `Connection: upgrade` reaches the backend only for a WebSocket. The kustomize
+  component `deploy/k8s/http3` serves HTTPS and HTTP/3 as the chart's `frontend.http3` does, and
+  both keep each client's address on `frontend-https` (`externalTrafficPolicy: Local`)
+  (`docs/adr/0002-edge-hardening-and-adaptive-grpc-windows.md`).
+- Every gRPC channel the backend opens, and the Agent Firewall server, use hyper's adaptive HTTP/2
+  flow control (`http2_adaptive_window`): a window that starts at 64 KiB and grows with the
+  measured bandwidth-delay product, in place of hyper's fixed windows (2 MiB per stream on a
+  client, 1 MiB on a server).
+- **Cheaper writes on the busiest tables.** `runs_lease_idx` is dropped and `runs`, `agents` and
+  `nodes` have `fillfactor = 90`, so lease renewals, heartbeats and node progress can be HOT
+  updates. `run_commands_run_idx` replaces `run_commands_pending_idx` and
+  `run_commands_run_id_idx`, `a2a_tasks_run_key` replaces `a2a_tasks_run_idx`, and
+  `memories_graph_idx` replaces `memories_graph_id_idx`. Spans are queued for onto-intelli by a
+  statement trigger, once per batch instead of once per span, and an agent is exported when only
+  its principal, manager or team changed too. `repo::migrate` polls its advisory lock
+  (`pg_try_advisory_lock(hashtext('nexc.migrate'))`, every 500 ms) instead of blocking on sqlx's,
+  so two servers starting together cannot deadlock a concurrent index build.
+- Cache invalidations between replicas: a replica skips a key kind it does not know instead of
+  ignoring the whole notification, and the onto-intelli keys travel in a notification of their
+  own, so during a rolling update a replica of a release without them still drops the rest.
 
 - App pages fill the width beside the sidebar instead of a centred column; settings and the
   platform console stay narrow.

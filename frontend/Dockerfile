@@ -5,6 +5,8 @@
 # Build: docker build -t nexc-engine-frontend ./frontend
 
 ARG NODE_IMAGE=node:22-bookworm-slim
+# nginx.org's packages, which this image is built from, include ngx_http_v3_module (QUIC and
+# HTTP/3) since 1.25.0; a replacement image must too, or the HTTPS listener does not start.
 ARG NGINX_IMAGE=nginxinc/nginx-unprivileged:1.28-alpine
 
 # ---------------------------------------------------------------------------------------------

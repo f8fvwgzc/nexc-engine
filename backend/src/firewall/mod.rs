@@ -1468,6 +1468,7 @@ pub async fn serve(state: AppState, addr: SocketAddr) -> std::io::Result<Running
             .tcp_nodelay(true)
             .http2_keepalive_interval(Some(keepalive.keepalive))
             .http2_keepalive_timeout(Some(keepalive.keepalive_timeout))
+            .http2_adaptive_window(Some(true))
             .add_service(health)
             .add_service(reflection)
             .add_service(AgentFirewallServer::new(service))

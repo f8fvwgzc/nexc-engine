@@ -5,7 +5,10 @@
 //!
 //! Every client channel the backend opens (to the runtime, to onto-intelli,
 //! to the OTLP collector) is built by [`channel`]: a small pool of HTTP/2
-//! connections with keepalive pings, reused for the life of the process.
+//! connections with keepalive pings and adaptive flow control, opened once
+//! and cloned into every client for the life of the process (a clone shares
+//! the connections; no request opens one of its own). Messages travel
+//! uncompressed: tonic's `gzip` feature is not enabled in this build.
 #![forbid(unsafe_code)]
 
 use std::time::Duration;
@@ -73,13 +76,18 @@ impl ChannelSettings {
     }
 }
 
+/// One connection to `url`: keepalive pings, idle or not, and adaptive flow
+/// control: in place of hyper's fixed windows on a client (2 MiB per stream,
+/// 5 MiB per connection), one that starts at HTTP/2's 64 KiB and grows with
+/// the bandwidth-delay product hyper measures with its pings.
 fn endpoint(url: &str, settings: &ChannelSettings) -> Result<Endpoint, tonic::transport::Error> {
     Ok(Endpoint::from_shared(url.to_owned())?
         .connect_timeout(settings.connect_timeout)
         .tcp_nodelay(true)
         .http2_keep_alive_interval(settings.keepalive)
         .keep_alive_timeout(settings.keepalive_timeout)
-        .keep_alive_while_idle(true))
+        .keep_alive_while_idle(true)
+        .http2_adaptive_window(true))
 }
 
 /// A lazily connected channel to `url`: `settings.pool` connections, each

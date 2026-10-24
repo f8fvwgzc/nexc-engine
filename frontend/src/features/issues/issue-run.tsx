@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { type QueryKey, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   BotIcon,
   CheckCircle2Icon,
@@ -48,6 +48,24 @@ import { createIssueGraph } from './api';
 const OUTPUT_MAX_CHARS = 20_000;
 /** Most log lines of a step kept on screen. */
 const LOG_MAX_LINES = 40;
+
+/**
+ * Where an issue shows, which a run's work on it changes: its page and timeline, its parent's page
+ * (how many of its parts are closed), the workspace's issue lists, projects and its team's cycles
+ * (its state, its graph), and the inbox. Nothing else of the workspace.
+ */
+function issueKeys(issue: Issue): QueryKey[] {
+  const keys: QueryKey[] = [
+    qk.issues.one(issue.id),
+    qk.issues.events(issue.id),
+    qk.issues.lists(issue.workspace_id),
+    qk.issues.projectLists(issue.workspace_id),
+    qk.issues.cycles(issue.workspace_id, issue.team_id),
+    qk.issues.inbox(issue.workspace_id),
+  ];
+  if (issue.parent) keys.push(qk.issues.one(issue.parent.id));
+  return keys;
+}
 
 /** What one step of the latest run has shown since the page opened. */
 interface Live {
@@ -188,7 +206,9 @@ export function IssueRun({ issue }: { issue: Issue }) {
     },
     onSuccess: (started) => {
       setPlan(started);
-      void queryClient.invalidateQueries({ queryKey: qk.issues.all });
+      for (const queryKey of issueKeys(issue)) {
+        void queryClient.invalidateQueries({ queryKey });
+      }
     },
   });
 
@@ -297,9 +317,12 @@ function LiveRun({
         queryClient.setQueryData<Run[]>(qk.graphs.runs(graphId), (prev) =>
           (prev ?? []).map((r) => (r.id === event.data.run.id ? event.data.run : r)),
         );
-        // The run reported back: a timeline entry, maybe a new state, an inbox entry, and the
-        // run's status on each file it made.
-        void queryClient.invalidateQueries({ queryKey: qk.issues.all });
+        // The run reported back on this issue: a timeline entry, maybe a new state (in the
+        // workspace's lists and projects too), an inbox entry, and the run's status on each file
+        // it made. Nothing else of the workspace changed.
+        for (const queryKey of issueKeys(issue)) {
+          void queryClient.invalidateQueries({ queryKey });
+        }
         void queryClient.invalidateQueries({ queryKey: qk.runs.artifacts(event.data.run.id) });
         void queryClient.invalidateQueries({ queryKey: qk.artifacts.runs(issue.id) });
         break;

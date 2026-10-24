@@ -250,9 +250,12 @@ pub async fn ensure_graph(
             .fetch_one(&mut *conn)
             .await?;
     let id = Uuid::now_v7();
-    sqlx::query(
+    // Two first tasks at once both find no graph: the later insert gives way to the earlier one
+    // (`graphs_a2a_agent_live_key`) and reads it back.
+    let created: Option<Uuid> = sqlx::query_scalar(
         "INSERT INTO graphs (id, owner_id, name, description, goal, workspace_id, a2a_agent_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT DO NOTHING RETURNING id",
     )
     .bind(id)
     .bind(owner)
@@ -261,9 +264,17 @@ pub async fn ensure_graph(
     .bind("Answer the tasks counterpart agents send over A2A.")
     .bind(workspace_id)
     .bind(agent_id)
-    .execute(&mut *conn)
+    .fetch_optional(&mut *conn)
     .await?;
-    Ok((id, owner))
+    if created.is_some() {
+        return Ok((id, owner));
+    }
+    sqlx::query_as::<_, (Uuid, Uuid)>(
+        "SELECT id, owner_id FROM graphs WHERE a2a_agent_id = $1 AND deleted_at IS NULL",
+    )
+    .bind(agent_id)
+    .fetch_one(&mut *conn)
+    .await
 }
 
 /// The agent every node of a graph is pinned to, when the graph is an

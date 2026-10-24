@@ -1,0 +1,39 @@
+# Browsers to the frontend's own HTTPS, HTTP/2 and HTTP/3: TCP and UDP 443 on one load balancer
+# (a mixed-protocol LoadBalancer, Kubernetes 1.26+), as the Helm chart's frontend.http3 does.
+# Local keeps the client's address (X-Real-IP, X-Forwarded-For) and needs a frontend pod on the
+# nodes the load balancer sends to. Keep it: Cluster replaces every client's address with a
+# node's, so the backend's per-address limits (five failed sign-ins a minute) lock out all the
+# clients behind one node together. A loadBalancerSourceRanges here filters only what reaches the
+# load balancer's address; the NetworkPolicy below is what keeps the rest (node ports, the
+# cluster IP, other pods) out.
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-https
+  labels: { app.kubernetes.io/name: frontend }
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  selector: { app.kubernetes.io/name: frontend }
+  ports:
+    - { name: https, port: 443, targetPort: https, protocol: TCP }
+    - { name: quic, port: 443, targetPort: quic, protocol: UDP }
+---
+# frontend, with its own TLS: HTTPS on TCP 8443 and HTTP/3 (QUIC) on UDP 8443, from any address
+# and any pod as it stands. To admit the load balancer's clients alone, give the rule a `from:`
+# with their ranges (with externalTrafficPolicy Local and a load balancer that keeps client
+# addresses; behind one that does not, its own addresses), e.g.
+#     - from: [{ ipBlock: { cidr: 203.0.113.0/24 } }]
+#       ports: ...
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-from-load-balancer
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: frontend }
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - { port: 8443, protocol: TCP }
+        - { port: 8443, protocol: UDP }

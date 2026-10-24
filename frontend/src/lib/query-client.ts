@@ -2,6 +2,7 @@ import { MutationCache, QueryCache, QueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 import { ApiError, ContractError, errorMessage } from '@/lib/api/errors';
+import { changesElsewhere, FRESH } from '@/lib/freshness';
 
 declare module '@tanstack/react-query' {
   interface Register {
@@ -13,7 +14,11 @@ declare module '@tanstack/react-query' {
   }
 }
 
-function shouldRetry(failureCount: number, error: unknown): boolean {
+/**
+ * Retries a network failure or a 5xx, twice. Never a 4xx (a 429 included) nor a body that breaks
+ * the contract: asked again at once, they come back the same.
+ */
+export function shouldRetry(failureCount: number, error: unknown): boolean {
   if (error instanceof ContractError) return false;
   if (error instanceof ApiError && error.status >= 400 && error.status < 500) return false;
   return failureCount < 2;
@@ -38,10 +43,11 @@ export function createQueryClient(): QueryClient {
     }),
     defaultOptions: {
       queries: {
-        staleTime: 30_000,
+        // Each query names the kind of resource it reads (`FRESH`); one that does not is a list.
+        staleTime: FRESH.list,
         gcTime: 10 * 60_000,
         retry: shouldRetry,
-        refetchOnWindowFocus: true,
+        refetchOnWindowFocus: changesElsewhere,
       },
       mutations: { retry: false },
     },

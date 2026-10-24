@@ -32,9 +32,12 @@ pub async fn ensure_graph(
             .fetch_one(&mut *conn)
             .await?;
     let id = Uuid::now_v7();
-    sqlx::query(
+    // Two first uses at once both find no graph: the later insert gives way to the earlier one
+    // (`graphs_external_agent_live_key`) and reads it back.
+    let created: Option<Uuid> = sqlx::query_scalar(
         "INSERT INTO graphs (id, owner_id, name, description, goal, workspace_id, external_agent_id)
-         VALUES ($1, $2, $3, $4, '', $5, $6)",
+         VALUES ($1, $2, $3, $4, '', $5, $6)
+         ON CONFLICT DO NOTHING RETURNING id",
     )
     .bind(id)
     .bind(owner)
@@ -42,9 +45,17 @@ pub async fn ensure_graph(
     .bind("Runs reported through the Agent Firewall API; one node per run.")
     .bind(workspace_id)
     .bind(agent_id)
-    .execute(&mut *conn)
+    .fetch_optional(&mut *conn)
     .await?;
-    Ok((id, owner))
+    if created.is_some() {
+        return Ok((id, owner));
+    }
+    sqlx::query_as::<_, (Uuid, Uuid)>(
+        "SELECT id, owner_id FROM graphs WHERE external_agent_id = $1 AND deleted_at IS NULL",
+    )
+    .bind(agent_id)
+    .fetch_one(&mut *conn)
+    .await
 }
 
 /// Opens a run of an external agent: a node for it, a run already running

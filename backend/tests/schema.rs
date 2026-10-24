@@ -69,7 +69,10 @@ async fn every_foreign_key_has_an_index(pool: PgPool) {
 
 /// Two indexes with the same definition, or a plain b-tree whose columns
 /// lead another b-tree: the second costs every write and serves nothing the
-/// first does not.
+/// first does not. The same definition is the same access method, keys or
+/// expressions, operator classes, collations and orderings over the same
+/// rows, so two copies of one partial, expression or unique index count too;
+/// of such a pair the plain one is named, else the later.
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
 async fn no_index_repeats_another(pool: PgPool) {
     let repeated: Vec<String> = sqlx::query_scalar(
@@ -81,17 +84,29 @@ async fn no_index_repeats_another(pool: PgPool) {
            JOIN pg_class ai ON ai.oid = a.indexrelid JOIN pg_am am ON am.oid = ai.relam
            JOIN pg_class bi ON bi.oid = b.indexrelid JOIN pg_am bm ON bm.oid = bi.relam
           WHERE s.nspname = current_schema()
-            AND NOT a.indisunique AND NOT a.indisprimary
-            AND am.amname = 'btree' AND bm.amname = 'btree'
-            AND a.indexprs IS NULL AND b.indexprs IS NULL
-            AND a.indpred IS NULL AND b.indpred IS NULL
-            AND a.indnkeyatts <= b.indnkeyatts
-            AND (string_to_array(b.indkey::text, ' '))[1:a.indnkeyatts]
-                = (string_to_array(a.indkey::text, ' '))[1:a.indnkeyatts]
-            AND (string_to_array(b.indoption::text, ' '))[1:a.indnkeyatts]
-                = (string_to_array(a.indoption::text, ' '))[1:a.indnkeyatts]
-            AND (a.indnkeyatts < b.indnkeyatts OR a.indexrelid > b.indexrelid
-                 OR b.indisunique)
+            AND ((NOT a.indisunique AND NOT a.indisprimary
+                  AND am.amname = 'btree' AND bm.amname = 'btree'
+                  AND a.indexprs IS NULL AND b.indexprs IS NULL
+                  AND a.indpred IS NULL AND b.indpred IS NULL
+                  AND a.indnkeyatts <= b.indnkeyatts
+                  AND (string_to_array(b.indkey::text, ' '))[1:a.indnkeyatts]
+                      = (string_to_array(a.indkey::text, ' '))[1:a.indnkeyatts]
+                  AND (string_to_array(b.indoption::text, ' '))[1:a.indnkeyatts]
+                      = (string_to_array(a.indoption::text, ' '))[1:a.indnkeyatts]
+                  AND (a.indnkeyatts < b.indnkeyatts OR a.indexrelid > b.indexrelid
+                       OR b.indisunique))
+                 OR (ai.relam = bi.relam
+                     AND a.indnkeyatts = b.indnkeyatts
+                     AND a.indkey::text = b.indkey::text
+                     AND a.indclass::text = b.indclass::text
+                     AND a.indcollation::text = b.indcollation::text
+                     AND a.indoption::text = b.indoption::text
+                     AND pg_get_expr(a.indexprs, a.indrelid)
+                         IS NOT DISTINCT FROM pg_get_expr(b.indexprs, b.indrelid)
+                     AND pg_get_expr(a.indpred, a.indrelid)
+                         IS NOT DISTINCT FROM pg_get_expr(b.indpred, b.indrelid)
+                     AND (a.indisprimary, a.indisunique, b.indexrelid)
+                         < (b.indisprimary, b.indisunique, a.indexrelid)))
           ORDER BY 1",
     )
     .fetch_all(&pool)

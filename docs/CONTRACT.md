@@ -79,7 +79,7 @@ In Docker/K8s the frontend is served by unprivileged nginx on 8080 which proxies
 | `NEXC_API_CALLS_PER_MINUTE`                                             | `600`                                                     | backend: authenticated API requests one account may make per minute (burst a fifth of it; 429 with `Retry-After` past it); `make prove-api` raises it on its own test server                                                                                                                 |
 | `NEXC_CACHE_TTL_SECS`                                                   | `60`                                                      | backend: longest a hot-read cache entry lives (agent cards, resolved policies per agent and policy version, guardrails, workspace LLM settings); a write drops the entry on every replica at once over the realtime fan-out, so this only bounds a missed notification; `0` turns the caches off                                                              |
 | `NEXC_GRPC_KEEPALIVE_SECS` / `NEXC_GRPC_KEEPALIVE_TIMEOUT_SECS`         | `30` / `10`                                               | backend: HTTP/2 keepalive of every gRPC channel it opens (the runtime, onto-intelli, the OTLP collector) and of the Agent Firewall server: how often a PING goes out, how long one may go unanswered before the connection is dropped                                                                                                        |
-| `NEXC_GRPC_POOL_SIZE`                                                   | `2`                                                       | backend: connections per gRPC client channel (1–64); requests and streams are spread over them, each connection kept with keepalive for the life of the process                                                                                                                                                                             |
+| `NEXC_GRPC_POOL_SIZE`                                                   | `2`                                                       | backend: connections per gRPC client channel (1–64); requests and streams are spread over them, each connection kept with keepalive and adaptive HTTP/2 flow control for the life of the process; every client is a clone of its one channel, and messages travel uncompressed (tonic's `gzip` is not in this build)                       |
 | `NEXC_LLM_BREAKER_FAILURES` / `NEXC_LLM_BREAKER_OPEN_SECS`              | `5` / `30`                                                | backend: the circuit breaker of each network LLM provider endpoint (Anthropic, OpenAI-compatible, keyed `provider@base_url`): after that many consecutive provider failures (429, 5xx, no connection) the circuit opens and calls fail at once for that long, then one probe is let through; `0` failures turns it off                           |
 | `NEXC_GATEWAY_CALLS_PER_MINUTE` / `NEXC_GATEWAY_TIMEOUT_SECS` / `NEXC_GATEWAY_MAX_RESPONSE_BYTES` | `120` / `30` / `1048576`               | backend: the tools gateway (§8): calls one agent may make per minute (burst a quarter of it), the longest one call may take, the largest response passed on                                                                                                                               |
 | `NEXC_A2A_TIMEOUT_SECS`                                                 | `120`                                                     | backend: the A2A adapter (§10): the longest one outbound task (`a2a:<name>`) may take, the remote agent's work included (1–600)                                                                                                                                                             |
@@ -112,6 +112,8 @@ In Docker/K8s the frontend is served by unprivileged nginx on 8080 which proxies
 | `RUNTIME_WORKSPACE`                                                     | `/tmp/nexc-runtime`                                       | runtime (per-run scratch dirs)                                                                                                                                                                                                                                                           |
 | `RUNTIME_ALLOW_CODE_EXEC`                                               | `false`                                                   | runtime: enables the sandboxed `run_python` tool                                                                                                                                                                                                                                         |
 | `VITE_API_BASE_URL`                                                     | `/api/v1`                                                 | frontend                                                                                                                                                                                                                                                                                 |
+| `NEXC_HTTPS_PUBLIC_PORT` | `443` | frontend container (`docker-entrypoint.d/41-nexc-tls.sh`): with `tls.crt` and `tls.key` mounted at `/etc/nginx/tls` (readable by uid 101), nginx serves the console with HTTPS on TCP 8443 (HTTP/2) and HTTP/3 (QUIC) on UDP 8443, and this is the port browsers reach it on, advertised in `Alt-Svc: h3=":<port>"; ma=86400`; the container listens on 8443 whatever it is. Without a certificate there is no HTTPS listener and no `Alt-Svc`; half of one, or one nginx cannot read, stops the container. nginx reads the pair at start: restart after a renewal (`docs/adr/0001-http3-edge-caching-and-indexes.md`) |
+| `NEXC_HTTPS_PORT` / `NEXC_TLS_DIR` | `8443` / `./data/tls` | `docker-compose.yml`: the host port of that listener, published on TCP and UDP (also the frontend's `NEXC_HTTPS_PUBLIC_PORT`, and its origin is added to the backend's `NEXC_CORS_ORIGINS`, which the WebSocket checks); the directory with `tls.crt` and `tls.key`, mounted read-only at `/etc/nginx/tls` (`make init` writes a localhost certificate there when there is none; `make tls-cert` writes it again, with mkcert's local CA when installed) |
 
 <!-- #endregion env -->
 <!-- #region conventions -->
@@ -136,29 +138,49 @@ In Docker/K8s the frontend is served by unprivileged nginx on 8080 which proxies
   413 too large, 422 validation, 429 rate limited (with `Retry-After`), 500. Free text in a query
   (every `q`, the span filters `tool` and `host`) with a control character in it is 422 on that
   parameter.
-- Conditional reads. Every `GET` that answers `200` with JSON (a single resource or a list)
-  carries a strong `ETag` (a hash of the body; `GET /graphs/{gid}` hashes the graph with its
-  version) and `Cache-Control: private, no-cache`: a client may keep the body but must ask
-  before reusing it. The public documents are the exception: the key set
-  (`/.well-known/jwks.json`, `public, max-age=300`) and the agent cards of exposed agents
-  (`/.well-known/agent.json`, `/a2a/agents/{principal}/card`, `public, max-age=30`) keep their
-  `public` policy with the tag, so the edge (nginx) and any other shared cache may keep them.
-  A `GET` with `If-None-Match` naming the current tag (or `*`) is answered
-  `304 Not Modified` with the `ETag`, the same `Cache-Control` and no body; a resource that
-  changed gets a new tag. Streams (SSE, WebSocket), downloads, `/metrics` and errors carry no
-  tag and keep `Cache-Control: no-store`. The console's fetch layer sends `If-None-Match` from
-  the bodies it keeps (per URL for the page; the persisted lists between visits) and reuses
-  the kept body on a 304. It asks again only once a body is stale, by the kind of resource
+- Conditional reads and caching (`backend/src/http/middleware/etag.rs`):
+  - the caller's own JSON: every `GET` that answers `200` with JSON (a single resource or a
+    list) carries a strong `ETag` (a hash of the body; `GET /graphs/{gid}` hashes the graph with
+    its version), `Cache-Control: private, no-cache` and `Vary: Authorization`: a browser may
+    keep the body but must ask before reusing it, and a shared cache never keeps it;
+  - the public documents are tagged as well and keep the `public` policy their handler sends,
+    so the edge (nginx) and any other shared cache may keep them: `GET /.well-known/jwks.json`,
+    `GET /agent-tokens/jwks.json` (on `NEXC_KEYS_ADDR` too) and `GET /api/openapi.json` with
+    `Cache-Control: public, max-age=300, stale-while-revalidate=60` (kept five minutes and served
+    a minute longer while it is revalidated; a cache behind the edge may hold its copy that long
+    again, since nginx sends no `Age`, so publish the next agent-token key in
+    `NEXC_AGENT_TOKEN_VERIFY_KEYS` well before it signs), and the agent cards of exposed agents
+    (`GET /.well-known/agent.json`, `GET /a2a/agents/{principal}/card`) with
+    `Cache-Control: public, max-age=30`;
+  - never kept, never tagged (`Cache-Control: no-store`, whatever the handler says):
+    `/auth/*` but `GET /auth/providers` (sign-in, sessions, the account, its second factor,
+    identities, the account export), the LLM credentials (`/settings/llm`,
+    `/workspaces/{wid}/llm`), the embeddings key's hint (`/workspaces/{wid}/knowledge/settings`),
+    agent API tokens (`/agents/{id}/tokens`), realtime tickets, span payloads, the SIEM pulls
+    (`/workspaces/{wid}/audit/export`, `/alerts/export`) and every download
+    (`Content-Disposition: attachment`: evidence bundles, artifacts, zips).
+
+  A `GET` with `If-None-Match` naming the current tag (or `*`) is answered `304 Not Modified`
+  with the `ETag`, the same `Cache-Control` and no body; a resource that changed gets a new tag.
+  Streams (SSE, WebSocket), `/metrics`, writes and errors carry no tag and keep
+  `Cache-Control: no-store`. The console's fetch layer sends `If-None-Match` from the bodies it
+  keeps (per URL for the page; the persisted lists between visits) and reuses the kept body on
+  a 304. It asks again only once a body is stale, by the kind of resource
   (`frontend/src/lib/freshness.ts`): catalogues (templates, the audit's questions) after 30
   minutes, a workspace's setup (members, teams, workflows, labels, settings, policies,
-  servers, destinations) after 5, the lists people work through and the usage report after 1,
-  live state (inbox, approvals, alerts, an active run, the runs of a graph while one of them
-  is queued or running) after 10 seconds besides its own poll. A change the console makes
-  itself refreshes what it touched at once. Per-item queries fanned out over a page are not
+  servers, destinations) after 5, the lists people work through and the usage report after 1
+  (a query that names no kind is a list), live state (inbox, approvals, alerts, an active run,
+  the runs of a graph while one of them is queued or running) after 10 seconds besides its own
+  poll. A change the console makes itself refreshes what it touched at once; a run that reports
+  on an issue refreshes that issue, its parent, the workspace's issue lists and projects, the
+  team's cycles and the inbox, not every issue query. Coming back to the tab refetches only
+  what other people and agents change meanwhile, the lists and live state; setup and
+  catalogues wait for their next mount. Per-item queries fanned out over a page are not
   refetched when the tab regains focus: an agent's activity never, a graph's runs only while
   one of them is live, and those are polled every 10 seconds meanwhile (the run-status stream
   is the canvas's, not the Runs page's), so a run that finishes shows as finished. A run
-  started elsewhere on a graph with no live run shows the next time the Runs page is opened.
+  started elsewhere on a graph with no live run shows the next time the Runs page is opened. A
+  failed read is retried twice for a network failure or a 5xx, never for a 4xx.
 - Limits: request body 1 MiB (node content max 64 KiB, title max 200 chars, ≤ 500 nodes per graph;
   a version of an artifact file at most 1 MiB, the whole body).
 - Idempotent retries. `POST /graphs/{gid}/runs`, `POST /workspaces/{wid}/teams/{tid}/issues`,

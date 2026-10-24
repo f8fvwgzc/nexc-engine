@@ -7,6 +7,13 @@ nexc-engine is rolling out in namespace {{ .Release.Namespace }}.
 Open http{{ if .Values.ingress.tls }}s{{ end }}://{{ .Values.ingress.host }} once the ingress answers
 (map the host in /etc/hosts on minikube: `minikube ip`).
 {{- end }}
+{{- if dig "http3" "enabled" false .Values.frontend }}
+
+HTTP/3: the Service frontend-https ({{ .Values.frontend.http3.service.type }}, TCP and UDP {{ .Values.frontend.http3.port }}) serves HTTPS and HTTP/3
+with the certificate of Secret {{ .Values.frontend.http3.secretName }}. Point the host's DNS at its address:
+  kubectl -n {{ .Release.Namespace }} get service frontend-https
+  curl --http3-only -sI https://<host>{{ if ne (int .Values.frontend.http3.port) 443 }}:{{ .Values.frontend.http3.port }}{{ end }}/
+{{- end }}
 
 The namespace should carry the restricted Pod Security Standard, as deploy/k8s does:
   kubectl label namespace {{ .Release.Namespace }} pod-security.kubernetes.io/enforce=restricted --overwrite

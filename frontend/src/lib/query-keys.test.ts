@@ -30,3 +30,20 @@ describe('qk.issues.projects', () => {
     expect(stale(qk.issues.projects('other'))).toBe(false);
   });
 });
+
+describe('qk.issues.lists', () => {
+  it('reaches every issue list of the workspace, and nothing else of it', async () => {
+    const client = new QueryClient();
+    const keys = [
+      qk.issues.list('w', {}),
+      qk.issues.list('w', { team_id: 't' }),
+      qk.issues.list('other', {}),
+      qk.issues.labels('w'),
+      qk.issues.one('i'),
+    ];
+    for (const key of keys) client.setQueryData(key, []);
+    await client.invalidateQueries({ queryKey: qk.issues.lists('w') });
+    const stale = keys.map((key) => client.getQueryState(key)?.isInvalidated);
+    expect(stale).toEqual([true, true, false, false, false]);
+  });
+});

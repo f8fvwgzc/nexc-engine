@@ -2,10 +2,12 @@ import { env } from '@/lib/env';
 import { useAuthStore } from '@/stores/auth-store';
 
 /**
- * Conditional reads (CONTRACT §3). Every JSON read the server answers carries a strong `ETag`
- * and `Cache-Control: private, no-cache`. This keeps the tag and the body of each GET by URL,
- * so the next request for the same URL sends `If-None-Match` and, when the server answers
- * `304 Not Modified` with no body, the body kept here is used again.
+ * Conditional reads (CONTRACT §3). Every JSON read the server lets a browser keep carries a strong
+ * `ETag` and `Cache-Control: private, no-cache`. This keeps the tag and the body of each GET by
+ * URL, so the next request for the same URL sends `If-None-Match` and, when the server answers
+ * `304 Not Modified` with no body, the body kept here is used again. Answers the server marks
+ * `no-store` (sign-in and the account, credentials, tokens, downloads) carry no tag, so none of
+ * them is kept here.
  *
  * Entries live for the page. The lists query-persist keeps between visits (the same data, in the
  * same browser storage) are kept here too with their tags, per account and build, so the first

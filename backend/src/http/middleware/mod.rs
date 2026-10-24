@@ -31,8 +31,9 @@ fn set(headers: &mut HeaderMap, name: HeaderName, value: &'static str) {
         .or_insert(HeaderValue::from_static(value));
 }
 
-/// Adds security headers to every response and `Cache-Control: no-store`
-/// to API responses that a conditional read did not tag (see [`etag`]).
+/// Adds security headers to every response, and `Cache-Control: no-store`
+/// to whatever the caching policy ([`etag`]) left undecided: writes,
+/// errors, streams without a policy of their own.
 pub async fn security_headers(State(state): State<AppState>, req: Request, next: Next) -> Response {
     let is_docs = req.uri().path().starts_with("/api/docs");
     let mut resp = next.run(req).await;

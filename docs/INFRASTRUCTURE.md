@@ -116,13 +116,17 @@ No other service is needed.
   `NOTIFY`, the same channel the realtime events travel on; `NEXC_CACHE_TTL_SECS` (60 s) only
   bounds a missed notification, and `0` turns the caches off. The smaller ones (a workspace's
   memory set for 30 seconds, the list of common words for 10 minutes) expire on their own. Every
-  JSON read also carries an `ETag`, so a console that asks again gets a `304` with no body
-  (CONTRACT §3). onto-intelli's reads are kept per caller and request for
-  `NEXC_ONTO_READ_CACHE_SECS` (10 s), a read on the wire shared by everyone asking the same, and
-  a write nexc makes to a tenant drops them on every replica. At the edge, nginx keeps the public
-  documents (the key set, agent cards) for their `max-age` and serves the build pre-compressed;
-  nothing private is kept there. The layers, and why the firewall's token checks are never
-  cached, are in [ADR 0001](adr/0001-http3-edge-caching-and-indexes.md).
+  JSON read also carries an `ETag`, so a console that asks again gets a `304` with no body: the
+  caller's own `private` and varying by `Authorization`, the documents that are the same for
+  everyone `public` by their handler's choice, and sign-in, credentials, tokens and downloads
+  `no-store` and never tagged (CONTRACT §3). onto-intelli's reads are kept per caller and request
+  for `NEXC_ONTO_READ_CACHE_SECS` (10 s), a read on the wire shared by everyone asking the same,
+  and a write nexc makes to a tenant drops them on every replica. At the edge, nginx keeps the
+  public documents (the key sets, agent cards) for their `max-age` and serves the build
+  pre-compressed; nothing private is kept there. The layers, and why the firewall's token checks
+  are never cached, are in [ADR 0001](adr/0001-http3-edge-caching-and-indexes.md), what is never
+  kept in [ADR 0003](adr/0003-no-store-secrets-and-narrower-refreshes.md); every layer, with its
+  key, lifetime and metric, is tabled in `docs/PERFORMANCE.md` (Caching layers).
 
 Redis or an external queue would be additions, not requirements. The Infrastructure page can
 check that a Redis is reachable (`redis://…`), which is as far as the server uses one today.
@@ -161,6 +165,173 @@ provider is in trouble (429, 5xx, no connection) the circuit opens and every cal
 fails at once with a retryable error for `NEXC_LLM_BREAKER_OPEN_SECS` (30), instead of each
 waiting on its own retries and timeouts; then one probe goes out and its outcome closes the
 circuit or opens it again. `nexc_llm_breaker_total` counts the events; `0` failures turns it off.
+
+## HTTP/3 and TLS at the edge
+
+Browsers reach nexc through one edge: the frontend's nginx in Docker Compose (it serves the SPA
+and proxies `/api`, `/a2a` and the well-known documents to the backend), the Ingress or the
+frontend's own load balancer in Kubernetes. HTTP/3 runs over QUIC, which carries TLS 1.3 inside
+it, and a browser only tries it after an HTTPS answer advertised it in an `Alt-Svc` header. So
+HTTP/3 is offered by whatever terminates TLS for browsers, never by the services behind it
+([ADR 0001](adr/0001-http3-edge-caching-and-indexes.md) says why).
+
+The frontend image is that edge once a certificate is mounted. With `tls.crt` and `tls.key` in
+`/etc/nginx/tls`, `/docker-entrypoint.d/41-nexc-tls.sh` writes a second listener from
+`nginx/tls-server.conf.template`, serving the same site as plain HTTP on 8080
+(`nginx/site.conf`), on port 8443:
+
+- TCP with TLS 1.2 (forward-secret AEAD suites only) and 1.3, serving HTTP/2 and HTTP/1.1;
+- UDP with QUIC, serving HTTP/3 (TLS 1.3 only). There is no Retry before the handshake
+  (`quic_retry` stays off): it would cost every new connection the round trip HTTP/3 saves, and
+  QUIC itself keeps what the server sends an address it has not validated to three times what it
+  received (RFC 9000, section 8), so a forged source address cannot turn it into an amplifier;
+- `Alt-Svc: h3=":<NEXC_HTTPS_PUBLIC_PORT>"; ma=86400` on every HTTPS answer, which moves browsers
+  to HTTP/3 from their next request; where UDP is blocked they stay on HTTP/2 by themselves;
+- no 0-RTT (`ssl_early_data off`): early data can be replayed, and a replayed POST is a second
+  write. Sessions resume from a cache the workers share, for a day, without session tickets;
+- `Strict-Transport-Security` on answers over HTTPS, never for a loopback name (`localhost`,
+  `127.0.0.1`, `[::1]`): a browser that trusts a local certificate would otherwise pin https on
+  every port of localhost, the plain console on 8080 included.
+
+Without a certificate there is no such listener: plain HTTP on 8080, no `Alt-Svc`. Half of one,
+or one nginx (uid 101) cannot read, stops the container rather than leaving it on plain HTTP.
+nginx reads the pair when it starts: restart it after a renewal. On the HTTPS listener the scheme
+nginx passes to the backend (`X-Forwarded-Proto`) is `https` whatever the request claims. What
+was tightened after ADR 0001 (the TLS 1.2 suites, that scheme, the reused upstream connections,
+the kustomize component, `externalTrafficPolicy`) is recorded in
+[ADR 0002](adr/0002-edge-hardening-and-adaptive-grpc-windows.md).
+
+WebSockets (`/api/v1/graphs/{id}/ws`) stay on TCP. nginx has no WebSocket over HTTP/2 or HTTP/3
+(RFC 8441, RFC 9220), so a browser that talks HTTP/3 to the console opens its WebSocket on an
+HTTP/1.1 connection of its own, to the same port over TCP, and nginx upgrades it as before; an
+`Upgrade` reaches the backend only for a WebSocket. Server-sent events gain the most: every
+stream of a page shares one HTTP/2 or HTTP/3 connection instead of taking one of the browser's
+six per host, and nginx still passes them through unbuffered.
+
+| Setting                  | Where                | Default      | What it does                                                                                    |
+| ------------------------ | -------------------- | ------------ | ----------------------------------------------------------------------------------------------- |
+| `/etc/nginx/tls`         | frontend image       | empty        | `tls.crt` (with its chain) and `tls.key`: the HTTPS listener exists while both are there        |
+| `NEXC_HTTPS_PUBLIC_PORT` | frontend image       | `443`        | The port browsers reach, named in `Alt-Svc`; the container listens on 8443 whatever it is       |
+| `NEXC_HTTPS_PORT`        | `docker-compose.yml` | `8443`       | The host port, published on TCP and UDP; its origin is among the backend's `NEXC_CORS_ORIGINS` |
+| `NEXC_TLS_DIR`           | `docker-compose.yml` | `./data/tls` | The directory mounted read-only at `/etc/nginx/tls`                                             |
+| `frontend.http3`         | Helm chart           | off          | The TLS Secret, the port and the `frontend-https` Service (below)                               |
+
+### Docker Compose
+
+`make init` writes a certificate for `localhost`, `127.0.0.1` and `::1` into `data/tls` when there
+is none, and `make tls-cert` writes it again (`scripts/tls-cert.sh`): signed by mkcert's local CA
+when mkcert is installed (`mkcert -install` once), self-signed otherwise, so a browser asks once
+before it opens the page. `docker compose up` then serves `https://localhost:8443` over HTTP/2 and
+HTTP/3 beside plain HTTP on `NEXC_HTTP_PORT`. For a real host name, put its certificate (the full
+chain) and key in a directory uid 101 can read, set `NEXC_TLS_DIR` and `NEXC_HTTPS_PORT=443`, and
+add `https://<host>` to the backend's `NEXC_CORS_ORIGINS` in `docker-compose.yml`, which names
+the localhost origins only.
+
+### Kubernetes and Helm
+
+ingress-nginx terminates TLS over TCP alone, so the chart's Ingress serves HTTP/1.1 and HTTP/2,
+never HTTP/3. Two ways to add it:
+
+1. **The frontend as its own edge.** `frontend.http3.enabled=true` with
+   `frontend.http3.secretName` (a `kubernetes.io/tls` Secret, cert-manager's for instance): the
+   frontend pods mount it at `/etc/nginx/tls` (mode 0440, the pod's group) and serve HTTPS and
+   HTTP/3 on 8443, the Service `frontend-https` publishes them as a LoadBalancer with TCP and UDP
+   on `frontend.http3.port` (443), and the frontend's NetworkPolicy admits TCP and UDP 8443. A
+   LoadBalancer with mixed protocols is generally available since Kubernetes 1.26, and the
+   cloud's load balancer must offer it too. Point the host's DNS at the Service's address instead
+   of the Ingress (the frontend proxies `/api` itself), set `NEXC_CORS_ORIGINS` and
+   `NEXC_COOKIE_SECURE=true` in `config`, and roll the Deployment after the certificate renews
+   (by hand, or with a tool that watches Secrets). `frontend.http3.service` sets the type, the
+   annotations and `externalTrafficPolicy`. Keep that `Local`, which keeps the client's address:
+   with `Cluster` every client arrives with a node's address, so the backend's per-address limits
+   (five failed sign-ins a minute) lock out every client behind that node at once. Without Helm,
+   the kustomize component `deploy/k8s/http3` does the same.
+
+   ```sh
+   kubectl -n nexc create secret tls nexc-frontend-tls --cert=tls.crt --key=tls.key
+   helm upgrade nexc deploy/helm/nexc-engine -n nexc --reuse-values \
+     --set frontend.http3.enabled=true --set frontend.http3.secretName=nexc-frontend-tls
+   ```
+
+2. **HTTP/3 in front of the Ingress**, which stays as it is: a Gateway API implementation that
+   terminates QUIC (Envoy Gateway and Istio's gateways can), or a CDN or cloud load balancer that
+   speaks HTTP/3 to browsers and HTTP/1.1 or HTTP/2 to the Ingress (CloudFront, Cloudflare,
+   Fastly, Google Cloud's external Application Load Balancer, among others). That edge sends
+   `Alt-Svc` itself and nothing in nexc changes; leave `frontend.http3` off.
+
+### Behind a CDN
+
+What nexc answers already says what an edge cache may keep, so a CDN in front (of the Ingress,
+or of the frontend in Compose) needs no rules of its own beyond respecting `Cache-Control`:
+
+| Path                                                                              | `Cache-Control`                                                                                       | At the edge                                       |
+| --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `/assets/*`, Vite's build files with a hash in the name                           | `public, max-age=31536000, immutable`; `no-store` on a miss                                           | Kept for a year; a new build has new names        |
+| `/`, `/index.html` and every client-side route                                    | `no-cache`                                                                                            | Kept, and revalidated (ETag) on every request     |
+| `/favicon.svg`, `/theme-init.js`                                                  | `no-cache`                                                                                            | The same                                          |
+| `/api/*`, `/a2a/*`, but the public reads below                                    | the backend's: `no-store`, or `private, no-cache` with `Vary: Authorization` on a read it tags        | Never kept                                        |
+| `/.well-known/jwks.json`, `/api/v1/agent-tokens/jwks.json`, `/api/openapi.json`   | the backend's: `public, max-age=300, stale-while-revalidate=60`, with an ETag                         | Five minutes (one more stale)                     |
+| `/.well-known/agent.json`, `/a2a/agents/{principal}/card`                         | the backend's: `public, max-age=30`, with an ETag                                                     | 30 seconds                                        |
+
+The chart's Ingress sends `/api`, `/a2a` and the well-known documents straight to the backend, so
+there they get no nginx copy; the rest of the table holds either way. Never add a rule that keeps
+any of `/api` longer than its `Cache-Control` says or rewrites that header, let WebSockets through
+(`/api/v1/graphs/*/ws`) and do not buffer `text/event-stream`.
+
+The frontend's nginx serves the build compressed once, when the image is built (`gzip_static`),
+compresses the rest with gzip (never `text/event-stream`, which would buffer the stream), keeps
+the descriptors of its static files open (`open_file_cache`), and keeps up to 32 idle HTTP/1.1
+connections to the backend: every proxied path clears the `Connection` header, except on a
+WebSocket upgrade. Its one cache of responses holds the key sets and the agent cards
+(`nginx/public-cache.conf`, on its `/tmp`): a copy lives for the `max-age` the backend gave it,
+one request refreshes an expired copy by its `ETag` while the others are answered from it, the
+copy answers while the backend is down, a request with an `Authorization` header neither reads
+nor fills it, no answer from there carries an `X-Request-Id` (a kept copy's would be the
+request's that filled it), and `X-Cache-Status` says what happened. nginx sends no `Age` with
+what it kept, so a cache behind it may hold a key set up to twice its lifetime: put the next key
+in the set well before anything is signed with it (`docs/CONTRACT.md` §3).
+
+### Checking it
+
+```sh
+curl -sI https://localhost:8443/ | grep -i alt-svc    # h3=":8443"; ma=86400 (-k unless curl trusts the certificate)
+curl --http3-only -sI https://localhost:8443/         # HTTP/3 200, from a curl built with HTTP/3
+```
+
+`curl -V` lists `HTTP3` among its features when it can speak it (many packaged builds cannot,
+macOS's own among them; the first command works with any curl). In Chrome, open devtools,
+Network, right-click the column headers and show **Protocol**: `h3` from the second load on (the
+first goes over TCP and brings the `Alt-Svc`), `h2` before. Chrome never uses QUIC with a
+certificate it does not trust, nor with one from a locally installed CA such as mkcert's
+(`ERR_QUIC_CERT_ROOT_NOT_KNOWN`; it stays on HTTP/2). To see `h3` locally, start a separate
+profile that trusts this one certificate for QUIC (the hash changes with every certificate):
+
+```sh
+spki="$(openssl x509 -in data/tls/tls.crt -noout -pubkey | openssl pkey -pubin -outform der |
+  openssl dgst -sha256 -binary | openssl base64)"
+open -na "Google Chrome" --args --user-data-dir=/tmp/nexc-chrome \
+  --origin-to-force-quic-on=localhost:8443 --ignore-certificate-errors-spki-list="$spki" \
+  https://localhost:8443    # Linux: google-chrome with the same flags
+```
+
+A public certificate needs nothing of the kind.
+
+### Between the services: gRPC over HTTP/2
+
+HTTP/3 stays at the edge; the backend's channels to the agent runtime, onto-intelli and the OTLP
+collector stay gRPC over HTTP/2. What QUIC fixes is the browser's last mile: a lossy, changing
+network where one lost packet stalls every stream of a TCP connection, each new connection costs
+handshake round trips, and a phone moves between networks. Between containers or pods none of
+that holds: the network is a data-centre one, the channels open once when the backend starts and
+live as long as it does, kept by HTTP/2 keepalive (`NEXC_GRPC_KEEPALIVE_SECS`), which is also how
+a replica notices a peer that vanished (`docs/HA.md`). The gRPC libraries on both ends (tonic in
+the backend, grpclib in the runtime) speak HTTP/2 only, and UDP is what NetworkPolicies, service
+meshes and L4 load balancers handle least well. Moving inside would cost CPU and moving parts and
+buy nothing measurable. [ADR 0001](adr/0001-http3-edge-caching-and-indexes.md) records this
+decision, the choices about WebSockets and 0-RTT, and what would make it change. Every channel,
+and the Agent Firewall server, sizes its HTTP/2 flow-control window from the bandwidth-delay
+product it measures instead of hyper's fixed windows
+([ADR 0002](adr/0002-edge-hardening-and-adaptive-grpc-windows.md)).
 
 <!-- #endregion secrets -->
 ## onto-intelli (optional): the audit's query engine

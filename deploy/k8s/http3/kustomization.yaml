@@ -1,0 +1,46 @@
+# HTTP/3 for browsers, served by the frontend itself, as the Helm chart's frontend.http3 does
+# (docs/adr/0001-http3-edge-caching-and-indexes.md). ingress-nginx terminates TLS over TCP alone,
+# so the Ingress offers HTTP/1.1 and HTTP/2 only. This component mounts the Secret
+# nexc-frontend-tls at /etc/nginx/tls, where the frontend image's 41-nexc-tls.sh finds tls.crt and
+# tls.key and opens HTTPS on 8443, TCP (HTTP/2) and UDP (HTTP/3), and publishes it through the
+# LoadBalancer Service frontend-https on TCP and UDP 443 (mixed protocols: Kubernetes 1.26+ and a
+# load balancer that offers them). Off unless listed:
+#
+#   kubectl -n nexc create secret tls nexc-frontend-tls --cert=tls.crt --key=tls.key
+#   # in ../kustomization.yaml:
+#   components:
+#     - http3
+#
+# then point the host's DNS at the address of `kubectl -n nexc get service frontend-https`, and set
+# NEXC_CORS_ORIGINS=https://<host> in config.env. nginx reads the certificate when it starts:
+# `kubectl -n nexc rollout restart deployment/frontend` after a renewal.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - frontend-https.yaml
+
+patches:
+  # A JSON patch, not a strategic merge: the two new ports share a number, and a strategic merge
+  # of container ports keys them by number alone.
+  - target: { kind: Deployment, name: frontend }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/ports/-
+        value: { name: https, containerPort: 8443, protocol: TCP }
+      - op: add
+        path: /spec/template/spec/containers/0/ports/-
+        value: { name: quic, containerPort: 8443, protocol: UDP }
+      # The port browsers reach, which Alt-Svc advertises for HTTP/3.
+      - op: add
+        path: /spec/template/spec/containers/0/env
+        value:
+          - { name: NEXC_HTTPS_PUBLIC_PORT, value: "443" }
+      # The Secret's files are 0644 by default: readable by nginx (uid 101), the container's only
+      # process.
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value: { name: tls, mountPath: /etc/nginx/tls, readOnly: true }
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value: { name: tls, secret: { secretName: nexc-frontend-tls } }

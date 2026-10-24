@@ -40,7 +40,7 @@ Tunables: `MINIKUBE_PROFILE`, `MINIKUBE_CPUS` (4), `MINIKUBE_MEMORY` (8192), `MI
 | `Deployment backend` (2 replicas) + `Service` + `PVC backend-data` | startup/liveness `/api/v1/healthz`, readiness `/api/v1/readyz`; port 8081 serves the agent-token key set alone (`NEXC_KEYS_ADDR`) |
 | `Deployment agent-runtime` (2 replicas) + `Service` | gets only `NEXC_RUNTIME_TOKEN`, the backend's agent-token key set URL and runtime settings, workspace on an `emptyDir` |
 | `Deployment runtime-egress` (2 replicas) + `Service` | `nexc egress-proxy` from the backend image, no secrets: the runtime's only way out, to the `host:port` entries of `NEXC_RUNTIME_EGRESS_ALLOW` |
-| `Deployment frontend` (2 replicas) + `Service` | nginx-unprivileged on 8080 |
+| `Deployment frontend` (2 replicas) + `Service` | nginx-unprivileged on 8080; with the optional `http3` component also TLS and QUIC on 8443, published by the LoadBalancer `Service frontend-https` (TCP and UDP 443) |
 | `Ingress nexc` | class `nginx`, host `nexc.local`; `/api` → backend, `/` → frontend; SSE/WebSocket timeouts and no buffering |
 | `NetworkPolicy` ×8 | default deny ingress; frontend ← ingress; backend ← frontend + ingress (8080), runtime (8081, the agent-token key set alone); runtime ← backend (HTTP 8090 and the gRPC stream 8095); runtime → backend 8081 and runtime-egress only, no DNS (it finds both by their Service environment variables, so apply the Services first: `kubectl apply -k` does); runtime-egress ← runtime; runtime-egress → DNS and TLS on public addresses (IPv4 and IPv6); postgres ← backend. The Agent Firewall API (`NEXC_GRPC_ADDR`) is off by default and documented in the file for when you open it to another namespace |
 | `PodDisruptionBudget` ×4 | `minAvailable: 1` for backend, runtime, runtime-egress and frontend |
@@ -74,7 +74,8 @@ the gRPC stream the backend opens, the only port the NetworkPolicy admits beside
 Agent Firewall API (`backend.grpcAddr` turns it on; `backend.firewall.port` is its Service port
 and `networkPolicies.firewallFrom` the namespaces admitted to it), the OTLP collector
 (`backend.otlpEndpoint`) and onto-intelli (`backend.ontoUrl`, its token in the Secret as
-`NEXC_ONTO_TOKEN`), the ingress host and TLS, and whether the chart runs PostgreSQL
+`NEXC_ONTO_TOKEN`), the ingress host and TLS, the frontend's own TLS and HTTP/3 behind a
+LoadBalancer (`frontend.http3`, off by default), and whether the chart runs PostgreSQL
 (`postgres.enabled=false` for a managed database, its URL in the Secret). Secrets come from a
 Secret you create (`secrets.existingSecret`) or from `secrets.values`; the chart refuses to
 render while a required one is empty. One release per namespace: the object names are fixed.
@@ -97,6 +98,12 @@ CI lints the chart and renders it with the firewall, the collector and onto-inte
 * **TLS** – add a `tls:` block to `ingress.yaml` (for example with cert-manager), enable
   `force-ssl-redirect`, then set `NEXC_ENV=production`, `NEXC_COOKIE_SECURE=true` and
   `NEXC_CORS_ORIGINS=https://<host>` in `config.env`.
+* **HTTP/3** – ingress-nginx terminates TLS over TCP alone, so the Ingress serves HTTP/1.1 and
+  HTTP/2. For HTTP/3 either put a CDN or a Gateway API implementation that speaks it in front, or
+  list the `http3` component in `kustomization.yaml` (Helm: `frontend.http3`): the frontend's own
+  nginx then terminates TLS and QUIC behind a LoadBalancer Service with TCP and UDP 443
+  (`http3/kustomization.yaml` lists what it needs). See
+  [docs/INFRASTRUCTURE.md](../../docs/INFRASTRUCTURE.md).
 * **Database** – prefer a managed PostgreSQL 17 or an operator such as CloudNativePG with backups;
   point `NEXC_DATABASE_URL` at it (`sslmode=require`) and drop `postgres.yaml` from the resources.
 * **Artifact storage** – `backend-data` is `ReadWriteOnce`, which is fine on one node. With several

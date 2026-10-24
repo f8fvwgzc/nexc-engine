@@ -73,7 +73,12 @@ pub fn build(state: AppState) -> Router {
             "/api/openapi.json",
             get(move || {
                 let body = spec_json.clone();
-                async move { ([(header::CONTENT_TYPE, "application/json")], body) }
+                // The same for everyone and changed only by a release: any cache may keep it.
+                let headers = [
+                    (header::CONTENT_TYPE, "application/json"),
+                    (header::CACHE_CONTROL, middleware::etag::PUBLIC_CACHE_CONTROL),
+                ];
+                async move { (headers, body) }
             }),
         )
         .merge(Scalar::with_url("/api/docs", spec).title("nexc-engine API"))
@@ -84,8 +89,9 @@ pub fn build(state: AppState) -> Router {
             state.clone(),
             middleware::idempotency::replay,
         ))
-        // Inside the metrics, so a 304 is counted as one; inside compression, so the tag is the
-        // body's, whatever encoding it travels in.
+        // Tags JSON reads (private, or the public policy their handler chose) and marks what is
+        // never kept `no-store`. Inside the metrics, so a 304 is counted as one; inside
+        // compression, so the tag is the body's, whatever encoding it travels in.
         .layer(from_fn(middleware::etag::conditional_reads))
         .layer(from_fn_with_state(state.clone(), middleware::track_metrics))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))

@@ -165,6 +165,11 @@ frontend:
     service:
       type: LoadBalancer
       annotations: {}
+      # Local keeps each client's address (X-Real-IP, X-Forwarded-For) and needs a frontend pod
+      # on the nodes the load balancer sends to. Keep it: Cluster replaces every client's address
+      # with a node's, so the backend's per-address limits (five failed sign-ins a minute) lock out
+      # every client behind that node together. Set for a LoadBalancer or NodePort type only.
+      externalTrafficPolicy: Local
 
 # onto-intelli in the release (docs/ONTOLOGY.md): a Deployment and a Service on port `port`,
 # configured as nexc needs it (tenants per workspace, impersonation, governance, the UI's

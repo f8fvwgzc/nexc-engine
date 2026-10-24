@@ -273,19 +273,54 @@ async fn get_raw(
     (status, headers, bytes.to_vec())
 }
 
-/// The documents anyone may read, and a shared cache keep: the public keys
-/// and the agent cards of exposed agents.
-fn public_document(path: &str) -> bool {
-    matches!(
-        path,
-        "/.well-known/jwks.json" | "/.well-known/agent.json" | "/a2a/agents/{principal}/card"
-    )
+/// The documents anyone may read, and a shared cache keep, with the policy
+/// they answer with: the public key sets for five minutes (a minute longer
+/// while a cache asks again), the agent cards of exposed agents for 30
+/// seconds.
+fn public_document(path: &str) -> Option<&'static str> {
+    match path {
+        "/.well-known/jwks.json" | "/api/v1/agent-tokens/jwks.json" => {
+            Some("public, max-age=300, stale-while-revalidate=60")
+        }
+        "/.well-known/agent.json" | "/a2a/agents/{principal}/card" => Some("public, max-age=30"),
+        _ => None,
+    }
+}
+
+/// The reads that are never kept, nor tagged: sign-in and the account,
+/// credentials and their hints, agent tokens, recorded payloads and the SIEM
+/// pulls. A download is never kept either; it is told by its answer.
+fn never_kept(path: &str) -> bool {
+    (path.starts_with("/api/v1/auth/") && path != "/api/v1/auth/providers")
+        || matches!(
+            path,
+            "/api/v1/settings/llm"
+                | "/api/v1/workspaces/{wid}/llm"
+                | "/api/v1/workspaces/{wid}/knowledge/settings"
+                | "/api/v1/agents/{id}/tokens"
+                | "/api/v1/spans/{sid}/payload"
+                | "/api/v1/workspaces/{wid}/audit/export"
+                | "/api/v1/workspaces/{wid}/alerts/export"
+        )
+}
+
+/// Whether an answer's `Vary` names `Authorization`.
+fn varies_by_credential(headers: &axum::http::HeaderMap) -> bool {
+    headers
+        .get_all(header::VARY)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .any(|name| name.trim().eq_ignore_ascii_case("authorization"))
 }
 
 /// Every read that answers JSON carries a strong `ETag` and
-/// `Cache-Control: private, no-cache`; asked again with `If-None-Match`, it
-/// answers 304 with no body; a changed resource gets a new tag; streams,
-/// downloads and `/metrics` carry none (CONTRACT §3).
+/// `Cache-Control: private, no-cache` with `Vary: Authorization`, but the
+/// public documents, which keep their own `public` policy; asked again with
+/// `If-None-Match`, it answers 304 with no body; a changed resource gets a
+/// new tag. What is never kept (sign-in and the account, credentials,
+/// tokens, downloads), streams and `/metrics` carry none and are `no-store`
+/// (CONTRACT §3).
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
 async fn reads_are_tagged_and_answer_304_to_a_matching_etag(pool: PgPool) {
     let app = TestApp::new(pool.clone(), &[("NEXC_API_CALLS_PER_MINUTE", "100000")]).await;
@@ -325,9 +360,17 @@ async fn reads_are_tagged_and_answer_304_to_a_matching_etag(pool: PgPool) {
             .get(header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
             .is_some_and(|ct| ct.starts_with("application/json"));
+        let download = headers
+            .get(header::CONTENT_DISPOSITION)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.starts_with("attachment"));
+        let secret = download || never_kept(&op.path);
         let Some(etag) = headers.get(header::ETAG).and_then(|v| v.to_str().ok()) else {
             let probe = url.ends_with("/healthz") || url.ends_with("/readyz");
-            assert!(!json || probe, "GET {url} answered JSON without an ETag");
+            assert!(
+                !json || probe || secret,
+                "GET {url} answered JSON without an ETag"
+            );
             assert_eq!(
                 headers
                     .get(header::CACHE_CONTROL)
@@ -337,23 +380,22 @@ async fn reads_are_tagged_and_answer_304_to_a_matching_etag(pool: PgPool) {
             );
             continue;
         };
+        assert!(!secret, "GET {url}: never kept, yet tagged");
         tagged += 1;
         assert!(json, "GET {url}: only JSON reads are tagged");
         assert!(
             etag.starts_with('"') && etag.ends_with('"') && !etag.starts_with("W/"),
             "GET {url}: a strong, quoted tag ({etag})"
         );
-        // The public documents (the key set, the agent cards) may be kept by shared caches;
-        // everything else privately, and asked about again.
-        let policy = if public_document(&op.path) {
-            if op.path == "/.well-known/jwks.json" {
-                "public, max-age=300"
-            } else {
-                "public, max-age=30"
-            }
-        } else {
-            "private, no-cache"
-        };
+        // The public documents (the key sets, the agent cards) may be kept by shared caches;
+        // everything else privately, per credential, and asked about again.
+        let public = public_document(&op.path);
+        let policy = public.unwrap_or("private, no-cache");
+        assert_eq!(
+            varies_by_credential(&headers),
+            public.is_none(),
+            "GET {url}: Vary: Authorization on the caller's own reads only"
+        );
         assert_eq!(
             headers
                 .get(header::CACHE_CONTROL)

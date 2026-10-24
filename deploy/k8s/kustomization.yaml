@@ -25,6 +25,11 @@ resources:
   - networkpolicies.yaml
   - pdb.yaml
 
+# HTTP/3 for browsers: the frontend's own TLS on a LoadBalancer with TCP and UDP 443 (http3/
+# says what it needs first, a TLS Secret among it).
+# components:
+#   - http3
+
 configMapGenerator:
   - name: nexc-config
     envs: [config.env]

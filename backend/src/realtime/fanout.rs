@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use sqlx::PgPool;
 use sqlx::postgres::PgListener;
 use tokio::sync::mpsc;
@@ -21,8 +21,39 @@ use crate::repo::outbox;
 #[serde(untagged)]
 enum Notification {
     Parked { origin: Uuid, parked: i64 },
-    Invalidate { origin: Uuid, invalidate: Vec<Key> },
+    Invalidate {
+        origin: Uuid,
+        #[serde(deserialize_with = "known_keys")]
+        invalidate: Vec<Key>,
+    },
     Inline(Envelope),
+}
+
+/// The keys of an invalidation this build knows. A kind a later build
+/// added is skipped, so that the keys sent with it are still dropped.
+fn known_keys<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Key>, D::Error> {
+    let keys = Vec::<serde_json::Value>::deserialize(d)?;
+    let known = keys
+        .into_iter()
+        .filter_map(|key| serde_json::from_value::<Key>(key).ok());
+    Ok(known.collect())
+}
+
+/// The notifications a batch of invalidations goes out in. A build before
+/// this one cannot read a notification that holds a kind it lacks, and
+/// drops all of it; during a rolling update such a replica should lose
+/// only the keys it does not keep anyway, not the policies, guardrails or
+/// vocabularies sent with them. So the newer kinds go apart. (From this
+/// build on, a replica skips the kinds it lacks: see [`known_keys`].)
+fn batches(keys: Vec<Key>) -> impl Iterator<Item = Vec<Key>> {
+    let (newer, known): (Vec<Key>, Vec<Key>) = keys.into_iter().partition(is_newer);
+    [known, newer].into_iter().filter(|keys| !keys.is_empty())
+}
+
+/// Whether builds before this one lack `key`'s kind (an onto-intelli
+/// tenant's reads, `ontology::cached`).
+fn is_newer(key: &Key) -> bool {
+    matches!(key, Key::Ontology(_))
 }
 
 /// Starts the notifier (local → peers) and listener (peers → local) tasks.
@@ -61,21 +92,24 @@ async fn notifier(
             },
             next = keys.recv() => match next {
                 Some(first) => {
-                    // Whatever else is waiting goes in the same notification.
-                    let mut invalidate = vec![first];
-                    while invalidate.len() < 64 {
+                    // Whatever else is waiting goes along, in one notification
+                    // per batch an older replica can read.
+                    let mut waiting = vec![first];
+                    while waiting.len() < 64 {
                         match keys.try_recv() {
-                            Ok(key) => invalidate.push(key),
+                            Ok(key) => waiting.push(key),
                             Err(_) => break,
                         }
                     }
-                    let payload = Notification::Invalidate { origin: instance, invalidate };
-                    let result = match serde_json::to_string(&payload) {
-                        Ok(payload) => outbox::notify(&db, &payload).await,
-                        Err(err) => Err(sqlx::Error::Encode(Box::new(err))),
-                    };
-                    if let Err(err) = result {
-                        tracing::warn!(error = %err, "cache invalidation NOTIFY failed");
+                    for invalidate in batches(waiting) {
+                        let payload = Notification::Invalidate { origin: instance, invalidate };
+                        let result = match serde_json::to_string(&payload) {
+                            Ok(payload) => outbox::notify(&db, &payload).await,
+                            Err(err) => Err(sqlx::Error::Encode(Box::new(err))),
+                        };
+                        if let Err(err) = result {
+                            tracing::warn!(error = %err, "cache invalidation NOTIFY failed");
+                        }
                     }
                 }
                 None => return,
@@ -185,6 +219,28 @@ mod tests {
         assert!(matches!(
             serde_json::from_str::<Notification>(&inline).unwrap(),
             Notification::Inline(_)
+        ));
+    }
+
+    #[test]
+    fn a_kind_older_replicas_lack_never_takes_others_down_with_it() {
+        let w = Uuid::now_v7();
+        let onto = Key::Ontology("ws_1".into());
+        let waiting = vec![Key::Vocabulary(w), onto.clone(), Key::Agents];
+        let sent: Vec<Vec<Key>> = batches(waiting).collect();
+        let known = vec![Key::Vocabulary(w), Key::Agents];
+        assert_eq!(sent, vec![known, vec![onto.clone()]]);
+        let alone: Vec<Vec<Key>> = batches(vec![onto.clone()]).collect();
+        assert_eq!(alone, vec![vec![onto]]);
+
+        // A kind a later build added is skipped; the keys sent with it are still read.
+        let later = serde_json::json!({
+            "origin": w,
+            "invalidate": [{"kind": "from_a_later_build", "id": 1}, Key::Guardrails(w)],
+        });
+        assert!(matches!(
+            serde_json::from_str::<Notification>(&later.to_string()).unwrap(),
+            Notification::Invalidate { invalidate, .. } if invalidate == [Key::Guardrails(w)]
         ));
     }
 }

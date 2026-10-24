@@ -154,9 +154,41 @@ pub async fn connect(url: &str, max_connections: u32) -> anyhow::Result<PgPool> 
     Ok(pool)
 }
 
-/// Applies pending migrations.
+/// Taken by the server that applies migrations; the others ask for it again until it is free.
+const MIGRATION_LOCK: &str = "SELECT pg_try_advisory_lock(hashtext('nexc.migrate'))";
+const MIGRATION_UNLOCK: &str = "SELECT pg_advisory_unlock(hashtext('nexc.migrate'))";
+/// How often a server that waits for another's migrations asks for the lock again.
+const MIGRATION_LOCK_POLL: Duration = Duration::from_millis(500);
+
+/// Applies pending migrations, one server at a time.
+///
+/// The lock is asked for again and again rather than waited for. A session blocked on a lock
+/// keeps the snapshot of its statement, and a `CREATE INDEX CONCURRENTLY` of the server holding
+/// the lock waits for every older snapshot: two servers starting together would deadlock, and the
+/// build would be left behind invalid (docs/DATABASE.md, "Building indexes"). sqlx's own lock,
+/// which blocks, is then taken by the holder alone, at once.
+///
+/// `run_direct` is what `Migrator::run` does once it has a connection. Given a connection, `run`
+/// ties its future to the lifetime of `Acquire` and the future is no longer `Send`, which the
+/// workspace transfer needs: it migrates its target inside a spawned task.
 pub async fn migrate(pool: &PgPool) -> anyhow::Result<()> {
-    MIGRATOR.run(pool).await?;
+    let mut conn = pool.acquire().await?;
+    loop {
+        let locked: bool = sqlx::query_scalar(MIGRATION_LOCK)
+            .fetch_one(&mut *conn)
+            .await?;
+        if locked {
+            break;
+        }
+        tokio::time::sleep(MIGRATION_LOCK_POLL).await;
+    }
+    if let Err(err) = MIGRATOR.run_direct(None, &mut *conn, false).await {
+        // A run that failed may still hold sqlx's lock: the connection is closed, and its locks
+        // go with it.
+        conn.close_on_drop();
+        return Err(err.into());
+    }
+    sqlx::query(MIGRATION_UNLOCK).execute(&mut *conn).await?;
     Ok(())
 }
 

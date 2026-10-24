@@ -29,6 +29,10 @@ metadata:
   {{- end }}
 spec:
   type: {{ .service.type }}
+  {{- if has .service.type (list "LoadBalancer" "NodePort") }}
+  # Local keeps each client's address, which the backend's per-address limits count by.
+  externalTrafficPolicy: {{ .service.externalTrafficPolicy | default "Local" }}
+  {{- end }}
   selector: { app.kubernetes.io/name: frontend }
   ports:
     - { name: https, port: {{ .port }}, targetPort: https, protocol: TCP }

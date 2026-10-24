@@ -1,10 +1,15 @@
 //! Conditional reads (CONTRACT §3): every JSON read carries a strong `ETag`
-//! over its body and `Cache-Control: private, no-cache`, so a client that
-//! keeps the body may ask again with `If-None-Match` and get a `304` with no
-//! body when nothing changed. Streams (SSE, downloads) and errors are left
-//! alone; a handler that computes its own tag keeps it, and one that serves a
-//! public document (a key set, an agent card) keeps its `public` policy, so
-//! the edge and any other shared cache may keep it too.
+//! over its body and `Cache-Control: private, no-cache` with
+//! `Vary: Authorization`, so a client that keeps the body may ask again with
+//! `If-None-Match` and get a `304` with no body when nothing changed, and a
+//! shared cache never mixes one caller's answer with another's. Streams
+//! (SSE) and errors are left alone; a handler that computes its own tag keeps
+//! it, and one that serves a public document (the key sets, the API
+//! description, an agent card) keeps its `public` policy, so the edge and any
+//! other shared cache may keep it too. What must never be kept (sign-in and
+//! the account, credentials and tokens, recorded payloads, the SIEM pulls and
+//! every download) goes out `no-store` and untagged, whatever its handler
+//! said.
 
 use axum::body::{Body, HttpBody as _};
 use axum::extract::Request;
@@ -22,6 +27,12 @@ pub const ETAG_MAX_BYTES: u64 = 8 * 1024 * 1024;
 /// but must ask (with `If-None-Match`) before reusing it; a shared cache
 /// may not keep it at all.
 pub const CACHE_CONTROL: &str = "private, no-cache";
+/// What the handlers of the documents that are the same for everyone (the
+/// key sets, the API description) answer with: any cache keeps them five
+/// minutes, and serves them a minute longer while it asks again.
+pub const PUBLIC_CACHE_CONTROL: &str = "public, max-age=300, stale-while-revalidate=60";
+/// What is never kept, by a browser or anything between.
+pub const NO_STORE: &str = "no-store";
 
 /// The policy a tagged read goes out with: the handler's own when it made
 /// the answer public, [`CACHE_CONTROL`] otherwise.
@@ -31,6 +42,51 @@ fn policy(headers: &HeaderMap) -> HeaderValue {
         .filter(|v| v.to_str().is_ok_and(|v| v.starts_with("public")))
         .cloned()
         .unwrap_or(HeaderValue::from_static(CACHE_CONTROL))
+}
+
+/// Gives a tagged read its [`policy`]. The caller's own also varies by
+/// `Authorization`: a cache that keeps it keeps it per credential.
+fn apply_policy(headers: &mut HeaderMap) {
+    let policy = policy(headers);
+    if policy == CACHE_CONTROL {
+        headers.append(header::VARY, HeaderValue::from_static("authorization"));
+    }
+    headers.insert(header::CACHE_CONTROL, policy);
+}
+
+/// Whether a `GET` of `path` is never kept, nor tagged, whatever its handler
+/// said. A download is never kept either, whatever its path
+/// ([`is_download`]).
+fn never_kept(path: &str) -> bool {
+    let parts: Vec<&str> = path.trim_end_matches('/').split('/').collect();
+    match parts.as_slice() {
+        // What the login page offers: the same for everyone, nothing personal.
+        ["", "api", "v1", "auth", "providers"] => false,
+        // Sign-in, sessions, the account, its second factor, identities and export.
+        ["", "api", "v1", "auth", ..] => true,
+        // Credentials (the LLM's and the embeddings' key hints), the tokens of
+        // agents, the realtime tickets.
+        ["", "api", "v1", "settings", "llm"]
+        | ["", "api", "v1", "workspaces", _, "llm"]
+        | ["", "api", "v1", "workspaces", _, "knowledge", "settings"]
+        | ["", "api", "v1", "agents", _, "tokens", ..]
+        | ["", "api", "v1", "realtime", ..] => true,
+        // What an agent read or wrote, as recorded.
+        ["", "api", "v1", "spans", _, "payload"] => true,
+        // The SIEM pulls: the audit trail and the alert history.
+        ["", "api", "v1", "workspaces", _, "audit" | "alerts", "export"] => true,
+        _ => false,
+    }
+}
+
+/// Whether an answer is a download (evidence bundles, the account export,
+/// artifacts, archives).
+fn is_download(response: &Response) -> bool {
+    response
+        .headers()
+        .get(header::CONTENT_DISPOSITION)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|value| value.starts_with("attachment"))
 }
 
 /// Strong entity tag of a body: the first 128 bits of its SHA-256, quoted.
@@ -61,9 +117,11 @@ fn is_probe(path: &str) -> bool {
     path.ends_with("/healthz") || path.ends_with("/readyz")
 }
 
-/// Tags JSON reads and answers `If-None-Match`.
+/// Tags JSON reads, gives them their policy and answers `If-None-Match`;
+/// marks what is never kept `no-store`.
 pub async fn conditional_reads(request: Request, next: Next) -> Response {
     let is_get = request.method() == Method::GET && !is_probe(request.uri().path());
+    let no_store = never_kept(request.uri().path());
     let if_none_match = request
         .headers()
         .get(header::IF_NONE_MATCH)
@@ -73,10 +131,15 @@ pub async fn conditional_reads(request: Request, next: Next) -> Response {
     if !is_get {
         return response;
     }
+    if no_store || is_download(&response) {
+        let headers = response.headers_mut();
+        headers.remove(header::ETAG);
+        headers.insert(header::CACHE_CONTROL, HeaderValue::from_static(NO_STORE));
+        return response;
+    }
     // A handler that tagged the answer itself (and answered the condition) only needs the policy.
     if response.headers().contains_key(header::ETAG) {
-        let policy = policy(response.headers());
-        response.headers_mut().insert(header::CACHE_CONTROL, policy);
+        apply_policy(response.headers_mut());
         return response;
     }
     if response.status() != StatusCode::OK || !is_json(&response) {
@@ -100,8 +163,7 @@ pub async fn conditional_reads(request: Request, next: Next) -> Response {
     let tag = etag_of(&bytes);
     let tag_value = HeaderValue::from_str(&tag).expect("an ETag is ASCII");
     parts.headers.insert(header::ETAG, tag_value);
-    let policy = policy(&parts.headers);
-    parts.headers.insert(header::CACHE_CONTROL, policy);
+    apply_policy(&mut parts.headers);
     if if_none_match.is_some_and(|value| matches(&value, &tag)) {
         parts.status = StatusCode::NOT_MODIFIED;
         parts.headers.remove(header::CONTENT_TYPE);
@@ -141,10 +203,49 @@ mod tests {
         assert!(!matches("", &tag));
     }
 
+    const ME: &str = "/api/v1/auth/me";
+
+    #[test]
+    fn credentials_tokens_and_the_account_are_never_kept() {
+        for path in [
+            ME,
+            "/api/v1/auth/sessions",
+            "/api/v1/auth/me/export",
+            "/api/v1/settings/llm",
+            "/api/v1/workspaces/w/llm",
+            "/api/v1/workspaces/w/knowledge/settings",
+            "/api/v1/agents/a/tokens",
+            "/api/v1/spans/s/payload",
+            "/api/v1/workspaces/w/audit/export",
+            "/api/v1/workspaces/w/alerts/export",
+        ] {
+            assert!(never_kept(path), "{path}");
+        }
+        for path in [
+            "/api/v1/auth/providers",
+            "/api/v1/settings/llm/models",
+            "/api/v1/workspaces/w",
+            "/api/v1/workspaces/w/audit",
+            "/api/v1/workspaces/w/knowledge/topics",
+            "/api/v1/agents/a",
+            "/api/v1/agent-tokens/jwks.json",
+            "/a2a/agents/agent%3Aops/card",
+        ] {
+            assert!(!never_kept(path), "{path}");
+        }
+    }
+
+    async fn bundle() -> Response {
+        let disposition = [(header::CONTENT_DISPOSITION, "attachment")];
+        (disposition, axum::Json(json!({"id": 1}))).into_response()
+    }
+
     fn app() -> Router {
         Router::new()
             .route("/thing", get(|| async { axum::Json(json!({"id": 7})) }))
             .route("/thing", post(|| async { axum::Json(json!({"id": 7})) }))
+            .route(ME, get(|| async { axum::Json(json!({"id": 1})) }))
+            .route("/bundle", get(bundle))
             .route(
                 "/text",
                 get(|| async { ([(header::CONTENT_TYPE, "text/plain")], "plain") }),
@@ -209,6 +310,7 @@ mod tests {
         assert_eq!(first.status(), StatusCode::OK);
         let tag = first.headers()[header::ETAG].to_str().unwrap().to_owned();
         assert_eq!(first.headers()[header::CACHE_CONTROL], CACHE_CONTROL);
+        assert_eq!(first.headers()[header::VARY], "authorization");
         assert_eq!(body_of(first).await, br#"{"id":7}"#);
 
         let cached = get_with("/thing", Some(&tag), Method::GET).await;
@@ -230,6 +332,7 @@ mod tests {
             first.headers()[header::CACHE_CONTROL],
             "public, max-age=300"
         );
+        assert!(first.headers().get(header::VARY).is_none());
         let tag = first.headers()[header::ETAG].to_str().unwrap().to_owned();
         let cached = get_with("/keys", Some(&tag), Method::GET).await;
         assert_eq!(cached.status(), StatusCode::NOT_MODIFIED);
@@ -244,6 +347,21 @@ mod tests {
             CACHE_CONTROL,
             "only a public policy is the handler's to choose: a JSON read is always kept privately"
         );
+    }
+
+    fn cache_control(r: &Response) -> &str {
+        r.headers()[header::CACHE_CONTROL].to_str().unwrap()
+    }
+
+    #[tokio::test]
+    async fn secrets_and_downloads_are_never_kept_nor_tagged() {
+        for path in [ME, "/bundle"] {
+            let secret = get_with(path, Some("*"), Method::GET).await;
+            assert_eq!(secret.status(), StatusCode::OK, "{path}");
+            assert_eq!(cache_control(&secret), NO_STORE, "{path}");
+            assert!(secret.headers().get(header::ETAG).is_none(), "{path}");
+            assert!(!body_of(secret).await.is_empty(), "{path}");
+        }
     }
 
     #[tokio::test]

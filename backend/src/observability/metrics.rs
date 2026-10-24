@@ -191,7 +191,9 @@ pub struct Metrics {
     /// A2A tasks exchanged, by direction (`inbound`, `outbound`) and outcome
     /// (`accepted`, `refused`, `completed`, `failed`).
     pub a2a_tasks: LabeledCounter,
-    /// Hot-read cache lookups, by cache and result (`hit`, `miss`).
+    /// Hot-read cache lookups, by cache and result (`hit`, `miss`; the
+    /// vocabularies also `stale`; onto-intelli's reads, `onto_read`, also
+    /// `coalesced`).
     pub cache_lookups: LabeledCounter,
     /// Latency of the gRPC calls this backend makes, by service and method.
     pub grpc_client_latency: LabeledHistogram,
@@ -450,7 +452,7 @@ impl Metrics {
             &mut out,
             "nexc_cache_lookups_total",
             "counter",
-            "Hot-read cache lookups, by cache and result (hit, miss).",
+            "Hot-read cache lookups, by cache and result (hit, miss, stale, coalesced).",
         );
         self.cache_lookups
             .render(&mut out, "nexc_cache_lookups_total");

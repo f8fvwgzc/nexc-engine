@@ -67,6 +67,78 @@ destination, an assistant conversation) answers 404 and is shown but not gated; 
 informational rows (the 64-caller gRPC figures, the cache-off figures, the one-team write, the
 single sign-on callback, which waits on the provider).
 
+## Caching layers
+
+What is kept where, from the browser to onto-intelli. The lookups of the backend's hot-read,
+vocabulary and onto-intelli caches are counted in `nexc_cache_lookups_total{cache, result}`, so a
+hit ratio per cache is one PromQL division (the Grafana board divides `result="hit"` by all).
+For onto-intelli's reads that understates what they save: `coalesced` (another caller's call
+shared) was answered without a call of its own too, so their share is
+`result=~"hit|coalesced"` over all results. Why each layer keeps what it keeps:
+[ADR 0001](adr/0001-http3-edge-caching-and-indexes.md); what none of them may keep, and the
+console's refreshes: [ADR 0003](adr/0003-no-store-secrets-and-narrower-refreshes.md).
+
+| Layer | What | Key | Lifetime | Invalidation | Metric |
+| --- | --- | --- | --- | --- | --- |
+| Browser: TanStack Query | the console's server state, in memory for the page; the lists (workspaces, graphs, issues, agents, templates) also in `localStorage` between visits, per account and build (`frontend/src/lib/query-persist.ts`) | the query key (`frontend/src/lib/query-keys.ts`) | `staleTime` by kind (`freshness.ts`): catalogue 30 min, setup 5 min, list 1 min, live 10 s; `gcTime` 10 min; the stored lists 24 h, restored stale | the console's own writes; SSE and WebSocket events patch or invalidate what they changed; sign-out clears it and the stored copy; a focus refetches lists and live state only | none |
+| Browser: ETag cache | body and `ETag` of each tagged GET, in memory (500 URLs at most); the stored lists' tags in `localStorage` too (100 at most) | the URL | until a refetch answers 200 with a new tag | a new tag; sign-out | `nexc_http_requests_total{status="304"}` |
+| HTTP: the caller's reads | every JSON `GET`: strong `ETag`, `private, no-cache`, `Vary: Authorization` | the body's SHA-256 | revalidated on every use | the body changes | `nexc_http_requests_total{status="304"}` |
+| HTTP: public reads | `/.well-known/jwks.json`, `/api/v1/agent-tokens/jwks.json`, `/api/openapi.json`; the agent cards of exposed agents; tagged, with the policy their handler sends | the URL | `public, max-age=300, stale-while-revalidate=60`; the cards `public, max-age=30` | a key rotation (publish the next key first); an agent's change shows within 30 s | none |
+| HTTP: never kept | `/auth/*` but `providers`, LLM credentials, the knowledge settings (the embeddings key's hint), agent tokens, realtime tickets, span payloads, SIEM pulls, downloads (evidence bundles) | none | `no-store`, no tag | none | none |
+| Edge: nginx | the key sets and the agent cards (`nginx/public-cache.conf`), never with an `Authorization` header; the build, compressed once at image build time (`gzip_static`) | host and URI | the backend's `max-age`; served stale while one request refreshes it by `ETag`, or while the backend is down | the `max-age`; a new image | `X-Cache-Status` on each answer |
+| Backend: hot reads | agent cards, a workspace's latest policies, resolved policies, guardrails, workspace LLM settings | agent; workspace; (workspace, agent, policy version) | `NEXC_CACHE_TTL_SECS` (60 s) | the write drops it here and on every replica (`NOTIFY`) | `{cache="agent_card"…"workspace_llm"}` |
+| Backend: graph vocabularies | a graph's node and relation types, read from onto-intelli | graph | `NEXC_ONTO_VOCABULARY_TTL_SECS` (30 s) fresh; 24 h as a fallback while onto-intelli is unreachable | nexc's vocabulary writes, on every replica | `{cache="vocabulary", result="hit"\|"miss"\|"stale"}` |
+| Backend: onto-intelli reads (`ontology/cached.rs`) | `FindEntities`, `Traverse`, `EventService/List`, `SchemaService/Get`, `ListProposals`; callers asking the same while a read is on the wire share it; errors never kept | the tenant's generation, the method, the whole principal, every field of the request | `NEXC_ONTO_READ_CACHE_SECS` (10 s) | every write nexc makes to the tenant (ingest, a vocabulary, a graph opened, a proposal filed) moves it to a new generation, on every replica | `{cache="onto_read", result="hit"\|"miss"\|"coalesced"}` |
+| Backend: LLM answers | complete answers of deterministic (`cacheable`) requests | SHA-256 of provider, model, base URL, system, messages, schema, limits | 6 h, 512 entries (LRU) | none | `nexc_llm_cache_hits_total`, `…_misses_total` |
+| Backend: node results | a node whose content hash matches a node that succeeded in an earlier run of the graph | the content hash | while the earlier run is kept | a changed node, a forced run | `nexc_node_cache_hits_total` |
+| Backend: memories | decoded memories per workspace | workspace | 30 s | this instance's writes | none |
+| Backend: probes, keys | health of the runtime (both wires), texc-symphony, onto-intelli; MCP registrations; the identity provider's discovery and keys | backend; workspace; issuer | 10 s; 5 s; 1 h (keys refetched on an unknown `kid`, a minute apart at most) | none | none |
+| Runtime: agent-token keys | the backend's agent-token key set | `kid` | 300 s, refetched on an unknown `kid` (10 s apart at most) | a key the set stops listing verifies 15 min more | none |
+
+The export ingests into a busy workspace's tenant every 2 s, and every ingest drops what is kept
+for the tenant, so the reads of a busy workspace are kept only between two export passes; there
+the cache saves most by sharing a read among the callers who ask at once (`coalesced`). A change
+made in onto-intelli itself, or by an answer of `Ask` that filed a proposal or ran an action,
+shows within `NEXC_ONTO_READ_CACHE_SECS`.
+
+Replicas tell each other what to drop in batched `NOTIFY` payloads
+(`backend/src/realtime/fanout.rs`). The onto-intelli tenant keys (`Key::Ontology`) are newer than
+the other kinds and go in a payload of their own: a replica still on a build without them during
+a rolling update cannot read them and ignores that payload only (it keeps no onto-intelli reads
+anyway), and still drops the policies, guardrails, agents and vocabularies sent beside it. From
+this build on, a replica skips a kind of key it does not know and drops the rest of the payload's
+keys.
+
+### Cross-service calls
+
+| Call | Idempotent | Hot path | Kept |
+| --- | --- | --- | --- |
+| onto-intelli `ExecutionService/Vocabulary` | yes | run start, `GET /graphs/{gid}`, the editor, dependency detection | by graph |
+| onto-intelli `SchemaService/Get` | yes | every assistant turn | the onto-intelli read cache |
+| onto-intelli `SchemaService/ListProposals` | yes | Settings, Ontology | the onto-intelli read cache |
+| onto-intelli `FindEntities`, `Traverse`, `EventService/List` | yes | no: the audit's canned questions | the onto-intelli read cache (event queries ask from the start of the minute) |
+| onto-intelli `IntelliService/Ask`, `AskStream` | no: model tokens, and an answer may file a proposal or run an action | no | no (onto-intelli keeps its own answer cache) |
+| onto-intelli `SchemaService/Plan` | yes, a dry run | no | no |
+| onto-intelli `Ingest`, `SetVocabulary`, `InitGraph`, `Propose` | no: writes | the export, every 2 s | drop the tenant's kept reads |
+| onto-intelli `POST /v1/auth/session` | no: mints a credential | the Map page | never |
+| onto-intelli `AdminService/Health`, runtime `AgentRuntime/Health` | yes | the status pages | 10 s |
+| runtime `AgentRuntime/Execute`, a bidirectional stream | no | every node attempt | no; the one pooled channel, cloned per stream |
+| OTLP `TraceService/Export` | no: at least once | the exporter | no |
+| OTLP reachability (status page) | yes | the infrastructure page | no: a fresh connection on purpose, it tests one |
+| A2A counterpart's card | yes | its check | the check's result, in the database |
+| A2A `tasks/send`, `tasks/sendSubscribe` | no | an agent's `a2a:<name>` tool | no |
+| OpenID Connect discovery and keys | yes | every sign-in | 1 h |
+| OpenID Connect code exchange, userinfo | no | a sign-in | no |
+| LLM provider completions | no in general | every node, plan and assistant turn | the LLM answer cache, deterministic requests only |
+
+Every gRPC client is built on the one channel of its peer (`backend/src/rpc.rs`): a pool of
+`NEXC_GRPC_POOL_SIZE` HTTP/2 connections opened lazily, with keepalive pings every
+`NEXC_GRPC_KEEPALIVE_SECS` (idle or not) and adaptive flow control, cloned into each call; no
+request opens a connection of its own. Messages are not compressed: tonic's `gzip` feature is
+not enabled in this build. Why these channels stay on HTTP/2 while browsers get HTTP/3:
+[ADR 0001](adr/0001-http3-edge-caching-and-indexes.md); why their windows are adaptive:
+[ADR 0002](adr/0002-edge-hardening-and-adaptive-grpc-windows.md).
+
 ## The table
 
 Taken on an Apple M2 Pro (10 cores, 16 GiB, macOS 26.6.2) with the release build (thin LTO,

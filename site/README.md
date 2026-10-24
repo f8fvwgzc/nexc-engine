@@ -38,6 +38,7 @@ The prose lives in the repository, not here. A page under `site/` is a title, on
 | `docs/AGENTSECOPS.md`                            | AgentSecOps                                                   |
 | `docs/INFRASTRUCTURE.md`                         | Infrastructure, Workspace transfers, Ask the audit            |
 | `docs/CONTRACT.md`                               | Reference                                                     |
+| `docs/adr/`                                      | Operate, one page per decision record                         |
 | `deploy/k8s/README.md`, `values.yaml`            | Kubernetes, Helm chart                                        |
 | `CONTRIBUTING.md`, `SECURITY.md`, `CHANGELOG.md` | Contributing, Security, Changelog                             |
 

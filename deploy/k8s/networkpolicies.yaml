@@ -8,7 +8,8 @@ spec:
   podSelector: {}
   policyTypes: [Ingress]
 ---
-# frontend: only from the ingress controller.
+# frontend: only from the ingress controller (the http3 component admits TCP and UDP 8443 from any
+# source; give its rule a `from:` to restrict it, http3/frontend-https.yaml).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
