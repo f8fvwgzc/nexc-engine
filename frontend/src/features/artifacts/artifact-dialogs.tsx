@@ -35,7 +35,8 @@ interface NameDialogProps {
 
 /**
  * Asks for a name: a new folder or file, or a new name for one. What is wrong with the name shows
- * under the field as it is typed, and so does what the server said.
+ * under the field as it is typed, and so does what the server said (a name taken, say) until the
+ * name is changed. The dialog stays open on a refusal, with nothing made.
  */
 export function NameDialog({
   onClose,
@@ -78,7 +79,11 @@ export function NameDialog({
             placeholder={placeholder}
             aria-label={label}
             aria-invalid={trimmed !== '' && problem !== null}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setName(e.target.value);
+              // What the server said was about the name it was sent, not this one.
+              if (save.isError) save.reset();
+            }}
             onFocus={(e) => {
               if (!selectStem) return;
               // The name without its extension, as file managers select it.

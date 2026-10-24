@@ -17,10 +17,10 @@ const EXTENSIONS = new Set(
   ).split(' '),
 );
 
-/** Names accepted as they are, without an extension of their own. */
+/** Names accepted whole, without an extension of their own, in lower case: any case matches. */
 const BASENAMES = new Set([
-  'Dockerfile',
-  'Makefile',
+  'dockerfile',
+  'makefile',
   '.gitignore',
   '.editorconfig',
   '.env.example',
@@ -46,7 +46,7 @@ export function artifactExtension(name: string): string {
 
 /** Whether a file of this name can be an artifact: code, markup, config or text. */
 export function isArtifactName(name: string): boolean {
-  return BASENAMES.has(name) || EXTENSIONS.has(artifactExtension(name));
+  return BASENAMES.has(name.toLowerCase()) || EXTENSIONS.has(artifactExtension(name));
 }
 
 /** Characters as the API counts them (code points, not UTF-16 units). */

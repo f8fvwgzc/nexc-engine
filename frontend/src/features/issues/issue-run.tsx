@@ -290,14 +290,18 @@ function LiveRun({
         void queryClient.invalidateQueries({
           queryKey: qk.runs.artifacts(event.data.artifact.run_id),
         });
+        // The issue's "From runs" list, where a run's file is kept.
+        void queryClient.invalidateQueries({ queryKey: qk.artifacts.runs(issue.id) });
         break;
       case 'run.finished':
         queryClient.setQueryData<Run[]>(qk.graphs.runs(graphId), (prev) =>
           (prev ?? []).map((r) => (r.id === event.data.run.id ? event.data.run : r)),
         );
-        // The run reported back: a timeline entry, maybe a new state, an inbox entry.
+        // The run reported back: a timeline entry, maybe a new state, an inbox entry, and the
+        // run's status on each file it made.
         void queryClient.invalidateQueries({ queryKey: qk.issues.all });
         void queryClient.invalidateQueries({ queryKey: qk.runs.artifacts(event.data.run.id) });
+        void queryClient.invalidateQueries({ queryKey: qk.artifacts.runs(issue.id) });
         break;
       case 'plan.started':
         break;
