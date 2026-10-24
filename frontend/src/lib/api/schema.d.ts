@@ -12601,7 +12601,7 @@ export interface operations {
                 workspace_id?: string | null;
                 /** @description Restrict to a graph (plus the caller's user-scope memories). */
                 graph_id?: string | null;
-                /** @description Hybrid search query; results then carry a `score`. */
+                /** @description Hybrid search query; results then carry a `score`. Without control characters. */
                 q?: string | null;
                 /** @description 1–100, default 20. */
                 limit?: number | null;
@@ -14511,7 +14511,7 @@ export interface operations {
                     "application/json": components["schemas"]["Problem"];
                 };
             };
-            /** @description It holds files of issues the caller cannot see */
+            /** @description It holds files of issues the caller cannot see, or crossed another change to it (try again) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -15583,6 +15583,7 @@ export interface operations {
     search: {
         parameters: {
             query: {
+                /** @description What to look for; without control characters. */
                 q: string;
                 /** @description Only passages grouped under this topic. */
                 topic_id?: string | null;

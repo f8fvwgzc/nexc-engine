@@ -257,6 +257,7 @@ pub async fn delete(
 #[derive(Debug, Deserialize, IntoParams)]
 #[serde(deny_unknown_fields)]
 pub struct SearchQuery {
+    /// What to look for; without control characters.
     pub q: String,
     /// Only passages grouped under this topic.
     pub topic_id: Option<Uuid>,
@@ -276,7 +277,7 @@ pub async fn search(
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<Vec<Passage>>, AppError> {
     require_member(&member_of(&state, auth, wid).await?)?;
-    let q: String = query.q.trim().chars().take(1_000).collect();
+    let q = search_text("q", Some(query.q), 1_000)?.unwrap_or_default();
     let limit = query.limit.unwrap_or(8).clamp(1, 20);
     Ok(Json(
         knowledge::search(&state, wid, Some(auth.id), &q, query.topic_id, limit).await?,

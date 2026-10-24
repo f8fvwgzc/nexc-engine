@@ -1979,6 +1979,141 @@ async fn a_folder_delete_counts_what_lands_in_it_meanwhile(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_folder_delete_waits_for_a_team_or_issue_delete_on_its_files(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), &[]).await;
+    let w = world(&app).await;
+    let count_in = |folder: String| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM artifact_files WHERE folder_id = $1::uuid",
+            )
+            .bind(folder)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+
+    // An issue's delete holds the issue, then leaves its files to the workspace (its trigger).
+    // The folder delete waits for the issue first, instead of holding a file that trigger waits
+    // for while it notes on the issue that the file went.
+    let ship = issue(&app, &w, &w.eng, &w.member, "Ship").await;
+    let docs = folder(&app, &w, &w.member, json!({"name": "Docs"})).await;
+    let notes = format!("name=notes.md&folder_id={docs}&issue_id={ship}");
+    upload(&app, &w, &w.member, &notes, b"n").await;
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM issues WHERE id = $1::uuid FOR UPDATE")
+        .bind(&ship)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let delete = spawn_request(
+        &app,
+        Method::DELETE,
+        &format!("{}/artifact-folders/{docs}", w.ws),
+        &w.member,
+        None,
+    );
+    until_blocked(&pool).await;
+    sqlx::query("DELETE FROM issues WHERE id = $1::uuid")
+        .bind(&ship)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let (status, body) = delete.await.unwrap();
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(count_in(docs).await, 0);
+
+    // A private team's delete holds the team, takes the files of its issues (its trigger), then
+    // the issues: the folder delete waits for the team, holding none of those.
+    let reorg = issue(&app, &w, &w.secret, &w.owner, "Reorg").await;
+    let board = folder(&app, &w, &w.owner, json!({"name": "Board"})).await;
+    let plan = format!("name=plan.md&folder_id={board}&issue_id={reorg}");
+    upload(&app, &w, &w.owner, &plan, b"p").await;
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM teams WHERE id = $1::uuid FOR UPDATE")
+        .bind(&w.secret)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM artifact_files WHERE issue_id = $1::uuid")
+        .bind(&reorg)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let delete = spawn_request(
+        &app,
+        Method::DELETE,
+        &format!("{}/artifact-folders/{board}", w.ws),
+        &w.owner,
+        None,
+    );
+    until_blocked(&pool).await;
+    sqlx::query("DELETE FROM teams WHERE id = $1::uuid")
+        .bind(&w.secret)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let (status, body) = delete.await.unwrap();
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+
+    // A delete Postgres stops for crossing another transaction (here one that holds a copy
+    // outside the folder, then changes its original inside) is a 409 to try again, and takes
+    // nothing.
+    let drafts = folder(&app, &w, &w.member, json!({"name": "Drafts"})).await;
+    let original = upload(
+        &app,
+        &w,
+        &w.member,
+        &format!("name=a.md&folder_id={drafts}"),
+        b"a",
+    )
+    .await;
+    let (status, copy) = call(
+        &app,
+        Method::POST,
+        &format!(
+            "/artifact-files/{}/duplicate",
+            original["id"].as_str().unwrap()
+        ),
+        &w.member,
+        Some(json!({"folder_id": null})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{copy}");
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query("UPDATE artifact_files SET updated_at = now() WHERE id = $1::uuid")
+        .bind(copy["id"].as_str().unwrap())
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let delete = spawn_request(
+        &app,
+        Method::DELETE,
+        &format!("{}/artifact-folders/{drafts}", w.ws),
+        &w.member,
+        None,
+    );
+    until_blocked(&pool).await;
+    sqlx::query("UPDATE artifact_files SET updated_at = now() WHERE id = $1::uuid")
+        .bind(original["id"].as_str().unwrap())
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let (status, body) = delete.await.unwrap();
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(
+        body["detail"],
+        "something under this folder changed while it was deleted; try again"
+    );
+    assert_eq!(count_in(drafts).await, 1);
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
 async fn a_search_with_a_control_character_is_refused(pool: PgPool) {
     let app = TestApp::new(pool, &[]).await;
     let w = world(&app).await;

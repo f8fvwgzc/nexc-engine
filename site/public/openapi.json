@@ -6231,7 +6231,7 @@
           {
             "name": "q",
             "in": "query",
-            "description": "Hybrid search query; results then carry a `score`.",
+            "description": "Hybrid search query; results then carry a `score`. Without control characters.",
             "required": false,
             "schema": {
               "type": [
@@ -9236,7 +9236,7 @@
             }
           },
           "409": {
-            "description": "It holds files of issues the caller cannot see",
+            "description": "It holds files of issues the caller cannot see, or crossed another change to it (try again)",
             "content": {
               "application/json": {
                 "schema": {
@@ -11063,6 +11063,7 @@
           {
             "name": "q",
             "in": "query",
+            "description": "What to look for; without control characters.",
             "required": true,
             "schema": {
               "type": "string"

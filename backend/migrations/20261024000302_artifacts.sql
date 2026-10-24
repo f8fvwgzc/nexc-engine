@@ -107,10 +107,14 @@ BEGIN
                  WHERE issue_id = OLD.id ORDER BY lower(name), id LOOP
         free := kept.name;
         n := 0;
+        -- Spelled as artifact_files_name_idx is, so each probe is one look in it.
         WHILE EXISTS (SELECT 1 FROM artifact_files g
                        WHERE g.workspace_id = kept.workspace_id
-                         AND g.folder_id IS NOT DISTINCT FROM kept.folder_id
-                         AND g.issue_id IS NULL AND lower(g.name) = lower(free)) LOOP
+                         AND COALESCE(g.folder_id, '00000000-0000-0000-0000-000000000000'::uuid)
+                             = COALESCE(kept.folder_id, '00000000-0000-0000-0000-000000000000'::uuid)
+                         AND COALESCE(g.issue_id, '00000000-0000-0000-0000-000000000000'::uuid)
+                             = '00000000-0000-0000-0000-000000000000'::uuid
+                         AND lower(g.name) = lower(free)) LOOP
             n := n + 1;
             free := artifact_copy_name(kept.name, n);
         END LOOP;

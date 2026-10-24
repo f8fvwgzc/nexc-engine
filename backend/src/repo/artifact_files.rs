@@ -198,7 +198,8 @@ pub async fn create_folder(
 /// folders are added, moved and deleted one at a time, so two moves that
 /// cross (A into B while B goes into A) cannot both pass the loop check, and
 /// no folder is added under one while it is deleted. File writes do not take
-/// it; a delete holds what it takes with [`lock_under`].
+/// it; a delete holds what it takes, and what it notes on issues, with
+/// [`lock_under`].
 pub async fn lock_folders(db: impl PgExecutor<'_>, workspace_id: Uuid) -> Result<(), sqlx::Error> {
     sqlx::query(
         "SELECT pg_advisory_xact_lock(hashtext('nexc.artifact_folders'), hashtext($1::text))",
@@ -245,16 +246,49 @@ pub async fn folder_is_within(
     .await
 }
 
-/// Locks, until the transaction ends, the files in a folder and the folders
-/// under it, then those folders, so what a delete counts is what it takes: a
-/// save, rename, move or re-attachment of one of those files finishes first
-/// or waits, and so does a file put into one of those folders (its foreign
-/// key shares the folder's row, which this holds for update). The files are
-/// held only against changes, so a copy being made of one (which shares its
-/// row) goes on; and they come before the folders, so a file moving between
-/// two of them never waits on the delete while the delete waits on it. Call
-/// after [`lock_folders`], which keeps the tree as it is.
+/// Locks, until the transaction ends, what a folder delete takes, in the
+/// order a team or issue delete takes it (the team, its issues, their
+/// files): the teams and then the issues of the files in the folder and the
+/// folders under it, against being deleted only; those files, against
+/// changes; then those folders. So a team or issue delete that would leave
+/// or take those files finishes first or waits for the folder delete, and
+/// never holds a file the folder delete waits on while the folder delete
+/// notes the file's going on its issue.
+///
+/// What the delete counts is then what it takes: a save, rename, move or
+/// re-attachment of one of those files finishes first or waits, and so does
+/// a file put into one of those folders (its foreign key shares the folder's
+/// row, which this holds for update). The files are held only against
+/// changes, so a copy being made of one (which shares its row) goes on; and
+/// they come before the folders, so a file moving between two of them never
+/// waits on the delete while the delete waits on it. Call after
+/// [`lock_folders`], which keeps the tree as it is.
 pub async fn lock_under(db: &mut PgConnection, folder_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "WITH RECURSIVE under AS (
+             SELECT $1::uuid AS id
+             UNION
+             SELECT c.id FROM artifact_folders c JOIN under u ON c.parent_id = u.id)
+         SELECT 1 FROM teams WHERE id IN (
+             SELECT i.team_id FROM issues i JOIN artifact_files f ON f.issue_id = i.id
+             WHERE f.folder_id IN (SELECT id FROM under))
+         ORDER BY id FOR KEY SHARE",
+    )
+    .bind(folder_id)
+    .execute(&mut *db)
+    .await?;
+    sqlx::query(
+        "WITH RECURSIVE under AS (
+             SELECT $1::uuid AS id
+             UNION
+             SELECT c.id FROM artifact_folders c JOIN under u ON c.parent_id = u.id)
+         SELECT 1 FROM issues WHERE id IN (
+             SELECT issue_id FROM artifact_files WHERE folder_id IN (SELECT id FROM under))
+         ORDER BY id FOR KEY SHARE",
+    )
+    .bind(folder_id)
+    .execute(&mut *db)
+    .await?;
     sqlx::query(
         "WITH RECURSIVE under AS (
              SELECT $1::uuid AS id

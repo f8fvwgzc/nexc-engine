@@ -100,6 +100,17 @@ fn file_not_saved(on_issue: bool) -> impl FnOnce(sqlx::Error) -> AppError {
     }
 }
 
+/// A folder delete that Postgres stopped because it crossed another write
+/// on the same rows (a deadlock) is a 409 to try again, not a 500.
+fn crossed(err: sqlx::Error) -> AppError {
+    match &err {
+        sqlx::Error::Database(db) if db.code().as_deref() == Some("40P01") => AppError::Conflict(
+            "something under this folder changed while it was deleted; try again".into(),
+        ),
+        _ => err.into(),
+    }
+}
+
 fn folder_name_taken(err: sqlx::Error) -> AppError {
     match &err {
         sqlx::Error::Database(db) if db.is_unique_violation() => {
@@ -314,7 +325,7 @@ pub async fn update_folder(
 #[utoipa::path(delete, path = "/workspaces/{wid}/artifact-folders/{fid}", tag = "artifact-files", security(("bearer" = [])),
     params(("wid" = Uuid, Path, description = "Workspace id"), ("fid" = Uuid, Path, description = "Folder id")),
     responses((status = 204, description = "Deleted"), (status = 403, body = Problem), (status = 404, body = Problem),
-        (status = 409, description = "It holds files of issues the caller cannot see", body = Problem)))]
+        (status = 409, description = "It holds files of issues the caller cannot see, or crossed another change to it (try again)", body = Problem)))]
 pub async fn delete_folder(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -326,8 +337,11 @@ pub async fn delete_folder(
     let folder = repo::artifact_files::find_folder(&mut *tx, wid, fid)
         .await
         .or_not_found("folder")?;
-    // A file put or moved into it meanwhile is counted, or waits and then finds it gone.
-    repo::artifact_files::lock_under(&mut tx, fid).await?;
+    // A file put or moved into it meanwhile is counted, or waits and then finds it gone; a
+    // team or issue delete that would take or leave its files goes first or waits.
+    repo::artifact_files::lock_under(&mut tx, fid)
+        .await
+        .map_err(crossed)?;
     // Refused without saying how many: what the caller cannot see is not counted out to them.
     if repo::artifact_files::hidden_files_under(&mut *tx, auth.id, fid).await? > 0 {
         return Err(AppError::Conflict(
@@ -338,9 +352,12 @@ pub async fn delete_folder(
     for (issue_id, name, version) in repo::artifact_files::issue_files_under(&mut *tx, fid).await? {
         let from = version.to_string();
         repo::issues::record_artifact(&mut *tx, issue_id, auth.id, &name, Some(&from), "deleted")
-            .await?;
+            .await
+            .map_err(crossed)?;
     }
-    repo::artifact_files::delete_folder(&mut *tx, fid).await?;
+    repo::artifact_files::delete_folder(&mut *tx, fid)
+        .await
+        .map_err(crossed)?;
     tx.commit().await?;
     let subject = Subject::Text(&folder.name);
     audit(

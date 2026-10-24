@@ -770,18 +770,17 @@ async fn no_query_parameter_alone_fails_on_a_control_character(pool: PgPool) {
         "{limited} of {sent} requests were only rate limited"
     );
     assert!(broken.is_empty(), "{}", broken.join("\n"));
-    // A free-text search says which parameter it refused.
-    for list in ["artifact-files", "issues", "documents"] {
-        let (status, body) = call(
-            &app,
-            Method::GET,
-            &format!("/workspaces/{}/{list}?q=%00", w.wid),
-            &w.owner,
-            None,
-        )
-        .await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{list}: {body}");
-        assert!(body["errors"]["q"].is_array(), "{list}: {body}");
+    // A free-text search says which parameter it refused, every `q` alike.
+    let mut searches: Vec<String> = ["artifact-files", "issues", "documents", "knowledge/search"]
+        .iter()
+        .map(|list| format!("/workspaces/{}/{list}?q=%00", w.wid))
+        .collect();
+    searches.push(format!("/workspaces/{}/search?q=ab%00", w.wid));
+    searches.push(format!("/memories?workspace_id={}&q=%00", w.wid));
+    for search in searches {
+        let (status, body) = call(&app, Method::GET, &search, &w.owner, None).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{search}: {body}");
+        assert!(body["errors"]["q"].is_array(), "{search}: {body}");
     }
 }
 
