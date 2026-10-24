@@ -82,6 +82,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **HTTP/3 to the console.** The frontend's nginx serves the site a second time on 8443: TLS with
+  HTTP/2 over TCP and HTTP/3 over QUIC on UDP, the same port, advertised by `Alt-Svc`; on
+  whenever a certificate is mounted at `/etc/nginx/tls`. Compose publishes `NEXC_HTTPS_PORT`
+  (8443) on TCP and UDP with the certificate of `NEXC_TLS_DIR`, which `make init` writes for
+  localhost (`make tls-cert` again; mkcert's local CA when installed); the Helm chart's
+  `frontend.http3` puts the pods behind a LoadBalancer on TCP and UDP with a TLS Secret. 0-RTT is
+  off. The services behind nginx stay on HTTP/1.1 and gRPC over HTTP/2
+  (`docs/adr/0001-http3-edge-caching-and-indexes.md` says why).
+- **A cache in front of onto-intelli's gRPC reads.** `FindEntities`, `Traverse`,
+  `EventService/List`, `SchemaService/Get` and `ListProposals` are kept per caller and request for
+  `NEXC_ONTO_READ_CACHE_SECS` (10 s; `0` turns it off), callers asking the same while a read is on
+  the wire share it, and every write nexc makes to a tenant drops the tenant's reads on every
+  replica over the realtime fan-out. `nexc_cache_lookups_total{cache="onto_read"}` counts hits,
+  misses and shared reads.
+- **The edge keeps the public documents.** nginx caches the key set and the agent cards for their
+  `max-age`, refreshes them by `ETag` one request at a time, serves the copy while the backend is
+  down and says what it did in `X-Cache-Status`; nothing private is kept. The build is compressed
+  once when the image is built and served with `gzip_static`.
+- `backend/tests/schema.rs`: every table has a primary key, every foreign key an index, no index
+  repeats another, and the projection triggers skip updates that change nothing they project.
 - **Artifacts: the text files of an issue's work, kept with their history and in folders.** A new
   Artifacts menu (`/app/artifacts`) lists folders and files. Folders nest and can be renamed,
   moved and deleted; files can be uploaded one by one or as a whole folder, created empty,
@@ -1648,6 +1668,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The key set (`/.well-known/jwks.json`) went out as `Cache-Control: private, no-cache` although
+  its handler asked for `public, max-age=300`: the conditional-reads middleware replaced every
+  tagged read's policy. A handler's `public` policy is now kept beside the tag, and agent cards
+  are `public, max-age=30` (CONTRACT §3).
+- 51 foreign keys had no index, so deleting what they point at read the whole referencing table
+  under the delete's locks (an agent read every issue, a run every alert and LLM usage row, an
+  erased account every audit entry). Each has one now, partial where the key is nullable; so do
+  the export outbox's per-run probe, the sweep of retired onto-intelli tenants and the vector
+  backfills, which read every row at every start. The redundant `artifacts_run_idx` is dropped.
+  On a large database, the migration's header says how to build them `CONCURRENTLY` first.
+- The projection triggers fired on every update that named a projected column, changed or not,
+  so saving an issue's description re-exported it to onto-intelli; each is split so an update
+  fires only when a projected column changed.
 - Deleting a graph erased the hash-chained trace of every run in it, with no record of the
   deletion. A deleted graph is now archived: it leaves every list and endpoint, its queued runs are
   cancelled and its running ones stopped, and its runs keep their spans, seals, payload metadata and

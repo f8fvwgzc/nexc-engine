@@ -66,7 +66,8 @@ Open **http://localhost:8080** and create an account. Open **Issues**, file an i
 **Hand to agents**, then **Apply plan and run**, and watch the steps on the issue. `make init`
 generates every secret and selects **demo mode** (no API key needed). `docker compose up` pulls the release images
 or, before the first release or for local changes, builds them from source (`make docker-up` always
-rebuilds).
+rebuilds). The same console is on **https://localhost:8443** over HTTP/2 and HTTP/3 (QUIC), with the
+localhost certificate `make init` writes ([ADR 0001](docs/adr/0001-http3-edge-caching-and-indexes.md)).
 
 <!-- #endregion quickstart -->
 <!-- #region providers -->

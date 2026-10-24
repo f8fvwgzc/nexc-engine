@@ -117,7 +117,12 @@ No other service is needed.
   bounds a missed notification, and `0` turns the caches off. The smaller ones (a workspace's
   memory set for 30 seconds, the list of common words for 10 minutes) expire on their own. Every
   JSON read also carries an `ETag`, so a console that asks again gets a `304` with no body
-  (CONTRACT §3).
+  (CONTRACT §3). onto-intelli's reads are kept per caller and request for
+  `NEXC_ONTO_READ_CACHE_SECS` (10 s), a read on the wire shared by everyone asking the same, and
+  a write nexc makes to a tenant drops them on every replica. At the edge, nginx keeps the public
+  documents (the key set, agent cards) for their `max-age` and serves the build pre-compressed;
+  nothing private is kept there. The layers, and why the firewall's token checks are never
+  cached, are in [ADR 0001](adr/0001-http3-edge-caching-and-indexes.md).
 
 Redis or an external queue would be additions, not requirements. The Infrastructure page can
 check that a Redis is reachable (`redis://…`), which is as far as the server uses one today.
