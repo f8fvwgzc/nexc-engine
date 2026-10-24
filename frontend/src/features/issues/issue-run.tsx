@@ -195,7 +195,7 @@ export function IssueRun({ issue }: { issue: Issue }) {
   if (!graphId) {
     return (
       <section aria-label="Agent work" className="space-y-2 border-t pt-4">
-        <h3 className="text-[13px] font-medium text-muted-foreground">Agent work</h3>
+        <h2 className="text-[13px] font-medium text-muted-foreground">Agent work</h2>
         <p className="text-[13px] text-muted-foreground">
           Hand this issue to agents. They plan it as steps, run them, and post the result here for
           review.
@@ -396,7 +396,7 @@ function LiveRun({
   return (
     <section aria-label="Agent work" className="space-y-3 border-t pt-4">
       <div className="flex items-center gap-2">
-        <h3 className="text-[13px] font-medium text-muted-foreground">Agent work</h3>
+        <h2 className="text-[13px] font-medium text-muted-foreground">Agent work</h2>
         {run && (
           <Link
             to={`/app/runs/${run.id}`}
