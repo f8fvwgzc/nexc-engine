@@ -237,7 +237,7 @@ function useRefreshLlm() {
   return () => {
     void queryClient.invalidateQueries({ queryKey: qk.settings.llm });
     // demo_mode may have flipped.
-    void queryClient.invalidateQueries({ queryKey: qk.orchestrator });
+    void queryClient.invalidateQueries({ queryKey: qk.planner });
   };
 }
 

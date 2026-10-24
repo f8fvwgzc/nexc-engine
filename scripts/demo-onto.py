@@ -132,7 +132,7 @@ def run_graph(token: str) -> str:
     })
     gid = graph["id"]
     _, first = api("POST", f"/graphs/{gid}/nodes", token, {
-        "title": "Rotterdam customs references", "kind": "research", "executor": "llm", "agent_role": "analyst",
+        "title": "Rotterdam customs references", "kind": "research", "executor": "llm", "agent_role": "customs-analyst",
         "content": "Which customs reference does each Rotterdam customer account ship under? List the accounts.",
     })
     _, second = api("POST", f"/graphs/{gid}/nodes", token, {
@@ -178,7 +178,7 @@ def main() -> int:
     wid = workspaces[0]["id"]
     print(f"workspace {workspaces[0]['name']} ({wid})")
     _, agents = api("GET", f"/agents?workspace_id={wid}", token)
-    analyst = agent(token, wid, agents, "Analyst", "analyst",
+    analyst = agent(token, wid, agents, "Analyst", "customs-analyst",
         {"data": {"labels": ["public", "internal", "confidential", "restricted"]}},
         "Answers customs questions from the restricted customer accounts.")
     agent(token, wid, agents, "Clerk", "clerk", {},

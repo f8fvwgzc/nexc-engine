@@ -37,7 +37,13 @@
     "risk_score": 2.1,
     "risk_reasons": [],
     "risk_updated_at": "2026-10-14T11:30:00Z",
-    "a2a_exposed": false
+    "a2a_exposed": false,
+    "skills": [
+      "plan-goal-decomposition",
+      "plan-specialist-routing",
+      "core-structured-deliverables"
+    ],
+    "template_id": null
   },
   {
     "id": "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4",
@@ -77,7 +83,13 @@
     "risk_score": 4.6,
     "risk_reasons": ["New egress host", "Denials above baseline"],
     "risk_updated_at": "2026-10-14T11:30:00Z",
-    "a2a_exposed": true
+    "a2a_exposed": true,
+    "skills": [
+      "research-source-evaluation",
+      "research-synthesis-and-citation",
+      "core-evidence-and-sources"
+    ],
+    "template_id": "researcher"
   },
   {
     "id": "c7f7d38d-b27f-71fe-8513-963f58ce7471",
@@ -117,7 +129,13 @@
     "risk_score": 3.2,
     "risk_reasons": [],
     "risk_updated_at": "2026-10-14T11:30:00Z",
-    "a2a_exposed": false
+    "a2a_exposed": false,
+    "skills": [
+      "fin-financial-statement-analysis",
+      "fin-equity-valuation",
+      "core-quantitative-reasoning"
+    ],
+    "template_id": "analyst"
   },
   {
     "id": "7151e019-9814-768a-86f2-eb698526c0ba",
@@ -157,7 +175,9 @@
     "risk_score": 0.4,
     "risk_reasons": [],
     "risk_updated_at": "2026-10-14T11:30:00Z",
-    "a2a_exposed": false
+    "a2a_exposed": false,
+    "skills": ["core-structured-deliverables"],
+    "template_id": null
   },
   {
     "id": "2c9f8c05-f28c-7ca6-8df5-2bac4a9358b1",
@@ -197,7 +217,9 @@
     "risk_score": 8.7,
     "risk_reasons": ["New egress host", "Denials above baseline"],
     "risk_updated_at": "2026-10-14T11:30:00Z",
-    "a2a_exposed": false
+    "a2a_exposed": false,
+    "skills": [],
+    "template_id": null
   },
   {
     "id": "9211ce12-92a4-75a8-86f9-47ec2550c5ba",
@@ -237,6 +259,8 @@
     "risk_score": 0,
     "risk_reasons": [],
     "risk_updated_at": "2026-10-14T11:30:00Z",
-    "a2a_exposed": false
+    "a2a_exposed": false,
+    "skills": [],
+    "template_id": null
   }
 ]

@@ -12,7 +12,7 @@ contract wins.
 | Component                    | Tech                                             | Responsibility                                                                                                                                                            |
 | ---------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **frontend**                 | React 19, Vite, TypeScript, TanStack Query, zod  | Graph canvas, plan review, run monitoring, agents, memory, settings. Talks only to `/api/v1`.                                                                             |
-| **backend** (`nexc serve`)   | Rust, axum, sqlx, utoipa                         | Auth, REST API, SSE + WebSocket hub, graph analysis, planner, scheduler, memory, orchestrator, artifact storage, the tools gateway, the Agent Firewall API (gRPC), the A2A adapter (agent cards and JSON-RPC at the root) and the OTLP export of the trace. |
+| **backend** (`nexc serve`)   | Rust, axum, sqlx, utoipa                         | Auth, REST API, SSE + WebSocket hub, graph analysis, graph planning, scheduler, memory, the Planner (agent organisation and node routing), artifact storage, the tools gateway, the Agent Firewall API (gRPC), the A2A adapter (agent cards and JSON-RPC at the root) and the OTLP export of the trace. |
 | **agent-runtime**            | Python 3.12, FastAPI + grpclib, Anthropic SDK, python-docx | Executes `executor: agent` nodes: agents are born from a spec per request and run a tool loop in a sandboxed workspace.                                                   |
 | **PostgreSQL 17**            |                                                  | Users, graphs, nodes, edges, plans, runs, artifacts metadata, agents, memories, refresh-token families. `LISTEN/NOTIFY` carries realtime events between backend replicas. |
 | **texc-symphony** (optional) | Rust                                             | Executes `executor: symphony` nodes as Codex coding tasks.                                                                                                                |
@@ -22,29 +22,29 @@ flowchart TB
     subgraph backend["backend (nexc)"]
         http["HTTP layer<br/>auth, rate limits, problem+json"]
         realtime["realtime hub<br/>SSE + WebSocket"]
-        planner["planner<br/>LLM plan refinement"]
+        planner["graph planning<br/>LLM plan refinement"]
         engine["engine<br/>analysis (topo order, levels,<br/>critical path, cycles)"]
         scheduler["scheduler<br/>priority queue, concurrency,<br/>retries, timeouts, cache"]
-        orchestrator["orchestrator<br/>executor routing + health"]
+        router["Planner<br/>agent org, skills,<br/>executor routing + health"]
         memory["memory<br/>BM25 retrieval"]
         kernels["C kernels (FFI)<br/>hash, MinHash, embeddings, SHA-256"]
         gateway["tools gateway<br/>policy, DLP, rate limit,<br/>tool_call + egress spans"]
         firewall["Agent Firewall API<br/>gRPC, signed decisions"]
     end
     http --> planner & engine & scheduler & memory
-    scheduler --> orchestrator
+    scheduler --> router
     engine --> kernels
     memory --> kernels
     planner --> realtime
     scheduler --> realtime
-    orchestrator -->|llm| provider[(LLM provider)]
-    orchestrator -->|agent: gRPC stream| runtime[agent-runtime]
+    router -->|llm| provider[(LLM provider)]
+    router -->|agent: gRPC stream| runtime[agent-runtime]
     runtime -.->|tool_request| gateway
     gateway -->|MCP, fetch_url, a2a:name| mcp[(MCP servers, the web,<br/>A2A counterparts)]
     external[external agents] -->|gRPC, API token| firewall
     external -->|A2A JSON-RPC, API token| http
     scheduler -->|spans| otlp[(OTLP collector)]
-    orchestrator -->|symphony| symphony[texc-symphony]
+    router -->|symphony| symphony[texc-symphony]
     realtime <-->|LISTEN/NOTIFY| pg[(PostgreSQL)]
     http --> pg
 ```

@@ -90,6 +90,7 @@ pub mod artifacts;
 pub mod assistant;
 pub mod audit;
 pub mod baselines;
+pub mod catalog_seeds;
 pub mod cycles;
 pub mod edges;
 pub mod evidence;

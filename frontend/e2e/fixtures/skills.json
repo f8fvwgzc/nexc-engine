@@ -1,0 +1,128 @@
+[
+  {
+    "id": "core-evidence-and-sources",
+    "name": "Evidence and sources",
+    "category": "core",
+    "description": "Cites what it was given, marks its own reasoning and says what it could not find.",
+    "keywords": ["cite", "source", "evidence"],
+    "sources": [
+      {
+        "title": "Citing sources",
+        "url": "https://example.com/citing-sources"
+      }
+    ],
+    "chars": 3600
+  },
+  {
+    "id": "core-quantitative-reasoning",
+    "name": "Quantitative reasoning",
+    "category": "core",
+    "description": "Shows its workings, checks units and orders of magnitude, and states its assumptions.",
+    "keywords": ["calculate", "estimate", "units"],
+    "sources": [
+      {
+        "title": "Estimation guide",
+        "url": "https://example.com/estimation"
+      }
+    ],
+    "chars": 3800
+  },
+  {
+    "id": "core-structured-deliverables",
+    "name": "Structured deliverables",
+    "category": "core",
+    "description": "Shapes a document with a summary first, headings, tables and a list of sources.",
+    "keywords": ["report", "summary", "document"],
+    "sources": [
+      {
+        "title": "Plain writing",
+        "url": "https://example.com/plain-writing"
+      }
+    ],
+    "chars": 3400
+  },
+  {
+    "id": "fin-equity-valuation",
+    "name": "Equity valuation",
+    "category": "finance",
+    "description": "Values a company's equity with DCF, dividend discount, residual income and multiples.",
+    "keywords": ["valuation", "dcf", "wacc", "multiples"],
+    "sources": [
+      {
+        "title": "CFA Program curriculum outline",
+        "url": "https://example.com/cfa-curriculum"
+      }
+    ],
+    "chars": 3400
+  },
+  {
+    "id": "fin-financial-statement-analysis",
+    "name": "Financial statement analysis",
+    "category": "finance",
+    "description": "Reads income statements, balance sheets and cash flows, and computes the ratios that matter.",
+    "keywords": ["ratios", "balance sheet", "cash flow"],
+    "sources": [
+      {
+        "title": "Financial reporting basics",
+        "url": "https://example.com/financial-reporting"
+      }
+    ],
+    "chars": 4100
+  },
+  {
+    "id": "plan-goal-decomposition",
+    "name": "Goal decomposition",
+    "category": "planning",
+    "description": "Breaks a goal into steps with clear outputs and the order they depend on.",
+    "keywords": ["plan", "steps", "dependencies"],
+    "sources": [
+      {
+        "title": "Work breakdown structures",
+        "url": "https://example.com/wbs"
+      }
+    ],
+    "chars": 3900
+  },
+  {
+    "id": "plan-specialist-routing",
+    "name": "Specialist routing",
+    "category": "planning",
+    "description": "Hands each step to the agent whose purpose and skills fit it.",
+    "keywords": ["route", "assign", "specialist"],
+    "sources": [
+      {
+        "title": "Delegation patterns",
+        "url": "https://example.com/delegation"
+      }
+    ],
+    "chars": 3700
+  },
+  {
+    "id": "research-source-evaluation",
+    "name": "Source evaluation",
+    "category": "research",
+    "description": "Weighs how far a source can be trusted: who wrote it, when, and what it rests on.",
+    "keywords": ["credibility", "bias", "primary source"],
+    "sources": [
+      {
+        "title": "Evaluating sources",
+        "url": "https://example.com/evaluating-sources"
+      }
+    ],
+    "chars": 4000
+  },
+  {
+    "id": "research-synthesis-and-citation",
+    "name": "Synthesis and citation",
+    "category": "research",
+    "description": "Brings findings together and cites each claim to the passage it came from.",
+    "keywords": ["synthesis", "citation", "findings"],
+    "sources": [
+      {
+        "title": "Research synthesis",
+        "url": "https://example.com/synthesis"
+      }
+    ],
+    "chars": 4200
+  }
+]

@@ -48,6 +48,7 @@ export const APP_ROUTES: AppRoute[] = [
   { name: 'runs', path: '/app/runs', persona: 'member', list: true, baseline: true },
   { name: 'run-detail', path: `/app/runs/${runId}`, persona: 'member', baseline: true },
   { name: 'agents', path: '/app/agents', persona: 'member', list: true, baseline: true },
+  { name: 'skills', path: '/app/skills', persona: 'member' },
   { name: 'secops', path: '/app/secops', persona: 'member', baseline: true },
   { name: 'sessions', path: '/app/sessions', persona: 'member', list: true, baseline: true },
   { name: 'session', path: `/app/sessions/${runId}`, persona: 'member' },

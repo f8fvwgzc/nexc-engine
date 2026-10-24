@@ -88,6 +88,13 @@
         "question": "How do you cite?",
         "expected": ["[doc:"]
       }
+    ],
+    "department": "Core team",
+    "credentials": ["ACRL Framework for Information Literacy for Higher Education (ALA)"],
+    "skills": [
+      "research-source-evaluation",
+      "research-synthesis-and-citation",
+      "core-evidence-and-sources"
     ]
   },
   {
@@ -174,6 +181,13 @@
       }
     },
     "knowledge": [],
-    "questions": []
+    "questions": [],
+    "department": "Finance & Risk",
+    "credentials": ["CFA® Program Levels I, II and III (CFA Institute)", "GIPS® standards"],
+    "skills": [
+      "fin-financial-statement-analysis",
+      "fin-equity-valuation",
+      "core-quantitative-reasoning"
+    ]
   }
 ]

@@ -27,6 +27,7 @@ use crate::domain::prompt::UpstreamOutput;
 use crate::domain::recording::Redaction;
 use crate::domain::run::Artifact;
 use crate::domain::settings::LlmProviderKind;
+use crate::domain::skill;
 use crate::domain::trace::{SYSTEM_PRINCIPAL, SpanDraft, SpanKind, SpanStatus};
 use crate::domain::workspace::WorkspaceRole;
 use crate::engine::approvals::Carried;
@@ -345,14 +346,30 @@ impl ExecContext {
         Ok(stored.artifact)
     }
 
-    /// System prompt: the assigned agent's, or a generic one.
+    /// System prompt: the assigned agent's (or a generic one) with the skills
+    /// that bear on this step, ranked against the node and the graph's goal
+    /// (`domain::skill::compose`); the node's log says which were applied.
     pub fn system_prompt(&self) -> String {
-        self.agent
+        let base = self
+            .agent
             .as_ref()
             .map(|a| a.system_prompt.trim())
             .filter(|p| !p.is_empty())
-            .unwrap_or(FALLBACK_SYSTEM_PROMPT)
-            .to_owned()
+            .unwrap_or(FALLBACK_SYSTEM_PROMPT);
+        let skills = self.agent.as_ref().map_or(&[][..], |a| a.skills.as_slice());
+        let focus = format!(
+            "{}\n{}\n{}\n{}\n{}",
+            self.node.title,
+            self.node.kind,
+            self.node.tags.join(" "),
+            self.node.content,
+            self.goal
+        );
+        let (prompt, applied) = skill::compose(base, skills, &focus);
+        if !applied.is_empty() {
+            self.log(LogLevel::Info, applied.describe());
+        }
+        prompt
     }
 
     /// The target with the agent's model when it fits the provider.

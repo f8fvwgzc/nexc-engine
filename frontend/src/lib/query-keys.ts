@@ -112,6 +112,12 @@ export const qk = {
     /** The tasks an exposed agent received over A2A. */
     a2aTasks: (agentId: string) => ['agents', 'a2a-tasks', agentId] as const,
   },
+  /** The skill library: a catalogue that changes with a release. */
+  skills: {
+    all: ['skills'] as const,
+    list: ['skills', 'list'] as const,
+    one: (skillId: string) => ['skills', 'detail', skillId] as const,
+  },
   a2a: {
     all: ['a2a'] as const,
     list: (workspaceId: string) => ['a2a', workspaceId] as const,
@@ -122,7 +128,7 @@ export const qk = {
     one: (memoryId: string) => [...qk.memories.all, 'detail', memoryId] as const,
     topics: (workspaceId: string) => [...qk.memories.all, 'topics', workspaceId] as const,
   },
-  orchestrator: ['orchestrator', 'status'] as const,
+  planner: ['planner', 'status'] as const,
   /** Sessions: runs as trees, and what their spans said (never copied to browser storage). */
   sessions: {
     all: ['sessions'] as const,

@@ -29,6 +29,7 @@ data:
   NEXC_GRPC_POOL_SIZE: {{ .Values.backend.grpc.poolSize | quote }}
   NEXC_CACHE_TTL_SECS: {{ .Values.backend.cacheTtlSecs | quote }}
   NEXC_RUN_LEASE_SECS: {{ .Values.backend.runLeaseSecs | quote }}
+  NEXC_SEED_EXPERT_AGENTS: {{ .Values.backend.seedExpertAgents | quote }}
   NEXC_LLM_BREAKER_FAILURES: {{ .Values.backend.llmBreaker.failures | quote }}
   NEXC_LLM_BREAKER_OPEN_SECS: {{ .Values.backend.llmBreaker.openSecs | quote }}
   {{- if .Values.backend.grpcAddr }}

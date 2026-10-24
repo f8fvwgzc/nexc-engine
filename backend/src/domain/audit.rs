@@ -85,6 +85,9 @@ string_enum!(
         /// An agent principal was deleted, by hand or with its A2A counterpart
         /// (subject: the principal; detail: its role and policy version).
         AgentDeleted => "agent_deleted",
+        /// An agent's skills changed: the working knowledge added to its prompts
+        /// (subject: the principal; detail: the skills added and removed).
+        AgentSkillsChanged => "agent_skills_changed",
     }
 );
 

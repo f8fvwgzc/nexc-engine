@@ -75,8 +75,15 @@ export const agentSchema = z.object({
   risk_updated_at: nullableTimestampSchema,
   /** Published as an A2A agent (CONTRACT §10): its card is served, counterparts may send it tasks. */
   a2a_exposed: z.boolean(),
+  /** Ids of its skills (`GET /skills`), most relevant first: added to its prompt for each step. */
+  skills: z.array(z.string()),
+  /** The role template it was made from; `null` for an agent made by hand. */
+  template_id: z.string().nullable(),
 });
 export type Agent = z.infer<typeof agentSchema>;
+
+/** How many skills an agent may have (`SKILLS_PER_AGENT_MAX` in the backend). */
+export const AGENT_SKILLS_MAX = 12;
 
 /** The states of an A2A task, from the run that answers it. */
 export const A2A_TASK_STATES = ['submitted', 'working', 'completed', 'canceled', 'failed'] as const;
@@ -130,7 +137,7 @@ export type IssuedAgentApiToken = z.infer<typeof issuedAgentApiTokenSchema>;
 /** What a token may be called (`TOKEN_NAME_MAX` in the backend). */
 export const TOKEN_NAME_MAX = 100;
 
-/** The competency score an agent made from a role template got on its three questions. */
+/** The competency score an agent made from a role template got on its questions. */
 export const agentEvaluationSchema = z.object({
   template: z.string(),
   score: z.number().int().nonnegative(),
@@ -233,6 +240,9 @@ export const agentInputSchema = z.object({
   purpose: z.string().trim().max(2000),
   team_id: idSchema.nullable(),
   capabilities: capabilitiesInputSchema,
+  skills: z
+    .array(z.string())
+    .max(AGENT_SKILLS_MAX, { error: `Pick at most ${AGENT_SKILLS_MAX} skills` }),
 });
 export type AgentInput = z.infer<typeof agentInputSchema>;
 

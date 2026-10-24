@@ -133,7 +133,7 @@ The harness's own header: nexc-engine API latency: 64 concurrent callers × 8 re
 | GET /api/v1/memories | 512 | 200 | 5.51 | 6.06 | 6.20 | 20 ms | pass |
 | GET /api/v1/memories/topics | 512 | 200 | 9.05 | 10.05 | 10.39 | 200 ms | pass |
 | GET /api/v1/memories/{id} | 512 | 404 | 3.22 | 3.96 | 4.21 | 20 ms | not gated (404) |
-| GET /api/v1/orchestrator/status | 512 | 200 | 7.34 | 8.31 | 8.55 | 20 ms | pass |
+| GET /api/v1/planner/status (measured as /orchestrator/status) | 512 | 200 | 7.34 | 8.31 | 8.55 | 20 ms | pass |
 | GET /api/v1/readyz | 512 | 200 | 2.93 | 3.58 | 3.74 | 20 ms | pass |
 | GET /api/v1/runs/{rid} | 512 | 200 | 8.41 | 9.33 | 9.56 | 20 ms | pass |
 | GET /api/v1/runs/{rid}/artifacts | 512 | 200 | 5.66 | 6.43 | 6.69 | 20 ms | pass |

@@ -131,6 +131,7 @@ function Console({ workspace }: { workspace: Workspace }) {
       <AgentCardSheet
         agent={card}
         admin={admin}
+        member={member}
         onOpenChange={(open) => !open && openCard(null)}
         onEdit={(agent) => navigate(`/app/agents?agent=${agent.id}`)}
       />

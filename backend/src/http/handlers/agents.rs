@@ -19,6 +19,7 @@ use crate::domain::agent::{
 };
 use crate::domain::audit::AuditAction;
 use crate::domain::capabilities::Capabilities;
+use crate::domain::skill;
 use crate::domain::trace::Span;
 use crate::domain::validation::{FieldErrors, Validate, check_max_len, check_text};
 use crate::http::extract::{AuthUser, Path, Query, ValidatedJson};
@@ -59,6 +60,9 @@ pub struct CreateAgent {
     pub team_id: Option<Uuid>,
     /// What the agent may do (default: the unrestricted policy).
     pub capabilities: Option<Capabilities>,
+    /// Ids of its skills (`GET /skills`), at most 12.
+    #[serde(default)]
+    pub skills: Vec<String>,
 }
 
 /// `PATCH /agents/{id}` body (any subset; `reports_to: null` and `team_id: null` detach).
@@ -87,6 +91,9 @@ pub struct UpdateAgent {
     /// Publishes the agent as an A2A agent, or withdraws it (workspace admins;
     /// audited as `agent_a2a_changed`; not for an `external` agent).
     pub a2a_exposed: Option<bool>,
+    /// Replaces its skills (ids from `GET /skills`, at most 12; audited as
+    /// `agent_skills_changed`).
+    pub skills: Option<Vec<String>>,
 }
 
 fn check_name(errors: &mut FieldErrors, name: &str) {
@@ -127,6 +134,7 @@ impl Validate for CreateAgent {
         if let Some(capabilities) = &self.capabilities {
             capabilities.check(errors);
         }
+        skill::check(errors, "skills", &self.skills);
     }
 }
 
@@ -156,6 +164,9 @@ impl Validate for UpdateAgent {
         }
         if let Some(capabilities) = &self.capabilities {
             capabilities.check(errors);
+        }
+        if let Some(skills) = &self.skills {
+            skill::check(errors, "skills", skills);
         }
     }
 }
@@ -406,6 +417,8 @@ pub async fn create(
         purpose: req.purpose.trim().to_owned(),
         capabilities: req.capabilities.unwrap_or_default(),
         a2a_exposed: false,
+        skills: skill::normalize(&req.skills),
+        template_id: None,
     };
     check_manager(&state, workspace, None, fields.reports_to).await?;
     check_owner_and_team(&state, workspace, fields.owner_user_id, fields.team_id).await?;
@@ -446,6 +459,11 @@ pub async fn update(
         .is_some_and(|c| *c != current.capabilities);
     // Publishing an agent over A2A is an admin's decision, and only for an agent that runs here.
     let exposure_changed = req.a2a_exposed.is_some_and(|e| e != current.a2a_exposed);
+    let skills = req.skills.as_deref().map(skill::normalize);
+    let skills_change = skills
+        .as_ref()
+        .filter(|s| **s != current.skills)
+        .map(|s| skill::describe_change(&current.skills, s));
     if exposure_changed {
         workspace_for(&state, auth, Some(workspace), Access::Admin)
             .await
@@ -479,6 +497,8 @@ pub async fn update(
         purpose: req.purpose.map_or(current.purpose, |p| p.trim().to_owned()),
         capabilities: req.capabilities.unwrap_or(current.capabilities),
         a2a_exposed: req.a2a_exposed.unwrap_or(current.a2a_exposed),
+        skills: skills.unwrap_or(current.skills),
+        template_id: current.template_id,
     };
     check_manager(&state, workspace, Some(id), fields.reports_to).await?;
     check_owner_and_team(&state, workspace, fields.owner_user_id, fields.team_id).await?;
@@ -494,6 +514,17 @@ pub async fn update(
             AuditAction::PolicyChanged,
             Subject::Text(&agent.principal_id),
             &format!("policy version {}", agent.policy_version),
+        )
+        .await;
+    }
+    if let Some(change) = &skills_change {
+        audit(
+            &state,
+            workspace,
+            auth.id,
+            AuditAction::AgentSkillsChanged,
+            Subject::Text(&agent.principal_id),
+            change,
         )
         .await;
     }

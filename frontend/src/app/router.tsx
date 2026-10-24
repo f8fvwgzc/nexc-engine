@@ -90,6 +90,13 @@ export const routes: RouteObject[] = [
                 ),
               },
               { path: 'agents', ...page(routeModules.agents, crumbs({ label: 'Agents' })) },
+              {
+                path: 'skills',
+                ...page(
+                  routeModules.skills,
+                  crumbs({ label: 'Agents', to: '/app/agents' }, { label: 'Skills' }),
+                ),
+              },
               { path: 'secops', ...page(routeModules.secops, crumbs({ label: 'Trust' })) },
               { path: 'sessions', ...page(routeModules.sessions, crumbs({ label: 'Sessions' })) },
               {

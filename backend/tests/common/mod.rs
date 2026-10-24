@@ -53,6 +53,8 @@ pub fn settings(overrides: &[(&str, &str)]) -> Settings {
         // The NDJSON stand-in runtime serves most suites; the gRPC ones switch the wire.
         ("NEXC_RUNTIME_PROTOCOL", "ndjson"),
         ("ANTHROPIC_API_KEY", "sk-test-not-a-real-key"),
+        // Suites count the default organisation; tests/catalog.rs turns the expert catalog on.
+        ("NEXC_SEED_EXPERT_AGENTS", "false"),
     ]
     .iter()
     .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
@@ -74,6 +76,8 @@ pub fn settings(overrides: &[(&str, &str)]) -> Settings {
 pub struct FakeLlm {
     pub calls: AtomicUsize,
     flaky_failures: AtomicUsize,
+    /// The system prompt of every call, in order.
+    pub systems: std::sync::Mutex<Vec<String>>,
 }
 
 impl FakeLlm {
@@ -119,6 +123,7 @@ impl FakeLlm {
 impl LlmProvider for FakeLlm {
     fn stream(&self, req: LlmRequest) -> LlmStream {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        self.systems.lock().unwrap().push(req.system.clone());
         let prompt = req
             .messages
             .last()

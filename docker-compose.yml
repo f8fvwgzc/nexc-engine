@@ -93,6 +93,8 @@ services:
       NEXC_LLM_PROVIDER: ${NEXC_LLM_PROVIDER:-demo}
       # The lease a replica holds on a run it executes (docs/HA.md); the same on every replica.
       NEXC_RUN_LEASE_SECS: ${NEXC_RUN_LEASE_SECS:-30}
+      # The expert catalog every workspace gets once (docs/AGENT-CATALOG.md).
+      NEXC_SEED_EXPERT_AGENTS: ${NEXC_SEED_EXPERT_AGENTS:-true}
       # A second listener with the agent-token key set alone, for the runtime (Kubernetes lets the
       # runtime reach only this port of the backend; here they share a network).
       NEXC_KEYS_ADDR: 0.0.0.0:8081

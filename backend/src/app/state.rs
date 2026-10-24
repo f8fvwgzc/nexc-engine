@@ -22,7 +22,7 @@ use crate::memory::index::MemoryIndex;
 use crate::observability::metrics::Metrics;
 use crate::ontology::OntologyBackend;
 use crate::ontology::grpc::GrpcOntology;
-use crate::orchestrator::health::HealthCache;
+use crate::planner::health::HealthCache;
 use crate::realtime::hub::Hub;
 use crate::security::agent_token::AgentTokenKeys;
 use crate::security::gate::SessionGate;

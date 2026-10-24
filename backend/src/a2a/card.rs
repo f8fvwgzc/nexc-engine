@@ -8,7 +8,7 @@ use uuid::Uuid;
 use super::endpoint_url;
 use crate::app::AppState;
 use crate::domain::agent::Agent;
-use crate::domain::agent_template;
+use crate::domain::{agent_template, skill};
 
 /// What a built-in tool does, for the card's skills.
 fn tool_description(tool: &str) -> String {
@@ -43,9 +43,15 @@ pub async fn build(state: &AppState, agent: &Agent, workspace_id: Uuid) -> anyho
         .resolved(&state.db, workspace_id, agent)
         .await?;
     let resolved = &resolved.resolved;
-    let template = agent_template::builtin()
-        .iter()
-        .find(|t| t.role == agent.role);
+    let template = agent
+        .template_id
+        .as_deref()
+        .and_then(agent_template::find)
+        .or_else(|| {
+            agent_template::builtin()
+                .iter()
+                .find(|t| t.role == agent.role)
+        });
     let mut skills = vec![json!({
         "id": format!("role:{}", agent.role),
         "name": if agent.title.is_empty() { agent.role.clone() } else { agent.title.clone() },
@@ -58,6 +64,19 @@ pub async fn build(state: &AppState, agent: &Agent, workspace_id: Uuid) -> anyho
         "inputModes": ["text", "file"],
         "outputModes": ["text", "file"],
     })];
+    // Its skills: the working knowledge it brings to a task.
+    for skill in agent.skills.iter().filter_map(|id| skill::find(id)) {
+        let mut tags = vec![skill.category.clone()];
+        tags.extend(skill.keywords.iter().take(6).cloned());
+        skills.push(json!({
+            "id": format!("skill:{}", skill.id),
+            "name": skill.name,
+            "description": skill.description,
+            "tags": tags,
+            "inputModes": ["text", "file"],
+            "outputModes": ["text", "file"],
+        }));
+    }
     if let Some(tools) = &resolved.capabilities.tools {
         for tool in tools {
             skills.push(json!({

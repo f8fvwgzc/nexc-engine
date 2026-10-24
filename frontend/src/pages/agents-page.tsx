@@ -26,6 +26,7 @@ function Agents({ open }: { open: string | null }) {
   const { current } = useCurrentWorkspace();
   const workspaceId = current?.id;
   const admin = current !== undefined && isWorkspaceAdmin(current.role);
+  const member = current !== undefined && current.role !== 'guest';
   const { data: agents } = useSuspenseQuery(agentsQuery(workspaceId));
   const [editing, setEditing] = useState<Editing>(null);
   // `?agent=` opens that agent's card: the audit's answers link to it.
@@ -79,6 +80,7 @@ function Agents({ open }: { open: string | null }) {
       <AgentCardSheet
         agent={card}
         admin={admin}
+        member={member}
         onOpenChange={(open) => !open && setCard(null)}
         onEdit={(agent) => {
           setCard(null);

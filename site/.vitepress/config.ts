@@ -68,6 +68,7 @@ export default defineConfig({
           { text: 'Graphs and plans', link: '/concepts/graphs' },
           { text: 'The ontology', link: '/concepts/ontology' },
           { text: 'Agents', link: '/concepts/agents' },
+          { text: 'Agent catalog', link: '/concepts/catalog' },
           { text: 'Memory', link: '/concepts/memory' },
           { text: 'Knowledge', link: '/concepts/knowledge' },
         ],

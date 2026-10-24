@@ -13,15 +13,17 @@ use super::json_stream::ArrayScanner;
 use super::{credentials, deps, editor, guardrails, knowledge, usage};
 use crate::app::AppState;
 use crate::domain::AppError;
+use crate::domain::agent::AgentStatus;
 use crate::domain::graph::{
     EdgeOrigin, Graph, GraphEdge, GraphNode, MAX_NODES, NodeDraft, NodeOrigin, normalize_tags,
 };
 use crate::domain::ontology::{ICONS, Ontology};
 use crate::domain::plan::{
-    ContextEdge, ContextNode, PLAN_CONTEXT_MARKER, PLAN_SCHEMA_NAME, Plan, PlanContext,
+    AgentBrief, ContextEdge, ContextNode, PLAN_CONTEXT_MARKER, PLAN_SCHEMA_NAME, Plan, PlanContext,
     PlanProposal, PlanStatus, ProposedEdge, ProposedNode, sanitize_proposal,
 };
 use crate::domain::settings::LlmProviderKind;
+use crate::domain::skill;
 use crate::domain::usage::{UsageEvent, UsagePurpose};
 use crate::dsa::graph::Indexed;
 use crate::llm::pricing::cost_usd;
@@ -32,6 +34,8 @@ use crate::realtime::events::{SseEvent, WsMessage};
 use crate::repo::{self, OrNotFound, plans};
 
 const CONTEXT_CONTENT_CHARS: usize = 2_000;
+/// Characters of an agent's purpose shown to the planner.
+const BRIEF_PURPOSE_CHARS: usize = 200;
 const EDGE_ANIMATION_DELAY: Duration = Duration::from_millis(40);
 const COLUMN_WIDTH: f64 = 320.0;
 const ROW_HEIGHT: f64 = 180.0;
@@ -60,7 +64,9 @@ const SYSTEM_PROMPT: &str = "You are the planning engine of nexc, a tool that ex
     deliverable. Choose each node's executor: `llm` for text-only steps, `agent` for steps that must \
     produce files (documents such as .docx, code, data) or need tools - the final node is `agent` \
     whenever the goal asks for a file - and `symphony` only for coding tasks against a git repository. \
-    Use only the given agent roles. `ref` values are short unique identifiers.";
+    Use only the given agent roles. `agents` says what each role's agent is for and which skills it \
+    has: give every node the role whose purpose and skills fit its work best (a specialist before a \
+    generalist; the reviewer before anything ships). `ref` values are short unique identifiers.";
 
 /// JSON schema of [`PlanProposal`] (strict: every object closed, every field required).
 pub fn plan_schema() -> serde_json::Value {
@@ -249,13 +255,30 @@ async fn build_context(
         Some(workspace) => repo::agents::list(&state.db, workspace).await,
         None => Ok(Vec::new()),
     };
-    let mut agent_roles: Vec<String> = workspace_agents
-        .unwrap_or_default()
-        .into_iter()
-        .map(|a| a.role)
-        .collect();
+    let workspace_agents = workspace_agents.unwrap_or_default();
+    let mut agent_roles: Vec<String> = workspace_agents.iter().map(|a| a.role.clone()).collect();
     agent_roles.sort();
     agent_roles.dedup();
+    // One brief per role, from the agent the scheduler would pick for it (active first, oldest).
+    let mut agents: Vec<AgentBrief> = Vec::new();
+    for agent in workspace_agents
+        .iter()
+        .filter(|a| a.status == AgentStatus::Active)
+    {
+        if agents.iter().any(|b| b.role == agent.role) {
+            continue;
+        }
+        agents.push(AgentBrief {
+            role: agent.role.clone(),
+            title: agent.title.clone(),
+            purpose: agent.purpose.chars().take(BRIEF_PURPOSE_CHARS).collect(),
+            skills: agent
+                .skills
+                .iter()
+                .filter_map(|id| skill::find(id).map(|s| s.name.clone()))
+                .collect(),
+        });
+    }
     PlanContext {
         goal: graph.goal.clone(),
         instructions: instructions.to_owned(),
@@ -287,6 +310,7 @@ async fn build_context(
         memories,
         documents,
         agent_roles,
+        agents,
     }
 }
 

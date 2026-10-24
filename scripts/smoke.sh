@@ -66,8 +66,8 @@ TOKEN="$(curl -sSf -H 'Content-Type: application/json' \
   "$API/auth/register" | jq -r .access_token)"
 [[ -n "$TOKEN" && "$TOKEN" != null ]] || fail "no access token"
 
-step "orchestrator status"
-api GET /orchestrator/status | jq -c '{demo_mode, backends: (.backends | map_values(.ok))}'
+step "planner status"
+api GET /planner/status | jq -c '{demo_mode, backends: (.backends | map_values(.ok))}'
 
 step "create a graph from the $TEMPLATE template"
 GRAPH="$(api POST /graphs/from-template "$(jq -n --arg t "$TEMPLATE" --arg topic "$TOPIC" '{template_id:$t,topic:$topic}')")"

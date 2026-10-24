@@ -42,7 +42,7 @@ import {
 import { mcpServerSchema } from '../src/schemas/mcp';
 import { memorySchema, memoryTopicSchema } from '../src/schemas/memory';
 import { ontologySessionSchema, ontologyStatusSchema } from '../src/schemas/ontology';
-import { orchestratorStatusSchema } from '../src/schemas/orchestrator';
+import { plannerStatusSchema } from '../src/schemas/planner';
 import {
   alertSchema,
   approvalSchema,
@@ -57,6 +57,7 @@ import {
 } from '../src/schemas/secops';
 import { sessionPageSchema, sessionSchema, spanPayloadsSchema } from '../src/schemas/session';
 import { llmSettingsSchema, modelCatalogSchema } from '../src/schemas/settings';
+import { skillSchema, skillSummarySchema } from '../src/schemas/skill';
 import { graphTemplateSchema } from '../src/schemas/template';
 import { spanSchema, tracePageSchema, traceVerificationSchema } from '../src/schemas/trace';
 import { usageReportSchema } from '../src/schemas/usage';
@@ -119,7 +120,7 @@ const SCHEMAS: Partial<Record<keyof Fixtures, z.ZodType>> = {
   models: modelCatalogSchema,
   ontology: ontologyStatusSchema,
   ontologySession: ontologySessionSchema,
-  orchestrator: orchestratorStatusSchema,
+  planner: plannerStatusSchema,
   passages: many(passageSchema),
   policies: many(policySchema),
   projects: many(projectSchema),
@@ -132,6 +133,8 @@ const SCHEMAS: Partial<Record<keyof Fixtures, z.ZodType>> = {
   session: sessionSchema,
   sessions: sessionPageSchema,
   signInMethods: z.object({ user: signInMethodsSchema, admin: signInMethodsSchema }),
+  skill: skillSchema,
+  skills: many(skillSummarySchema),
   spanPayloads: spanPayloadsSchema,
   states: byTeam(issueStateSchema),
   teamMembers: many(teamMemberSchema),

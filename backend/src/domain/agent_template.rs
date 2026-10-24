@@ -1,7 +1,9 @@
-//! Role templates for agents (`docs/AGENTSECOPS.md` §4.6), embedded from
-//! `backend/templates/agent-*.json`: a role with its capabilities, its own
-//! policy, the knowledge topics it is bound to and the competency questions
-//! it is asked once when an agent is made from it.
+//! Role templates for agents (`docs/AGENTSECOPS.md` §4.6, the expert catalog
+//! in `docs/AGENT-CATALOG.md`), embedded from `backend/templates/agent-*.json`:
+//! a role with its department, the certifications its knowledge is benchmarked
+//! against, its skills, its capabilities, its own policy, the knowledge topics
+//! it is bound to and the competency questions it is asked when an agent is
+//! made from it (and again on request).
 
 use std::sync::OnceLock;
 
@@ -11,7 +13,12 @@ use utoipa::ToSchema;
 
 use super::agent::AgentRuntime;
 use super::capabilities::Capabilities;
+use super::catalog::AGENT_TEMPLATE_SOURCES;
 use super::policy_document::PolicyDocument;
+
+/// The department of the default organisation's agents; every other
+/// department's templates are the expert catalog seeded into workspaces.
+pub const CORE_DEPARTMENT: &str = "Core team";
 
 /// Most characters of an answer kept with the evaluation.
 pub const ANSWER_EXCERPT_CHARS: usize = 300;
@@ -49,6 +56,11 @@ pub struct AgentTemplateSpec {
     pub name: String,
     pub role: String,
     pub title: String,
+    /// The department it belongs to in the catalog (`Finance & Risk`).
+    pub department: String,
+    /// Certifications whose public outlines its knowledge is benchmarked
+    /// against. Agents do not hold them; the names belong to their owners.
+    pub credentials: Vec<String>,
     pub description: String,
     pub purpose: String,
     pub system_prompt: String,
@@ -57,6 +69,8 @@ pub struct AgentTemplateSpec {
     /// Whether the agent's model allow-list is set to the model it is created with.
     #[serde(default)]
     pub pin_model: bool,
+    /// Ids of the skills an agent made from it is given.
+    pub skills: Vec<String>,
     pub capabilities: Capabilities,
     /// The agent-level policy set as version 1 when an agent is made.
     pub policy: PolicyDocument,
@@ -73,6 +87,13 @@ pub struct AgentTemplate {
     pub name: String,
     pub role: String,
     pub title: String,
+    /// The department it belongs to in the catalog.
+    pub department: String,
+    /// Certifications whose public outlines its knowledge is benchmarked against
+    /// (the agents do not hold them).
+    pub credentials: Vec<String>,
+    /// Ids of the skills an agent made from it is given.
+    pub skills: Vec<String>,
     pub description: String,
     pub purpose: String,
     pub runtime: AgentRuntime,
@@ -91,6 +112,9 @@ impl AgentTemplateSpec {
             name: self.name.clone(),
             role: self.role.clone(),
             title: self.title.clone(),
+            department: self.department.clone(),
+            credentials: self.credentials.clone(),
+            skills: self.skills.clone(),
             description: self.description.clone(),
             purpose: self.purpose.clone(),
             runtime: self.runtime,
@@ -100,6 +124,11 @@ impl AgentTemplateSpec {
             knowledge: self.knowledge.clone(),
             questions: self.questions.clone(),
         }
+    }
+
+    /// True for a template of the expert catalog (not the core team's).
+    pub fn is_expert(&self) -> bool {
+        self.department != CORE_DEPARTMENT
     }
 
     /// Ids of the workspace's topics the template binds to, by the terms
@@ -159,24 +188,24 @@ pub fn excerpt(answer: &str) -> String {
     short
 }
 
-const SOURCES: [&str; 3] = [
-    include_str!("../../templates/agent-analyst.json"),
-    include_str!("../../templates/agent-researcher.json"),
-    include_str!("../../templates/agent-reviewer.json"),
-];
-
-/// Every built-in role template (parsed once; the files are validated by tests).
+/// Every built-in role template, in file-name order (parsed once; the files
+/// are validated by tests).
 pub fn builtin() -> &'static [AgentTemplateSpec] {
     static TEMPLATES: OnceLock<Vec<AgentTemplateSpec>> = OnceLock::new();
     TEMPLATES.get_or_init(|| {
-        SOURCES
+        AGENT_TEMPLATE_SOURCES
             .iter()
-            .map(|src| {
+            .map(|(file, src)| {
                 serde_json::from_str(src)
-                    .expect("built-in agent template JSON is validated by tests")
+                    .unwrap_or_else(|e| panic!("agent template {file}: {e} (validated by tests)"))
             })
             .collect()
     })
+}
+
+/// The expert catalog: every template outside the core team, in file-name order.
+pub fn experts() -> impl Iterator<Item = &'static AgentTemplateSpec> {
+    builtin().iter().filter(|t| t.is_expert())
 }
 
 /// A built-in template by id, whatever the case.
@@ -196,19 +225,61 @@ mod tests {
     use crate::domain::agent::is_valid_role;
     use crate::domain::validation::FieldErrors;
 
+    /// The departments of the catalog (`docs/AGENT-CATALOG.md`).
+    const DEPARTMENTS: [&str; 8] = [
+        CORE_DEPARTMENT,
+        "Finance & Risk",
+        "IT, Cloud & Security",
+        "Software, Data & AI",
+        "Hardware & Manufacturing",
+        "Supply Chain & Shipping",
+        "Marketing & Sales",
+        "Business, Legal & People",
+    ];
+
     #[test]
     fn every_template_is_well_formed() {
         let templates = builtin();
-        assert_eq!(templates.len(), 3);
-        let mut ids = HashSet::new();
+        assert_eq!(
+            templates.len(),
+            32,
+            "30 experts, the researcher and the reviewer"
+        );
+        assert_eq!(experts().count(), 30, "the expert catalog");
+        let (mut ids, mut roles, mut names) = (HashSet::new(), HashSet::new(), HashSet::new());
         for t in templates {
             assert!(ids.insert(t.id.as_str()), "duplicate id {}", t.id);
+            assert!(roles.insert(t.role.as_str()), "{}: duplicate role", t.id);
+            assert!(names.insert(t.name.as_str()), "{}: duplicate name", t.id);
             assert!(is_valid_role(&t.role), "{}: role", t.id);
             assert!(!t.name.is_empty() && !t.purpose.is_empty() && !t.system_prompt.is_empty());
             assert!(t.budget_tokens > 0);
-            assert_eq!(t.questions.len(), 3, "{}: three competency questions", t.id);
+            assert!(
+                DEPARTMENTS.contains(&t.department.as_str()),
+                "{}: department",
+                t.id
+            );
+            assert!(
+                (1..=5).contains(&t.credentials.len()),
+                "{}: credentials",
+                t.id
+            );
+            assert!((3..=8).contains(&t.skills.len()), "{}: skills", t.id);
+            for skill in &t.skills {
+                assert!(
+                    crate::domain::skill::find(skill).is_some(),
+                    "{}: unknown skill {skill}",
+                    t.id
+                );
+            }
+            assert_eq!(t.questions.len(), 5, "{}: five competency questions", t.id);
             for q in &t.questions {
                 assert!(!q.question.is_empty() && !q.expected.is_empty(), "{}", t.id);
+                assert!(
+                    q.expected.iter().all(|e| !e.trim().is_empty()),
+                    "{}: empty term",
+                    t.id
+                );
             }
             let mut errors = FieldErrors::default();
             t.capabilities.check(&mut errors);
@@ -219,6 +290,15 @@ mod tests {
                 t.id
             );
             assert_eq!(t.summary().id, t.id);
+        }
+        for t in experts() {
+            for seed in crate::domain::agent::DEFAULT_ORG {
+                assert!(
+                    t.role != seed.role && t.name != seed.name,
+                    "{} clashes with the core team",
+                    t.id
+                );
+            }
         }
         assert!(find("Analyst").is_some());
         assert!(find(" reviewer ").is_some());

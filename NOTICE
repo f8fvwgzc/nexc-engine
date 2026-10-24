@@ -7,3 +7,10 @@ It bundles shadcn/ui components (MIT License, Copyright (c) 2023 shadcn) in
 frontend/src/components/ui, and depends on third-party open-source packages
 listed in backend/Cargo.lock, frontend/pnpm-lock.yaml and agent-runtime/uv.lock,
 each under its own license.
+
+The expert agent templates (backend/templates/agent-*.json) and the skills (backend/skills/*.md)
+name professional certifications and standards to say what an agent's knowledge is benchmarked
+against. Those names (for example CFA®, FRM®, CIA®, CISA®, CISM®, CISSP®, CSSLP®, ITIL®, PRINCE2®,
+PMP®, PMI-ACP®, ISTQB®, GIPS®, IFRS®, CBAP®) are trademarks of their owners, used descriptively.
+nexc-engine is not affiliated with or endorsed by them, and its agents hold no credentials. The
+skills are original text written from the public sources each one lists.

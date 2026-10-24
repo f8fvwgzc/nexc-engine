@@ -320,9 +320,15 @@ a record): nexc agents call them through onto-intelli's MCP server, under the sa
 <!-- #region templates -->
 ### 4.6 Creating agents that work on day one
 
-- **Role templates** ship with capabilities, policy, knowledge bindings and an evaluation set of
-  competency questions (onto-intelli's `eval` pattern). Creating an agent from a template runs the
-  evaluation once and shows the score on the card.
+- **Role templates** ship with capabilities, policy, knowledge bindings, skills and an evaluation
+  set of five competency questions (onto-intelli's `eval` pattern). Creating an agent from a
+  template runs the evaluation once and shows the score on the card; `POST /agents/{id}/evaluate`
+  asks again. The 30 templates of the expert catalog ([AGENT-CATALOG.md](AGENT-CATALOG.md)) are
+  benchmarked against the public outlines of professional certifications (CFA, FRM, CISSP, ITIL,
+  ASCM, PMP and others) and every workspace gets them once, next to the Planner and the core team.
+- **Skills** are working knowledge written from public sources and embedded in the backend. An
+  agent's skills are added to its system prompt by relevance to the step, within a budget, and
+  the node's log names the ones applied; a change to an agent's skills is audited.
 - **Dynamic configuration** without redeploy: capabilities, policy, model and knowledge bindings
   are editable in the console; the next run picks them up; every edit is in the audit log.
 - **Sub-agents inherit narrowed scopes**; the console shows the delegation tree per run.

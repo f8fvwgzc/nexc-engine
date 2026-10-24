@@ -82,6 +82,36 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **An expert agent catalog and skills (`docs/AGENT-CATALOG.md`).** Every workspace now has 30
+  expert agents next to the Planner and the core team, in seven departments: Finance & Risk
+  (financial analyst, accountant and tax advisor, risk manager, internal auditor, compliance and
+  AML officer), IT, Cloud & Security, Software, Data & AI, Hardware & Manufacturing, Supply Chain &
+  Shipping (planner, freight and customs, maritime chartering, procurement), Marketing & Sales and
+  Business, Legal & People. Each is a role template (`backend/templates/agent-*.json`) whose
+  knowledge is benchmarked against the public outline of real certifications (CFA Program Levels
+  I to III, CPA, FRM, CIA, CAMS, the AWS, Azure and Google architect exams, CISSP, CISM, ITIL 4,
+  ISTQB, ASCM CSCP, CIPS, PMP, CIPP/E, SHRM-SCP and others; the agents do not hold them and never
+  claim to), with five competency questions in the style of those exams, its tools, its data
+  labels and its policy. **Skills** are a new building block: about 150 Markdown files of working
+  knowledge in `backend/skills/`, each written from the public sources it names (certifying bodies,
+  standard setters, official documentation, reputable GitHub repositories), embedded at build time
+  (`build.rs` lists both folders). An agent has up to 12 (`skills` on `Agent`, `POST /agents`,
+  `PATCH /agents/{id}`, audited as `agent_skills_changed`); when it runs a step, the skills that bear
+  on the step are added to its system prompt, in full within 14,000 characters and as one line after
+  that, plus up to two library skills the step matches strongly, and the node's log names them. The
+  graph planner now sees every agent's title, purpose and skills and routes each node to the
+  specialist that fits it. New: `GET /skills`, `GET /skills/{id}`, `POST /agents/{id}/evaluate`
+  (asks a template agent its questions again), `template_id` on `Agent`, `department`,
+  `credentials` and `skills` on `AgentTemplate`, agent skills on A2A agent cards, and the
+  `NEXC_SEED_EXPERT_AGENTS` setting (default `true`): every workspace gets the catalog once, when
+  it is created or in the background after the backend starts (the sweep repeats every ten
+  minutes; recorded in the new `workspace_catalog_seeds` table, which a workspace transfer
+  carries, so a deleted agent stays deleted). Each expert runs under its template's policy, less
+  any field that would widen the workspace's (the audit names those). The seed also gives the core team richer prompts where they still had the
+  ones earlier releases seeded, and their skills. In the console, the agent card shows skills,
+  benchmarks and a *Run competency check* button, the agent form picks skills, the template dialog
+  groups the 32 templates by department, and Agents has a Skills library page.
+
 - Evidence that survives (`docs/AGENTSECOPS.md` §12). Each workspace's audit log is a hash chain
   the database writes itself (`seq`, `prev_hash`, `hash`, names as salted digests so an erased
   account's name can still leave it), checked by `GET /workspaces/{wid}/audit/verify`, which also
@@ -1614,6 +1644,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Paging the audit log no longer skips entries written together.** An entry's `created_at` was
+  the start of its transaction, so a change that wrote many entries at once gave them one time and
+  `before=` paging dropped the rest of them; it is now the time the entry is written
+  (`clock_timestamp()`).
+
 - Deleting a graph erased the hash-chained trace of every run in it, with no record of the
   deletion. A deleted graph is now archived: it leaves every list and endpoint, its queued runs are
   cancelled and its running ones stopped, and its runs keep their spans, seals, payload metadata and
@@ -1676,6 +1711,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   broke generating the client types; a test now checks that every reference resolves.
 
 ### Changed
+
+- **The orchestrator is called the Planner.** The backend module that runs the agent organisation
+  and routes nodes to agents and executors is `planner` (it was `orchestrator`; the graph planning
+  that turns a goal into a graph is still `engine::planner`), its report is `GET /planner/status`
+  returning `PlannerStatus` (was `OrchestratorStatus`), and the OpenAPI tag is `planner`.
+  `GET /orchestrator/status` still answers, marked deprecated; it will be removed in a later
+  release. nexc runs its own DAG scheduler and agent runtime; it never used LangGraph.
+- **The analyst template is the Financial Analyst.** It keeps the id `analyst` and the role
+  `analyst`; an agent made from it is now named `Financial Analyst` by default, has run_python among
+  its tools and is asked five questions instead of three. The researcher and reviewer templates
+  have five questions too.
 
 - **The sidebar is a rail of core menus and a panel that changes with them.** The rail holds one
   icon per core menu (Issues, Agents, Graphs, Trust; Settings and the account menu at the

@@ -3,7 +3,7 @@ import { FlaskConicalIcon, XIcon } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 import { IconButton } from '@/components/custom-ui/icon-button';
-import { orchestratorQuery } from '@/features/graphs/api';
+import { plannerQuery } from '@/features/graphs/api';
 import { useDismissible } from '@/hooks/use-dismissible';
 
 /**
@@ -13,7 +13,7 @@ import { useDismissible } from '@/hooks/use-dismissible';
 export function DemoBanner() {
   // Demo mode is set when the server starts: one read is enough, whatever page is open.
   const { data: demoMode } = useQuery({
-    ...orchestratorQuery(),
+    ...plannerQuery(),
     staleTime: Infinity,
     select: (s) => s.demo_mode,
   });
