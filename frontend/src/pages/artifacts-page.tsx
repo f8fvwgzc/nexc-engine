@@ -16,7 +16,7 @@ import {
   UploadIcon,
 } from 'lucide-react';
 import { Fragment, useRef, useState, type DragEvent, type ReactNode } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { EmptyState } from '@/components/custom-ui/empty-state';
@@ -67,6 +67,7 @@ import {
 import { issuesQuery } from '@/features/issues/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import { errorMessage } from '@/lib/api/errors';
 import { formatBytes, formatDateTime, formatRelative } from '@/lib/format';
 import { qk } from '@/lib/query-keys';
 import { cn } from '@/lib/utils';
@@ -75,6 +76,11 @@ import type { Workspace } from '@/schemas/workspace';
 
 const ROOT = 'root';
 const ANY = 'any';
+
+/** Navigation state of a change to the issue filter, which keeps the search typed. */
+interface BrowserNavState {
+  keepSearch?: boolean;
+}
 
 /** A row being dragged: what it is, where it is now, and the folders it cannot go into. */
 interface Dragged {
@@ -378,13 +384,23 @@ type Asking = 'folder' | 'file' | null;
 function Browser({ workspace }: { workspace: Workspace }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const location = useLocation();
   const [params, setParams] = useSearchParams();
   const guest = workspace.role === 'guest';
   const canWrite = !guest;
   const folderParam = params.get('folder');
   const issueId = params.get('issue');
   const [q, setQ] = useState('');
-  const search = useDebouncedValue(q.trim(), 250);
+  // Opening a folder, a crumb or All files (from the table or the sidebar) leaves the search;
+  // only a change of the issue filter keeps it.
+  const [seenKey, setSeenKey] = useState(location.key);
+  if (seenKey !== location.key) {
+    setSeenKey(location.key);
+    if (!(location.state as BrowserNavState | null)?.keepSearch) setQ('');
+  }
+  const debounced = useDebouncedValue(q.trim(), 250);
+  // A cleared box shows the folder at once, without waiting out the debounce.
+  const search = q.trim() === '' ? '' : debounced;
   const [asking, setAsking] = useState<Asking>(null);
   const [overPage, setOverPage] = useState(false);
   const filesInput = useRef<HTMLInputElement>(null);
@@ -455,11 +471,14 @@ function Browser({ workspace }: { workspace: Workspace }) {
   const missing = folderId !== null && foldersQuery.isSuccess && !openFolder;
 
   const setIssue = (value: string) =>
-    setParams((next) => {
-      if (value === ANY) next.delete('issue');
-      else next.set('issue', value);
-      return next;
-    });
+    setParams(
+      (next) => {
+        if (value === ANY) next.delete('issue');
+        else next.set('issue', value);
+        return next;
+      },
+      { state: { keepSearch: true } satisfies BrowserNavState },
+    );
 
   const createFolder = async (name: string) => {
     await createArtifactFolder(workspace.id, { name, parent_id: folderId });
@@ -490,7 +509,10 @@ function Browser({ workspace }: { workspace: Workspace }) {
       setOverPage(false);
       if (!canWrite || !dragHasFiles(e.dataTransfer)) return;
       e.preventDefault();
-      void entriesFromDrop(e.dataTransfer).then(uploads.upload);
+      // A drop during an upload waits its turn in the hook.
+      entriesFromDrop(e.dataTransfer)
+        .then(uploads.upload)
+        .catch((error: unknown) => toast.error(errorMessage(error)));
     },
   };
 
@@ -508,7 +530,7 @@ function Browser({ workspace }: { workspace: Workspace }) {
         size="sm"
         variant="outline"
         onClick={() => folderInput.current?.click()}
-        disabled={missing || uploads.sending !== null}
+        disabled={missing || uploads.busy}
       >
         <FolderUpIcon />
         Upload folder
@@ -516,7 +538,7 @@ function Browser({ workspace }: { workspace: Workspace }) {
       <Button
         size="sm"
         onClick={() => filesInput.current?.click()}
-        disabled={missing || uploads.sending !== null}
+        disabled={missing || uploads.busy}
       >
         <UploadIcon />
         Upload files
@@ -698,10 +720,10 @@ function Browser({ workspace }: { workspace: Workspace }) {
           className="h-8 w-full text-[13px] sm:w-56"
         />
       </div>
-      {uploads.sending && (
+      {uploads.busy && (
         <p role="status" className="flex items-center gap-2 text-[13px] text-muted-foreground">
           <Spinner className="size-3.5" aria-hidden />
-          Uploading {uploads.sending}…
+          {uploads.sending ? `Uploading ${uploads.sending}…` : 'Uploading…'}
         </p>
       )}
       {table}

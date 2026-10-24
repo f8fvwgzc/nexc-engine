@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { errorMessage } from '@/lib/api/errors';
@@ -95,7 +95,8 @@ function summarise(sent: number, skipped: { path: string; reason: string }[]) {
 /**
  * Sends files into a folder (null: none) and, for an issue, attaches them to it. A picked or
  * dropped folder is recreated under that folder, reusing folders of the same name; files the API
- * would refuse are skipped and listed in one toast at the end.
+ * would refuse are skipped and listed in one toast at the end. An upload started while another
+ * is still sending waits for it, so the two neither mix their status nor race to make a folder.
  */
 export function useArtifactUpload(
   workspaceId: string,
@@ -103,9 +104,11 @@ export function useArtifactUpload(
 ) {
   const queryClient = useQueryClient();
   const [sending, setSending] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const queue = useRef<Promise<void>>(Promise.resolve());
+  const waiting = useRef(0);
 
-  const upload = async (entries: UploadEntry[]) => {
-    if (entries.length === 0) return;
+  const run = async (entries: UploadEntry[]) => {
     const plan = planFolderUpload(entries);
     const skipped = [...plan.skipped];
     const ids = new Map<string, string | null>([['', target.folderId]]);
@@ -153,14 +156,33 @@ export function useArtifactUpload(
         skipped.push({ path, reason: errorMessage(error) });
       }
     }
-    setSending(null);
     invalidateArtifacts(queryClient, workspaceId, target.issueId);
     summarise(sent, skipped);
+  };
+
+  const upload = (entries: UploadEntry[]) => {
+    if (entries.length === 0) return;
+    waiting.current += 1;
+    setBusy(true);
+    queue.current = queue.current
+      .then(() => run(entries))
+      .catch((error: unknown) => {
+        toast.error(errorMessage(error));
+      })
+      .finally(() => {
+        waiting.current -= 1;
+        if (waiting.current === 0) {
+          setBusy(false);
+          setSending(null);
+        }
+      });
   };
 
   return {
     /** What is being sent right now, or null. */
     sending,
-    upload: (entries: UploadEntry[]) => void upload(entries),
+    /** Whether an upload is under way or waiting its turn. */
+    busy,
+    upload,
   };
 }

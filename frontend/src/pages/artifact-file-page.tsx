@@ -10,9 +10,10 @@ import {
   Trash2Icon,
 } from 'lucide-react';
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useBlocker, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
 import { ErrorState } from '@/components/custom-ui/error-state';
 import { IconButton } from '@/components/custom-ui/icon-button';
 import { OptionSelect } from '@/components/custom-ui/option-select';
@@ -99,6 +100,8 @@ function FolderTrail({ file, guest }: { file: ArtifactFile; guest: boolean }) {
 function FileName({ file, canWrite }: { file: ArtifactFile; canWrite: boolean }) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
+  // Escape leaves the field without saving what was typed.
+  const cancelled = useRef(false);
   const rename = useMutation({
     mutationFn: (name: string) => updateArtifactFile(file.id, { name }),
     onSuccess: (renamed) => {
@@ -116,24 +119,36 @@ function FileName({ file, canWrite }: { file: ArtifactFile; canWrite: boolean })
   };
   if (editing) {
     return (
-      <Input
-        autoFocus
-        defaultValue={file.name}
-        aria-label="File name"
-        className="h-8 max-w-md font-semibold"
-        onFocus={(e) => {
-          const dot = e.target.value.lastIndexOf('.');
-          e.target.setSelectionRange(0, dot > 0 ? dot : e.target.value.length);
-        }}
-        onBlur={(e) => commit(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') commit(e.currentTarget.value);
-          if (e.key === 'Escape') {
-            e.stopPropagation();
-            setEditing(false);
-          }
-        }}
-      />
+      <>
+        {/* The name is edited in place; the heading still names the page. */}
+        <h1 className="sr-only">{file.name}</h1>
+        <Input
+          autoFocus
+          defaultValue={file.name}
+          aria-label="File name"
+          className="h-8 max-w-md font-semibold"
+          onFocus={(e) => {
+            const dot = e.target.value.lastIndexOf('.');
+            e.target.setSelectionRange(0, dot > 0 ? dot : e.target.value.length);
+          }}
+          onBlur={(e) => {
+            if (cancelled.current) {
+              cancelled.current = false;
+              setEditing(false);
+            } else {
+              commit(e.target.value);
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur();
+            if (e.key === 'Escape') {
+              e.stopPropagation();
+              cancelled.current = true;
+              e.currentTarget.blur();
+            }
+          }}
+        />
+      </>
     );
   }
   return (
@@ -220,7 +235,30 @@ function Versions({
 interface Draft {
   /** The version the edit started from: saving over any other is a conflict. */
   base: number;
+  /** The text as the edit started, to tell whether anything was changed. */
+  start: string;
   text: string;
+  /**
+   * Whether the file's lines end in CRLF. A textarea only ever gives back LF, so the CRs are put
+   * back on save; otherwise one changed character would rewrite every line ending.
+   */
+  crlf: boolean;
+}
+
+function startDraft(base: number, content: string): Draft {
+  const text = content.replace(/\r\n?/g, '\n');
+  return { base, start: text, text, crlf: content.includes('\r\n') };
+}
+
+/** The bytes a draft saves as, with its line endings as the file had them. */
+const draftBody = (draft: Draft) => (draft.crlf ? draft.text.replace(/\n/g, '\r\n') : draft.text);
+
+/** Puts the text being edited on the clipboard, for when it cannot be saved here. */
+function copyText(text: string) {
+  void navigator.clipboard
+    .writeText(text)
+    .then(() => toast.success('Your text is on the clipboard'))
+    .catch(() => toast.error('Couldn’t copy the text'));
 }
 
 /** The text being edited, with Save (⌘S) and Cancel, and what to do when someone saved first. */
@@ -240,10 +278,11 @@ function Editor({
   onReload: () => Promise<void>;
 }) {
   const queryClient = useQueryClient();
+  const body = draftBody(draft);
   const save = useMutation({
-    mutationFn: () => saveArtifactContent(file.id, draft.base, draft.text),
+    mutationFn: () => saveArtifactContent(file.id, draft.base, body),
     meta: { errorToast: false },
-    onSuccess: (saved) => onSaved(saved, draft.base, draft.text),
+    onSuccess: (saved) => onSaved(saved, draft.base, body),
     // Someone saved first: fetch the file again, so the message can say which version they made.
     onError: (error) => {
       if (error instanceof ApiError && error.status === 409) {
@@ -288,17 +327,7 @@ function Editor({
               : 'Someone else saved a newer version first.'}{' '}
             Reload to edit theirs; your text here is replaced, so copy it first if you need it.
           </span>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() =>
-              void navigator.clipboard
-                .writeText(draft.text)
-                .then(() => toast.success('Your text is on the clipboard'))
-                .catch(() => toast.error('Couldn’t copy the text'))
-            }
-          >
+          <Button type="button" variant="outline" size="sm" onClick={() => copyText(draft.text)}>
             <CopyIcon />
             Copy my text
           </Button>
@@ -330,15 +359,19 @@ function Editor({
           Cancel
         </Button>
         <span className="ml-auto text-xs text-muted-foreground tabular-nums">
-          {formatBytes(new Blob([draft.text]).size)} of {formatBytes(MAX_ARTIFACT_BYTES)}
+          {formatBytes(new Blob([body]).size)} of {formatBytes(MAX_ARTIFACT_BYTES)}
         </span>
       </div>
     </form>
   );
 }
 
-/** One file: its name, where it is, its issue, the version shown, and that version's content. */
-function FileView({ file }: { file: ArtifactFile }) {
+/**
+ * One file: its name, where it is, its issue, the version shown, and that version's content.
+ * `gone` says the file was deleted (or put out of reach) while open: what is on screen stays,
+ * so a draft can still be copied.
+ */
+function FileView({ file, gone }: { file: ArtifactFile; gone: boolean }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
@@ -374,7 +407,7 @@ function FileView({ file }: { file: ArtifactFile }) {
   // A new file opens ready to write in (`?edit=1`).
   const wantsEdit = params.get('edit') === '1';
   if (wantsEdit && draft === null && canWrite && current && content.data) {
-    setDraft({ base: file.current_version, text: content.data.content });
+    setDraft(startDraft(file.current_version, content.data.content));
   }
   useEffect(() => {
     if (wantsEdit && draft !== null) {
@@ -387,6 +420,20 @@ function FileView({ file }: { file: ArtifactFile }) {
       );
     }
   }, [wantsEdit, draft, setParams]);
+
+  // Unsaved text is not left behind without asking: not for another page, not for the tab closing.
+  const dirty = draft !== null && draft.text !== draft.start;
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      dirty && currentLocation.pathname !== nextLocation.pathname,
+  );
+  const leaving = useRef(false);
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
 
   const saved = (next: ArtifactFile, base: number, text?: string) => {
     queryClient.setQueryData(qk.artifacts.file(next.id), next);
@@ -414,7 +461,7 @@ function FileView({ file }: { file: ArtifactFile }) {
       artifactContentQuery(fresh.id, fresh.current_version),
     );
     void queryClient.invalidateQueries({ queryKey: qk.artifacts.versions(file.id) });
-    setDraft({ base: fresh.current_version, text: latest.content });
+    setDraft(startDraft(fresh.current_version, latest.content));
   };
 
   const replace = useMutation({
@@ -422,6 +469,12 @@ function FileView({ file }: { file: ArtifactFile }) {
       saveArtifactContent(file.id, base, body),
     onSuccess: (next, { body, base }) =>
       saved(next, base, typeof body === 'string' ? body : undefined),
+    // Someone saved first: fetch the file again, so a retry goes over their version.
+    onError: (error) => {
+      if (error instanceof ApiError && error.status === 409) {
+        void queryClient.invalidateQueries({ queryKey: qk.artifacts.file(file.id) });
+      }
+    },
   });
   const uploadVersion = (picked: File | undefined) => {
     if (!picked) return;
@@ -433,8 +486,7 @@ function FileView({ file }: { file: ArtifactFile }) {
   };
 
   const startEdit = () => {
-    if (content.data && current)
-      setDraft({ base: file.current_version, text: content.data.content });
+    if (content.data && current) setDraft(startDraft(file.current_version, content.data.content));
   };
 
   let body: ReactNode;
@@ -541,7 +593,8 @@ function FileView({ file }: { file: ArtifactFile }) {
                   }}
                 />
                 <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
+                  {/* Shut while editing: duplicating or deleting would drop the draft. */}
+                  <DropdownMenuTrigger asChild disabled={draft !== null}>
                     <IconButton label={`More actions for ${file.name}`}>
                       <MoreHorizontalIcon />
                     </IconButton>
@@ -584,6 +637,26 @@ function FileView({ file }: { file: ArtifactFile }) {
           </span>
         </div>
       </header>
+      {gone && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-2 rounded-md border border-destructive/30 bg-destructive/[0.04] px-3 py-2 text-[13px]"
+        >
+          <span className="min-w-0 flex-1">
+            This file was deleted, or you can no longer see it.
+            {draft && ' Your text here cannot be saved; copy it before you leave.'}
+          </span>
+          {draft && (
+            <Button size="sm" variant="outline" onClick={() => copyText(draft.text)}>
+              <CopyIcon />
+              Copy my text
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" asChild>
+            <Link to="/app/artifacts">All files</Link>
+          </Button>
+        </div>
+      )}
       {!current && !draft && (
         <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-[13px]">
           <span className="min-w-0 flex-1">
@@ -613,6 +686,20 @@ function FileView({ file }: { file: ArtifactFile }) {
         <Versions file={file} viewing={viewing} onView={view} disabled={draft !== null} />
       </div>
       {actions.dialogs}
+      <ConfirmDialog
+        open={blocker.state === 'blocked'}
+        onOpenChange={(open) => {
+          if (!open && !leaving.current) blocker.reset?.();
+        }}
+        title="Leave without saving?"
+        description={`Your changes to ${file.name} are not saved and will be lost.`}
+        confirmLabel="Leave"
+        destructive
+        onConfirm={() => {
+          leaving.current = true;
+          blocker.proceed?.();
+        }}
+      />
     </PageContainer>
   );
 }
@@ -620,8 +707,9 @@ function FileView({ file }: { file: ArtifactFile }) {
 function ArtifactFileLoader({ fileId }: { fileId: string }) {
   const { data: file, isPending, error, refetch } = useQuery(artifactFileQuery(fileId));
   if (isPending) return <PageSkeleton />;
-  if (error) {
-    const gone = error instanceof ApiError && error.status === 404;
+  const gone = error instanceof ApiError && error.status === 404;
+  // A failed refetch keeps the file on screen (and any draft with it); only a first load fails here.
+  if (file === undefined) {
     return (
       <PageContainer className="max-w-none">
         <ErrorState
@@ -641,7 +729,7 @@ function ArtifactFileLoader({ fileId }: { fileId: string }) {
       </PageContainer>
     );
   }
-  return <FileView file={file} />;
+  return <FileView file={file} gone={gone} />;
 }
 
 export default function ArtifactFilePage() {

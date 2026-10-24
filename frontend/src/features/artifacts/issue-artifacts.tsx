@@ -170,11 +170,11 @@ export function IssueArtifacts({ workspace, issue }: { workspace: Workspace; iss
               variant="ghost"
               size="sm"
               className="h-6 gap-1.5 px-2 text-xs"
-              disabled={uploads.sending !== null}
+              disabled={uploads.busy}
               onClick={() => picker.current?.click()}
             >
               <UploadIcon className="size-3.5" />
-              {uploads.sending ? 'Uploading…' : 'Upload'}
+              {uploads.busy ? 'Uploading…' : 'Upload'}
             </Button>
             <input
               ref={picker}
