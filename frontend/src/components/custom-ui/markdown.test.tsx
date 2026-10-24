@@ -24,6 +24,12 @@ describe('Markdown', () => {
     expect(container.querySelector('img')).toBeNull();
   });
 
+  it('names the boxes of a task list by whether each task is done', () => {
+    render(<Markdown>{'- [x] Shipped\n- [ ] Announced'}</Markdown>);
+    expect(screen.getByRole('checkbox', { name: 'Done' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Not done' })).not.toBeChecked();
+  });
+
   it('opens links in a new tab without an opener', () => {
     render(<Markdown>{'[docs](https://example.com)'}</Markdown>);
     const link = screen.getByRole('link', { name: 'docs' });

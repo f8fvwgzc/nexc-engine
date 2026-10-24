@@ -1,5 +1,7 @@
 /** Static breadcrumb or a dynamic one resolved from cached server data. */
-export type Crumb = { label: string; to?: string } | { dynamic: 'graph' | 'run' | 'issue' };
+export type Crumb =
+  | { label: string; to?: string }
+  | { dynamic: 'graph' | 'run' | 'issue' | 'artifact' };
 
 export interface RouteHandle {
   crumbs: Crumb[];

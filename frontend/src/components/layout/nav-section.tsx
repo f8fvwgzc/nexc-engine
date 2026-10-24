@@ -44,6 +44,8 @@ interface NavSectionProps {
 export function NavSection({ label, items, badges = {} }: NavSectionProps) {
   const { pathname, search } = useLocation();
   const teamOpen = useOwnTeamOpen(pathname, search);
+  // A folder of artifacts is highlighted in the folder tree, not as all the files.
+  const folderOpen = pathname === '/app/artifacts' && new URLSearchParams(search).has('folder');
   if (items.length === 0) return null;
   return (
     <SidebarGroup className="py-1">
@@ -51,7 +53,10 @@ export function NavSection({ label, items, badges = {} }: NavSectionProps) {
       <SidebarMenu className="gap-0.5">
         {items.map((item) => {
           const count = badges[item.to] ?? 0;
-          const active = itemMatches(item, pathname) && !(teamOpen && item.to === pathname);
+          const active =
+            itemMatches(item, pathname) &&
+            !(teamOpen && item.to === pathname) &&
+            !(folderOpen && item.to === '/app/artifacts');
           return (
             <SidebarMenuItem key={item.to}>
               {/* Marked current by the same rule as the highlight: a team's page marks its row

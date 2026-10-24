@@ -125,6 +125,17 @@ export const routes: RouteObject[] = [
                   crumbs({ label: 'Projects', to: '/app/projects' }, { label: 'Project' }),
                 ),
               },
+              {
+                path: 'artifacts',
+                ...page(routeModules.artifacts, crumbs({ label: 'Artifacts' })),
+              },
+              {
+                path: 'artifacts/:fileId',
+                ...page(
+                  routeModules.artifactFile,
+                  crumbs({ label: 'Artifacts', to: '/app/artifacts' }, { dynamic: 'artifact' }),
+                ),
+              },
               // These pages moved into the settings area; old addresses still land there.
               { path: 'teams', element: <Navigate to="/app/settings/teams" replace /> },
               { path: 'members', element: <Navigate to="/app/settings/members" replace /> },

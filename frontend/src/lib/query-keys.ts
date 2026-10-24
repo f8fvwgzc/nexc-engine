@@ -63,6 +63,21 @@ export const qk = {
     one: (issueId: string) => ['issues', 'detail', issueId] as const,
     inbox: (workspaceId: string) => ['issues', workspaceId, 'inbox'] as const,
   },
+  /** Artifact folders and files: not copied to browser storage, so file contents stay on the server. */
+  artifacts: {
+    all: ['artifacts'] as const,
+    folders: (workspaceId: string) => ['artifacts', workspaceId, 'folders'] as const,
+    /** Prefix of every file list of a workspace, whatever it is filtered by. */
+    lists: (workspaceId: string) => ['artifacts', workspaceId, 'files'] as const,
+    list: (workspaceId: string, filter: object) =>
+      ['artifacts', workspaceId, 'files', filter] as const,
+    file: (fileId: string) => ['artifacts', 'file', fileId] as const,
+    versions: (fileId: string) => ['artifacts', 'file', fileId, 'versions'] as const,
+    content: (fileId: string, version: number) =>
+      ['artifacts', 'file', fileId, 'content', version] as const,
+    /** The files the runs of an issue's graph produced. */
+    runs: (issueId: string) => ['artifacts', 'runs', issueId] as const,
+  },
   /** Kept out of the `workspaces` root, which is copied to browser storage. */
   audit: (workspaceId: string) => ['audit', workspaceId] as const,
   auditQuestions: (workspaceId: string) => ['audit', workspaceId, 'questions'] as const,

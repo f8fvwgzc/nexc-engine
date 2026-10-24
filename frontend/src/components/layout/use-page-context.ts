@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useLocation, useMatches } from 'react-router-dom';
 
+import { artifactFileQuery } from '@/features/artifacts/api';
 import { graphQuery } from '@/features/graphs/api';
 import { issueQuery } from '@/features/issues/api';
 import type { PageContext } from '@/schemas/assistant';
@@ -18,7 +19,8 @@ export function usePageContext(): PageContext {
   const graphId = params.graphId ?? '';
   const runId = params.runId ?? '';
   const issueId = params.issueId ?? '';
-  // Read the caches the graph and issue pages fill; never trigger their own fetch.
+  const fileId = params.fileId ?? '';
+  // Read the caches the graph, issue and file pages fill; never trigger their own fetch.
   const { data: graphName } = useQuery({
     ...graphQuery(graphId),
     enabled: false,
@@ -29,12 +31,18 @@ export function usePageContext(): PageContext {
     enabled: false,
     select: (i) => `${i.identifier} ${i.title}`,
   });
+  const { data: fileName } = useQuery({
+    ...artifactFileQuery(fileId),
+    enabled: false,
+    select: (f) => f.name,
+  });
   const labels = matches
     .flatMap((m) => (isRouteHandle(m.handle) ? m.handle.crumbs : []))
     .map((crumb) => {
       if ('label' in crumb) return crumb.label;
       if (crumb.dynamic === 'graph') return graphName ?? 'Graph';
       if (crumb.dynamic === 'issue') return issueName ?? 'Issue';
+      if (crumb.dynamic === 'artifact') return fileName ?? 'File';
       return `Run ${runId.slice(0, 8)}`;
     });
   return { path: pathname, title: labels.join(' › ') };
