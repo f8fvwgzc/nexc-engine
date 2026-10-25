@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
+import { CACHE_SCHEMA } from '@/lib/query-persist';
 import { useAuthStore } from '@/stores/auth-store';
 import * as f from '@/test/fixtures';
 
@@ -96,6 +97,10 @@ describe('conditional reads', () => {
     expect(persistable('/api/v1/agents/a/tokens')).toBe(false);
     expect(persistable('/api/v1/graphs?workspace_id=w')).toBe(true);
     expect(persistable('/api/v1/graphs/g')).toBe(false);
+    // Searches and sub-issue lists stay out, as they do of query-persist's copy.
+    expect(persistable('/api/v1/workspaces/w/issues?open=true&q=needle')).toBe(false);
+    expect(persistable('/api/v1/workspaces/w/issues?parent_id=p')).toBe(false);
+    expect(persistable('/api/v1/workspaces/w/issues?team_id=t&open=true')).toBe(true);
 
     forgetAll();
     localStorage.setItem(KEY, saved);
@@ -110,11 +115,11 @@ describe('conditional reads', () => {
     stopSecond();
   });
 
-  it('ignores a copy another account or build wrote', () => {
+  it('ignores a copy written under another cache schema', () => {
     localStorage.setItem(
       KEY,
       JSON.stringify({
-        build: 'elsewhere',
+        schema: CACHE_SCHEMA - 1,
         userId: f.user.id,
         savedAt: Date.now(),
         entries: [['/api/v1/workspaces', { etag: '"x"', body: [] }]],
