@@ -5726,8 +5726,8 @@
         "tags": [
           "issues"
         ],
-        "summary": "Comments on an issue. Whoever may edit the issue may comment on it.",
-        "description": "Each member the comment mentions who can see the issue hears of it in\ntheir inbox (`mention`), in place of the `comment` entry the assignee and\nthe creator get. The first active agent it mentions is delegated an issue\nthat has none; then, when the author is a member of the issue's team and\nthe issue's graph is idle, one mentioned agent is asked for a plan (the\nissue gets its graph if it has none). The plan waits to be applied like\nany other: nothing runs by itself. Both show in the timeline as `agent`\nentries.",
+        "summary": "Comments on an issue, or replies to one of its comments. Whoever may edit\nthe issue may comment on it.",
+        "description": "Each member the comment mentions who can see the issue hears of it in\ntheir inbox (`mention`), in place of the `comment` entry the assignee and\nthe creator get; a reply also tells the author of the comment it answers\n(`comment`, once, whether or not they watch the issue). The first active\nagent it mentions is delegated an issue that has none; then, when the\nauthor is a member of the issue's team and the issue's graph is idle, one\nmentioned agent is asked for a plan (the issue gets its graph if it has\nnone). The plan waits to be applied like any other: nothing runs by\nitself. Both show in the timeline as `agent` entries.",
         "operationId": "create_comment",
         "parameters": [
           {
@@ -5745,7 +5745,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CommentBody"
+                "$ref": "#/components/schemas/NewComment"
               }
             }
           },
@@ -5780,6 +5780,7 @@
             }
           },
           "422": {
+            "description": "Invalid fields, or `parent_id` is not a top-level comment of the issue",
             "content": {
               "application/json": {
                 "schema": {
@@ -5801,7 +5802,7 @@
         "tags": [
           "issues"
         ],
-        "summary": "Deletes a comment: its author, or whoever manages the team.",
+        "summary": "Deletes a comment, with its replies: its author, or whoever manages the\nteam.",
         "operationId": "delete_comment",
         "parameters": [
           {
@@ -5943,7 +5944,7 @@
         "tags": [
           "issues"
         ],
-        "summary": "The timeline of an issue, oldest first: its comments, the changes to its\nstate, priority, assignee, title, due date and GitHub link, what happened\nto its files, and what its runs reported.",
+        "summary": "The timeline of an issue, oldest first: its comments and their replies,\nthe changes to its state, priority, assignee, title, due date and GitHub\nlink, what happened to its files, and what its runs reported; comments\nand run reports with their reactions.",
         "operationId": "events",
         "parameters": [
           {
@@ -5971,6 +5972,182 @@
             }
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/issues/{iid}/events/{eid}/reactions": {
+      "post": {
+        "tags": [
+          "issues"
+        ],
+        "summary": "Reacts to a comment or a run report with an emoji; giving the same emoji\nagain changes nothing. Whoever may comment on the issue may react.",
+        "description": "The comment's author hears of it in their inbox (`reaction`, with the\nemoji): never of their own, and once a day for the same emoji from the\nsame person on the issue, however often it is taken back and given again.",
+        "operationId": "add_reaction",
+        "parameters": [
+          {
+            "name": "iid",
+            "in": "path",
+            "description": "Issue id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "eid",
+            "in": "path",
+            "description": "Timeline entry id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReactionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The entry's reactions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Reaction"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "An emoji not on the list, or an entry that is not a comment or a run report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "issues"
+        ],
+        "summary": "Takes the caller's emoji back from a comment or a run report; one they\nnever gave is no error. The inbox entry it gave stays.",
+        "operationId": "remove_reaction",
+        "parameters": [
+          {
+            "name": "iid",
+            "in": "path",
+            "description": "Issue id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "eid",
+            "in": "path",
+            "description": "Timeline entry id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "emoji",
+            "in": "query",
+            "description": "The emoji to take back: one of 👍 👎 😄 🎉 😕 ❤️ 🚀 👀 🔥 ✅.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The entry's reactions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Reaction"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "An emoji not on the list, or an entry that is not a comment or a run report",
             "content": {
               "application/json": {
                 "schema": {
@@ -18449,7 +18626,7 @@
       },
       "CommentBody": {
         "type": "object",
-        "description": "`POST /issues/{iid}/comments` and `PATCH /issues/{iid}/comments/{cid}` body.",
+        "description": "`PATCH /issues/{iid}/comments/{cid}` body.",
         "required": [
           "body"
         ],
@@ -21139,7 +21316,9 @@
           "to",
           "created_at",
           "edited_at",
-          "run_id"
+          "run_id",
+          "parent_id",
+          "reactions"
         ],
         "properties": {
           "actor": {
@@ -21186,6 +21365,21 @@
           },
           "kind": {
             "$ref": "#/components/schemas/IssueEventKind"
+          },
+          "parent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The top-level comment a reply answers; `null` for every other entry."
+          },
+          "reactions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Reaction"
+            },
+            "description": "The emoji given to a comment or a run report, each once, in the order\nthey were first given; empty for other entries."
           },
           "run_id": {
             "type": [
@@ -22426,6 +22620,28 @@
           }
         }
       },
+      "NewComment": {
+        "type": "object",
+        "description": "`POST /issues/{iid}/comments` body.",
+        "required": [
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "Markdown, 1 byte to 16 KiB. `@[Name](user:<uuid>)` mentions a member and\n`@[Name](agent:<uuid>)` an agent of the workspace, at most 20 of them."
+          },
+          "parent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The comment this one replies to: a top-level comment of the same issue."
+          }
+        },
+        "additionalProperties": false
+      },
       "NodeOrigin": {
         "type": "string",
         "description": "Who created a node.",
@@ -22647,6 +22863,7 @@
           "approval",
           "alert",
           "actor",
+          "emoji",
           "created_at",
           "read_at"
         ],
@@ -22688,6 +22905,13 @@
             "type": "string",
             "format": "date-time"
           },
+          "emoji": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the actor reacted with (`reaction`); `null` for the other kinds."
+          },
           "id": {
             "type": "string",
             "format": "uuid"
@@ -22696,7 +22920,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/NotificationIssue",
-                "description": "The issue (`assigned`, `comment`, `state`, `due`, `run`, `mention`); `null` for the other\nkinds."
+                "description": "The issue (`assigned`, `comment`, `state`, `due`, `run`, `mention`, `reaction`); `null` for\nthe other kinds."
               },
               {
                 "type": "null"
@@ -22846,7 +23070,8 @@
           "approval",
           "alert",
           "run",
-          "mention"
+          "mention",
+          "reaction"
         ]
       },
       "OntoMode": {
@@ -24056,6 +24281,51 @@
             "type": "string"
           }
         }
+      },
+      "Reaction": {
+        "type": "object",
+        "description": "One emoji given to a comment or a run report: how many gave it, whether\nthe reader did, and who, newest first.",
+        "required": [
+          "emoji",
+          "count",
+          "reacted",
+          "users"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "emoji": {
+            "type": "string",
+            "description": "One of 👍 👎 😄 🎉 😕 ❤️ 🚀 👀 🔥 ✅."
+          },
+          "reacted": {
+            "type": "boolean",
+            "description": "Whether the reader is one of them."
+          },
+          "users": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssuePerson"
+            },
+            "description": "Up to 10 of them, newest first."
+          }
+        }
+      },
+      "ReactionBody": {
+        "type": "object",
+        "description": "`POST /issues/{iid}/events/{eid}/reactions` body.",
+        "required": [
+          "emoji"
+        ],
+        "properties": {
+          "emoji": {
+            "type": "string",
+            "description": "One of 👍 👎 😄 🎉 😕 ❤️ 🚀 👀 🔥 ✅."
+          }
+        },
+        "additionalProperties": false
       },
       "Recording": {
         "type": "object",

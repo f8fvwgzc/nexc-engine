@@ -10,10 +10,10 @@ use uuid::Uuid;
 use super::enum_col;
 use crate::domain::cycle::CycleRef;
 use crate::domain::issue::{
-    Issue, IssueChange, IssueEvent, IssuePerson, IssueRef, IssueState, Label, NodeOutcome,
-    Notification, NotificationAlert, NotificationApproval, NotificationIssue, NotificationKind,
-    Project, ProjectStatus, RUN_REPORT_MAX_CHARS, STARTER_STATES, StateCategory, SubIssueCount,
-    TeamRef,
+    Issue, IssueChange, IssueEvent, IssueEventKind, IssuePerson, IssueRef, IssueState, Label,
+    NodeOutcome, Notification, NotificationAlert, NotificationApproval, NotificationIssue,
+    NotificationKind, Project, ProjectStatus, RUN_REPORT_MAX_CHARS, Reaction, STARTER_STATES,
+    StateCategory, SubIssueCount, TeamRef,
 };
 use crate::domain::run::RunStatus;
 
@@ -657,6 +657,7 @@ impl FromRow<'_, PgRow> for IssueEvent {
     fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
         let actor_id: Option<Uuid> = row.try_get("actor_id")?;
         let actor_name: Option<String> = row.try_get("actor_name")?;
+        let Json(reactions): Json<Vec<Reaction>> = row.try_get("reactions")?;
         Ok(IssueEvent {
             id: row.try_get("id")?,
             issue_id: row.try_get("issue_id")?,
@@ -671,65 +672,185 @@ impl FromRow<'_, PgRow> for IssueEvent {
             created_at: row.try_get("created_at")?,
             edited_at: row.try_get("edited_at")?,
             run_id: row.try_get("run_id")?,
+            parent_id: row.try_get("parent_id")?,
+            reactions,
         })
     }
 }
 
+/// Timeline entries with their actor and their reactions as user `$1` reads
+/// them: each emoji once, in the order it was first given, with its count,
+/// whether `$1` gave it and the latest ten who did
+/// ([`crate::domain::issue::REACTION_USERS_MAX`]). The reactions are read in
+/// the same statement, one probe of their primary key per entry.
 macro_rules! event_select {
     ($tail:literal) => {
         concat!(
             "SELECT e.id, e.issue_id, e.kind, e.actor_id, u.name AS actor_name, e.body,
-                    e.from_value, e.to_value, e.created_at, e.edited_at, e.run_id
-             FROM issue_events e LEFT JOIN users u ON u.id = e.actor_id
+                    e.from_value, e.to_value, e.created_at, e.edited_at, e.run_id, e.parent_id,
+                    COALESCE(r.reactions, '[]'::jsonb) AS reactions
+             FROM issue_events e
+             LEFT JOIN users u ON u.id = e.actor_id
+             LEFT JOIN LATERAL (
+                 SELECT jsonb_agg(jsonb_build_object('emoji', g.emoji, 'count', g.count,
+                                                     'reacted', g.reacted, 'users', g.users)
+                                  ORDER BY g.first_at, g.emoji) AS reactions
+                 FROM (SELECT x.emoji, count(*) AS count, bool_or(x.user_id = $1) AS reacted,
+                              min(x.created_at) AS first_at,
+                              to_jsonb((array_agg(jsonb_build_object('user_id', x.user_id,
+                                                                     'name', xu.name)
+                                                  ORDER BY x.created_at DESC, x.user_id))[1:10])
+                                  AS users
+                       FROM issue_event_reactions x JOIN users xu ON xu.id = x.user_id
+                       WHERE x.event_id = e.id
+                       GROUP BY x.emoji) g) r ON true
              WHERE ",
             $tail
         )
     };
 }
 
-/// The timeline of an issue, oldest first.
+/// The timeline of an issue, oldest first, as `viewer` reads it.
 pub async fn events(
     db: impl PgExecutor<'_>,
+    viewer: Uuid,
     issue_id: Uuid,
 ) -> Result<Vec<IssueEvent>, sqlx::Error> {
-    sqlx::query_as(event_select!("e.issue_id = $1 ORDER BY e.created_at, e.id"))
+    sqlx::query_as(event_select!("e.issue_id = $2 ORDER BY e.created_at, e.id"))
+        .bind(viewer)
         .bind(issue_id)
         .fetch_all(db)
         .await
 }
 
-/// One comment of an issue.
+/// One entry of an issue's timeline, of any kind, as `viewer` reads it.
+pub async fn find_event(
+    db: impl PgExecutor<'_>,
+    viewer: Uuid,
+    issue_id: Uuid,
+    id: Uuid,
+) -> Result<Option<IssueEvent>, sqlx::Error> {
+    sqlx::query_as(event_select!("e.issue_id = $2 AND e.id = $3"))
+        .bind(viewer)
+        .bind(issue_id)
+        .bind(id)
+        .fetch_optional(db)
+        .await
+}
+
+/// One comment of an issue, as `viewer` reads it.
 pub async fn find_comment(
     db: impl PgExecutor<'_>,
+    viewer: Uuid,
     issue_id: Uuid,
     id: Uuid,
 ) -> Result<Option<IssueEvent>, sqlx::Error> {
     sqlx::query_as(event_select!(
-        "e.issue_id = $1 AND e.id = $2 AND e.kind = 'comment'"
+        "e.issue_id = $2 AND e.id = $3 AND e.kind = 'comment'"
     ))
+    .bind(viewer)
     .bind(issue_id)
     .bind(id)
     .fetch_optional(db)
     .await
 }
 
-/// Adds a comment and returns its id.
+/// What a reply or a reaction needs to know of the entry it is about.
+#[derive(Debug, Clone, Copy)]
+pub struct EventRef {
+    pub kind: IssueEventKind,
+    /// Who wrote it; `None` for a run report and once the account is gone.
+    pub actor_id: Option<Uuid>,
+    /// The comment it replies to.
+    pub parent_id: Option<Uuid>,
+}
+
+impl FromRow<'_, PgRow> for EventRef {
+    fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
+        Ok(EventRef {
+            kind: enum_col(row, "kind")?,
+            actor_id: row.try_get("actor_id")?,
+            parent_id: row.try_get("parent_id")?,
+        })
+    }
+}
+
+/// One entry of the issue's timeline, kept from being deleted until the
+/// transaction ends (`FOR KEY SHARE`, which edits do not wait for), so the
+/// reply or the reaction written in it has the entry to point at; None when
+/// the issue has no such entry.
+pub async fn event_for_share(
+    db: &mut PgConnection,
+    issue_id: Uuid,
+    id: Uuid,
+) -> Result<Option<EventRef>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT kind, actor_id, parent_id FROM issue_events
+         WHERE issue_id = $1 AND id = $2 FOR KEY SHARE",
+    )
+    .bind(issue_id)
+    .bind(id)
+    .fetch_optional(db)
+    .await
+}
+
+/// Adds a comment, or a reply to the comment `parent_id`, and returns its id.
 pub async fn add_comment(
     db: impl PgExecutor<'_>,
     issue_id: Uuid,
     actor_id: Uuid,
     body: &str,
+    parent_id: Option<Uuid>,
 ) -> Result<Uuid, sqlx::Error> {
     sqlx::query_scalar(
-        "INSERT INTO issue_events (id, issue_id, actor_id, kind, body)
-         VALUES ($1, $2, $3, 'comment', $4) RETURNING id",
+        "INSERT INTO issue_events (id, issue_id, actor_id, kind, body, parent_id)
+         VALUES ($1, $2, $3, 'comment', $4, $5) RETURNING id",
     )
     .bind(Uuid::now_v7())
     .bind(issue_id)
     .bind(actor_id)
     .bind(body)
+    .bind(parent_id)
     .fetch_one(db)
     .await
+}
+
+/// Gives an entry the person's emoji; returns whether it is new (giving the
+/// same emoji again changes nothing).
+pub async fn add_reaction(
+    db: impl PgExecutor<'_>,
+    event_id: Uuid,
+    user_id: Uuid,
+    emoji: &str,
+) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query(
+        "INSERT INTO issue_event_reactions (event_id, user_id, emoji) VALUES ($1, $2, $3)
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(event_id)
+    .bind(user_id)
+    .bind(emoji)
+    .execute(db)
+    .await?;
+    Ok(done.rows_affected() == 1)
+}
+
+/// Takes the person's emoji back from an entry, if they gave it.
+pub async fn remove_reaction(
+    db: impl PgExecutor<'_>,
+    event_id: Uuid,
+    user_id: Uuid,
+    emoji: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "DELETE FROM issue_event_reactions WHERE event_id = $1 AND user_id = $2 AND emoji = $3",
+    )
+    .bind(event_id)
+    .bind(user_id)
+    .bind(emoji)
+    .execute(db)
+    .await?;
+    Ok(())
 }
 
 /// Replaces the text of a comment.
@@ -1112,6 +1233,7 @@ impl FromRow<'_, PgRow> for Notification {
                 user_id,
                 name: actor_name.unwrap_or_default(),
             }),
+            emoji: row.try_get("emoji")?,
             created_at: row.try_get("created_at")?,
             read_at: row.try_get("read_at")?,
         })
@@ -1157,22 +1279,34 @@ pub async fn notify_watchers_except(
 }
 
 /// Tells the members `user_ids` that the actor mentioned them on the issue,
-/// and returns those told. One statement: only members of the issue's
-/// workspace who can see its team are, never the actor; other ids are
-/// dropped without a word, so a mention reveals nothing about who can see
-/// what.
+/// and returns those told ([`notify_members`]).
 pub async fn notify_mentioned(
     db: impl PgExecutor<'_>,
     issue_id: Uuid,
     actor_id: Uuid,
     user_ids: &[Uuid],
 ) -> Result<Vec<Uuid>, sqlx::Error> {
+    notify_members(db, issue_id, actor_id, user_ids, NotificationKind::Mention).await
+}
+
+/// Tells the members `user_ids` what the actor did on the issue (`kind`),
+/// and returns those told. One statement: only members of the issue's
+/// workspace who can see its team are, never the actor; other ids are
+/// dropped without a word, so a mention or a reply reveals nothing about who
+/// can see what.
+pub async fn notify_members(
+    db: impl PgExecutor<'_>,
+    issue_id: Uuid,
+    actor_id: Uuid,
+    user_ids: &[Uuid],
+    kind: NotificationKind,
+) -> Result<Vec<Uuid>, sqlx::Error> {
     if user_ids.is_empty() {
         return Ok(Vec::new());
     }
     sqlx::query_scalar(concat!(
         "INSERT INTO notifications (id, user_id, workspace_id, issue_id, actor_id, kind)
-         SELECT gen_random_uuid(), wm.user_id, i.workspace_id, i.id, $2, 'mention'
+         SELECT gen_random_uuid(), wm.user_id, i.workspace_id, i.id, $2, $4
          FROM issues i
          JOIN teams t ON t.id = i.team_id
          JOIN workspace_members wm ON wm.workspace_id = i.workspace_id
@@ -1183,8 +1317,44 @@ pub async fn notify_mentioned(
     .bind(issue_id)
     .bind(actor_id)
     .bind(user_ids)
+    .bind(kind.as_str())
     .fetch_all(db)
     .await
+}
+
+/// Tells the author of the comment `event_id` that the actor reacted to it
+/// with `emoji`, as [`notify_members`] would: never an author reacting to
+/// their own comment, nor one who can no longer see the issue. One entry per
+/// actor, emoji and issue a day: an emoji taken back and given again, or the
+/// same one given to the author's next comment there, tells nobody twice.
+pub async fn notify_reaction(
+    db: impl PgExecutor<'_>,
+    event_id: Uuid,
+    actor_id: Uuid,
+    emoji: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(concat!(
+        "INSERT INTO notifications (id, user_id, workspace_id, issue_id, actor_id, kind, emoji)
+         SELECT $1, e.actor_id, i.workspace_id, i.id, $3, 'reaction', $4
+         FROM issue_events e
+         JOIN issues i ON i.id = e.issue_id
+         JOIN teams t ON t.id = i.team_id
+         JOIN workspace_members wm ON wm.workspace_id = i.workspace_id AND wm.user_id = e.actor_id
+         WHERE e.id = $2 AND e.kind = 'comment' AND e.actor_id <> $3 AND ",
+        team_visible!("t", "wm", "e.actor_id"),
+        " AND NOT EXISTS (
+               SELECT 1 FROM notifications n
+               WHERE n.user_id = e.actor_id AND n.workspace_id = i.workspace_id
+                 AND n.created_at > now() - interval '1 day' AND n.kind = 'reaction'
+                 AND n.issue_id = i.id AND n.actor_id = $3 AND n.emoji = $4)"
+    ))
+    .bind(Uuid::now_v7())
+    .bind(event_id)
+    .bind(actor_id)
+    .bind(emoji)
+    .execute(db)
+    .await?;
+    Ok(())
 }
 
 /// Tells one member about an issue.
@@ -1238,7 +1408,7 @@ pub async fn inbox(
 ) -> Result<Vec<Notification>, sqlx::Error> {
     sqlx::query_as(concat!(
         "SELECT n.id, n.kind, n.issue_id, t.key AS team_key, i.number, i.title, n.actor_id,
-                u.name AS actor_name, n.created_at, n.read_at,
+                u.name AS actor_name, n.emoji, n.created_at, n.read_at,
                 n.approval_id, a.run_id AS approval_run_id, a.node_id AS approval_node_id,
                 a.graph_id AS approval_graph_id, a.principal AS approval_principal,
                 a.tool AS approval_tool, a.reason AS approval_reason, a.status AS approval_status,

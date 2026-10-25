@@ -1,5 +1,6 @@
 //! Mentions in comments: members hear of them in their inbox, and a
 //! mentioned agent is handed the issue (delegated, then asked for a plan).
+//! Replies: the author of the comment replied to hears of it too.
 #![forbid(unsafe_code)]
 
 mod common;
@@ -650,4 +651,160 @@ async fn an_edit_that_adds_an_agent_hands_it_the_issue(pool: PgPool) {
         agent_entries(&app, &w.member, &iid).await,
         [("delegated".to_owned(), "Scout".to_owned())]
     );
+}
+
+/// Replies to the comment `parent` as `token`; returns the status and the reply.
+async fn reply(
+    app: &TestApp,
+    token: &str,
+    iid: &str,
+    parent: &str,
+    body: &str,
+) -> (StatusCode, Value) {
+    let path = format!("/issues/{iid}/comments");
+    let body = json!({"body": body, "parent_id": parent});
+    call(app, Method::POST, &path, token, Some(body)).await
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_reply_tells_the_author_of_its_comment_once(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let w = world(&app).await;
+    let (dana, _) = user(&app, "dana@example.com").await;
+    let invite = json!({"email": "dana@example.com", "role": "member"});
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &format!("{}/members", w.ws),
+        &w.owner,
+        Some(invite),
+    )
+    .await;
+    assert!(status.is_success(), "{status}");
+    // The owner files the issue and so watches it.
+    let iid = issue(&app, &w, &w.eng, &w.owner, "Fix login").await;
+    let (_, first) = comment(&app, &w.member, &iid, "Reproduced on staging.").await;
+    let first = first["id"].as_str().unwrap().to_owned();
+    assert_eq!(inbox(&app, &w, &w.owner).await, ["comment"]);
+
+    // Dana replies: the comment's author hears, and the owner as the issue's watcher.
+    let (status, posted) = reply(&app, &dana, &iid, &first, "Me too.").await;
+    assert_eq!(status, StatusCode::CREATED, "{posted}");
+    assert_eq!(inbox(&app, &w, &w.member).await, ["comment"]);
+    assert_eq!(inbox(&app, &w, &w.owner).await, ["comment", "comment"]);
+    // The owner replies: the author hears again, the owner of their own reply not at all.
+    reply(&app, &w.owner, &iid, &first, "On it.").await;
+    assert_eq!(inbox(&app, &w, &w.member).await, ["comment", "comment"]);
+    assert_eq!(inbox(&app, &w, &w.owner).await.len(), 2);
+    // The author replies to their own comment: only the watcher hears.
+    reply(&app, &w.member, &iid, &first, "Thanks.").await;
+    assert_eq!(inbox(&app, &w, &w.member).await.len(), 2);
+    assert_eq!(inbox(&app, &w, &w.owner).await.len(), 3);
+
+    // The owner watches the issue and wrote the comment replied to: one entry, not two.
+    let (_, second) = comment(&app, &w.owner, &iid, "Which browser?").await;
+    let second = second["id"].as_str().unwrap().to_owned();
+    reply(&app, &w.member, &iid, &second, "Firefox.").await;
+    assert_eq!(inbox(&app, &w, &w.owner).await, ["comment"; 4]);
+    // A reply that mentions them tells them once, as a mention.
+    let body = format!("{} and Safari.", user_token("Owner", &w.owner_id));
+    reply(&app, &w.member, &iid, &second, &body).await;
+    let owner = inbox(&app, &w, &w.owner).await;
+    assert_eq!(
+        (owner[0].as_str(), owner.len()),
+        ("mention", 5),
+        "{owner:?}"
+    );
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_reply_answers_a_top_level_comment_of_the_same_issue(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let w = world(&app).await;
+    let iid = issue(&app, &w, &w.eng, &w.owner, "Fix login").await;
+    let events = format!("/issues/{iid}/events");
+    let (_, first) = comment(&app, &w.owner, &iid, "Reproduced on staging.").await;
+    let first = first["id"].as_str().unwrap().to_owned();
+
+    let (status, answer) = reply(&app, &w.member, &iid, &first, "Me too.").await;
+    assert_eq!(status, StatusCode::CREATED, "{answer}");
+    assert_eq!(
+        (answer["kind"].as_str(), answer["parent_id"].as_str()),
+        (Some("comment"), Some(first.as_str()))
+    );
+    assert_eq!(answer["reactions"], json!([]));
+    let answer = answer["id"].as_str().unwrap().to_owned();
+    let (_, list) = call(&app, Method::GET, &events, &w.member, None).await;
+    let parents: Vec<&Value> = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| &e["parent_id"])
+        .collect();
+    assert_eq!(parents, [&Value::Null, &json!(first)]);
+
+    // Not a reply to a reply, a change, another issue's comment or nothing at all.
+    let (status, _) = call(
+        &app,
+        Method::PATCH,
+        &format!("/issues/{iid}"),
+        &w.owner,
+        Some(json!({"priority": 2})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, list) = call(&app, Method::GET, &events, &w.owner, None).await;
+    let change = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["kind"] == "priority")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let elsewhere = issue(&app, &w, &w.eng, &w.owner, "Other").await;
+    let (_, theirs) = comment(&app, &w.owner, &elsewhere, "Elsewhere.").await;
+    let nowhere = Uuid::now_v7().to_string();
+    for parent in [
+        answer.as_str(),
+        change.as_str(),
+        theirs["id"].as_str().unwrap(),
+        nowhere.as_str(),
+    ] {
+        let (status, problem) = reply(&app, &w.member, &iid, parent, "Hm.").await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
+        assert!(problem["errors"]["parent_id"].is_array(), "{problem}");
+    }
+    // An edit cannot move a comment into a thread.
+    let path = format!("/issues/{iid}/comments/{answer}");
+    let edit = json!({"body": "Me too!", "parent_id": theirs["id"]});
+    let (status, _) = call(&app, Method::PATCH, &path, &w.member, Some(edit)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // A reply goes alone; the comment takes its replies along.
+    let (_, other) = reply(&app, &w.member, &iid, &first, "Also on Safari.").await;
+    let other = format!("/issues/{iid}/comments/{}", other["id"].as_str().unwrap());
+    let (status, _) = call(&app, Method::DELETE, &other, &w.member, None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let comments = |list: &Value| -> usize {
+        list.as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| e["kind"] == "comment")
+            .count()
+    };
+    let (_, list) = call(&app, Method::GET, &events, &w.owner, None).await;
+    assert_eq!(comments(&list), 2);
+    let (status, _) = call(
+        &app,
+        Method::DELETE,
+        &format!("/issues/{iid}/comments/{first}"),
+        &w.owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, list) = call(&app, Method::GET, &events, &w.owner, None).await;
+    assert_eq!(comments(&list), 0, "{list}");
 }
