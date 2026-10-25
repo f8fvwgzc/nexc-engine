@@ -5753,6 +5753,7 @@
           "issues"
         ],
         "summary": "Comments on an issue. Whoever may edit the issue may comment on it.",
+        "description": "Each member the comment mentions who can see the issue hears of it in\ntheir inbox (`mention`), in place of the `comment` entry the assignee and\nthe creator get. The first active agent it mentions is delegated an issue\nthat has none; then, when the author is a member of the issue's team and\nthe issue's graph is idle, one mentioned agent is asked for a plan (the\nissue gets its graph if it has none). The plan waits to be applied like\nany other: nothing runs by itself. Both show in the timeline as `agent`\nentries.",
         "operationId": "create_comment",
         "parameters": [
           {
@@ -5884,6 +5885,7 @@
           "issues"
         ],
         "summary": "Edits a comment. Only its author can.",
+        "description": "Only the mentions the edit adds act: the members it newly mentions are\ntold, and agents it newly mentions are handed the issue as on a new\ncomment. Nobody hears of the same mention twice.",
         "operationId": "update_comment",
         "parameters": [
           {
@@ -18626,7 +18628,7 @@
         "properties": {
           "body": {
             "type": "string",
-            "description": "Markdown, 1 byte to 16 KiB."
+            "description": "Markdown, 1 byte to 16 KiB. `@[Name](user:<uuid>)` mentions a member and\n`@[Name](agent:<uuid>)` an agent of the workspace, at most 20 of them."
           }
         },
         "additionalProperties": false
@@ -21398,7 +21400,8 @@
           "due",
           "run",
           "github",
-          "artifact"
+          "artifact",
+          "agent"
         ]
       },
       "IssuePerson": {
@@ -23052,7 +23055,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/NotificationIssue",
-                "description": "The issue (`assigned`, `comment`, `state`, `due`); `null` for the other kinds."
+                "description": "The issue (`assigned`, `comment`, `state`, `due`, `run`, `mention`); `null` for the other\nkinds."
               },
               {
                 "type": "null"
@@ -23201,7 +23204,8 @@
           "due",
           "approval",
           "alert",
-          "run"
+          "run",
+          "mention"
         ]
       },
       "OntoMode": {

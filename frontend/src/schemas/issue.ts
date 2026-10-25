@@ -94,6 +94,11 @@ export const issueEventKindSchema = z.enum([
    * `updated:v<N>`, `duplicated`, `deleted`).
    */
   'artifact',
+  /**
+   * A comment that mentioned an agent handed it the issue; `to` is the agent's name, `body` what
+   * was asked (`delegated`, `asked to plan`).
+   */
+  'agent',
 ]);
 
 /** One entry of an issue's timeline: a comment, or a change to the issue. */
@@ -116,7 +121,7 @@ export type IssueEvent = z.infer<typeof issueEventSchema>;
 /** One entry of the caller's inbox. */
 export const notificationSchema = z.object({
   id: idSchema,
-  kind: z.enum(['assigned', 'comment', 'state', 'due', 'approval', 'alert', 'run']),
+  kind: z.enum(['assigned', 'comment', 'state', 'due', 'approval', 'alert', 'run', 'mention']),
   /** The issue; null for approvals and alerts. */
   issue: z.object({ id: idSchema, identifier: z.string(), title: z.string() }).nullable(),
   /** The tool call to decide (`approval`). */

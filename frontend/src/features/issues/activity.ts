@@ -124,5 +124,9 @@ export function changeText(event: IssueEvent): string {
       return `linked GitHub ${githubRef(to)?.kind === 'pull' ? 'pull request' : 'issue'} ${githubLabel(to)}`;
     case 'artifact':
       return artifactText(event.body || 'a file', to);
+    case 'agent':
+      // `body` is what a mention asked of the agent named in `to`.
+      if (event.body === 'asked to plan') return `asked ${to ?? 'an agent'} to plan this`;
+      return `delegated this to ${to ?? 'an agent'}`;
   }
 }

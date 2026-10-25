@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Deserializer, Serialize};
 use sqlx::PgPool;
-use sqlx::postgres::PgListener;
+use sqlx::postgres::{PgListener, PgNotification};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -20,7 +20,10 @@ use crate::repo::outbox;
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 enum Notification {
-    Parked { origin: Uuid, parked: i64 },
+    Parked {
+        origin: Uuid,
+        parked: i64,
+    },
     Invalidate {
         origin: Uuid,
         #[serde(deserialize_with = "known_keys")]
@@ -134,12 +137,60 @@ async fn send(db: &PgPool, envelope: Envelope) -> anyhow::Result<()> {
 }
 
 async fn listener(hub: Arc<Hub>, caches: Arc<Caches>, db: PgPool, shutdown: CancellationToken) {
+    // Whether invalidations may have been sent while no LISTEN was open.
+    let mut gap = false;
     while !shutdown.is_cancelled() {
-        if let Err(err) = listen(&hub, &caches, &db, &shutdown).await {
+        if let Err(err) = listen(&hub, &caches, &db, &shutdown, gap).await {
+            gap = true;
             tracing::warn!(error = %err, "realtime LISTEN connection lost; reconnecting");
             tokio::select! {
                 _ = shutdown.cancelled() => return,
                 _ = tokio::time::sleep(Duration::from_secs(2)) => {}
+            }
+        }
+    }
+}
+
+/// What the other replicas sent while this one was not listening never
+/// arrives: every entry kept here is dropped, once LISTEN is open again, so
+/// nothing they invalidated meanwhile is served until its TTL runs out.
+fn listening_again(caches: &Caches) {
+    caches.drop_all_local();
+    tracing::info!("realtime LISTEN connection back; every cached entry dropped");
+}
+
+/// How long the listener waits for a notification before it asks whether
+/// its connection still answers. A NAT or load balancer that forgets an idle
+/// connection sends no reset, and a connection that only reads would wait
+/// for the next notification forever.
+pub const QUIET: Duration = Duration::from_secs(30);
+
+/// How long the database has to answer that question.
+pub const ANSWER: Duration = Duration::from_secs(10);
+
+/// The next notification, or an error once the connection is gone: it
+/// dropped, or it was quiet for `quiet` and then did not answer a `SELECT 1`
+/// within `answer`. The caller opens a new LISTEN and drops its caches.
+pub async fn next_notification(
+    listener: &mut PgListener,
+    quiet: Duration,
+    answer: Duration,
+) -> anyhow::Result<PgNotification> {
+    loop {
+        match tokio::time::timeout(quiet, listener.try_recv()).await {
+            Ok(received) => {
+                return received?.ok_or_else(|| anyhow::anyhow!("the LISTEN connection dropped"));
+            }
+            Err(_) => {
+                // Notifications that come during the query are kept for the
+                // next read.
+                let ping = sqlx::query("SELECT 1").execute(&mut *listener);
+                match tokio::time::timeout(answer, ping).await {
+                    Ok(answered) => {
+                        answered?;
+                    }
+                    Err(_) => anyhow::bail!("the LISTEN connection gave no answer in {answer:?}"),
+                }
             }
         }
     }
@@ -150,13 +201,21 @@ async fn listen(
     caches: &Caches,
     db: &PgPool,
     shutdown: &CancellationToken,
+    gap: bool,
 ) -> anyhow::Result<()> {
     let mut listener = PgListener::connect_with(db).await?;
+    // A dropped connection ends this call instead of being replaced inside
+    // `try_recv`, where a timeout could cut the reconnect short and lose the
+    // drop: the caller then reconnects and drops the caches, once.
+    listener.eager_reconnect(false);
     listener.listen(outbox::CHANNEL).await?;
+    if gap {
+        listening_again(caches);
+    }
     loop {
         let notification = tokio::select! {
             _ = shutdown.cancelled() => return Ok(()),
-            n = listener.recv() => n?,
+            n = next_notification(&mut listener, QUIET, ANSWER) => n?,
         };
         let envelope = match serde_json::from_str::<Notification>(notification.payload()) {
             Ok(Notification::Inline(e)) if e.origin != hub.instance() => e,

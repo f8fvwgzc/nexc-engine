@@ -1608,7 +1608,17 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Comments on an issue. Whoever may edit the issue may comment on it. */
+        /**
+         * Comments on an issue. Whoever may edit the issue may comment on it.
+         * @description Each member the comment mentions who can see the issue hears of it in
+         *     their inbox (`mention`), in place of the `comment` entry the assignee and
+         *     the creator get. The first active agent it mentions is delegated an issue
+         *     that has none; then, when the author is a member of the issue's team and
+         *     the issue's graph is idle, one mentioned agent is asked for a plan (the
+         *     issue gets its graph if it has none). The plan waits to be applied like
+         *     any other: nothing runs by itself. Both show in the timeline as `agent`
+         *     entries.
+         */
         post: operations["create_comment"];
         delete?: never;
         options?: never;
@@ -1630,7 +1640,12 @@ export interface paths {
         delete: operations["delete_comment"];
         options?: never;
         head?: never;
-        /** Edits a comment. Only its author can. */
+        /**
+         * Edits a comment. Only its author can.
+         * @description Only the mentions the edit adds act: the members it newly mentions are
+         *     told, and agents it newly mentions are handed the issue as on a new
+         *     comment. Nobody hears of the same mention twice.
+         */
         patch: operations["update_comment"];
         trace?: never;
     };
@@ -4746,7 +4761,10 @@ export interface components {
         ChunkKind: "text" | "table";
         /** @description `POST /issues/{iid}/comments` and `PATCH /issues/{iid}/comments/{cid}` body. */
         CommentBody: {
-            /** @description Markdown, 1 byte to 16 KiB. */
+            /**
+             * @description Markdown, 1 byte to 16 KiB. `@[Name](user:<uuid>)` mentions a member and
+             *     `@[Name](agent:<uuid>)` an agent of the workspace, at most 20 of them.
+             */
             body: string;
         };
         /** @description A competency question and what a competent answer mentions. */
@@ -5848,7 +5866,7 @@ export interface components {
          * @description What an entry of an issue's timeline records.
          * @enum {string}
          */
-        IssueEventKind: "comment" | "state" | "priority" | "assignee" | "title" | "due" | "run" | "github" | "artifact";
+        IssueEventKind: "comment" | "state" | "priority" | "assignee" | "title" | "due" | "run" | "github" | "artifact" | "agent";
         /** @description Someone an issue refers to. */
         IssuePerson: {
             name: string;
@@ -6519,7 +6537,7 @@ export interface components {
          * @description Why an issue is in someone's inbox.
          * @enum {string}
          */
-        NotificationKind: "assigned" | "comment" | "state" | "due" | "approval" | "alert" | "run";
+        NotificationKind: "assigned" | "comment" | "state" | "due" | "approval" | "alert" | "run" | "mention";
         /**
          * @description How nexc reaches onto-intelli (`NEXC_ONTO_MODE`).
          * @enum {string}

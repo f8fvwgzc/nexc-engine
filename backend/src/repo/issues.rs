@@ -818,6 +818,119 @@ pub async fn delete_comment(db: impl PgExecutor<'_>, id: Uuid) -> Result<(), sql
     Ok(())
 }
 
+// ---------- mentions ----------
+
+/// An agent a comment mentions, as much as handing it the issue needs.
+#[derive(Debug, Clone, PartialEq, Eq, FromRow)]
+pub struct MentionedAgent {
+    pub id: Uuid,
+    pub name: String,
+    pub role: String,
+}
+
+/// The agents among `ids` that belong to the workspace and take work
+/// (`active`), in the order of `ids`.
+pub async fn active_agents(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    ids: &[Uuid],
+) -> Result<Vec<MentionedAgent>, sqlx::Error> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    sqlx::query_as(
+        "SELECT a.id, a.name, a.role
+         FROM unnest($2::uuid[]) WITH ORDINALITY m (id, n)
+         JOIN agents a ON a.id = m.id
+         WHERE a.workspace_id = $1 AND a.status = 'active'
+         ORDER BY m.n",
+    )
+    .bind(workspace_id)
+    .bind(ids)
+    .fetch_all(db)
+    .await
+}
+
+/// Delegates the issue to the agent unless it already is to one; returns
+/// whether it was.
+pub async fn delegate(
+    db: impl PgExecutor<'_>,
+    issue_id: Uuid,
+    agent_id: Uuid,
+) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query(
+        "UPDATE issues SET agent_id = $2, updated_at = now() WHERE id = $1 AND agent_id IS NULL",
+    )
+    .bind(issue_id)
+    .bind(agent_id)
+    .execute(db)
+    .await?;
+    Ok(done.rows_affected() == 1)
+}
+
+/// Records in the issue's timeline what the actor's mention asked of an
+/// agent: an `agent` entry with the agent's name and `what`
+/// ([`crate::domain::issue::AGENT_DELEGATED`],
+/// [`crate::domain::issue::AGENT_ASKED_TO_PLAN`]).
+pub async fn record_agent(
+    db: impl PgExecutor<'_>,
+    issue_id: Uuid,
+    actor_id: Uuid,
+    agent_name: &str,
+    what: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO issue_events (id, issue_id, actor_id, kind, body, to_value)
+         VALUES ($1, $2, $3, 'agent', $4, $5)",
+    )
+    .bind(Uuid::now_v7())
+    .bind(issue_id)
+    .bind(actor_id)
+    .bind(what)
+    .bind(agent_name)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Whether the graph has work under way: a run queued or running, or a plan
+/// still streaming. A mention does not ask its agents for another then.
+pub async fn graph_busy(db: impl PgExecutor<'_>, graph_id: Uuid) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM runs WHERE graph_id = $1 AND status IN ('queued', 'running'))
+             OR EXISTS (SELECT 1 FROM plans WHERE graph_id = $1 AND status = 'streaming')",
+    )
+    .bind(graph_id)
+    .fetch_one(db)
+    .await
+}
+
+/// The issue's graph, if it has one, locking the issue's row until the
+/// transaction ends; None when there is no such issue.
+pub async fn graph_id_for_update(
+    db: &mut PgConnection,
+    issue_id: Uuid,
+) -> Result<Option<Option<Uuid>>, sqlx::Error> {
+    sqlx::query_scalar("SELECT graph_id FROM issues WHERE id = $1 FOR UPDATE")
+        .bind(issue_id)
+        .fetch_optional(db)
+        .await
+}
+
+/// A comment's text, locking it until the transaction ends, so edits made at
+/// the same moment take turns; None when there is no such comment.
+pub async fn comment_body_for_update(
+    db: &mut PgConnection,
+    id: Uuid,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT body FROM issue_events WHERE id = $1 AND kind = 'comment' FOR UPDATE",
+    )
+    .bind(id)
+    .fetch_optional(db)
+    .await
+}
+
 /// Records changes to an issue in its timeline, in one statement.
 pub async fn record_changes(
     db: impl PgExecutor<'_>,
@@ -1084,21 +1197,65 @@ pub async fn notify_watchers(
     actor_id: Uuid,
     kind: NotificationKind,
 ) -> Result<(), sqlx::Error> {
+    notify_watchers_except(db, issue_id, actor_id, kind, &[]).await
+}
+
+/// [`notify_watchers`], leaving out `except`: the members a comment's
+/// mentions already told, who get one entry for it, not two.
+pub async fn notify_watchers_except(
+    db: impl PgExecutor<'_>,
+    issue_id: Uuid,
+    actor_id: Uuid,
+    kind: NotificationKind,
+    except: &[Uuid],
+) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO notifications (id, user_id, workspace_id, issue_id, actor_id, kind)
          SELECT gen_random_uuid(), r.user_id, i.workspace_id, i.id, $2, $3
          FROM issues i
          CROSS JOIN LATERAL (
              SELECT DISTINCT x AS user_id FROM unnest(ARRAY[i.assignee_id, i.creator_id]) x
-             WHERE x IS NOT NULL AND x <> $2) r
+             WHERE x IS NOT NULL AND x <> $2 AND NOT (x = ANY($4::uuid[]))) r
          WHERE i.id = $1",
     )
     .bind(issue_id)
     .bind(actor_id)
     .bind(kind.as_str())
+    .bind(except)
     .execute(db)
     .await?;
     Ok(())
+}
+
+/// Tells the members `user_ids` that the actor mentioned them on the issue,
+/// and returns those told. One statement: only members of the issue's
+/// workspace who can see its team are, never the actor; other ids are
+/// dropped without a word, so a mention reveals nothing about who can see
+/// what.
+pub async fn notify_mentioned(
+    db: impl PgExecutor<'_>,
+    issue_id: Uuid,
+    actor_id: Uuid,
+    user_ids: &[Uuid],
+) -> Result<Vec<Uuid>, sqlx::Error> {
+    if user_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    sqlx::query_scalar(concat!(
+        "INSERT INTO notifications (id, user_id, workspace_id, issue_id, actor_id, kind)
+         SELECT gen_random_uuid(), wm.user_id, i.workspace_id, i.id, $2, 'mention'
+         FROM issues i
+         JOIN teams t ON t.id = i.team_id
+         JOIN workspace_members wm ON wm.workspace_id = i.workspace_id
+         WHERE i.id = $1 AND wm.user_id = ANY($3) AND wm.user_id <> $2 AND ",
+        team_visible!("t", "wm", "wm.user_id"),
+        " RETURNING user_id"
+    ))
+    .bind(issue_id)
+    .bind(actor_id)
+    .bind(user_ids)
+    .fetch_all(db)
+    .await
 }
 
 /// Tells one member about an issue.
