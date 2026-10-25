@@ -358,6 +358,25 @@ async fn agent_entries(app: &TestApp, token: &str, iid: &str) -> Vec<(String, St
         .collect()
 }
 
+/// [`agent_entries`] once there are at least `want`: a mention asks its agent
+/// for a plan in a task of its own, which the comment's response may not
+/// wait out.
+async fn agent_entries_once(
+    app: &TestApp,
+    token: &str,
+    iid: &str,
+    want: usize,
+) -> Vec<(String, String)> {
+    for _ in 0..100 {
+        let entries = agent_entries(app, token, iid).await;
+        if entries.len() >= want {
+            return entries;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    agent_entries(app, token, iid).await
+}
+
 /// The plans of a graph, oldest first, as `(status, instructions)`, once
 /// none of them is still streaming.
 async fn plans_of(app: &TestApp, graph_id: &str) -> Vec<(String, String)> {
@@ -481,7 +500,7 @@ async fn a_mentioned_agent_is_delegated_the_issue_and_asked_for_a_plan(pool: PgP
         .unwrap();
     assert_eq!(runs, 0);
     assert_eq!(
-        agent_entries(&app, &w.member, &iid).await,
+        agent_entries_once(&app, &w.member, &iid, 2).await,
         [
             ("delegated".to_owned(), "Scout".to_owned()),
             ("asked to plan".to_owned(), "Scout".to_owned()),
@@ -522,7 +541,72 @@ async fn a_mentioned_agent_is_delegated_the_issue_and_asked_for_a_plan(pool: PgP
         .await
         .unwrap();
     assert_eq!(count, 2);
-    assert_eq!(agent_entries(&app, &w.member, &iid).await.len(), 3);
+    assert_eq!(agent_entries_once(&app, &w.member, &iid, 3).await.len(), 3);
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_mention_gives_no_graph_when_no_plan_could_start(pool: PgPool) {
+    // No LLM key: a plan cannot start, so the issue is not given an empty graph.
+    let app = TestApp::new(pool, &[("ANTHROPIC_API_KEY", "")]).await;
+    let w = world(&app).await;
+    let scout = agent(&app, &w.owner, "Scout", "scout").await;
+    join(&app, &w, &w.eng, &w.member_id).await;
+    let iid = issue(&app, &w, &w.eng, &w.member, "Compare tender portals").await;
+    let body = format!("{} please compare.", agent_token("Scout", &scout));
+    let (status, posted) = comment(&app, &w.member, &iid, &body).await;
+    assert_eq!(status, StatusCode::CREATED, "the comment stands: {posted}");
+    let (_, found) = call(
+        &app,
+        Method::GET,
+        &format!("/issues/{iid}"),
+        &w.member,
+        None,
+    )
+    .await;
+    assert_eq!(found["agent_id"], scout.as_str());
+    assert_eq!(found["graph_id"], Value::Null);
+    assert_eq!(
+        agent_entries(&app, &w.member, &iid).await,
+        [("delegated".to_owned(), "Scout".to_owned())]
+    );
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn edits_saved_at_the_same_moment_tell_a_member_once(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let w = world(&app).await;
+    let iid = issue(&app, &w, &w.eng, &w.member, "Fix login").await;
+    let (_, posted) = comment(&app, &w.owner, &iid, "Who can look?").await;
+    let path = format!("/issues/{iid}/comments/{}", posted["id"].as_str().unwrap());
+    let edit = json!({"body": format!("Who can look? {}", user_token("Member", &w.member_id))});
+    let saves = (0..4).map(|_| call(&app, Method::PATCH, &path, &w.owner, Some(edit.clone())));
+    for (status, body) in futures::future::join_all(saves).await {
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    assert_eq!(mentions_of(&app, &w.member_id).await, 1);
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn an_issue_given_a_graph_twice_at_once_gets_one(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let w = world(&app).await;
+    join(&app, &w, &w.eng, &w.member_id).await;
+    let iid = issue(&app, &w, &w.eng, &w.member, "Compare tender portals").await;
+    let path = format!("/issues/{iid}/graph");
+    let asks = (0..4).map(|_| call(&app, Method::POST, &path, &w.member, None));
+    let mut linked = Vec::new();
+    for (status, found) in futures::future::join_all(asks).await {
+        assert_eq!(status, StatusCode::OK, "{found}");
+        linked.push(found["graph_id"].as_str().unwrap().to_owned());
+    }
+    linked.dedup();
+    assert_eq!(linked.len(), 1, "{linked:?}");
+    let graphs: i64 = sqlx::query_scalar("SELECT count(*) FROM graphs WHERE team_id = $1")
+        .bind(Uuid::parse_str(&w.eng).unwrap())
+        .fetch_one(&app.state.db)
+        .await
+        .unwrap();
+    assert_eq!(graphs, 1);
 }
 
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]

@@ -842,6 +842,32 @@ pub async fn graph_busy(db: impl PgExecutor<'_>, graph_id: Uuid) -> Result<bool,
     .await
 }
 
+/// The issue's graph, if it has one, locking the issue's row until the
+/// transaction ends; None when there is no such issue.
+pub async fn graph_id_for_update(
+    db: &mut PgConnection,
+    issue_id: Uuid,
+) -> Result<Option<Option<Uuid>>, sqlx::Error> {
+    sqlx::query_scalar("SELECT graph_id FROM issues WHERE id = $1 FOR UPDATE")
+        .bind(issue_id)
+        .fetch_optional(db)
+        .await
+}
+
+/// A comment's text, locking it until the transaction ends, so edits made at
+/// the same moment take turns; None when there is no such comment.
+pub async fn comment_body_for_update(
+    db: &mut PgConnection,
+    id: Uuid,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT body FROM issue_events WHERE id = $1 AND kind = 'comment' FOR UPDATE",
+    )
+    .bind(id)
+    .fetch_optional(db)
+    .await
+}
+
 /// Records changes to an issue in its timeline.
 pub async fn record_changes(
     db: &mut PgConnection,

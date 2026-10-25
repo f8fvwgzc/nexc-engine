@@ -547,14 +547,16 @@ fn strip_prefix_ignore_case<'a>(rest: &'a str, prefix: &str) -> Option<&'a str> 
 /// `](user:` or `](agent:`, a hyphenated UUID, `)`.
 fn mention_at(body: &str, at: usize) -> Option<MentionToken<'_>> {
     let rest = &body[at + 2..];
-    let close = rest.find([']', '\n'])?;
+    // The name ends at the first `]`, within a name's length: looking no
+    // further keeps a body full of `@[` quick to read.
+    let (close, end) = rest
+        .char_indices()
+        .take(MENTION_NAME_MAX + 1)
+        .find(|&(_, c)| c == ']' || c == '\n')?;
+    if end != ']' || close == 0 {
+        return None;
+    }
     let name = &rest[..close];
-    if !rest[close..].starts_with(']') || name.is_empty() {
-        return None;
-    }
-    if name.chars().count() > MENTION_NAME_MAX {
-        return None;
-    }
     let rest = rest[close + 1..].strip_prefix('(')?;
     let (kind, rest) = match strip_prefix_ignore_case(rest, "user:") {
         Some(rest) => (MentionKind::User, rest),
@@ -846,6 +848,11 @@ mod tests {
         }
         let longest = format!("@[{}](user:{ADA})", "n".repeat(MENTION_NAME_MAX));
         assert_eq!(mentions(&longest).len(), 1);
+        // Names count characters, not bytes; past the longest name no `]` is looked for.
+        let wide = format!("@[{}](user:{ADA})", "é".repeat(MENTION_NAME_MAX));
+        assert_eq!(mentions(&wide).len(), 1);
+        let unclosed = format!("{}@[Ada](user:{ADA})", "@[".repeat(8_000));
+        assert_eq!(mentions(&unclosed).len(), 1);
         // A broken token does not hide the next one.
         let body = format!("@[Ada\n @[Ada](user:{ADA})");
         assert_eq!(mentions(&body).len(), 1);

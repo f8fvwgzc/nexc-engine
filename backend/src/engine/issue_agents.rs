@@ -4,18 +4,19 @@
 
 use uuid::Uuid;
 
-use super::{editor, planner};
+use super::{credentials, editor, guardrails, planner};
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::graph::{GRAPH_NAME_MAX, GRAPH_TEXT_MAX};
 use crate::domain::issue::{AGENT_ASKED_TO_PLAN, Issue, mention_plan_instructions};
-use crate::repo;
 use crate::repo::issues::MentionedAgent;
+use crate::repo::{self, OrNotFound};
 
 /// Gives the issue a graph that plans and executes it: a graph of the
 /// issue's team whose goal is the issue's title and description, linked to
 /// the issue. Graphs of a team are open to its members only, so only a
-/// member of the team can (403 otherwise). Returns the graph's id.
+/// member of the team can (403 otherwise). Returns the graph's id: the one
+/// the issue already has when another call linked one first.
 pub async fn create_graph(state: &AppState, actor: Uuid, issue: &Issue) -> Result<Uuid, AppError> {
     let home = editor::graph_home(state, actor, None, Some(issue.team_id))
         .await
@@ -33,6 +34,13 @@ pub async fn create_graph(state: &AppState, actor: Uuid, issue: &Issue) -> Resul
     };
     let goal: String = goal.chars().take(GRAPH_TEXT_MAX).collect();
     let mut tx = state.db.begin().await?;
+    // The issue stays locked until its graph is linked: two calls at once give it one graph.
+    if let Some(linked) = repo::issues::graph_id_for_update(&mut tx, issue.id)
+        .await
+        .or_not_found("issue")?
+    {
+        return Ok(linked);
+    }
     let graph = repo::graphs::create(
         &mut *tx,
         actor,
@@ -56,7 +64,8 @@ pub async fn create_graph(state: &AppState, actor: Uuid, issue: &Issue) -> Resul
 /// `agent` entry in the timeline says who asked. Returns false, asking
 /// nothing, when `actor` is not a member of the issue's team (only members
 /// plan a team's work) or when the graph already has a run or a plan under
-/// way.
+/// way. Fails, before the issue is given a graph, when no plan could start:
+/// no usable LLM key, or the workspace's guardrails refuse it.
 pub async fn ask_to_plan(
     state: &AppState,
     actor: Uuid,
@@ -70,6 +79,9 @@ pub async fn ask_to_plan(
     {
         return Ok(false);
     }
+    let workspace = Some(issue.workspace_id);
+    let llm = credentials::require(state, actor, workspace).await?;
+    guardrails::admit(state, workspace, actor, llm.target.provider).await?;
     let graph_id = match issue.graph_id {
         Some(id) => id,
         None => create_graph(state, actor, issue).await?,

@@ -5,6 +5,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use chrono::NaiveDate;
 use serde::{Deserialize, Deserializer};
+use std::time::Duration;
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
@@ -774,46 +775,45 @@ fn mentioned_users(mentions: &[Mention]) -> Vec<Uuid> {
         .collect()
 }
 
-/// The agents among `mentions` that belong to the issue's workspace and take
-/// work, in the order the comment names them. Others stay plain text.
-async fn mentioned_agents(
-    state: &AppState,
-    issue: &Issue,
-    mentions: &[Mention],
-) -> Result<Vec<MentionedAgent>, AppError> {
-    let ids: Vec<Uuid> = mentions
-        .iter()
-        .filter(|m| m.kind == MentionKind::Agent)
-        .map(|m| m.id)
-        .collect();
-    Ok(repo::issues::active_agents(&state.db, issue.workspace_id, &ids).await?)
-}
-
 /// What a comment's mentions do in its transaction: tells each member it
 /// newly mentions (returning them), and delegates an issue that has no agent
-/// yet to the first agent it mentions, with an `agent` timeline entry.
+/// yet to the first agent it mentions, with an `agent` timeline entry. Also
+/// returns the agents it mentions that belong to the issue's workspace and
+/// take work, in the order the comment names them; others stay plain text.
 async fn act_on_mentions(
     tx: &mut sqlx::PgConnection,
     issue: &Issue,
     actor: Uuid,
     mentions: &[Mention],
-    agents: &[MentionedAgent],
-) -> Result<Vec<Uuid>, AppError> {
+) -> Result<(Vec<Uuid>, Vec<MentionedAgent>), AppError> {
     let users = mentioned_users(mentions);
     let told = repo::issues::notify_mentioned(&mut *tx, issue.id, actor, &users).await?;
+    let ids: Vec<Uuid> = mentions
+        .iter()
+        .filter(|m| m.kind == MentionKind::Agent)
+        .map(|m| m.id)
+        .collect();
+    let agents = repo::issues::active_agents(&mut *tx, issue.workspace_id, &ids).await?;
     if issue.agent_id.is_none()
         && let Some(agent) = agents.first()
         && repo::issues::delegate(&mut *tx, issue.id, agent.id).await?
     {
         repo::issues::record_agent(&mut *tx, issue.id, actor, &agent.name, AGENT_DELEGATED).await?;
     }
-    Ok(told)
+    Ok((told, agents))
 }
+
+/// How long a comment's response waits for its mentioned agent to be asked
+/// for a plan. That takes a moment as a rule, so the timeline shows the entry
+/// with the comment; when it takes longer (the ontology service is slow, say)
+/// the comment is answered anyway and the ask carries on.
+const MENTION_ASK_WAIT: Duration = Duration::from_secs(2);
 
 /// After a comment that mentions agents is saved, asks one of them (the
 /// issue's own when the comment names it, else the first) for a plan, as the
-/// author ([`issue_agents::ask_to_plan`]). Best effort: the comment stands
-/// whatever happens here, and a failure is only logged.
+/// author ([`issue_agents::ask_to_plan`]), in a task of its own that the
+/// response waits for at most [`MENTION_ASK_WAIT`]. Best effort: the comment
+/// stands whatever happens there, and a failure is only logged.
 async fn ask_mentioned_agent(
     state: &AppState,
     actor: Uuid,
@@ -825,13 +825,19 @@ async fn ask_mentioned_agent(
         .iter()
         .find(|a| Some(a.id) == issue.agent_id)
         .or_else(|| agents.first())
+        .cloned()
     else {
         return;
     };
-    if let Err(err) = issue_agents::ask_to_plan(state, actor, issue, agent, comment).await {
-        tracing::warn!(issue = %issue.id, agent = %agent.id, error = %err,
-            "a mentioned agent could not be asked for a plan");
-    }
+    let (state, issue, comment) = (state.clone(), issue.clone(), comment.to_owned());
+    let ask = tokio::spawn(async move {
+        if let Err(err) = issue_agents::ask_to_plan(&state, actor, &issue, &agent, &comment).await {
+            tracing::warn!(issue = %issue.id, agent = %agent.id, error = %err,
+                "a mentioned agent could not be asked for a plan");
+        }
+    });
+    // Once the wait is over the task is let go, not stopped.
+    let _ = tokio::time::timeout(MENTION_ASK_WAIT, ask).await;
 }
 
 /// The timeline of an issue, oldest first: its comments, the changes to its
@@ -874,10 +880,9 @@ pub async fn create_comment(
     let issue = editable(&state, auth, iid).await?;
     let body = req.body.trim();
     let mentioned = mentions(body);
-    let agents = mentioned_agents(&state, &issue, &mentioned).await?;
     let mut tx = state.db.begin().await?;
     let id = repo::issues::add_comment(&mut *tx, issue.id, auth.id, body).await?;
-    let told = act_on_mentions(&mut tx, &issue, auth.id, &mentioned, &agents).await?;
+    let (told, agents) = act_on_mentions(&mut tx, &issue, auth.id, &mentioned).await?;
     let kind = NotificationKind::Comment;
     repo::issues::notify_watchers_except(&mut *tx, issue.id, auth.id, kind, &told).await?;
     tx.commit().await?;
@@ -914,15 +919,19 @@ pub async fn update_comment(
         ));
     }
     let body = req.body.trim();
-    let before = mentions(&comment.body);
+    let mut tx = state.db.begin().await?;
+    // Read under a lock: of two edits at the same moment, the second sees the
+    // first's text, so a mention they both add acts once.
+    let before = repo::issues::comment_body_for_update(&mut tx, cid)
+        .await
+        .or_not_found("comment")?;
+    let before = mentions(&before);
     let added: Vec<Mention> = mentions(body)
         .into_iter()
         .filter(|m| !before.contains(m))
         .collect();
-    let agents = mentioned_agents(&state, &issue, &added).await?;
-    let mut tx = state.db.begin().await?;
     repo::issues::edit_comment(&mut *tx, cid, body).await?;
-    act_on_mentions(&mut tx, &issue, auth.id, &added, &agents).await?;
+    let (_, agents) = act_on_mentions(&mut tx, &issue, auth.id, &added).await?;
     tx.commit().await?;
     ask_mentioned_agent(&state, auth.id, &issue, &agents, body).await;
     Ok(Json(
