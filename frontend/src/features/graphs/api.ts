@@ -21,6 +21,22 @@ export const graphsQuery = (workspaceId?: string) =>
       ),
   });
 
+/**
+ * The `limit` most recently updated graphs of a workspace (the sidebar's), read as such rather
+ * than cut from every graph. Under the workspace's list key, so whatever refreshes the graph
+ * lists refreshes these.
+ */
+export const recentGraphsQuery = (workspaceId: string | undefined, limit: number) =>
+  queryOptions({
+    queryKey: [...qk.graphs.list(workspaceId), 'recent', limit] as const,
+    staleTime: FRESH.list,
+    queryFn: ({ signal }) =>
+      apiRequest('/graphs', z.array(graphSummarySchema), {
+        signal,
+        query: { workspace_id: workspaceId, limit },
+      }),
+  });
+
 export const graphQuery = (graphId: string) =>
   queryOptions({
     queryKey: qk.graphs.detail(graphId),

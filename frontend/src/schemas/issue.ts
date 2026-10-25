@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { idSchema, timestampSchema } from './common';
 import { alertKindSchema, approvalStatusSchema, severitySchema } from './policy';
+import { runStatusSchema } from './run';
 
 export const stateCategorySchema = z.enum([
   'backlog',
@@ -63,6 +64,19 @@ export const issueSchema = z.object({
   completed_at: timestampSchema.nullable(),
 });
 export type Issue = z.infer<typeof issueSchema>;
+
+/**
+ * An issue as lists carry it (`GET /workspaces/{wid}/issues`, search): every field but the
+ * description, which only `GET /issues/{iid}` returns, plus the status of the latest run of the
+ * issue's graph (null without a graph or runs).
+ */
+export const issueSummarySchema = issueSchema.omit({ description: true }).extend({
+  run_status: runStatusSchema.nullable(),
+});
+export type IssueSummary = z.infer<typeof issueSummarySchema>;
+
+/** `GET /workspaces/{wid}/inbox/unread-count`: unread notifications, at most 1,000. */
+export const unreadCountSchema = z.object({ count: z.number().int().nonnegative() });
 
 export const issueEventKindSchema = z.enum([
   'comment',

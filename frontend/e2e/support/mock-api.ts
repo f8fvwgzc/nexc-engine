@@ -91,7 +91,7 @@ const handlers: [string, Handler][] = [
   ['GET /workspaces/:wid/transfers', ({ mode }) => list(mode, fixtures.transfers)],
 
   /* issues */
-  ['GET /workspaces/:wid/issues', ({ mode, url }) => list(mode, filterIssues(url))],
+  ['GET /workspaces/:wid/issues', ({ mode, url }) => list(mode, filterIssues(url).map(summary))],
   ['GET /workspaces/:wid/labels', ({ mode }) => list(mode, fixtures.labels)],
   [
     'GET /workspaces/:wid/projects',
@@ -104,6 +104,10 @@ const handlers: [string, Handler][] = [
     },
   ],
   ['GET /workspaces/:wid/inbox', ({ mode }) => list(mode, fixtures.inbox)],
+  [
+    'GET /workspaces/:wid/inbox/unread-count',
+    ({ mode }) => ({ count: list(mode, fixtures.inbox).filter((n) => n.read_at === null).length }),
+  ],
   ['GET /issues/:iid/events', ({ mode }) => list(mode, fixtures.issueEvents)],
   ['GET /issues/:iid/run-artifacts', ({ mode }) => list(mode, fixtures.runArtifacts)],
   ['GET /issues/:iid', ({ params }) => fixtures.issues.find((i) => i.id === params.iid)],
@@ -125,7 +129,19 @@ const handlers: [string, Handler][] = [
   ],
 
   /* graphs and runs */
-  ['GET /graphs', ({ mode }) => list(mode, fixtures.graphs)],
+  [
+    'GET /graphs',
+    ({ mode, url }) => {
+      // `limit`: the most recently updated first, as the server answers the sidebar.
+      const limit = Number(url.searchParams.get('limit') ?? 0);
+      const graphs = limit
+        ? [...fixtures.graphs]
+            .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+            .slice(0, limit)
+        : fixtures.graphs;
+      return list(mode, graphs);
+    },
+  ],
   ['GET /graphs/:gid', ({ mode, params }) => (mode === 'full' ? graphById(params.gid) : undefined)],
   [
     'GET /graphs/:gid/runs',
@@ -133,6 +149,17 @@ const handlers: [string, Handler][] = [
       list(
         mode,
         fixtures.runs.filter((r) => r.graph_id === params.gid),
+      ),
+  ],
+  [
+    'GET /workspaces/:wid/runs',
+    ({ mode }) =>
+      list(
+        mode,
+        fixtures.runs.map((r) => ({
+          ...r,
+          graph_name: fixtures.graphs.find((g) => g.id === r.graph_id)?.name ?? 'Graph',
+        })),
       ),
   ],
   ['GET /graphs/:gid/suggestions', () => []],
@@ -239,6 +266,12 @@ function filterIssues(url: URL) {
       (!q.get('label_id') || i.labels.some((l) => l.id === q.get('label_id'))) &&
       (q.get('open') !== 'true' || !['completed', 'canceled'].includes(i.state.category)),
   );
+}
+
+/** An issue as lists carry it (`IssueSummary`): without its description. */
+function summary(issue: (typeof fixtures.issues)[number]) {
+  const { description: _description, ...rest } = issue;
+  return rest;
 }
 
 function filterArtifactFiles(url: URL) {

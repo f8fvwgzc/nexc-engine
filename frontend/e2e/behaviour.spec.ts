@@ -50,15 +50,17 @@ test.describe('the Runs page', () => {
     const status = page.locator('tr', { hasText: live.id.slice(0, 8) }).getByRole('status');
     await expect(status).toHaveAccessibleName('Running');
 
-    // The run finishes; nothing on this page holds the graph's event stream.
+    // The run finishes; nothing on this page holds the graph's event stream. The page reads the
+    // workspace's runs in one request, polled while one of them is live.
     const finished = { ...live, status: 'succeeded', finished_at: '2026-10-14T12:00:05Z' };
     await page.route(
-      (url) => url.pathname === `${API}/graphs/${live.graph_id}/runs`,
+      (url) => /^\/api\/v1\/workspaces\/[^/]+\/runs$/.test(url.pathname),
       (r) =>
         r.fulfill({
-          json: fixtures.runs
-            .filter((run) => run.graph_id === live.graph_id)
-            .map((run) => (run.id === live.id ? finished : run)),
+          json: fixtures.runs.map((run) => ({
+            ...(run.id === live.id ? finished : run),
+            graph_name: fixtures.graphs.find((g) => g.id === run.graph_id)?.name ?? 'Graph',
+          })),
         }),
     );
     await page.clock.fastForward('00:11');

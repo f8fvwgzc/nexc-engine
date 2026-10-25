@@ -46,6 +46,8 @@ export const qk = {
     artifacts: (runId: string) => [...qk.runs.all, runId, 'artifacts'] as const,
     trace: (runId: string) => [...qk.runs.all, runId, 'trace'] as const,
     verify: (runId: string) => [...qk.runs.all, runId, 'trace', 'verify'] as const,
+    /** The latest runs across a workspace's graphs (the Runs page). */
+    workspace: (workspaceId: string) => [...qk.runs.all, 'workspace', workspaceId] as const,
   },
   issues: {
     all: ['issues'] as const,
@@ -64,6 +66,8 @@ export const qk = {
     labels: (workspaceId: string) => ['issues', workspaceId, 'labels'] as const,
     one: (issueId: string) => ['issues', 'detail', issueId] as const,
     inbox: (workspaceId: string) => ['issues', workspaceId, 'inbox'] as const,
+    /** Under the inbox's key, so whatever refreshes the inbox refreshes the count too. */
+    unread: (workspaceId: string) => ['issues', workspaceId, 'inbox', 'unread'] as const,
   },
   /** Artifact folders and files: not copied to browser storage, so file contents stay on the server. */
   artifacts: {

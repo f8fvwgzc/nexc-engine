@@ -5,7 +5,7 @@ import type { Issue } from '@/schemas/issue';
 import { dueLabel, localToday } from './due';
 
 /** When an issue is due; red once that day has passed and the work is still open. */
-export function DueChip({ issue }: { issue: Issue }) {
+export function DueChip({ issue }: { issue: Pick<Issue, 'due_date' | 'state'> }) {
   if (!issue.due_date) return null;
   const open = !['completed', 'canceled'].includes(issue.state.category);
   const { text, late } = dueLabel(issue.due_date, localToday(), open);

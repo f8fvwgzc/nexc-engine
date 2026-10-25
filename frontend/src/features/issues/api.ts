@@ -9,9 +9,11 @@ import {
   issueEventSchema,
   issueSchema,
   issueStateSchema,
+  issueSummarySchema,
   labelSchema,
   notificationSchema,
   projectSchema,
+  unreadCountSchema,
   type IssueInput,
   type ProjectStatus,
   type StateCategory,
@@ -29,16 +31,22 @@ export interface IssueFilter {
   creator_id?: string;
   open?: boolean;
   q?: string;
+  /** At most this many (1-500; the server's default is 200). */
+  limit?: number;
 }
 
-/** Issues of a workspace in the teams the caller can see. */
+/**
+ * Issues of a workspace in the teams the caller can see, without their descriptions
+ * (`IssueSummary`): `issueQuery` reads one issue whole.
+ */
 export const issuesQuery = (workspaceId: string, filter: IssueFilter = {}) =>
   queryOptions({
     queryKey: qk.issues.list(workspaceId, filter),
     staleTime: FRESH.list,
     queryFn: ({ signal }) =>
-      apiRequest(`/workspaces/${workspaceId}/issues`, z.array(issueSchema), {
+      apiRequest(`/workspaces/${workspaceId}/issues`, z.array(issueSummarySchema), {
         query: {
+          limit: filter.limit,
           team_id: filter.team_id,
           project_id: filter.project_id,
           label_id: filter.label_id,
@@ -131,6 +139,24 @@ export const inboxQuery = (workspaceId: string) =>
     staleTime: FRESH.live,
     queryFn: ({ signal }) =>
       apiRequest(`/workspaces/${workspaceId}/inbox`, z.array(notificationSchema), { signal }),
+    refetchInterval: 60_000,
+  });
+
+/**
+ * How many of the caller's notifications in a workspace are unread (at most 1,000), for the
+ * sidebar's badge: a count, not the inbox. Checked again every minute; marking read and issue
+ * edits refresh it with the inbox (it lives under the same `issues` root).
+ */
+export const unreadCountQuery = (workspaceId: string) =>
+  queryOptions({
+    queryKey: qk.issues.unread(workspaceId),
+    staleTime: FRESH.live,
+    queryFn: async ({ signal }) =>
+      (
+        await apiRequest(`/workspaces/${workspaceId}/inbox/unread-count`, unreadCountSchema, {
+          signal,
+        })
+      ).count,
     refetchInterval: 60_000,
   });
 

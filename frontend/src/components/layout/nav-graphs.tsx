@@ -12,7 +12,7 @@ import {
   SidebarMenuSkeleton,
 } from '@/components/ui/sidebar';
 import { routeModules } from '@/app/route-modules';
-import { graphQuery, graphsQuery } from '@/features/graphs/api';
+import { graphQuery, recentGraphsQuery } from '@/features/graphs/api';
 import { useWorkspaceId } from '@/features/workspaces/use-current-workspace';
 
 const MAX_GRAPHS = 8;
@@ -22,10 +22,10 @@ export function NavGraphs() {
   const queryClient = useQueryClient();
   const { graphId: activeId } = useParams();
   const workspaceId = useWorkspaceId();
+  // Only the eight it shows, newest first, from the server: not every graph of the workspace.
   const { data: graphs, isPending } = useQuery({
-    ...graphsQuery(workspaceId),
-    select: (list) =>
-      [...list].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, MAX_GRAPHS),
+    ...recentGraphsQuery(workspaceId, MAX_GRAPHS),
+    enabled: !!workspaceId,
   });
 
   const prefetch = (graphId: string) => {
