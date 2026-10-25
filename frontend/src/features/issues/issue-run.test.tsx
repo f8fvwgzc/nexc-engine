@@ -75,6 +75,8 @@ const report = (over: Partial<IssueEvent> = {}): IssueEvent => ({
   created_at: '2026-10-20T09:00:00Z',
   edited_at: null,
   run_id: RUN,
+  reactions: [],
+  parent_id: null,
   ...over,
 });
 

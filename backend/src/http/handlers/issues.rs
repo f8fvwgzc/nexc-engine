@@ -18,8 +18,9 @@ use crate::domain::issue::{
     AGENT_DELEGATED, COMMENT_MAX_BYTES, COMMENT_MENTIONS_MAX, DESCRIPTION_MAX_BYTES,
     ISSUE_LABELS_MAX, Issue, IssueEvent, IssueEventKind, IssuePerson, IssueState, IssueSummary,
     LABEL_NAME_MAX, LABELS_MAX, Label, Mention, MentionKind, Notification, NotificationKind,
-    PRIORITY_MAX, Project, ProjectStatus, STATE_NAME_MAX, STATES_MAX, StateCategory, TITLE_MAX,
-    UNREAD_MAX, UnreadCount, changes, github_url, is_hex_color, mentions,
+    PRIORITY_MAX, Project, ProjectStatus, REACTION_EMOJI, Reaction, STATE_NAME_MAX, STATES_MAX,
+    StateCategory, TITLE_MAX, UNREAD_MAX, UnreadCount, changes, github_url, is_hex_color, mentions,
+    reaction_emoji,
 };
 use crate::domain::validation::{FieldErrors, Validate, check_text, search_text};
 use crate::domain::workspace::TeamAccess;
@@ -752,7 +753,18 @@ pub async fn delete_label(
 
 // ---------- timeline ----------
 
-/// `POST /issues/{iid}/comments` and `PATCH /issues/{iid}/comments/{cid}` body.
+/// `POST /issues/{iid}/comments` body.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NewComment {
+    /// Markdown, 1 byte to 16 KiB. `@[Name](user:<uuid>)` mentions a member and
+    /// `@[Name](agent:<uuid>)` an agent of the workspace, at most 20 of them.
+    pub body: String,
+    /// The comment this one replies to: a top-level comment of the same issue.
+    pub parent_id: Option<Uuid>,
+}
+
+/// `PATCH /issues/{iid}/comments/{cid}` body.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CommentBody {
@@ -761,15 +773,48 @@ pub struct CommentBody {
     pub body: String,
 }
 
+fn check_comment(errors: &mut FieldErrors, body: &str) {
+    if body.trim().is_empty() {
+        errors.add("body", "must not be empty");
+    } else if body.len() > COMMENT_MAX_BYTES {
+        errors.add("body", "must be at most 16 KiB");
+    } else if mentions(body).len() > COMMENT_MENTIONS_MAX {
+        errors.add("body", "mentions at most 20 people and agents");
+    }
+}
+
+impl Validate for NewComment {
+    fn validate(&self, errors: &mut FieldErrors) {
+        check_comment(errors, &self.body);
+    }
+}
+
 impl Validate for CommentBody {
     fn validate(&self, errors: &mut FieldErrors) {
-        if self.body.trim().is_empty() {
-            errors.add("body", "must not be empty");
-        } else if self.body.len() > COMMENT_MAX_BYTES {
-            errors.add("body", "must be at most 16 KiB");
-        } else if mentions(&self.body).len() > COMMENT_MENTIONS_MAX {
-            errors.add("body", "mentions at most 20 people and agents");
+        check_comment(errors, &self.body);
+    }
+}
+
+/// The author of the comment a reply answers, which must be a top-level
+/// comment of the issue; it is kept from being deleted until the reply is
+/// saved. `None` once the author's account is gone.
+async fn replied_to(
+    tx: &mut sqlx::PgConnection,
+    issue_id: Uuid,
+    parent_id: Uuid,
+) -> Result<Option<Uuid>, AppError> {
+    match repo::issues::event_for_share(tx, issue_id, parent_id).await? {
+        Some(parent) if parent.kind == IssueEventKind::Comment && parent.parent_id.is_none() => {
+            Ok(parent.actor_id)
         }
+        Some(_) => Err(AppError::field(
+            "parent_id",
+            "a reply answers a top-level comment, not a reply or a change",
+        )),
+        None => Err(AppError::field(
+            "parent_id",
+            "unknown comment on this issue",
+        )),
     }
 }
 
@@ -847,9 +892,10 @@ async fn ask_mentioned_agent(
     let _ = tokio::time::timeout(MENTION_ASK_WAIT, ask).await;
 }
 
-/// The timeline of an issue, oldest first: its comments, the changes to its
-/// state, priority, assignee, title, due date and GitHub link, what happened
-/// to its files, and what its runs reported.
+/// The timeline of an issue, oldest first: its comments and their replies,
+/// the changes to its state, priority, assignee, title, due date and GitHub
+/// link, what happened to its files, and what its runs reported; comments
+/// and run reports with their reactions.
 #[utoipa::path(get, path = "/issues/{iid}/events", tag = "issues", security(("bearer" = [])),
     params(("iid" = Uuid, Path, description = "Issue id")),
     responses((status = 200, body = [IssueEvent]), (status = 404, body = Problem)))]
@@ -861,40 +907,54 @@ pub async fn events(
     let issue = repo::issues::find(&state.db, auth.id, iid)
         .await
         .or_not_found("issue")?;
-    Ok(Json(repo::issues::events(&state.db, issue.id).await?))
+    Ok(Json(
+        repo::issues::events(&state.db, auth.id, issue.id).await?,
+    ))
 }
 
-/// Comments on an issue. Whoever may edit the issue may comment on it.
+/// Comments on an issue, or replies to one of its comments. Whoever may edit
+/// the issue may comment on it.
 ///
 /// Each member the comment mentions who can see the issue hears of it in
 /// their inbox (`mention`), in place of the `comment` entry the assignee and
-/// the creator get. The first active agent it mentions is delegated an issue
-/// that has none; then, when the author is a member of the issue's team and
-/// the issue's graph is idle, one mentioned agent is asked for a plan (the
-/// issue gets its graph if it has none). The plan waits to be applied like
-/// any other: nothing runs by itself. Both show in the timeline as `agent`
-/// entries.
+/// the creator get; a reply also tells the author of the comment it answers
+/// (`comment`, once, whether or not they watch the issue). The first active
+/// agent it mentions is delegated an issue that has none; then, when the
+/// author is a member of the issue's team and the issue's graph is idle, one
+/// mentioned agent is asked for a plan (the issue gets its graph if it has
+/// none). The plan waits to be applied like any other: nothing runs by
+/// itself. Both show in the timeline as `agent` entries.
 #[utoipa::path(post, path = "/issues/{iid}/comments", tag = "issues", security(("bearer" = [])),
-    params(("iid" = Uuid, Path, description = "Issue id")), request_body = CommentBody,
+    params(("iid" = Uuid, Path, description = "Issue id")), request_body = NewComment,
     responses((status = 201, body = IssueEvent), (status = 403, body = Problem), (status = 404, body = Problem),
-        (status = 422, body = Problem)))]
+        (status = 422, description = "Invalid fields, or `parent_id` is not a top-level comment of the issue", body = Problem)))]
 pub async fn create_comment(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(iid): Path<Uuid>,
-    ValidatedJson(req): ValidatedJson<CommentBody>,
+    ValidatedJson(req): ValidatedJson<NewComment>,
 ) -> Result<(StatusCode, Json<IssueEvent>), AppError> {
     let issue = editable(&state, auth, iid).await?;
     let body = req.body.trim();
     let mentioned = mentions(body);
     let mut tx = state.db.begin().await?;
-    let id = repo::issues::add_comment(&mut *tx, issue.id, auth.id, body).await?;
+    let parent_author = match req.parent_id {
+        Some(parent) => replied_to(&mut tx, issue.id, parent).await?,
+        None => None,
+    };
+    let id = repo::issues::add_comment(&mut *tx, issue.id, auth.id, body, req.parent_id).await?;
     let (told, agents) = act_on_mentions(&mut tx, &issue, auth.id, &mentioned).await?;
     let kind = NotificationKind::Comment;
-    repo::issues::notify_watchers_except(&mut *tx, issue.id, auth.id, kind, &told).await?;
+    // The author of the comment replied to hears once, below, not as a watcher too.
+    let mut except = told.clone();
+    except.extend(parent_author);
+    repo::issues::notify_watchers_except(&mut *tx, issue.id, auth.id, kind, &except).await?;
+    if let Some(author) = parent_author.filter(|a| !told.contains(a)) {
+        repo::issues::notify_members(&mut *tx, issue.id, auth.id, &[author], kind).await?;
+    }
     tx.commit().await?;
     ask_mentioned_agent(&state, auth.id, &issue, &agents, body).await;
-    let comment = repo::issues::find_comment(&state.db, issue.id, id)
+    let comment = repo::issues::find_comment(&state.db, auth.id, issue.id, id)
         .await
         .or_not_found("comment")?;
     Ok((StatusCode::CREATED, Json(comment)))
@@ -917,7 +977,7 @@ pub async fn update_comment(
     ValidatedJson(req): ValidatedJson<CommentBody>,
 ) -> Result<Json<IssueEvent>, AppError> {
     let issue = editable(&state, auth, iid).await?;
-    let comment = repo::issues::find_comment(&state.db, issue.id, cid)
+    let comment = repo::issues::find_comment(&state.db, auth.id, issue.id, cid)
         .await
         .or_not_found("comment")?;
     if comment.actor.as_ref().map(|a| a.user_id) != Some(auth.id) {
@@ -942,13 +1002,14 @@ pub async fn update_comment(
     tx.commit().await?;
     ask_mentioned_agent(&state, auth.id, &issue, &agents, body).await;
     Ok(Json(
-        repo::issues::find_comment(&state.db, issue.id, cid)
+        repo::issues::find_comment(&state.db, auth.id, issue.id, cid)
             .await
             .or_not_found("comment")?,
     ))
 }
 
-/// Deletes a comment: its author, or whoever manages the team.
+/// Deletes a comment, with its replies: its author, or whoever manages the
+/// team.
 #[utoipa::path(delete, path = "/issues/{iid}/comments/{cid}", tag = "issues", security(("bearer" = [])),
     params(("iid" = Uuid, Path, description = "Issue id"), ("cid" = Uuid, Path, description = "Comment id")),
     responses((status = 204, description = "Deleted"), (status = 403, body = Problem), (status = 404, body = Problem)))]
@@ -961,7 +1022,7 @@ pub async fn delete_comment(
         .await
         .or_not_found("issue")?;
     let (_, access) = visible_team(&state, auth, issue.workspace_id, issue.team_id).await?;
-    let comment = repo::issues::find_comment(&state.db, issue.id, cid)
+    let comment = repo::issues::find_comment(&state.db, auth.id, issue.id, cid)
         .await
         .or_not_found("comment")?;
     let own = comment.actor.as_ref().map(|a| a.user_id) == Some(auth.id);
@@ -972,6 +1033,122 @@ pub async fn delete_comment(
     }
     repo::issues::delete_comment(&state.db, cid).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------- reactions ----------
+
+/// `POST /issues/{iid}/events/{eid}/reactions` body.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReactionBody {
+    /// One of 👍 👎 😄 🎉 😕 ❤️ 🚀 👀 🔥 ✅.
+    pub emoji: String,
+}
+
+/// Query of `DELETE /issues/{iid}/events/{eid}/reactions`.
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+pub struct ReactionQuery {
+    /// The emoji to take back: one of 👍 👎 😄 🎉 😕 ❤️ 🚀 👀 🔥 ✅.
+    pub emoji: String,
+}
+
+/// Why an emoji is not a reaction (the message of the `emoji` field error).
+fn not_a_reaction() -> String {
+    format!("must be one of {}", REACTION_EMOJI.join(" "))
+}
+
+/// The emoji of [`REACTION_EMOJI`] that `raw` is.
+fn reaction(raw: &str) -> Result<&'static str, AppError> {
+    reaction_emoji(raw).ok_or_else(|| AppError::field("emoji", not_a_reaction()))
+}
+
+impl Validate for ReactionBody {
+    fn validate(&self, errors: &mut FieldErrors) {
+        if reaction_emoji(&self.emoji).is_none() {
+            errors.add("emoji", not_a_reaction());
+        }
+    }
+}
+
+/// Checks that `eid` is an entry of the issue (404) that takes reactions, a
+/// comment or a run report (422), and keeps it from being deleted until the
+/// transaction ends.
+async fn reactable(tx: &mut sqlx::PgConnection, issue_id: Uuid, eid: Uuid) -> Result<(), AppError> {
+    let event = repo::issues::event_for_share(tx, issue_id, eid)
+        .await
+        .or_not_found("timeline entry")?;
+    if !event.kind.takes_reactions() {
+        return Err(AppError::Unprocessable(
+            "only comments and run reports take reactions".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// An entry's reactions as the caller reads them.
+async fn reactions_of(
+    state: &AppState,
+    auth: AuthUser,
+    issue_id: Uuid,
+    eid: Uuid,
+) -> Result<Json<Vec<Reaction>>, AppError> {
+    let event = repo::issues::find_event(&state.db, auth.id, issue_id, eid)
+        .await
+        .or_not_found("timeline entry")?;
+    Ok(Json(event.reactions))
+}
+
+/// Reacts to a comment or a run report with an emoji; giving the same emoji
+/// again changes nothing. Whoever may comment on the issue may react.
+///
+/// The comment's author hears of it in their inbox (`reaction`, with the
+/// emoji): never of their own, and once a day for the same emoji from the
+/// same person on the issue, however often it is taken back and given again.
+#[utoipa::path(post, path = "/issues/{iid}/events/{eid}/reactions", tag = "issues", security(("bearer" = [])),
+    params(("iid" = Uuid, Path, description = "Issue id"), ("eid" = Uuid, Path, description = "Timeline entry id")),
+    request_body = ReactionBody,
+    responses((status = 200, description = "The entry's reactions", body = [Reaction]),
+        (status = 403, body = Problem), (status = 404, body = Problem),
+        (status = 422, description = "An emoji not on the list, or an entry that is not a comment or a run report", body = Problem)))]
+pub async fn add_reaction(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((iid, eid)): Path<(Uuid, Uuid)>,
+    ValidatedJson(req): ValidatedJson<ReactionBody>,
+) -> Result<Json<Vec<Reaction>>, AppError> {
+    let issue = editable(&state, auth, iid).await?;
+    let emoji = reaction(&req.emoji)?;
+    let mut tx = state.db.begin().await?;
+    reactable(&mut tx, issue.id, eid).await?;
+    if repo::issues::add_reaction(&mut *tx, eid, auth.id, emoji).await? {
+        repo::issues::notify_reaction(&mut *tx, eid, auth.id, emoji).await?;
+    }
+    tx.commit().await?;
+    reactions_of(&state, auth, issue.id, eid).await
+}
+
+/// Takes the caller's emoji back from a comment or a run report; one they
+/// never gave is no error. The inbox entry it gave stays.
+#[utoipa::path(delete, path = "/issues/{iid}/events/{eid}/reactions", tag = "issues", security(("bearer" = [])),
+    params(("iid" = Uuid, Path, description = "Issue id"), ("eid" = Uuid, Path, description = "Timeline entry id"),
+        ReactionQuery),
+    responses((status = 200, description = "The entry's reactions", body = [Reaction]),
+        (status = 403, body = Problem), (status = 404, body = Problem),
+        (status = 422, description = "An emoji not on the list, or an entry that is not a comment or a run report", body = Problem)))]
+pub async fn remove_reaction(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((iid, eid)): Path<(Uuid, Uuid)>,
+    Query(query): Query<ReactionQuery>,
+) -> Result<Json<Vec<Reaction>>, AppError> {
+    let issue = editable(&state, auth, iid).await?;
+    let emoji = reaction(&query.emoji)?;
+    let mut tx = state.db.begin().await?;
+    reactable(&mut tx, issue.id, eid).await?;
+    repo::issues::remove_reaction(&mut *tx, eid, auth.id, emoji).await?;
+    tx.commit().await?;
+    reactions_of(&state, auth, issue.id, eid).await
 }
 
 /// Gives the issue a graph that plans and executes it: a graph of the issue's

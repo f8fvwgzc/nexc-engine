@@ -32,6 +32,8 @@ interface Ctx {
   params: Record<string, string>;
   mode: DataMode;
   persona: Persona;
+  /** The request's JSON body, if it has one. */
+  body: unknown;
 }
 
 /** The JSON body to answer with; `undefined` answers 404, {@link PENDING} leaves the request open. */
@@ -109,6 +111,20 @@ const handlers: [string, Handler][] = [
     ({ mode }) => ({ count: list(mode, fixtures.inbox).filter((n) => n.read_at === null).length }),
   ],
   ['GET /issues/:iid/events', ({ mode }) => list(mode, fixtures.issueEvents)],
+  [
+    'POST /issues/:iid/comments',
+    ({ params, body, persona }) => postedComment(params.iid, body, persona),
+  ],
+  [
+    'POST /issues/:iid/events/:eid/reactions',
+    ({ params, body, persona }) =>
+      reactionsAfter(params.eid, (body as { emoji?: string } | null)?.emoji, true, persona),
+  ],
+  [
+    'DELETE /issues/:iid/events/:eid/reactions',
+    ({ params, url, persona }) =>
+      reactionsAfter(params.eid, url.searchParams.get('emoji'), false, persona),
+  ],
   ['GET /issues/:iid/run-artifacts', ({ mode }) => list(mode, fixtures.runArtifacts)],
   ['GET /issues/:iid', ({ params }) => fixtures.issues.find((i) => i.id === params.iid)],
 
@@ -253,6 +269,51 @@ const handlers: [string, Handler][] = [
   ],
 ];
 
+const signedIn = (persona: Persona) => {
+  const { id, name } = persona === 'admin' ? fixtures.auth.admin : fixtures.auth.user;
+  return { user_id: id, name };
+};
+
+/** A comment, or a reply (`parent_id`), as the server answers its creation: by the reader, now. */
+function postedComment(issueId: string | undefined, body: unknown, persona: Persona) {
+  const sent = (body ?? {}) as { body?: string; parent_id?: string };
+  return {
+    id: crypto.randomUUID(),
+    issue_id: issueId,
+    kind: 'comment',
+    actor: signedIn(persona),
+    body: sent.body ?? '',
+    from: null,
+    to: null,
+    created_at: new Date().toISOString(),
+    edited_at: null,
+    run_id: null,
+    parent_id: sent.parent_id ?? null,
+    reactions: [],
+  };
+}
+
+/** An entry's reactions once the reader reacted with `emoji` (`on`) or took it back. */
+function reactionsAfter(
+  eventId: string | undefined,
+  emoji: string | null | undefined,
+  on: boolean,
+  persona: Persona,
+) {
+  const event = fixtures.issueEvents.find((e) => e.id === eventId);
+  if (!event || !emoji) return undefined;
+  const me = signedIn(persona);
+  const others = (users: { user_id: string; name: string }[]) =>
+    users.filter((u) => u.user_id !== me.user_id);
+  const found = event.reactions.find((r) => r.emoji === emoji);
+  const rest = event.reactions.filter((r) => r.emoji !== emoji);
+  const named = found ? others(found.users) : [];
+  const count = (found?.count ?? 0) - (found?.reacted ? 1 : 0) + (on ? 1 : 0);
+  if (count === 0) return rest;
+  const users = on ? [me, ...named] : named;
+  return [...rest, { emoji, count, reacted: on, users }];
+}
+
 function filterIssues(url: URL) {
   const q = url.searchParams;
   return fixtures.issues.filter(
@@ -383,6 +444,7 @@ export async function mockApi(page: Page, options: MockOptions): Promise<MockLog
           params,
           mode: options.mode,
           persona: options.persona ?? 'member',
+          body: request.postData() ? (request.postDataJSON() as unknown) : undefined,
         });
         // A live stream stays open: the request is never answered.
         if (reply === PENDING) return;

@@ -85,7 +85,7 @@ pub const STARTER_STATES: [(&str, StateCategory, &str); 6] = [
 ];
 
 /// Someone an issue refers to.
-#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct IssuePerson {
     pub user_id: Uuid,
     pub name: String,
@@ -318,6 +318,39 @@ string_enum!(
     }
 );
 
+impl IssueEventKind {
+    /// Whether people may react to an entry of this kind: comments and run reports.
+    pub fn takes_reactions(self) -> bool {
+        matches!(self, IssueEventKind::Comment | IssueEventKind::Run)
+    }
+}
+
+/// The emoji people may react with, in the order a picker shows them.
+pub const REACTION_EMOJI: [&str; 10] = ["👍", "👎", "😄", "🎉", "😕", "❤️", "🚀", "👀", "🔥", "✅"];
+/// Most people a reaction names, newest first; `count` has them all.
+pub const REACTION_USERS_MAX: usize = 10;
+
+/// The emoji of [`REACTION_EMOJI`] that `raw` is, surrounding spaces aside;
+/// a heart without its emoji presentation selector is the same heart.
+pub fn reaction_emoji(raw: &str) -> Option<&'static str> {
+    let raw = raw.trim();
+    let raw = if raw == "\u{2764}" { "❤️" } else { raw };
+    REACTION_EMOJI.into_iter().find(|emoji| *emoji == raw)
+}
+
+/// One emoji given to a comment or a run report: how many gave it, whether
+/// the reader did, and who, newest first.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct Reaction {
+    /// One of 👍 👎 😄 🎉 😕 ❤️ 🚀 👀 🔥 ✅.
+    pub emoji: String,
+    pub count: i64,
+    /// Whether the reader is one of them.
+    pub reacted: bool,
+    /// Up to 10 of them, newest first.
+    pub users: Vec<IssuePerson>,
+}
+
 /// One entry of an issue's timeline: a comment, or a change to the issue.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct IssueEvent {
@@ -342,6 +375,12 @@ pub struct IssueEvent {
     /// The run a `run` entry reports; `null` for other entries and once the run is deleted.
     #[schema(required = true)]
     pub run_id: Option<Uuid>,
+    /// The top-level comment a reply answers; `null` for every other entry.
+    #[schema(required = true)]
+    pub parent_id: Option<Uuid>,
+    /// The emoji given to a comment or a run report, each once, in the order
+    /// they were first given; empty for other entries.
+    pub reactions: Vec<Reaction>,
 }
 
 /// A change to record in an issue's timeline.
@@ -465,6 +504,8 @@ string_enum!(
         Run => "run",
         /// Someone mentioned the member in a comment on the issue.
         Mention => "mention",
+        /// Someone reacted to the member's comment on the issue (`emoji` says with what).
+        Reaction => "reaction",
     }
 );
 
@@ -511,8 +552,8 @@ pub struct NotificationAlert {
 pub struct Notification {
     pub id: Uuid,
     pub kind: NotificationKind,
-    /// The issue (`assigned`, `comment`, `state`, `due`, `run`, `mention`); `null` for the other
-    /// kinds.
+    /// The issue (`assigned`, `comment`, `state`, `due`, `run`, `mention`, `reaction`); `null` for
+    /// the other kinds.
     #[schema(required = true)]
     pub issue: Option<NotificationIssue>,
     /// The approval to decide (`approval`); `null` for the other kinds.
@@ -524,6 +565,9 @@ pub struct Notification {
     /// Who assigned, commented or moved the issue; `null` once the account is gone.
     #[schema(required = true)]
     pub actor: Option<IssuePerson>,
+    /// What the actor reacted with (`reaction`); `null` for the other kinds.
+    #[schema(required = true)]
+    pub emoji: Option<String>,
     pub created_at: DateTime<Utc>,
     #[schema(required = true)]
     pub read_at: Option<DateTime<Utc>>,
@@ -874,6 +918,26 @@ mod tests {
             }]
         );
         assert!(changes(&issue(Some(link)), &issue(Some(link))).is_empty());
+    }
+
+    #[test]
+    fn only_the_listed_emoji_are_reactions() {
+        for emoji in REACTION_EMOJI {
+            assert_eq!(reaction_emoji(emoji), Some(emoji));
+        }
+        assert_eq!(reaction_emoji(" 🎉 "), Some("🎉"));
+        assert_eq!(reaction_emoji("\u{2764}"), Some("❤️"));
+        for other in ["", " ", "🙂", "👍🏽", "🎉🎉", ":tada:", "\u{0}", "❤️ ❤️"] {
+            assert_eq!(reaction_emoji(other), None, "{other}");
+        }
+        assert!(IssueEventKind::Comment.takes_reactions() && IssueEventKind::Run.takes_reactions());
+        for kind in [
+            IssueEventKind::State,
+            IssueEventKind::Artifact,
+            IssueEventKind::Agent,
+        ] {
+            assert!(!kind.takes_reactions(), "{kind:?}");
+        }
     }
 
     #[test]

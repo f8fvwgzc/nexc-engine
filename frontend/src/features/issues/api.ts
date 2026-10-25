@@ -13,6 +13,7 @@ import {
   labelSchema,
   notificationSchema,
   projectSchema,
+  reactionSchema,
   unreadCountSchema,
   type IssueInput,
   type ProjectStatus,
@@ -222,10 +223,11 @@ export const issueEventsQuery = (issueId: string) =>
       apiRequest(`/issues/${issueId}/events`, z.array(issueEventSchema), { signal }),
   });
 
-export function createComment(issueId: string, body: string) {
+/** Comments on the issue; with `parentId`, replies to that comment in its thread. */
+export function createComment(issueId: string, body: string, parentId?: string) {
   return apiRequest(`/issues/${issueId}/comments`, issueEventSchema, {
     method: 'POST',
-    body: { body },
+    body: parentId ? { body, parent_id: parentId } : { body },
   });
 }
 
@@ -238,6 +240,22 @@ export function updateComment(issueId: string, commentId: string, body: string) 
 
 export function deleteComment(issueId: string, commentId: string) {
   return apiSend(`/issues/${issueId}/comments/${commentId}`, { method: 'DELETE' });
+}
+
+/** Reacts to a comment or a run report; answers with the entry's reactions. Twice is once. */
+export function addReaction(issueId: string, eventId: string, emoji: string) {
+  return apiRequest(`/issues/${issueId}/events/${eventId}/reactions`, z.array(reactionSchema), {
+    method: 'POST',
+    body: { emoji },
+  });
+}
+
+/** Takes the caller's reaction back; answers with the entry's reactions. */
+export function removeReaction(issueId: string, eventId: string, emoji: string) {
+  return apiRequest(`/issues/${issueId}/events/${eventId}/reactions`, z.array(reactionSchema), {
+    method: 'DELETE',
+    query: { emoji },
+  });
 }
 
 /** The projects of a workspace the caller can see, or only those one team owns. */

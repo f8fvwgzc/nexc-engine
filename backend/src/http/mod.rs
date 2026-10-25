@@ -208,6 +208,7 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(issues::mark_read))
         .routes(routes!(issues::create_comment))
         .routes(routes!(issues::update_comment, issues::delete_comment))
+        .routes(routes!(issues::add_reaction, issues::remove_reaction))
         .routes(routes!(issues::states, issues::create_state))
         .routes(routes!(issues::update_state, issues::delete_state))
         .routes(routes!(issues::projects, issues::create_project))

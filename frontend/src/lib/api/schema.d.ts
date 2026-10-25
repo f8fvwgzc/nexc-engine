@@ -1609,15 +1609,17 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Comments on an issue. Whoever may edit the issue may comment on it.
+         * Comments on an issue, or replies to one of its comments. Whoever may edit
+         *     the issue may comment on it.
          * @description Each member the comment mentions who can see the issue hears of it in
          *     their inbox (`mention`), in place of the `comment` entry the assignee and
-         *     the creator get. The first active agent it mentions is delegated an issue
-         *     that has none; then, when the author is a member of the issue's team and
-         *     the issue's graph is idle, one mentioned agent is asked for a plan (the
-         *     issue gets its graph if it has none). The plan waits to be applied like
-         *     any other: nothing runs by itself. Both show in the timeline as `agent`
-         *     entries.
+         *     the creator get; a reply also tells the author of the comment it answers
+         *     (`comment`, once, whether or not they watch the issue). The first active
+         *     agent it mentions is delegated an issue that has none; then, when the
+         *     author is a member of the issue's team and the issue's graph is idle, one
+         *     mentioned agent is asked for a plan (the issue gets its graph if it has
+         *     none). The plan waits to be applied like any other: nothing runs by
+         *     itself. Both show in the timeline as `agent` entries.
          */
         post: operations["create_comment"];
         delete?: never;
@@ -1636,7 +1638,10 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Deletes a comment: its author, or whoever manages the team. */
+        /**
+         * Deletes a comment, with its replies: its author, or whoever manages the
+         *     team.
+         */
         delete: operations["delete_comment"];
         options?: never;
         head?: never;
@@ -1657,14 +1662,42 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The timeline of an issue, oldest first: its comments, the changes to its
-         *     state, priority, assignee, title, due date and GitHub link, what happened
-         *     to its files, and what its runs reported.
+         * The timeline of an issue, oldest first: its comments and their replies,
+         *     the changes to its state, priority, assignee, title, due date and GitHub
+         *     link, what happened to its files, and what its runs reported; comments
+         *     and run reports with their reactions.
          */
         get: operations["events"];
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/issues/{iid}/events/{eid}/reactions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reacts to a comment or a run report with an emoji; giving the same emoji
+         *     again changes nothing. Whoever may comment on the issue may react.
+         * @description The comment's author hears of it in their inbox (`reaction`, with the
+         *     emoji): never of their own, and once a day for the same emoji from the
+         *     same person on the issue, however often it is taken back and given again.
+         */
+        post: operations["add_reaction"];
+        /**
+         * Takes the caller's emoji back from a comment or a run report; one they
+         *     never gave is no error. The inbox entry it gave stays.
+         */
+        delete: operations["remove_reaction"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4760,7 +4793,7 @@ export interface components {
          * @enum {string}
          */
         ChunkKind: "text" | "table";
-        /** @description `POST /issues/{iid}/comments` and `PATCH /issues/{iid}/comments/{cid}` body. */
+        /** @description `PATCH /issues/{iid}/comments/{cid}` body. */
         CommentBody: {
             /**
              * @description Markdown, 1 byte to 16 KiB. `@[Name](user:<uuid>)` mentions a member and
@@ -5857,6 +5890,16 @@ export interface components {
             kind: components["schemas"]["IssueEventKind"];
             /**
              * Format: uuid
+             * @description The top-level comment a reply answers; `null` for every other entry.
+             */
+            parent_id: string | null;
+            /**
+             * @description The emoji given to a comment or a run report, each once, in the order
+             *     they were first given; empty for other entries.
+             */
+            reactions: components["schemas"]["Reaction"][];
+            /**
+             * Format: uuid
              * @description The run a `run` entry reports; `null` for other entries and once the run is deleted.
              */
             run_id: string | null;
@@ -6405,6 +6448,19 @@ export interface components {
             /** Format: int64 */
             tokens_out: number;
         };
+        /** @description `POST /issues/{iid}/comments` body. */
+        NewComment: {
+            /**
+             * @description Markdown, 1 byte to 16 KiB. `@[Name](user:<uuid>)` mentions a member and
+             *     `@[Name](agent:<uuid>)` an agent of the workspace, at most 20 of them.
+             */
+            body: string;
+            /**
+             * Format: uuid
+             * @description The comment this one replies to: a top-level comment of the same issue.
+             */
+            parent_id?: string | null;
+        };
         /**
          * @description Who created a node.
          * @enum {string}
@@ -6488,6 +6544,8 @@ export interface components {
             approval: components["schemas"]["NotificationApproval"] | null;
             /** Format: date-time */
             created_at: string;
+            /** @description What the actor reacted with (`reaction`); `null` for the other kinds. */
+            emoji: string | null;
             /** Format: uuid */
             id: string;
             issue: components["schemas"]["NotificationIssue"] | null;
@@ -6538,7 +6596,7 @@ export interface components {
          * @description Why an issue is in someone's inbox.
          * @enum {string}
          */
-        NotificationKind: "assigned" | "comment" | "state" | "due" | "approval" | "alert" | "run" | "mention";
+        NotificationKind: "assigned" | "comment" | "state" | "due" | "approval" | "alert" | "run" | "mention" | "reaction";
         /**
          * @description How nexc reaches onto-intelli (`NEXC_ONTO_MODE`).
          * @enum {string}
@@ -6982,6 +7040,25 @@ export interface components {
             ref: string;
             tags: string[];
             title: string;
+        };
+        /**
+         * @description One emoji given to a comment or a run report: how many gave it, whether
+         *     the reader did, and who, newest first.
+         */
+        Reaction: {
+            /** Format: int64 */
+            count: number;
+            /** @description One of 👍 👎 😄 🎉 😕 ❤️ 🚀 👀 🔥 ✅. */
+            emoji: string;
+            /** @description Whether the reader is one of them. */
+            reacted: boolean;
+            /** @description Up to 10 of them, newest first. */
+            users: components["schemas"]["IssuePerson"][];
+        };
+        /** @description `POST /issues/{iid}/events/{eid}/reactions` body. */
+        ReactionBody: {
+            /** @description One of 👍 👎 😄 🎉 😕 ❤️ 🚀 👀 🔥 ✅. */
+            emoji: string;
         };
         /**
          * @description What is kept of what agents say and hear, off by default: the prompt and
@@ -12433,7 +12510,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CommentBody"];
+                "application/json": components["schemas"]["NewComment"];
             };
         };
         responses: {
@@ -12461,6 +12538,7 @@ export interface operations {
                     "application/json": components["schemas"]["Problem"];
                 };
             };
+            /** @description Invalid fields, or `parent_id` is not a top-level comment of the issue */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -12583,6 +12661,113 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    add_reaction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Issue id */
+                iid: string;
+                /** @description Timeline entry id */
+                eid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReactionBody"];
+            };
+        };
+        responses: {
+            /** @description The entry's reactions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Reaction"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description An emoji not on the list, or an entry that is not a comment or a run report */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    remove_reaction: {
+        parameters: {
+            query: {
+                /** @description The emoji to take back: one of 👍 👎 😄 🎉 😕 ❤️ 🚀 👀 🔥 ✅. */
+                emoji: string;
+            };
+            header?: never;
+            path: {
+                /** @description Issue id */
+                iid: string;
+                /** @description Timeline entry id */
+                eid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The entry's reactions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Reaction"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description An emoji not on the list, or an entry that is not a comment or a run report */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
