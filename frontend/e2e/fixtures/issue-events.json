@@ -43,5 +43,35 @@
     "created_at": "2026-10-14T07:00:00Z",
     "edited_at": null,
     "run_id": null
+  },
+  {
+    "id": "6f1e0d2a-8b3c-7d4e-9f5a-1b2c3d4e5f60",
+    "issue_id": "6c08cc63-f95f-77d4-8576-23a9c41035ee",
+    "kind": "comment",
+    "actor": {
+      "user_id": "85f2ef98-7b76-74c3-8c08-1acef84e0a73",
+      "name": "Alan Turing"
+    },
+    "body": "@[Ada Lovelace](user:d6b5915c-4605-7bcb-805f-46f6433df656) the Nordic portals publish in their own languages. @[Researcher](agent:01cbdeb6-76f5-73d7-800d-7403e6bcc2f4) can you add them to the sources?",
+    "from": null,
+    "to": null,
+    "created_at": "2026-10-14T07:30:00Z",
+    "edited_at": null,
+    "run_id": null
+  },
+  {
+    "id": "6f1e0d2a-8b3c-7d4e-9f5a-1b2c3d4e5f61",
+    "issue_id": "6c08cc63-f95f-77d4-8576-23a9c41035ee",
+    "kind": "agent",
+    "actor": {
+      "user_id": "85f2ef98-7b76-74c3-8c08-1acef84e0a73",
+      "name": "Alan Turing"
+    },
+    "body": "asked to plan",
+    "from": null,
+    "to": "Researcher",
+    "created_at": "2026-10-14T07:30:00Z",
+    "edited_at": null,
+    "run_id": null
   }
 ]

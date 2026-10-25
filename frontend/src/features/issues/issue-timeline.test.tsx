@@ -1,8 +1,11 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { Agent } from '@/schemas/agent';
 import type { Issue, IssueEvent } from '@/schemas/issue';
+import type { Team, Workspace, WorkspaceMember } from '@/schemas/workspace';
 import { useAuthStore } from '@/stores/auth-store';
 import * as f from '@/test/fixtures';
 
@@ -27,11 +30,75 @@ vi.mock('./api', () => ({
 vi.mock('./issue-run', () => ({ RunReport: () => null }));
 
 const at = '2026-10-20T09:00:00Z';
+const WORKSPACE = '0199bbbb-0000-7000-8000-00000000f001';
+const TEAM = '0199bbbb-0000-7000-8000-00000000f002';
+const GRACE = '0199bbbb-0000-7000-8000-00000000a001';
+const GUS = '0199bbbb-0000-7000-8000-00000000a002';
+
+const workspace: Workspace = {
+  id: WORKSPACE,
+  name: 'Acme',
+  slug: 'acme',
+  role: 'member',
+  member_count: 3,
+  created_at: at,
+};
+const team: Team = {
+  id: TEAM,
+  workspace_id: WORKSPACE,
+  name: 'Engineering',
+  key: 'ENG',
+  description: '',
+  private: false,
+  role: 'member',
+  member_count: 2,
+  created_at: at,
+};
+const member = (user_id: string, name: string, role: WorkspaceMember['role']) => ({
+  user_id,
+  name,
+  email: `${name.split(' ')[0]?.toLowerCase()}@acme.example`,
+  role,
+  suspended: false,
+  joined_at: at,
+});
+// Gus is a guest outside the team: he cannot see the issue, so he is not offered.
+const members: WorkspaceMember[] = [
+  member(f.user.id, f.user.name, 'owner'),
+  member(GRACE, 'Grace Hopper', 'member'),
+  member(GUS, 'Gus Guest', 'guest'),
+];
+const researcher: Agent = { ...f.agent, name: 'Researcher', role: 'researcher' };
+const quarantined: Agent = {
+  ...f.agent,
+  id: '0199bbbb-0000-7000-8000-00000000b002',
+  name: 'Rogue',
+  status: 'quarantined',
+};
+
+vi.mock('@/features/workspaces/api', () => ({
+  workspacesQuery: () => ({ queryKey: ['workspaces'], queryFn: () => [workspace] }),
+  teamsQuery: (wid: string) => ({ queryKey: ['workspaces', wid, 'teams'], queryFn: () => [team] }),
+  membersQuery: (wid: string) => ({
+    queryKey: ['workspaces', wid, 'members'],
+    queryFn: () => members,
+  }),
+  teamMembersQuery: (wid: string, tid: string) => ({
+    queryKey: ['workspaces', wid, 'teams', tid, 'members'],
+    queryFn: () => [],
+  }),
+}));
+vi.mock('@/features/agents/api', () => ({
+  agentsQuery: (wid: string) => ({
+    queryKey: ['agents', wid],
+    queryFn: () => [researcher, quarantined],
+  }),
+}));
 
 const issue: Issue = {
   id: '0199bbbb-0000-7000-8000-00000000c001',
-  workspace_id: '0199bbbb-0000-7000-8000-00000000f001',
-  team_id: '0199bbbb-0000-7000-8000-00000000f002',
+  workspace_id: WORKSPACE,
+  team_id: TEAM,
   identifier: 'ENG-7',
   number: 7,
   title: 'Pick the wrist bus',
@@ -86,7 +153,9 @@ function renderTimeline() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <IssueTimeline issue={issue} canModerate={false} />
+      <MemoryRouter>
+        <IssueTimeline issue={issue} canModerate={false} />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -160,5 +229,86 @@ describe('a comment edit in progress', () => {
 
     await waitFor(() => expect(editField()).toHaveValue('Use EtherCAT.'));
     expect(updateComment).not.toHaveBeenCalled();
+  });
+});
+
+describe('mentions', () => {
+  const grace = `@[Grace Hopper](user:${GRACE})`;
+  const agent = `@[Researcher](agent:${researcher.id})`;
+
+  it('are picked from a list that opens on @ and sent as tokens', async () => {
+    createComment.mockResolvedValue(event('3', { body: 'sent' }));
+    renderTimeline();
+    const field = screen.getByRole('textbox', { name: 'New comment' });
+    fireEvent.focus(field);
+    fireEvent.change(field, { target: { value: 'Ask @g' } });
+
+    // Only people who can see the issue are offered: not Gus, a guest outside the team, nor me.
+    expect(await screen.findByRole('option', { name: 'Grace Hopper' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /Gus Guest/ })).not.toBeInTheDocument();
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(field).toHaveValue('Ask @Grace Hopper ');
+    await waitFor(() => expect(screen.queryByRole('listbox')).not.toBeInTheDocument());
+
+    fireEvent.change(field, { target: { value: 'Ask @Grace Hopper and @' } });
+    expect(await screen.findByRole('option', { name: /Researcher/ })).toBeInTheDocument();
+    // Quarantined agents take no work and are not offered.
+    expect(screen.queryByRole('option', { name: /Rogue/ })).not.toBeInTheDocument();
+    fireEvent.keyDown(field, { key: 'ArrowDown' });
+    expect(screen.getByRole('option', { name: /Researcher/ })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    fireEvent.keyDown(field, { key: 'Tab' });
+    expect(field).toHaveValue('Ask @Grace Hopper and @Researcher ');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
+    await waitFor(() =>
+      expect(createComment).toHaveBeenCalledWith(issue.id, `Ask ${grace} and ${agent}`),
+    );
+  });
+
+  it('close with Escape and leave the text as typed', async () => {
+    createComment.mockResolvedValue(event('3', { body: 'sent' }));
+    renderTimeline();
+    const field = screen.getByRole('textbox', { name: 'New comment' });
+    fireEvent.focus(field);
+    fireEvent.change(field, { target: { value: '@gr' } });
+    await screen.findByRole('option', { name: 'Grace Hopper' });
+    fireEvent.keyDown(field, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('listbox')).not.toBeInTheDocument());
+    // Cmd+Enter sends what is there; a name nobody picked stays plain text.
+    fireEvent.keyDown(field, { key: 'Enter', metaKey: true });
+    await waitFor(() => expect(createComment).toHaveBeenCalledWith(issue.id, '@gr'));
+  });
+
+  it('show as chips: a person by their current name, an agent as a link to it', async () => {
+    const old = `@[G. Hopper](user:${GRACE})`;
+    listEvents.mockResolvedValue([event('4', { body: `${old} and ${agent}: Use CAN FD.` })]);
+    renderTimeline();
+    expect(await screen.findByText('Grace Hopper')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Researcher' })).toHaveAttribute(
+      'href',
+      `/app/agents?agent=${researcher.id}`,
+    );
+    expect(screen.getByText(/Use CAN FD\./)).toBeInTheDocument();
+    expect(screen.queryByText(/user:/)).not.toBeInTheDocument();
+  });
+
+  it('are kept through an edit', async () => {
+    updateComment.mockResolvedValue(event('2', { body: 'edited' }));
+    listEvents.mockResolvedValue([event('2', { body: `${grace} check this` })]);
+    renderTimeline();
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    expect(editField()).toHaveValue('@Grace Hopper check this');
+    fireEvent.change(editField()!, { target: { value: '@Grace Hopper check this again' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(updateComment).toHaveBeenCalledWith(
+        issue.id,
+        event('2', {}).id,
+        `${grace} check this again`,
+      ),
+    );
   });
 });

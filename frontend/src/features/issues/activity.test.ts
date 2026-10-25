@@ -103,4 +103,12 @@ describe('change entries', () => {
     expect(file('duplicated')).toBe('duplicated notes.md');
     expect(file('deleted', '3')).toBe('deleted notes.md');
   });
+
+  it('say what a mention handed an agent, among the changes', () => {
+    const agent = (body: string) => event('agent', { body, to: 'Researcher' });
+    expect(changeText(agent('delegated'))).toBe('delegated this to Researcher');
+    expect(changeText(agent('asked to plan'))).toBe('asked Researcher to plan this');
+    expect(showsEvent(agent('delegated'), 'changes')).toBe(true);
+    expect(showsEvent(agent('delegated'), 'comments')).toBe(false);
+  });
 });

@@ -45,9 +45,10 @@ import { SEVERITY_META } from '@/schemas/policy';
 import type { Workspace } from '@/schemas/workspace';
 
 /** What the actor did to the issue. */
-const VERB: Record<'assigned' | 'comment' | 'state' | 'due' | 'run', string> = {
+const VERB: Record<'assigned' | 'comment' | 'state' | 'due' | 'run' | 'mention', string> = {
   assigned: 'assigned you',
   comment: 'commented on',
+  mention: 'mentioned you in',
   state: 'moved',
   // Nobody did this one: the day arrived.
   due: 'is due:',
@@ -263,7 +264,7 @@ function List({ workspace }: { workspace: Workspace }) {
       <EmptyState
         icon={InboxIcon}
         title="Nothing for you yet"
-        description="You hear here when an issue is assigned to you, when someone comments on or moves an issue you created or are assigned, when an issue of yours is due, when an agent's tool call waits for your approval, and when an agent needs a look."
+        description="You hear here when an issue is assigned to you, when someone mentions you in a comment, when someone comments on or moves an issue you created or are assigned, when an issue of yours is due, when an agent's tool call waits for your approval, and when an agent needs a look."
         action={
           <Button variant="outline" asChild>
             <Link to="/app/issues">
