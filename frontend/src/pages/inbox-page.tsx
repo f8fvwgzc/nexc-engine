@@ -55,6 +55,12 @@ const VERB: Record<'assigned' | 'comment' | 'state' | 'due' | 'run' | 'mention',
   run: 'finished work on',
 };
 
+/** What an issue entry says the actor did, up to the issue; a reaction names its emoji. */
+function verbOf(kind: keyof typeof VERB | 'reaction', emoji: string | null): string {
+  if (kind !== 'reaction') return VERB[kind];
+  return emoji ? `reacted ${emoji} to your comment on` : 'reacted to your comment on';
+}
+
 /** Who an issue entry names: nobody for a reminder, the agents for a run, else the actor. */
 function entryActor(n: Notification): string {
   if (n.kind === 'due') return 'Your issue';
@@ -87,7 +93,7 @@ function IssueEntry({ n, onOpen }: { n: Notification; onOpen: (n: Notification) 
         className={`min-w-0 flex-1 truncate ${read ? 'text-muted-foreground' : ''}`}
         title={`${n.issue.identifier} ${n.issue.title}`}
       >
-        <span className="font-medium">{entryActor(n)}</span> {VERB[n.kind]}{' '}
+        <span className="font-medium">{entryActor(n)}</span> {verbOf(n.kind, n.emoji)}{' '}
         <span className="font-mono text-xs">{n.issue.identifier}</span> {n.issue.title}
       </span>
       <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
@@ -255,7 +261,7 @@ function List({ workspace }: { workspace: Workspace }) {
       <EmptyState
         icon={InboxIcon}
         title="Nothing for you yet"
-        description="You hear here when an issue is assigned to you, when someone mentions you in a comment, when someone comments on or moves an issue you created or are assigned, when an issue of yours is due, when an agent's tool call waits for your approval, and when an agent needs a look."
+        description="You hear here when an issue is assigned to you, when someone mentions you in a comment, replies to it or reacts to it, when someone comments on or moves an issue you created or are assigned, when an issue of yours is due, when an agent's tool call waits for your approval, and when an agent needs a look."
         action={
           <Button variant="outline" asChild>
             <Link to="/app/issues">

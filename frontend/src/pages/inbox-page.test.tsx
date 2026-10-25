@@ -27,14 +27,25 @@ const mention: Notification = {
   approval: null,
   alert: null,
   actor: { user_id: '0199eeee-0000-7000-8000-000000000004', name: 'Grace Hopper' },
+  emoji: null,
   created_at: at,
   read_at: null,
 };
 
+const reaction: Notification = {
+  ...mention,
+  id: '0199eeee-0000-7000-8000-000000000005',
+  kind: 'reaction',
+  emoji: '🎉',
+};
+
+/** What the inbox holds. */
+let inbox: Notification[] = [mention];
+
 vi.mock('@/lib/api/client', () => ({
   apiRequest: (path: string) => {
     if (path === '/workspaces') return Promise.resolve([workspace]);
-    if (path.endsWith('/inbox')) return Promise.resolve([mention]);
+    if (path.endsWith('/inbox')) return Promise.resolve(inbox);
     if (path.endsWith('/inbox/read')) return Promise.resolve([{ ...mention, read_at: at }]);
     return Promise.resolve([]);
   },
@@ -46,24 +57,40 @@ function Issue() {
   return <p>Opened {useParams().issueId}</p>;
 }
 
+function renderInbox() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <HelmetProvider>
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/app/inbox']}>
+          <Routes>
+            <Route path="/app/inbox" element={<InboxPage />} />
+            <Route path="/app/issues/:issueId" element={<Issue />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    </HelmetProvider>,
+  );
+}
+
 describe('a mention in the inbox', () => {
   it('says who mentioned you in which issue, and opens it', async () => {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(
-      <HelmetProvider>
-        <QueryClientProvider client={client}>
-          <MemoryRouter initialEntries={['/app/inbox']}>
-            <Routes>
-              <Route path="/app/inbox" element={<InboxPage />} />
-              <Route path="/app/issues/:issueId" element={<Issue />} />
-            </Routes>
-          </MemoryRouter>
-        </QueryClientProvider>
-      </HelmetProvider>,
-    );
+    inbox = [mention];
+    renderInbox();
     const entry = await screen.findByRole('button', { name: /mentioned you in ENG-12/ });
     expect(entry).toHaveTextContent('Grace Hopper mentioned you in ENG-12 Fix login');
     fireEvent.click(entry);
     expect(await screen.findByText(`Opened ${mention.issue?.id}`)).toBeInTheDocument();
+  });
+});
+
+describe('a reaction in the inbox', () => {
+  it('says who reacted to your comment with what, on which issue', async () => {
+    inbox = [reaction];
+    renderInbox();
+    const entry = await screen.findByRole('button', { name: /reacted 🎉 to your comment on/ });
+    expect(entry).toHaveTextContent('Grace Hopper reacted 🎉 to your comment on ENG-12 Fix login');
+    fireEvent.click(entry);
+    expect(await screen.findByText(`Opened ${reaction.issue?.id}`)).toBeInTheDocument();
   });
 });

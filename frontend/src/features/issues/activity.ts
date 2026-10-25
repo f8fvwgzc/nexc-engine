@@ -89,6 +89,78 @@ export function showsEvent(event: IssueEvent, show: ActivityShow): boolean {
   }
 }
 
+/**
+ * Whether an entry reads as one short line: a change to the issue, or a file that is gone (there
+ * is nothing left to open). Comments, run reports and files are entries of their own.
+ */
+export function isCompact(event: IssueEvent): boolean {
+  if (event.kind === 'artifact') return event.to === 'deleted';
+  return event.kind !== 'comment' && event.kind !== 'run';
+}
+
+/** How far apart two changes by the same person may be and still read as one entry. */
+export const CHANGE_GROUP_MS = 5 * 60_000;
+
+/** One entry of the activity as it is drawn. */
+export type ActivityItem =
+  | { kind: 'event'; event: IssueEvent }
+  /** Changes made one after another by the same person, drawn as one entry of short lines. */
+  | { kind: 'changes'; events: IssueEvent[] };
+
+/**
+ * The activity as it is drawn, in the order given: each comment, run report and file an entry of
+ * its own, and changes that follow one another by the same person within a few minutes gathered
+ * into one, as Linear does. `who` keys whose a change is (equal only for the same person).
+ */
+export function groupActivity(
+  events: IssueEvent[],
+  who: (event: IssueEvent) => string,
+): ActivityItem[] {
+  const items: ActivityItem[] = [];
+  for (const event of events) {
+    if (!isCompact(event)) {
+      items.push({ kind: 'event', event });
+      continue;
+    }
+    const last = items.at(-1);
+    const previous = last?.kind === 'changes' ? last.events.at(-1) : undefined;
+    const gap = previous
+      ? Math.abs(Date.parse(event.created_at) - Date.parse(previous.created_at))
+      : Infinity;
+    if (
+      last?.kind === 'changes' &&
+      previous &&
+      who(previous) === who(event) &&
+      gap <= CHANGE_GROUP_MS
+    )
+      last.events.push(event);
+    else items.push({ kind: 'changes', events: [event] });
+  }
+  return items;
+}
+
+/**
+ * The entries of the activity, and the replies under each comment: a reply goes into its
+ * comment's thread, oldest first whatever the activity's order, unless that comment is not among
+ * the entries (then it stands on its own).
+ */
+export function threadReplies(events: IssueEvent[]): {
+  entries: IssueEvent[];
+  replies: Map<string, IssueEvent[]>;
+} {
+  const parents = new Set(events.filter((e) => e.parent_id === null).map((e) => e.id));
+  const entries: IssueEvent[] = [];
+  const replies = new Map<string, IssueEvent[]>();
+  for (const event of events) {
+    if (event.parent_id && parents.has(event.parent_id)) {
+      replies.set(event.parent_id, [...(replies.get(event.parent_id) ?? []), event]);
+    } else {
+      entries.push(event);
+    }
+  }
+  return { entries, replies };
+}
+
 /** What a file entry says: `to` is the action, `updated:v3` for a new version. */
 function artifactText(name: string, action: string | null): string {
   if (action === 'uploaded') return `uploaded ${name}`;
