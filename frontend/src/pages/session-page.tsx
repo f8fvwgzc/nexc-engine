@@ -17,7 +17,7 @@ import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { StatusBadge } from '@/components/custom-ui/status-badge';
 import { STATUS_META } from '@/components/custom-ui/status-meta';
-import { ContentSkeleton } from '@/components/layout/page-skeleton';
+import { ListSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Button } from '@/components/ui/button';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
@@ -129,7 +129,7 @@ function SessionView({ runId }: { runId: string }) {
   );
   const selectedRow = rows.find((r) => r.key === selected) ?? rows[0] ?? null;
 
-  if (session.isPending) return <ContentSkeleton />;
+  if (session.isPending) return <ListSkeleton rows={8} label="Loading the session" />;
   // A missing run is not an outage: the first gets a way back, the second a retry.
   const missing = session.error instanceof ApiError && session.error.status === 404;
   if (session.isError && !missing) {
@@ -281,7 +281,7 @@ function SessionView({ runId }: { runId: string }) {
 
   if (isMobile) {
     return (
-      <div className="space-y-3">
+      <div className="space-y-3 motion-safe:animate-fade-in">
         <SessionHeader session={data} />
         {drilled && details ? (
           <div className="space-y-3">
@@ -302,7 +302,7 @@ function SessionView({ runId }: { runId: string }) {
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 motion-safe:animate-fade-in">
       <SessionHeader session={data} />
       {filters}
       <ResizablePanelGroup orientation="horizontal" className="min-h-96 items-start">

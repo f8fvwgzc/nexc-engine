@@ -12,6 +12,7 @@ import {
   StateGlyph,
 } from '@/components/custom-ui/issue-glyphs';
 import { ScrollRegion } from '@/components/custom-ui/scroll-region';
+import { onIntent, prefetchIssue } from '@/lib/prefetch';
 import { qk } from '@/lib/query-keys';
 import type { Issue, IssueState } from '@/schemas/issue';
 import type { Workspace } from '@/schemas/workspace';
@@ -194,8 +195,10 @@ export function IssueBoard({
  * opens GitHub instead.
  */
 function BoardCard({ issue }: { issue: Issue }) {
+  const queryClient = useQueryClient();
   return (
     <div
+      {...onIntent(() => prefetchIssue(queryClient, issue))}
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData('text/plain', issue.id);

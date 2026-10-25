@@ -20,7 +20,8 @@ import { ProjectStatusGlyph } from '@/components/custom-ui/issue-glyphs';
 import { OptionSelect } from '@/components/custom-ui/option-select';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { ContentSkeleton, PageSkeleton } from '@/components/layout/page-skeleton';
+import { SettingsSkeleton } from '@/components/layout/page-skeleton';
+import { QueryErrorBoundary } from '@/components/layout/query-error-boundary';
 import { Seo } from '@/components/seo/seo';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -171,7 +172,8 @@ function TeamRoster({
   canManage: boolean;
 }) {
   const queryClient = useQueryClient();
-  const { data: members = [] } = useQuery(teamMembersQuery(workspace.id, team.id));
+  const membersResult = useQuery(teamMembersQuery(workspace.id, team.id));
+  const members = membersResult.data ?? [];
   // Guests cannot list workspace members; they never manage a team either.
   const { data: everyone = [] } = useQuery({
     ...membersQuery(workspace.id),
@@ -199,6 +201,21 @@ function TeamRoster({
 
   return (
     <div className="space-y-2 border-t pt-3">
+      {/* A roster that could not be read is not an empty one. */}
+      {membersResult.isPending ? (
+        <div role="status" aria-busy aria-label="Loading the members" className="space-y-1.5">
+          <Skeleton className="h-6 w-full" />
+          <Skeleton className="h-6 w-4/5" />
+        </div>
+      ) : membersResult.isError && !membersResult.data ? (
+        <div role="alert" className="flex items-center gap-2 text-sm text-muted-foreground">
+          <span className="flex-1">Couldn’t load the members.</span>
+          <Button variant="ghost" size="sm" onClick={() => void membersResult.refetch()}>
+            <RotateCcwIcon />
+            Try again
+          </Button>
+        </div>
+      ) : null}
       <ul className="space-y-1">
         {members.map((member) => (
           <li key={member.user_id} className="flex items-center gap-2 text-sm">
@@ -531,7 +548,7 @@ function TeamList({ workspace, onCreate }: { workspace: Workspace; onCreate?: ()
   }
   return (
     <>
-      <ul className="grid gap-3 md:grid-cols-2">
+      <ul className="grid gap-3 motion-safe:animate-fade-in md:grid-cols-2">
         {teams.map((team) => (
           <TeamCard
             key={team.id}
@@ -558,10 +575,21 @@ function TeamList({ workspace, onCreate }: { workspace: Workspace; onCreate?: ()
   );
 }
 
+/** The team cards while they load, two to a row as they will be. */
+function TeamsSkeleton() {
+  return (
+    <div role="status" aria-busy aria-label="Loading" className="grid gap-3 md:grid-cols-2">
+      {Array.from({ length: 4 }, (_, i) => (
+        <Skeleton key={i} className="h-44 rounded-xl" />
+      ))}
+    </div>
+  );
+}
+
 function Teams() {
   const { current } = useCurrentWorkspace();
   const [creating, setCreating] = useState(false);
-  if (!current) return <PageSkeleton width="narrow" />;
+  if (!current) return <SettingsSkeleton />;
   const canCreate = current.role !== 'guest';
   return (
     <PageContainer width="narrow">
@@ -577,13 +605,15 @@ function Teams() {
           )
         }
       />
-      <Suspense fallback={<ContentSkeleton />}>
-        <TeamList
-          key={current.id}
-          workspace={current}
-          onCreate={canCreate ? () => setCreating(true) : undefined}
-        />
-      </Suspense>
+      <QueryErrorBoundary title="Couldn’t load the teams">
+        <Suspense fallback={<TeamsSkeleton />}>
+          <TeamList
+            key={current.id}
+            workspace={current}
+            onCreate={canCreate ? () => setCreating(true) : undefined}
+          />
+        </Suspense>
+      </QueryErrorBoundary>
       <NewTeamDialog workspace={current} open={creating} onClose={() => setCreating(false)} />
     </PageContainer>
   );

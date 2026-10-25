@@ -14,7 +14,7 @@ import { OptionSelect } from '@/components/custom-ui/option-select';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { IconButton } from '@/components/custom-ui/icon-button';
-import { PageSkeleton } from '@/components/layout/page-skeleton';
+import { ListSkeleton, SettingsSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -28,7 +28,6 @@ import {
 } from '@/components/ui/dialog';
 import { FieldGroup } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
-import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import {
   checkMcpServer,
@@ -299,14 +298,14 @@ function Servers({
 }) {
   const { data: servers, isPending, error, refetch } = useQuery(mcpServersQuery(workspace.id));
   const admin = isWorkspaceAdmin(workspace.role);
-  if (isPending) return <Skeleton className="h-40 rounded-xl" />;
+  if (isPending) return <ListSkeleton rows={3} label="Loading the servers" />;
   if (error) {
     return (
       <ErrorState title="Couldn’t load the servers" error={error} onRetry={() => void refetch()} />
     );
   }
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 motion-safe:animate-fade-in">
       {servers.length > 0 && (
         <p className="text-[13px] text-muted-foreground">
           {`${servers.length} server${servers.length === 1 ? '' : 's'}; agents call their tools through the gateway, under the policy.`}
@@ -338,7 +337,7 @@ function Servers({
 export default function McpServersSettingsPage() {
   const { current } = useCurrentWorkspace();
   const [adding, setAdding] = useState(false);
-  if (!current) return <PageSkeleton width="narrow" />;
+  if (!current) return <SettingsSkeleton />;
   return (
     <PageContainer width="narrow">
       <Seo title="MCP servers" noIndex />

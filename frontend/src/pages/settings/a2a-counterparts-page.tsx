@@ -15,7 +15,7 @@ import { OptionSelect } from '@/components/custom-ui/option-select';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { IconButton } from '@/components/custom-ui/icon-button';
-import { PageSkeleton } from '@/components/layout/page-skeleton';
+import { ListSkeleton, SettingsSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -31,7 +31,6 @@ import {
 import { FieldGroup } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Skeleton } from '@/components/ui/skeleton';
 import {
   a2aCounterpartsQuery,
   checkA2aCounterpart,
@@ -349,7 +348,7 @@ function Counterparts({
   const { data: agents } = useQuery(agentsQuery(workspace.id));
   const [registered, setRegistered] = useState<RegisteredA2aCounterpart | null>(null);
   const admin = isWorkspaceAdmin(workspace.role);
-  if (isPending) return <Skeleton className="h-40 rounded-xl" />;
+  if (isPending) return <ListSkeleton rows={3} label="Loading the counterparts" />;
   if (error) {
     return (
       <ErrorState
@@ -360,7 +359,7 @@ function Counterparts({
     );
   }
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 motion-safe:animate-fade-in">
       {counterparts.length > 0 && (
         <p className="text-[13px] text-muted-foreground">
           {`${counterparts.length} counterpart${counterparts.length === 1 ? '' : 's'}; agents send them tasks through the gateway, under the policy, and they send tasks back with the tokens issued here.`}
@@ -404,7 +403,7 @@ function Counterparts({
 export default function A2aCounterpartsSettingsPage() {
   const { current } = useCurrentWorkspace();
   const [adding, setAdding] = useState(false);
-  if (!current) return <PageSkeleton width="narrow" />;
+  if (!current) return <SettingsSkeleton />;
   return (
     <PageContainer width="narrow">
       <Seo title="A2A counterparts" noIndex />

@@ -12,7 +12,9 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 
 import { AnimatedButton } from '@/components/custom-ui/animated-button';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { PageSkeleton } from '@/components/layout/page-skeleton';
+import { DetailSkeleton } from '@/components/layout/page-skeleton';
+import { QueryErrorBoundary } from '@/components/layout/query-error-boundary';
+import { ErrorState } from '@/components/custom-ui/error-state';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { StatTile } from '@/components/custom-ui/stat-tile';
 import { StatusBadge } from '@/components/custom-ui/status-badge';
@@ -62,7 +64,7 @@ function RunDetail({ runId }: { runId: string }) {
   useLiveTrace(run);
 
   return (
-    <PageContainer>
+    <PageContainer className="motion-safe:animate-fade-in">
       <PageHeader
         title={
           <span className="flex flex-wrap items-center gap-3">
@@ -190,8 +192,20 @@ function RunDetail({ runId }: { runId: string }) {
         </div>
         {trace.data ? (
           <TraceWaterfall spans={trace.data} titles={titles} live={active} highlight={highlight} />
+        ) : trace.error ? (
+          <ErrorState
+            compact
+            title="Couldn’t load the trace"
+            error={trace.error}
+            onRetry={() => void trace.refetch()}
+          />
         ) : (
-          <Skeleton className="h-24 rounded-xl" />
+          <Skeleton
+            className="h-24 rounded-xl"
+            role="status"
+            aria-busy
+            aria-label="Loading the trace"
+          />
         )}
       </section>
       <section className="space-y-3" aria-labelledby="artifacts">
@@ -209,9 +223,11 @@ export default function RunDetailPage() {
   return (
     <>
       <Seo title={`Run ${runId.slice(0, 8)}`} noIndex />
-      <Suspense fallback={<PageSkeleton />}>
-        <RunDetail runId={runId} />
-      </Suspense>
+      <QueryErrorBoundary page="default" title="Couldn’t load the run">
+        <Suspense fallback={<DetailSkeleton stats={4} />}>
+          <RunDetail runId={runId} />
+        </Suspense>
+      </QueryErrorBoundary>
     </>
   );
 }

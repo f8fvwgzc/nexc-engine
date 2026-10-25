@@ -150,7 +150,7 @@ function SessionList({ workspace }: { workspace: Workspace }) {
           }
         />
       ) : (
-        <>
+        <div className="space-y-4 motion-safe:animate-fade-in">
           <SessionsTable rows={rows} />
           {query.hasNextPage && (
             <div className="flex justify-center">
@@ -164,7 +164,7 @@ function SessionList({ workspace }: { workspace: Workspace }) {
               </Button>
             </div>
           )}
-        </>
+        </div>
       )}
     </div>
   );

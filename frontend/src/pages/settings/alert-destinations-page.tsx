@@ -16,7 +16,7 @@ import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { IconButton } from '@/components/custom-ui/icon-button';
 import { WithTooltip } from '@/components/custom-ui/with-tooltip';
-import { PageSkeleton } from '@/components/layout/page-skeleton';
+import { ListSkeleton, SettingsSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -32,7 +32,6 @@ import {
 import { FieldGroup } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import {
   alertDeliveriesQuery,
@@ -247,7 +246,7 @@ function DeliveryLog({
   const { data, isPending, error, refetch } = useQuery(
     alertDeliveriesQuery(workspaceId, destinationId),
   );
-  if (isPending) return <Skeleton className="h-16 rounded-lg" />;
+  if (isPending) return <ListSkeleton rows={2} label="Loading the deliveries" />;
   if (error) {
     return (
       <ErrorState
@@ -442,7 +441,7 @@ function Destinations({
 }) {
   const { data, isPending, error, refetch } = useQuery(alertDestinationsQuery(workspace.id));
   const [issued, setIssued] = useState<IssuedAlertDestination | null>(null);
-  if (isPending) return <Skeleton className="h-40 rounded-xl" />;
+  if (isPending) return <ListSkeleton rows={3} label="Loading the destinations" />;
   if (error) {
     return (
       <ErrorState
@@ -453,7 +452,7 @@ function Destinations({
     );
   }
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 motion-safe:animate-fade-in">
       {data.length > 0 && (
         <p className="text-[13px] text-muted-foreground">
           {`${data.length} destination${data.length === 1 ? '' : 's'}; a destination that fails 50 times in a row is switched off and an alert says so.`}
@@ -487,7 +486,7 @@ function Destinations({
 export default function AlertDestinationsSettingsPage() {
   const { current } = useCurrentWorkspace();
   const [adding, setAdding] = useState(false);
-  if (!current) return <PageSkeleton width="narrow" />;
+  if (!current) return <SettingsSkeleton />;
   const allowed = isWorkspaceAdmin(current.role);
   return (
     <PageContainer width="narrow">

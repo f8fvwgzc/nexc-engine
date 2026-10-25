@@ -4,7 +4,7 @@ import { useState } from 'react';
 
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { ContentSkeleton } from '@/components/layout/page-skeleton';
+import { ListSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Button } from '@/components/ui/button';
 import { teamsQuery } from '@/features/workspaces/api';
@@ -72,7 +72,7 @@ export default function MyIssuesPage() {
           onCreatingChange={setCreating}
         />
       ) : (
-        <ContentSkeleton />
+        <ListSkeleton rows={8} label="Loading your issues" />
       )}
     </PageContainer>
   );

@@ -67,12 +67,18 @@ test.describe('the Runs page', () => {
 });
 
 test.describe('a page that failed to load', () => {
-  for (const name of ['runs', 'agents']) {
+  // The route's error page stands in for a page without a boundary of its own (runs); a page
+  // that has one (agents) keeps its header and shows the error under it.
+  for (const { name, heading } of [
+    { name: 'runs', heading: 'Something went wrong' },
+    { name: 'agents', heading: 'Agents' },
+  ]) {
     test(`${name}: Try again reads it again`, async ({ page }) => {
       await page.setViewportSize({ width: 1280, height: 800 });
       const target = route(name);
       await openRoute(page, target, { mode: 'error', theme: 'light' });
-      await expect(page.getByRole('heading', { level: 1 })).toHaveText('Something went wrong');
+      await expect(page.getByRole('heading', { level: 1 })).toHaveText(heading);
+      await expect(page.getByRole('alert').filter({ hasText: 'Try again' })).toBeVisible();
 
       // The server is back.
       await page.unrouteAll({ behavior: 'ignoreErrors' });

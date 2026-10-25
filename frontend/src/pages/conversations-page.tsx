@@ -7,7 +7,8 @@ import { EmptyState } from '@/components/custom-ui/empty-state';
 import { IconButton } from '@/components/custom-ui/icon-button';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { TableSkeleton } from '@/components/layout/page-skeleton';
+import { ListSkeleton } from '@/components/layout/page-skeleton';
+import { QueryErrorBoundary } from '@/components/layout/query-error-boundary';
 import { Seo } from '@/components/seo/seo';
 import { Button } from '@/components/ui/button';
 import { conversationsQuery, deleteConversation } from '@/features/workspaces/api';
@@ -74,7 +75,10 @@ function Timeline({ workspaceId }: { workspaceId: string }) {
   }
 
   return (
-    <ol className="relative space-y-8 border-l pl-6" aria-label="Conversations by day">
+    <ol
+      className="relative space-y-8 border-l pl-6 motion-safe:animate-fade-in"
+      aria-label="Conversations by day"
+    >
       {groupByDay(conversations).map((group) => (
         <li key={group.day}>
           <span
@@ -132,9 +136,12 @@ function Timeline({ workspaceId }: { workspaceId: string }) {
   );
 }
 
+/** The timeline's rows while they load. */
+const loading = <ListSkeleton rows={5} label="Loading the conversations" />;
+
 function ConversationsList() {
   const workspaceId = useWorkspaceId();
-  return workspaceId ? <Timeline workspaceId={workspaceId} /> : <TableSkeleton />;
+  return workspaceId ? <Timeline workspaceId={workspaceId} /> : loading;
 }
 
 export default function ConversationsPage() {
@@ -146,9 +153,11 @@ export default function ConversationsPage() {
           title="Conversations"
           description="Everything you have talked over with the assistant in this workspace, latest first. Open one to read it back and keep going."
         />
-        <Suspense fallback={<TableSkeleton />}>
-          <ConversationsList />
-        </Suspense>
+        <QueryErrorBoundary title="Couldn’t load the conversations">
+          <Suspense fallback={loading}>
+            <ConversationsList />
+          </Suspense>
+        </QueryErrorBoundary>
       </PageContainer>
     </>
   );

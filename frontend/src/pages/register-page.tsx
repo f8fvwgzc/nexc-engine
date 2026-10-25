@@ -3,13 +3,14 @@ import { Link } from 'react-router-dom';
 
 import { Seo } from '@/components/seo/seo';
 import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { providersQuery } from '@/features/auth/api';
 import { AuthCard } from '@/features/auth/components/auth-card';
 import { RegisterForm } from '@/features/auth/components/register-form';
 
 export default function RegisterPage() {
-  const { data: providers } = useQuery(providersQuery());
-  // Until the installation says otherwise, the form is what this page has always offered.
+  const { data: providers, isPending } = useQuery(providersQuery());
+  // Unless the installation says otherwise (or cannot say), the form is what this page offers.
   const closed = providers?.signup === false;
   const sso = providers?.sso[0];
   return (
@@ -30,7 +31,18 @@ export default function RegisterPage() {
           </>
         }
       >
-        {closed ? (
+        {isPending ? (
+          // The form's place while the installation says whether it takes sign-ups.
+          <div role="status" aria-busy aria-label="Loading" className="space-y-4">
+            {Array.from({ length: 3 }, (_, i) => (
+              <div key={i} className="space-y-2">
+                <Skeleton className="h-4 w-24" />
+                <Skeleton className="h-9 w-full" />
+              </div>
+            ))}
+            <Skeleton className="h-10 w-full" />
+          </div>
+        ) : closed ? (
           <div className="space-y-4 text-center">
             <p className="text-sm text-muted-foreground">
               {sso

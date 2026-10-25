@@ -16,7 +16,7 @@ import { ErrorState } from '@/components/custom-ui/error-state';
 import { OptionSelect } from '@/components/custom-ui/option-select';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { TableSkeleton } from '@/components/layout/page-skeleton';
+import { ListSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Button } from '@/components/ui/button';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
@@ -178,9 +178,9 @@ export default function MemoryPage() {
           onRetry={() => void refetch()}
         />
       ) : isPending ? (
-        <TableSkeleton rows={4} />
+        <ListSkeleton rows={5} label="Loading the memories" />
       ) : memories && (memories.length > 0 || page > 0) ? (
-        <div className="space-y-3">
+        <div className="space-y-3 motion-safe:animate-fade-in">
           <MemoryList memories={memories} graphNames={graphNames} onOpen={setOpened} />
           {(page > 0 || hasNext) && (
             <nav

@@ -2,8 +2,9 @@ import { Suspense } from 'react';
 
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
+import { SettingsCardsSkeleton } from '@/components/layout/page-skeleton';
+import { QueryErrorBoundary } from '@/components/layout/query-error-boundary';
 import { Seo } from '@/components/seo/seo';
-import { Skeleton } from '@/components/ui/skeleton';
 import { GuardrailsCard } from '@/features/settings/components/guardrails-card';
 
 export default function GuardrailsSettingsPage() {
@@ -14,9 +15,11 @@ export default function GuardrailsSettingsPage() {
         title="Guardrails"
         description="Limits on what agents in this workspace may spend and do."
       />
-      <Suspense fallback={<Skeleton className="h-72 rounded-xl" />}>
-        <GuardrailsCard />
-      </Suspense>
+      <QueryErrorBoundary title="Couldn’t load the guardrails">
+        <Suspense fallback={<SettingsCardsSkeleton rows={4} />}>
+          <GuardrailsCard />
+        </Suspense>
+      </QueryErrorBoundary>
     </PageContainer>
   );
 }

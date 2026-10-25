@@ -4,11 +4,13 @@ import { Suspense, useState } from 'react';
 import { toast } from 'sonner';
 
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
+import { ErrorState } from '@/components/custom-ui/error-state';
 import { IconButton } from '@/components/custom-ui/icon-button';
 import { OptionSelect } from '@/components/custom-ui/option-select';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { PageSkeleton, TableSkeleton } from '@/components/layout/page-skeleton';
+import { ListSkeleton, SettingsSkeleton, TableSkeleton } from '@/components/layout/page-skeleton';
+import { QueryErrorBoundary } from '@/components/layout/query-error-boundary';
 import { Seo } from '@/components/seo/seo';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -110,16 +112,27 @@ function InviteForm({ workspace }: { workspace: Workspace }) {
 
 function PendingInvites({ workspace }: { workspace: Workspace }) {
   const queryClient = useQueryClient();
-  const { data: invites = [] } = useQuery(invitesQuery(workspace.id));
+  const { data: invites, isPending, error, refetch } = useQuery(invitesQuery(workspace.id));
   const withdraw = useMutation({
     mutationFn: (inviteId: string) => withdrawInvite(workspace.id, inviteId),
     meta: { successMessage: 'Invitation withdrawn' },
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: qk.workspaces.invites(workspace.id) }),
   });
+  if (isPending) return <ListSkeleton rows={2} label="Loading the invitations" />;
+  if (!invites) {
+    return (
+      <ErrorState
+        compact
+        title="Couldn’t load the invitations"
+        error={error}
+        onRetry={() => void refetch()}
+      />
+    );
+  }
   if (invites.length === 0) return null;
   return (
-    <section aria-labelledby="pending-invites" className="space-y-2">
+    <section aria-labelledby="pending-invites" className="space-y-2 motion-safe:animate-fade-in">
       <h2 id="pending-invites" className="text-sm font-medium">
         Pending invitations
       </h2>
@@ -168,7 +181,7 @@ function MembersTable({ workspace }: { workspace: Workspace }) {
 
   return (
     <>
-      <div className="overflow-x-auto rounded-xl border">
+      <div className="overflow-x-auto rounded-xl border motion-safe:animate-fade-in">
         <Table>
           <TableHeader>
             <TableRow>
@@ -264,7 +277,7 @@ function MembersTable({ workspace }: { workspace: Workspace }) {
 
 function Members() {
   const { current } = useCurrentWorkspace();
-  if (!current) return <PageSkeleton width="narrow" />;
+  if (!current) return <SettingsSkeleton />;
   const admin = isWorkspaceAdmin(current.role);
   return (
     <PageContainer width="narrow">
@@ -281,9 +294,11 @@ function Members() {
       ) : (
         <>
           {admin && <InviteForm workspace={current} />}
-          <Suspense fallback={<TableSkeleton rows={4} />}>
-            <MembersTable key={current.id} workspace={current} />
-          </Suspense>
+          <QueryErrorBoundary title="Couldn’t load the members">
+            <Suspense fallback={<TableSkeleton rows={4} />}>
+              <MembersTable key={current.id} workspace={current} />
+            </Suspense>
+          </QueryErrorBoundary>
           {admin && <PendingInvites workspace={current} />}
           <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[auto_1fr]">
             {(Object.keys(ROLE_LABEL) as WorkspaceRole[]).map((role) => (

@@ -6,7 +6,7 @@ import { EmptyState } from '@/components/custom-ui/empty-state';
 import { ErrorState } from '@/components/custom-ui/error-state';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { PageSkeleton } from '@/components/layout/page-skeleton';
+import { SettingsCardsSkeleton, SettingsSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import {
   Select,
@@ -15,7 +15,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Skeleton } from '@/components/ui/skeleton';
 import { agentsQuery } from '@/features/agents/api';
 import { PolicyVersions } from '@/features/policies/components/policy-versions';
 import { ResolvedPolicyView } from '@/features/policies/components/resolved-policy';
@@ -28,7 +27,8 @@ import { isWorkspaceAdmin, type Workspace } from '@/schemas/workspace';
 type Level = { scope: 'workspace' } | { scope: 'team' | 'agent'; id: string };
 
 function Policies({ workspace }: { workspace: Workspace }) {
-  const { data: teams = [] } = useQuery(teamsQuery(workspace.id));
+  const teamsList = useQuery(teamsQuery(workspace.id));
+  const teams = teamsList.data ?? [];
   const agentsList = useQuery(agentsQuery(workspace.id));
   const agents = agentsList.data ?? [];
   const [level, setLevel] = useState<Level>({ scope: 'workspace' });
@@ -49,7 +49,7 @@ function Policies({ workspace }: { workspace: Workspace }) {
         : `agent ${agents.find((a) => a.id === level.id)?.name ?? ''}`;
   const agentForResolve = resolveFor ?? agents[0]?.id ?? null;
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 motion-safe:animate-fade-in">
       <section className="space-y-3" aria-labelledby="versions">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 id="versions" className="text-sm font-medium">
@@ -61,6 +61,16 @@ function Policies({ workspace }: { workspace: Workspace }) {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="workspace">Whole workspace</SelectItem>
+              {/* The teams are levels too: say so while they load, or when they could not. */}
+              {teamsList.isPending ? (
+                <SelectItem value="teams-loading" disabled>
+                  Loading the teams…
+                </SelectItem>
+              ) : teamsList.isError && !teamsList.data ? (
+                <SelectItem value="teams-failed" disabled>
+                  Couldn’t load the teams
+                </SelectItem>
+              ) : null}
               {teams.map((team) => (
                 <SelectItem key={team.id} value={`team:${team.id}`}>
                   Team {team.name}
@@ -110,7 +120,7 @@ function Policies({ workspace }: { workspace: Workspace }) {
             onRetry={() => void agentsList.refetch()}
           />
         ) : agentsList.isPending ? (
-          <Skeleton className="h-64 rounded-xl" />
+          <SettingsCardsSkeleton rows={4} label="Loading the agents" />
         ) : agentForResolve ? (
           <ResolvedPolicyView workspaceId={workspace.id} agentId={agentForResolve} />
         ) : (
@@ -123,7 +133,7 @@ function Policies({ workspace }: { workspace: Workspace }) {
 
 export default function PoliciesSettingsPage() {
   const { current } = useCurrentWorkspace();
-  if (!current) return <PageSkeleton width="narrow" />;
+  if (!current) return <SettingsSkeleton />;
   const allowed = isWorkspaceAdmin(current.role);
   return (
     <PageContainer width="narrow">

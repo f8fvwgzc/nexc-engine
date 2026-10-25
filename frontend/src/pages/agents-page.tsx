@@ -7,7 +7,8 @@ import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
 import { EmptyState } from '@/components/custom-ui/empty-state';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { PageSkeleton } from '@/components/layout/page-skeleton';
+import { ListPageSkeleton } from '@/components/layout/page-skeleton';
+import { QueryErrorBoundary } from '@/components/layout/query-error-boundary';
 import { Seo } from '@/components/seo/seo';
 import { Button } from '@/components/ui/button';
 import { agentsQuery } from '@/features/agents/api';
@@ -21,6 +22,9 @@ import type { Agent } from '@/schemas/agent';
 import { isWorkspaceAdmin } from '@/schemas/workspace';
 
 type Editing = { agent: Agent | null } | null;
+
+const DESCRIPTION =
+  'This workspace’s AI org chart: who reports to whom, which roles execute which nodes, what each may do, and how much budget each has left.';
 
 function Agents({ open }: { open: string | null }) {
   const { current } = useCurrentWorkspace();
@@ -37,10 +41,10 @@ function Agents({ open }: { open: string | null }) {
   const create = () => setEditing({ agent: null });
 
   return (
-    <PageContainer>
+    <PageContainer className="motion-safe:animate-fade-in">
       <PageHeader
         title="Agents"
-        description="This workspace’s AI org chart: who reports to whom, which roles execute which nodes, what each may do, and how much budget each has left."
+        description={DESCRIPTION}
         actions={
           <Button onClick={create}>
             <PlusIcon />
@@ -110,9 +114,15 @@ export default function AgentsPage() {
   return (
     <>
       <Seo title="Agents" noIndex />
-      <Suspense fallback={<PageSkeleton />}>
-        <Agents key={open ?? ''} open={open} />
-      </Suspense>
+      <QueryErrorBoundary
+        page="default"
+        header={<PageHeader title="Agents" description={DESCRIPTION} />}
+        title="Couldn’t load the agents"
+      >
+        <Suspense fallback={<ListPageSkeleton filters={false} rows={6} />}>
+          <Agents key={open ?? ''} open={open} />
+        </Suspense>
+      </QueryErrorBoundary>
     </>
   );
 }

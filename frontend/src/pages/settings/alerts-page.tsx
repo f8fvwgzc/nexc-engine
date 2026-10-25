@@ -6,11 +6,10 @@ import { EmptyState } from '@/components/custom-ui/empty-state';
 import { ErrorState } from '@/components/custom-ui/error-state';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { PageSkeleton } from '@/components/layout/page-skeleton';
+import { ListSkeleton, SettingsSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
 import { acknowledgeAlert, alertsQuery } from '@/features/policies/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { formatDateTime, formatRelative } from '@/lib/format';
@@ -37,7 +36,7 @@ function Feed({ workspace }: { workspace: Workspace }) {
         list?.map((a) => (a.id === seen.id ? seen : a)),
       ),
   });
-  if (isPending) return <Skeleton className="h-48 rounded-xl" />;
+  if (isPending) return <ListSkeleton rows={4} label="Loading the alerts" />;
   if (error) {
     return (
       <ErrorState title="Couldn’t load the alerts" error={error} onRetry={() => void refetch()} />
@@ -62,7 +61,7 @@ function Feed({ workspace }: { workspace: Workspace }) {
   }
   const open = alerts.filter((a) => a.acknowledged_at === null).length;
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 motion-safe:animate-fade-in">
       <p className="text-[13px] text-muted-foreground">
         {open === 0 ? 'All acknowledged' : `${open} to acknowledge`}
       </p>
@@ -124,7 +123,7 @@ function Feed({ workspace }: { workspace: Workspace }) {
 
 export default function AlertsSettingsPage() {
   const { current } = useCurrentWorkspace();
-  if (!current) return <PageSkeleton width="narrow" />;
+  if (!current) return <SettingsSkeleton />;
   const allowed = isWorkspaceAdmin(current.role);
   return (
     <PageContainer width="narrow">

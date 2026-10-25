@@ -6,11 +6,10 @@ import { EmptyState } from '@/components/custom-ui/empty-state';
 import { ErrorState } from '@/components/custom-ui/error-state';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { ContentSkeleton } from '@/components/layout/page-skeleton';
+import { SettingsCardsSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
 import { ontologyStatusQuery } from '@/features/ontology/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { formatDateTime, formatRelative } from '@/lib/format';
@@ -61,7 +60,7 @@ function Proposal({ proposal }: { proposal: SchemaProposal }) {
 
 function Ontology({ workspace }: { workspace: Workspace }) {
   const { data: status, isPending, error, refetch } = useQuery(ontologyStatusQuery(workspace.id));
-  if (isPending) return <Skeleton className="h-48 rounded-xl" />;
+  if (isPending) return <SettingsCardsSkeleton rows={3} label="Loading the ontology" />;
   if (error) {
     return (
       <ErrorState title="Couldn’t load the ontology" error={error} onRetry={() => void refetch()} />
@@ -152,7 +151,7 @@ export default function OntologySettingsPage() {
         description="What the workspace models, kept in onto-intelli: entity kinds, link types, actions and the vocabulary of every graph. Approvers decide on proposed changes there; the assistant may propose, never apply."
       />
       {!current ? (
-        <ContentSkeleton />
+        <SettingsCardsSkeleton rows={3} />
       ) : current.role === 'guest' ? (
         <EmptyState
           icon={ShapesIcon}
