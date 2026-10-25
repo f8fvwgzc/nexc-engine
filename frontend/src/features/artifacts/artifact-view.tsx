@@ -47,7 +47,7 @@ export function ArtifactPreview({
   if (file.kind === 'markdown') {
     return (
       <div className="rounded-lg border px-5 py-4 sm:px-8 sm:py-6">
-        <Markdown className="max-w-[52rem] sm:prose-base">{content}</Markdown>
+        <Markdown className="max-w-none sm:prose-base">{content}</Markdown>
       </div>
     );
   }

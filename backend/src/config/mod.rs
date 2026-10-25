@@ -103,6 +103,8 @@ pub struct Settings {
     pub onto_migrate_on_start: bool,
     pub max_concurrency: usize,
     pub max_attempts: u32,
+    /// Give every workspace the expert catalog once (`planner::seed_catalog`).
+    pub seed_expert_agents: bool,
     pub node_timeout: Duration,
     /// The lease an instance holds on a run it executes (renewed every third of it); a run
     /// whose lease ran out is taken over by another instance (docs/HA.md).
@@ -282,6 +284,7 @@ impl Settings {
             onto_migrate_on_start: r.parse("NEXC_ONTO_MIGRATE_ON_START", true),
             max_concurrency: r.parse("NEXC_MAX_CONCURRENCY", 4),
             max_attempts: r.parse("NEXC_MAX_ATTEMPTS", 3),
+            seed_expert_agents: r.parse("NEXC_SEED_EXPERT_AGENTS", true),
             node_timeout: Duration::from_secs(r.parse("NEXC_NODE_TIMEOUT_SECS", 600)),
             run_lease: Duration::from_secs(r.parse("NEXC_RUN_LEASE_SECS", 30)),
             trust_proxy: r.parse("NEXC_TRUST_PROXY", false),

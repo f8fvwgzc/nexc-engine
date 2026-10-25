@@ -452,6 +452,12 @@ pub const ENV_VARS: &[EnvVar] = &[
         "lease an instance holds on a run it executes, renewed every third of it; a run whose lease ran out is taken over by another instance (docs/HA.md); at least 10 in production",
     ),
     var(
+        "NEXC_SEED_EXPERT_AGENTS",
+        "true",
+        false,
+        "give every workspace the 30 expert agents and the core team's skills once (docs/AGENT-CATALOG.md)",
+    ),
+    var(
         "NEXC_TRUST_PROXY",
         "false",
         false,

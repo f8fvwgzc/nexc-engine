@@ -18,7 +18,7 @@ pub use state::{AppState, http_client};
 use crate::config::Settings;
 use crate::domain::user::{self, Role};
 use crate::engine::scheduler;
-use crate::{memory, orchestrator, repo, security};
+use crate::{memory, planner, repo, security};
 
 /// Longest a shutting-down instance waits for its runs to be handed to its
 /// peers before it lets them go (they are then taken over when their lease
@@ -130,7 +130,7 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
         );
     }
     seed_missing_workspaces(&state).await?;
-    orchestrator::seed_missing_orgs(&state).await?;
+    planner::seed_missing_orgs(&state).await?;
     tokio::fs::create_dir_all(state.settings.artifacts_dir()).await?;
     tokio::fs::create_dir_all(state.settings.documents_dir()).await?;
 

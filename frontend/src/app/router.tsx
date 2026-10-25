@@ -123,6 +123,13 @@ export const routes: RouteObject[] = [
                 ...page(routeModules.agents, crumbs({ label: 'Agents' }), 'agents'),
               },
               {
+                path: 'skills',
+                ...page(
+                  routeModules.skills,
+                  crumbs({ label: 'Agents', to: '/app/agents' }, { label: 'Skills' }),
+                ),
+              },
+              {
                 path: 'secops',
                 ...page(routeModules.secops, crumbs({ label: 'Trust' }), 'secops'),
               },

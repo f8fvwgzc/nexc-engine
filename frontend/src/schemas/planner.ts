@@ -8,7 +8,8 @@ export const backendHealthSchema = z.object({
 });
 export type BackendHealth = z.infer<typeof backendHealthSchema>;
 
-export const orchestratorStatusSchema = z.object({
+/** The Planner's live view: its queue, running work, agents and the backends it routes to. */
+export const plannerStatusSchema = z.object({
   demo_mode: z.boolean(),
   queue_depth: z.number().int().nonnegative(),
   running_nodes: z.number().int().nonnegative(),
@@ -20,4 +21,4 @@ export const orchestratorStatusSchema = z.object({
     symphony: backendHealthSchema,
   }),
 });
-export type OrchestratorStatus = z.infer<typeof orchestratorStatusSchema>;
+export type PlannerStatus = z.infer<typeof plannerStatusSchema>;

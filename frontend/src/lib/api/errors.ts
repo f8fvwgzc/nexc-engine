@@ -72,3 +72,15 @@ export function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return 'Something went wrong.';
 }
+
+/**
+ * What a refusal says to fix: the first field message of a problem (a 422 names its field), and
+ * the error's one line otherwise. For errors no form field can show.
+ */
+export function problemMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    const first = Object.values(error.fieldErrors).flat()[0];
+    if (first) return first.charAt(0).toUpperCase() + first.slice(1);
+  }
+  return errorMessage(error);
+}

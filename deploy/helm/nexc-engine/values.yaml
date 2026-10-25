@@ -115,6 +115,8 @@ backend:
   # its peers at once and exits; the grace period leaves room for that and for HTTP requests in
   # flight.
   runLeaseSecs: 30
+  # Give every workspace the 30 expert agents and the core team's skills once (docs/AGENT-CATALOG.md).
+  seedExpertAgents: true
   terminationGracePeriodSeconds: 60
   # The backend's data volume (NEXC_DATA_DIR: run artifacts, uploaded documents), mounted by every
   # backend replica. ReadWriteOnce attaches it to one node, so the chart keeps every backend pod on

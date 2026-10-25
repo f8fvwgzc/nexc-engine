@@ -67,6 +67,7 @@ const VERB: Record<AuditAction, string> = {
   agent_deleted: 'deleted the agent',
   artifact_folder_deleted: 'deleted the artifact folder',
   artifact_file_deleted: 'deleted the artifact',
+  agent_skills_changed: "changed the agent's skills",
 };
 
 /** Actions whose subject is a thing of the workspace, not a name: it reads on in lower case. */

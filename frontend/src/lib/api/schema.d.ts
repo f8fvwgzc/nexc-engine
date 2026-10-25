@@ -552,6 +552,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agents/{id}/evaluate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Asks an agent made from a role template its competency questions again
+         *     with the workspace's provider (members and above) and keeps the score for
+         *     its card. 404 for an agent the caller cannot see; 422 for an agent made by
+         *     hand, or when no usable provider answered.
+         */
+        post: operations["evaluate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agents/{id}/quarantine": {
         parameters: {
             query?: never;
@@ -1829,6 +1851,26 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /**
+         * The same report at its former address; use `GET /planner/status`.
+         * @deprecated
+         */
+        get: operations["status_legacy"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/planner/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
         /** Queue, running work, agents and backend health for the caller. */
         get: operations["status"];
         put?: never;
@@ -2090,6 +2132,40 @@ export interface paths {
          *     right now, newest first. Asked from the provider, never from a built-in list.
          */
         get: operations["llm_models"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every skill of the library, in id order, without their bodies. */
+        get: operations["list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/skills/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One skill with its working knowledge. */
+        get: operations["get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3843,12 +3919,19 @@ export interface components {
             risk_updated_at: string | null;
             role: string;
             runtime: components["schemas"]["AgentRuntime"];
+            /**
+             * @description Ids of its skills (`GET /skills`): the working knowledge added to its
+             *     system prompt when it runs a step, most relevant first.
+             */
+            skills: string[];
             /** Format: int64 */
             spent_tokens: number;
             status: components["schemas"]["AgentStatus"];
             system_prompt: string;
             /** Format: uuid */
             team_id: string | null;
+            /** @description The role template it was made from; `null` for an agent made by hand. */
+            template_id: string | null;
             title: string;
         };
         /** @description An API token of an external agent, as listed (the token itself is shown once). */
@@ -4010,6 +4093,13 @@ export interface components {
             /** Format: int64 */
             budget_tokens: number;
             capabilities: components["schemas"]["Capabilities"];
+            /**
+             * @description Certifications whose public outlines its knowledge is benchmarked against
+             *     (the agents do not hold them).
+             */
+            credentials: string[];
+            /** @description The department it belongs to in the catalog. */
+            department: string;
             description: string;
             id: string;
             knowledge: string[];
@@ -4019,6 +4109,8 @@ export interface components {
             questions: components["schemas"]["CompetencyQuestion"][];
             role: string;
             runtime: components["schemas"]["AgentRuntime"];
+            /** @description Ids of the skills an agent made from it is given. */
+            skills: string[];
             title: string;
         };
         /** @description One alert. */
@@ -4470,7 +4562,7 @@ export interface components {
          * @description What an audit entry records.
          * @enum {string}
          */
-        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned" | "trace_sealed" | "policy_changed" | "policy_mismatch" | "agent_quarantined" | "agent_released" | "recording_changed" | "payload_viewed" | "agent_cancelled" | "approval_granted" | "approval_denied" | "artifact_quarantined" | "artifact_released" | "alert_raised" | "alert_destination_changed" | "classification_changed" | "mcp_server_added" | "mcp_server_removed" | "agent_token_issued" | "agent_token_revoked" | "agent_a2a_changed" | "a2a_counterpart_added" | "a2a_counterpart_removed" | "graph_deleted" | "evidence_purged" | "evidence_exported" | "agent_created" | "agent_deleted" | "artifact_folder_deleted" | "artifact_file_deleted";
+        AuditAction: "workspace_renamed" | "member_added" | "member_invited" | "member_role_changed" | "member_removed" | "invite_withdrawn" | "team_created" | "team_updated" | "team_deleted" | "team_member_set" | "team_member_removed" | "credential_set" | "credential_removed" | "guardrails_changed" | "label_deleted" | "knowledge_changed" | "workspace_transferred" | "platform_owner_assigned" | "trace_sealed" | "policy_changed" | "policy_mismatch" | "agent_quarantined" | "agent_released" | "recording_changed" | "payload_viewed" | "agent_cancelled" | "approval_granted" | "approval_denied" | "artifact_quarantined" | "artifact_released" | "alert_raised" | "alert_destination_changed" | "classification_changed" | "mcp_server_added" | "mcp_server_removed" | "agent_token_issued" | "agent_token_revoked" | "agent_a2a_changed" | "a2a_counterpart_added" | "a2a_counterpart_removed" | "graph_deleted" | "evidence_purged" | "evidence_exported" | "agent_created" | "agent_deleted" | "artifact_folder_deleted" | "artifact_file_deleted" | "agent_skills_changed";
         /** @description An answer from the audit. */
         AuditAnswer: {
             answer: string;
@@ -4808,6 +4900,8 @@ export interface components {
             reports_to?: string | null;
             role: string;
             runtime?: components["schemas"]["AgentRuntime"] | null;
+            /** @description Ids of its skills (`GET /skills`), at most 12. */
+            skills?: string[];
             system_prompt?: string;
             /**
              * Format: uuid
@@ -6478,20 +6572,6 @@ export interface components {
             /** @description The onto-intelli workspace inside the tenant; `null` when off. */
             workspace: string | null;
         };
-        /** @description Live view of the orchestrator for the current user. */
-        OrchestratorStatus: {
-            /** Format: int64 */
-            active_runs: number;
-            /** Format: int64 */
-            agents_active: number;
-            backends: components["schemas"]["Backends"];
-            /** @description True when the effective LLM provider is the offline demo provider. */
-            demo_mode: boolean;
-            /** Format: int64 */
-            queue_depth: number;
-            /** Format: int64 */
-            running_nodes: number;
-        };
         /** @description Where the export stands, for the operator. */
         OtlpStatus: {
             /**
@@ -6635,6 +6715,20 @@ export interface components {
          * @enum {string}
          */
         PlanStatus: "streaming" | "ready" | "failed" | "applied";
+        /** @description Live view of the Planner for the current user: queue, running work, agents and backend health. */
+        PlannerStatus: {
+            /** Format: int64 */
+            active_runs: number;
+            /** Format: int64 */
+            agents_active: number;
+            backends: components["schemas"]["Backends"];
+            /** @description True when the effective LLM provider is the offline demo provider. */
+            demo_mode: boolean;
+            /** Format: int64 */
+            queue_depth: number;
+            /** Format: int64 */
+            running_nodes: number;
+        };
         /**
          * @description What a platform administrator did.
          * @enum {string}
@@ -7531,6 +7625,38 @@ export interface components {
             /** @description Whether the account has a password; one single sign-on created has none. */
             password: boolean;
         };
+        /** @description A skill with its working knowledge. */
+        Skill: {
+            /** @description The working knowledge, in Markdown. */
+            body: string;
+            /** @description The field it belongs to (`finance`, `shipping`, ...). */
+            category: string;
+            /** @description What it does and when it applies, in a sentence. */
+            description: string;
+            /** @description Its id in agents' skill lists (`fin-equity-valuation`). */
+            id: string;
+            /** @description Terms a step that needs it tends to use (matched to rank skills). */
+            keywords: string[];
+            name: string;
+            /** @description The public pages it was written from. */
+            sources: components["schemas"]["SkillSource"][];
+        };
+        /** @description A public source a skill was written from. */
+        SkillSource: {
+            title: string;
+            url: string;
+        };
+        /** @description A skill as listed by `GET /skills`, without its body. */
+        SkillSummary: {
+            category: string;
+            /** @description Characters of its body: what it costs in a prompt. */
+            chars: number;
+            description: string;
+            id: string;
+            keywords: string[];
+            name: string;
+            sources: components["schemas"]["SkillSource"][];
+        };
         /**
          * @description One span of a run's trace, as stored and as served (and as an evidence
          *     bundle carries it, to be read back by the offline verifier).
@@ -7940,6 +8066,11 @@ export interface components {
             reports_to?: string | null;
             role?: string | null;
             runtime?: components["schemas"]["AgentRuntime"] | null;
+            /**
+             * @description Replaces its skills (ids from `GET /skills`, at most 12; audited as
+             *     `agent_skills_changed`).
+             */
+            skills?: string[] | null;
             status?: components["schemas"]["AgentStatus"] | null;
             system_prompt?: string | null;
             /** Format: uuid */
@@ -9244,7 +9375,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Template id: analyst, researcher or reviewer */
+                /** @description Template id, e.g. analyst, risk-manager, freight-specialist (GET /agent-templates) */
                 name: string;
             };
             cookie?: never;
@@ -9471,6 +9602,52 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    evaluate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentEvaluation"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12833,6 +13010,33 @@ export interface operations {
             };
         };
     };
+    status_legacy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlannerStatus"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     status: {
         parameters: {
             query?: never;
@@ -12847,7 +13051,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["OrchestratorStatus"];
+                    "application/json": components["schemas"]["PlannerStatus"];
                 };
             };
             401: {
@@ -13360,6 +13564,74 @@ export interface operations {
             };
             /** @description The provider could not be asked */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list: {
+        parameters: {
+            query?: {
+                /** @description Only the skills of this category (`finance`, `shipping`, ...). */
+                category?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillSummary"][];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Skill id, e.g. fin-equity-valuation */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Skill"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

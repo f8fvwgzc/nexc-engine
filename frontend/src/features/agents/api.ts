@@ -8,6 +8,7 @@ import {
   a2aTaskSchema,
   agentApiTokenSchema,
   agentCardSchema,
+  agentEvaluationSchema,
   agentSchema,
   issuedAgentApiTokenSchema,
   type AgentInput,
@@ -65,6 +66,14 @@ export function createAgent(body: AgentInput & { workspace_id?: string }) {
 
 export function updateAgent(agentId: string, body: AgentInput) {
   return apiRequest(`/agents/${agentId}`, agentSchema, { method: 'PATCH', body });
+}
+
+/**
+ * Asks an agent made from a role template its competency questions again (members and above);
+ * the score is kept for its card. 422 for an agent made by hand, or when no provider answered.
+ */
+export function evaluateAgent(agentId: string) {
+  return apiRequest(`/agents/${agentId}/evaluate`, agentEvaluationSchema, { method: 'POST' });
 }
 
 export function deleteAgent(agentId: string) {

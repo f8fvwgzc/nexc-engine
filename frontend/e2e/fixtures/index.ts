@@ -55,8 +55,8 @@ import memoryTopics from './memory-topics.json' with { type: 'json' };
 import models from './models.json' with { type: 'json' };
 import ontologySession from './ontology-session.json' with { type: 'json' };
 import ontology from './ontology.json' with { type: 'json' };
-import orchestrator from './orchestrator.json' with { type: 'json' };
 import passages from './passages.json' with { type: 'json' };
+import planner from './planner.json' with { type: 'json' };
 import platformEvents from './platform-events.json' with { type: 'json' };
 import platformUsers from './platform-users.json' with { type: 'json' };
 import platformWorkspace from './platform-workspace.json' with { type: 'json' };
@@ -74,6 +74,8 @@ import secopsSpans from './secops-spans.json' with { type: 'json' };
 import session from './session.json' with { type: 'json' };
 import sessions from './sessions.json' with { type: 'json' };
 import signInMethods from './sign-in-methods.json' with { type: 'json' };
+import skill from './skill.json' with { type: 'json' };
+import skills from './skills.json' with { type: 'json' };
 import spanPayloads from './span-payloads.json' with { type: 'json' };
 import states from './states.json' with { type: 'json' };
 import teamMembers from './team-members.json' with { type: 'json' };
@@ -165,8 +167,8 @@ export const fixtures = {
   models: typed<One<'ModelCatalog'>>(models),
   ontology: typed<One<'OntologyStatus'>>(ontology),
   ontologySession: typed<One<'OntologySession'>>(ontologySession),
-  orchestrator: typed<One<'OrchestratorStatus'>>(orchestrator),
   passages: typed<Many<'Passage'>>(passages),
+  planner: typed<One<'PlannerStatus'>>(planner),
   platformEvents: typed<Many<'PlatformEvent'>>(platformEvents),
   platformUsers: typed<Many<'PlatformUser'>>(platformUsers),
   platformWorkspace: typed<One<'PlatformWorkspaceDetail'>>(platformWorkspace),
@@ -184,6 +186,8 @@ export const fixtures = {
   session: typed<One<'Session'>>(session),
   sessions: typed<One<'SessionPage'>>(sessions),
   signInMethods: typed<{ user: One<'SignInMethods'>; admin: One<'SignInMethods'> }>(signInMethods),
+  skill: typed<One<'Skill'>>(skill),
+  skills: typed<Many<'SkillSummary'>>(skills),
   spanPayloads: typed<One<'SpanPayloads'>>(spanPayloads),
   states: typed<ByTeam<'IssueState'>>(states),
   teamMembers: typed<Many<'TeamMember'>>(teamMembers),

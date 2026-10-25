@@ -19,11 +19,13 @@ import {
 import { FieldGroup } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { SkillPicker } from '@/features/skills/components/skill-picker';
 import { teamsQuery } from '@/features/workspaces/api';
 import { useWorkspaceId } from '@/features/workspaces/use-current-workspace';
 import { errorMessage } from '@/lib/api/errors';
 import { applyProblemToForm } from '@/lib/api/form-errors';
 import {
+  AGENT_SKILLS_MAX,
   DEFAULT_CAPABILITIES,
   agentInputSchema,
   type Agent,
@@ -48,6 +50,7 @@ const EMPTY: AgentInput = {
   purpose: '',
   team_id: null,
   capabilities: DEFAULT_CAPABILITIES,
+  skills: [],
 };
 
 function toInput(agent: Agent): AgentInput {
@@ -63,6 +66,7 @@ function toInput(agent: Agent): AgentInput {
     purpose,
     team_id,
     capabilities,
+    skills,
   } = agent;
   return {
     name,
@@ -76,6 +80,7 @@ function toInput(agent: Agent): AgentInput {
     purpose,
     team_id,
     capabilities,
+    skills,
   };
 }
 
@@ -91,6 +96,7 @@ const FIELDS = [
   'purpose',
   'team_id',
   'capabilities',
+  'skills',
 ] as const;
 
 interface AgentFormDialogProps {
@@ -239,6 +245,22 @@ export function AgentFormDialog({ open, onOpenChange, agent, agents }: AgentForm
                   {...field}
                   rows={2}
                   placeholder="Gathers and weighs evidence for the other agents to build on."
+                />
+              )}
+            </FormField>
+            <FormField
+              control={form.control}
+              name="skills"
+              label="Skills"
+              description={`Working knowledge from the skill library, added to its prompt for each step; the most relevant first, up to ${AGENT_SKILLS_MAX}.`}
+            >
+              {({ value, onChange, id, ...field }) => (
+                <SkillPicker
+                  id={id}
+                  value={value}
+                  onChange={onChange}
+                  aria-invalid={field['aria-invalid']}
+                  aria-describedby={field['aria-describedby']}
                 />
               )}
             </FormField>

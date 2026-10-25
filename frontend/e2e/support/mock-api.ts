@@ -9,7 +9,7 @@ import { fixtures } from '../fixtures';
 export type DataMode = 'full' | 'empty' | 'loading' | 'error';
 
 /** What the shell needs to stand up at all: answered in every mode. */
-const SHELL = /^\/(auth\/|workspaces$|orchestrator\/)/;
+const SHELL = /^\/(auth\/|workspaces$|planner\/)/;
 
 /** Who is signed in: a workspace member, or a platform administrator (the console). */
 export type Persona = 'member' | 'admin';
@@ -138,7 +138,7 @@ const handlers: [string, Handler][] = [
   ['GET /graphs/:gid/suggestions', () => []],
   ['GET /graphs/:gid/events', () => PENDING],
   ['GET /templates', () => fixtures.templates],
-  ['GET /orchestrator/status', () => fixtures.orchestrator],
+  ['GET /planner/status', () => fixtures.planner],
   ['POST /realtime/tickets', () => ({ ticket: 'e2e-ticket', expires_in: 30 })],
   ['GET /runs/:rid', ({ mode, params }) => (mode === 'full' ? runById(params.rid) : undefined)],
   ['GET /runs/:rid/artifacts', ({ mode }) => list(mode, fixtures.artifacts)],
@@ -158,6 +158,18 @@ const handlers: [string, Handler][] = [
   ['GET /agents/:aid/tokens', ({ mode }) => list(mode, fixtures.agentTokens)],
   ['GET /agents/:aid/a2a/tasks', ({ mode }) => list(mode, fixtures.a2aTasks)],
   ['GET /agent-templates', () => fixtures.agentTemplates],
+  // The skill library is a catalogue: there in every data mode, like the templates.
+  ['GET /skills', () => fixtures.skills],
+  [
+    'GET /skills/:sid',
+    ({ params }) => {
+      const summary = fixtures.skills.find((s) => s.id === params.sid);
+      if (!summary) return undefined;
+      // Every skill opens with the fixture skill's knowledge, under its own name.
+      const { chars: _chars, ...rest } = summary;
+      return { ...fixtures.skill, ...rest };
+    },
+  ],
   [
     'GET /workspaces/:wid/secops/overview',
     ({ mode }) => full(mode, fixtures.secopsOverview, fixtures.secopsOverviewEmpty),

@@ -722,6 +722,7 @@ mod tests {
             memories: vec![],
             documents: vec![],
             agent_roles: vec![],
+            agents: vec![],
         }
     }
 

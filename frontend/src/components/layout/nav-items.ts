@@ -18,6 +18,7 @@ import {
   InboxIcon,
   KeyRoundIcon,
   LayoutDashboardIcon,
+  LibraryBigIcon,
   ListTreeIcon,
   type LucideIcon,
   MessagesSquareIcon,
@@ -115,6 +116,7 @@ export const WORKSPACE_MENUS: CoreMenu[] = [
       {
         items: [
           { title: 'Agents', to: '/app/agents', icon: BotIcon },
+          { title: 'Skills', to: '/app/skills', icon: LibraryBigIcon },
           { title: 'Conversations', to: '/app/conversations', icon: MessagesSquareIcon },
           { title: 'Sessions', to: '/app/sessions', icon: ListTreeIcon },
           { title: 'Runs', to: '/app/runs', icon: PlayIcon },

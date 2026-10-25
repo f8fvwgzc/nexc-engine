@@ -90,6 +90,9 @@ string_enum!(
         /// An artifact file was deleted with its versions (subject: its name; detail: its
         /// last version and the issue it was on).
         ArtifactFileDeleted => "artifact_file_deleted",
+        /// An agent's skills changed: the working knowledge added to its prompts
+        /// (subject: the principal; detail: the skills added and removed).
+        AgentSkillsChanged => "agent_skills_changed",
     }
 );
 

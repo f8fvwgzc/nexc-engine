@@ -72,7 +72,7 @@ use crate::repo::run_leases;
 use crate::repo::runs::{NodeOutcome, RunRow, StoredNode};
 use crate::repo::{self, OrNotFound};
 use crate::security::agent_token::OnBehalfOf;
-use crate::{kernel, memory, orchestrator};
+use crate::{kernel, memory, planner};
 
 /// How often the dispatcher looks for queued runs and for leases that ran out.
 const DISPATCH_POLL: Duration = Duration::from_secs(2);
@@ -1925,7 +1925,7 @@ impl NodeTask {
             (Some(pinned), Some(workspace)) => {
                 repo::agents::find(&state.db, workspace, pinned).await?
             }
-            _ => orchestrator::assign(&state, data.workspace_id, &node, &vocabulary).await?,
+            _ => planner::assign(&state, data.workspace_id, &node, &vocabulary).await?,
         };
         let query = format!("{} {}", node.title, node.content);
         let recalled = match data.workspace_id {

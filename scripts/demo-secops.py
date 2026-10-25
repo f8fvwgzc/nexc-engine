@@ -236,6 +236,12 @@ def make_agent(token: str, wid: str) -> dict:
             api("POST", f"/agents/{existing['id']}/release", token)
             say("released from the quarantine of an earlier run of this demo")
         return card
+    # The workspace's expert catalog has a Financial Analyst of the same role; nodes go to the
+    # oldest agent of their role, so this demo's workspace keeps its own analyst only.
+    for other in agents:
+        if other["role"] == "analyst" and other["name"] != AGENT:
+            api("DELETE", f"/agents/{other['id']}", token, ok=(204, 404))
+            say(f"removed {other['name']} from the demo workspace: the demo's analyst takes its nodes")
     status, card = api("POST", "/agents/from-template/analyst", token, {"workspace_id": wid, "name": AGENT})
     agent = card["agent"]
     caps = agent["capabilities"]

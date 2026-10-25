@@ -1,4 +1,4 @@
-//! Orchestrator status report.
+//! Planner status report.
 
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -22,9 +22,9 @@ pub struct Backends {
     pub symphony: BackendHealth,
 }
 
-/// Live view of the orchestrator for the current user.
+/// Live view of the Planner for the current user: queue, running work, agents and backend health.
 #[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct OrchestratorStatus {
+pub struct PlannerStatus {
     /// True when the effective LLM provider is the offline demo provider.
     pub demo_mode: bool,
     pub queue_depth: i64,

@@ -3,16 +3,18 @@ import type { z } from 'zod';
 
 import * as f from '@/test/fixtures';
 
-import { agentCardSchema, agentSchema } from './agent';
+import { AGENT_SKILLS_MAX, agentCardSchema, agentInputSchema, agentSchema } from './agent';
 import { authResponseSchema, registerInputSchema, userSchema } from './auth';
 import { graphSchema, graphSummarySchema, nodeFormSchema, parseTags } from './graph';
 import { memorySchema } from './memory';
-import { orchestratorStatusSchema } from './orchestrator';
+import { plannerStatusSchema } from './planner';
 import { planSchema } from './plan';
 import { problemSchema } from './problem';
 import { wsServerMessageSchema } from './realtime';
 import { artifactSchema, runSchema } from './run';
+import { agentTemplateSchema } from './secops';
 import { llmSettingsSchema } from './settings';
+import { skillSchema, skillSummarySchema } from './skill';
 import { graphTemplateSchema } from './template';
 import { spanSchema, tracePageSchema, traceVerificationSchema } from './trace';
 
@@ -27,7 +29,10 @@ describe('contract schemas (CONTRACT §4)', () => {
     ['Agent', agentSchema, f.agent],
     ['AgentCard', agentCardSchema, f.agentCard],
     ['Memory', memorySchema, f.memory],
-    ['OrchestratorStatus', orchestratorStatusSchema, f.orchestratorStatus],
+    ['PlannerStatus', plannerStatusSchema, f.plannerStatus],
+    ['AgentTemplate', agentTemplateSchema, f.agentTemplate],
+    ['SkillSummary', skillSummarySchema, f.skillSummaries[0]],
+    ['Skill', skillSchema, f.skill],
     ['GraphTemplate', graphTemplateSchema, f.template],
     ['LlmSettings', llmSettingsSchema, f.llmSettings],
     ['Span', spanSchema, f.span],
@@ -122,6 +127,16 @@ describe('form schemas', () => {
     });
     expect(result.success).toBe(false);
     expect(result.error?.issues[0]?.message).toMatch(/at least 12/);
+  });
+
+  it('gives an agent at most twelve skills', () => {
+    const input = {
+      ...f.agent,
+      skills: Array.from({ length: AGENT_SKILLS_MAX }, (_, i) => `s${i}`),
+    };
+    expect(agentInputSchema.safeParse(input).success).toBe(true);
+    const over = agentInputSchema.safeParse({ ...input, skills: [...input.skills, 'one-more'] });
+    expect(over.error?.issues[0]?.message).toBe('Pick at most 12 skills');
   });
 
   it('parses comma separated tags without duplicates or blanks', () => {

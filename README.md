@@ -177,7 +177,7 @@ flowchart LR
     end
 
     subgraph core[Private network]
-        api["backend - nexc serve<br/>Rust / axum<br/>REST, SSE, WebSocket<br/>graph engine, scheduler,<br/>memory, orchestrator"]
+        api["backend - nexc serve<br/>Rust / axum<br/>REST, SSE, WebSocket<br/>graph engine, scheduler,<br/>memory, Planner"]
         rt["agent-runtime<br/>Python / FastAPI<br/>agents, tools, sandbox"]
         db[("PostgreSQL 17")]
         sym["texc-symphony<br/>(optional)<br/>coding agents"]
@@ -196,7 +196,8 @@ flowchart LR
 
 - **frontend** – Vite + React 19 + TypeScript SPA (graph canvas, runs, agents, memory, settings).
 - **backend** – a single Rust binary, `nexc`: REST API, realtime hub, graph analysis, planner,
-  DAG scheduler, memory and the orchestrator that routes nodes to executors. Stateless apart from
+  DAG scheduler, memory and the Planner, which runs the agent organisation (the core team and the
+  expert catalog, [docs/AGENT-CATALOG.md](docs/AGENT-CATALOG.md)) and routes nodes to executors. Stateless apart from
   the artifact volume; scale it horizontally.
 - **agent-runtime** – Python service where agents are born from a spec per request and run a
   tool loop (`write_file`, `make_docx`, `spawn_subagent`, optional sandboxed `run_python`). Internal

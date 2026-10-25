@@ -147,6 +147,9 @@ const TABLES: &[Table] = &[
         ),
     },
     table("workspaces", "t.id = $1", false),
+    // The catalog seeds it had: without them the target would seed the catalog again and bring
+    // back the agents the workspace deleted.
+    table("workspace_catalog_seeds", IN_WORKSPACE, false),
     table("workspace_members", IN_WORKSPACE, false),
     table("workspace_invites", IN_WORKSPACE, false),
     table("workspace_guardrails", IN_WORKSPACE, false),

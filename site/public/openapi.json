@@ -1353,7 +1353,7 @@
           {
             "name": "name",
             "in": "path",
-            "description": "Template id: analyst, researcher or reviewer",
+            "description": "Template id, e.g. analyst, risk-manager, freight-specialist (GET /agent-templates)",
             "required": true,
             "schema": {
               "type": "string"
@@ -1697,6 +1697,70 @@
             }
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/agents/{id}/evaluate": {
+      "post": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Asks an agent made from a role template its competency questions again\nwith the workspace's provider (members and above) and keeps the score for\nits card. 404 for an agent the caller cannot see; 422 for an agent made by\nhand, or when no usable provider answered.",
+        "operationId": "evaluate",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentEvaluation"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
             "content": {
               "application/json": {
                 "schema": {
@@ -6583,7 +6647,42 @@
     "/api/v1/orchestrator/status": {
       "get": {
         "tags": [
-          "orchestrator"
+          "planner"
+        ],
+        "summary": "The same report at its former address; use `GET /planner/status`.",
+        "operationId": "status_legacy",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlannerStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "deprecated": true,
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/planner/status": {
+      "get": {
+        "tags": [
+          "planner"
         ],
         "summary": "Queue, running work, agents and backend health for the caller.",
         "operationId": "status",
@@ -6592,7 +6691,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OrchestratorStatus"
+                  "$ref": "#/components/schemas/PlannerStatus"
                 }
               }
             }
@@ -7357,6 +7456,111 @@
           },
           "422": {
             "description": "The provider could not be asked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/skills": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Every skill of the library, in id order, without their bodies.",
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "category",
+            "in": "query",
+            "description": "Only the skills of this category (`finance`, `shipping`, ...).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SkillSummary"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/skills/{id}": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "One skill with its working knowledge.",
+        "operationId": "get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Skill id, e.g. fin-equity-valuation",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Skill"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
             "content": {
               "application/json": {
                 "schema": {
@@ -16025,7 +16229,9 @@
           "risk_score",
           "risk_reasons",
           "risk_updated_at",
-          "a2a_exposed"
+          "a2a_exposed",
+          "skills",
+          "template_id"
         ],
         "properties": {
           "a2a_exposed": {
@@ -16121,6 +16327,13 @@
           "runtime": {
             "$ref": "#/components/schemas/AgentRuntime"
           },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ids of its skills (`GET /skills`): the working knowledge added to its\nsystem prompt when it runs a step, most relevant first."
+          },
           "spent_tokens": {
             "type": "integer",
             "format": "int64"
@@ -16137,6 +16350,13 @@
               "null"
             ],
             "format": "uuid"
+          },
+          "template_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The role template it was made from; `null` for an agent made by hand."
           },
           "title": {
             "type": "string"
@@ -16579,6 +16799,9 @@
           "name",
           "role",
           "title",
+          "department",
+          "credentials",
+          "skills",
           "description",
           "purpose",
           "runtime",
@@ -16595,6 +16818,17 @@
           },
           "capabilities": {
             "$ref": "#/components/schemas/Capabilities"
+          },
+          "credentials": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Certifications whose public outlines its knowledge is benchmarked against\n(the agents do not hold them)."
+          },
+          "department": {
+            "type": "string",
+            "description": "The department it belongs to in the catalog."
           },
           "description": {
             "type": "string"
@@ -16628,6 +16862,13 @@
           },
           "runtime": {
             "$ref": "#/components/schemas/AgentRuntime"
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ids of the skills an agent made from it is given."
           },
           "title": {
             "type": "string"
@@ -17831,7 +18072,8 @@
           "agent_created",
           "agent_deleted",
           "artifact_folder_deleted",
-          "artifact_file_deleted"
+          "artifact_file_deleted",
+          "agent_skills_changed"
         ]
       },
       "AuditAnswer": {
@@ -18704,6 +18946,13 @@
                 "type": "null"
               }
             ]
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ids of its skills (`GET /skills`), at most 12."
           },
           "system_prompt": {
             "type": "string"
@@ -22963,43 +23212,6 @@
           }
         }
       },
-      "OrchestratorStatus": {
-        "type": "object",
-        "description": "Live view of the orchestrator for the current user.",
-        "required": [
-          "demo_mode",
-          "queue_depth",
-          "running_nodes",
-          "active_runs",
-          "agents_active",
-          "backends"
-        ],
-        "properties": {
-          "active_runs": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "agents_active": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "backends": {
-            "$ref": "#/components/schemas/Backends"
-          },
-          "demo_mode": {
-            "type": "boolean",
-            "description": "True when the effective LLM provider is the offline demo provider."
-          },
-          "queue_depth": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "running_nodes": {
-            "type": "integer",
-            "format": "int64"
-          }
-        }
-      },
       "OtlpStatus": {
         "type": "object",
         "description": "Where the export stands, for the operator.",
@@ -23388,6 +23600,43 @@
           "failed",
           "applied"
         ]
+      },
+      "PlannerStatus": {
+        "type": "object",
+        "description": "Live view of the Planner for the current user: queue, running work, agents and backend health.",
+        "required": [
+          "demo_mode",
+          "queue_depth",
+          "running_nodes",
+          "active_runs",
+          "agents_active",
+          "backends"
+        ],
+        "properties": {
+          "active_runs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "agents_active": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "backends": {
+            "$ref": "#/components/schemas/Backends"
+          },
+          "demo_mode": {
+            "type": "boolean",
+            "description": "True when the effective LLM provider is the offline demo provider."
+          },
+          "queue_depth": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "running_nodes": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
       },
       "PlatformAction": {
         "type": "string",
@@ -25652,6 +25901,114 @@
           }
         }
       },
+      "Skill": {
+        "type": "object",
+        "description": "A skill with its working knowledge.",
+        "required": [
+          "id",
+          "name",
+          "category",
+          "description",
+          "keywords",
+          "sources",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "The working knowledge, in Markdown."
+          },
+          "category": {
+            "type": "string",
+            "description": "The field it belongs to (`finance`, `shipping`, ...)."
+          },
+          "description": {
+            "type": "string",
+            "description": "What it does and when it applies, in a sentence."
+          },
+          "id": {
+            "type": "string",
+            "description": "Its id in agents' skill lists (`fin-equity-valuation`)."
+          },
+          "keywords": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Terms a step that needs it tends to use (matched to rank skills)."
+          },
+          "name": {
+            "type": "string"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillSource"
+            },
+            "description": "The public pages it was written from."
+          }
+        }
+      },
+      "SkillSource": {
+        "type": "object",
+        "description": "A public source a skill was written from.",
+        "required": [
+          "title",
+          "url"
+        ],
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "SkillSummary": {
+        "type": "object",
+        "description": "A skill as listed by `GET /skills`, without its body.",
+        "required": [
+          "id",
+          "name",
+          "category",
+          "description",
+          "keywords",
+          "sources",
+          "chars"
+        ],
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "chars": {
+            "type": "integer",
+            "description": "Characters of its body: what it costs in a prompt.",
+            "minimum": 0
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "keywords": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillSource"
+            }
+          }
+        }
+      },
       "Span": {
         "type": "object",
         "description": "One span of a run's trace, as stored and as served (and as an evidence\nbundle carries it, to be read back by the offline verifier).",
@@ -26766,6 +27123,16 @@
                 "type": "null"
               }
             ]
+          },
+          "skills": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Replaces its skills (ids from `GET /skills`, at most 12; audited as\n`agent_skills_changed`)."
           },
           "status": {
             "oneOf": [
@@ -28072,7 +28439,8 @@
       "description": "Where a workspace's alerts and approvals are sent: signed webhooks and Slack"
     },
     {
-      "name": "orchestrator"
+      "name": "planner",
+      "description": "The Planner: queue, running work, agents and the backends it routes nodes to"
     },
     {
       "name": "realtime"

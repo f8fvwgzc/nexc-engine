@@ -519,7 +519,7 @@ async fn workspace_roles(
             &mut tx,
             id,
             &crate::http::handlers::auth::personal_workspace_name(&account.name),
-            &state.settings.llm_model,
+            &state.settings,
         )
         .await?;
     }
