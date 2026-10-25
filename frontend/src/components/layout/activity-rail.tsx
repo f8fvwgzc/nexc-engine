@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 
 import { WithTooltip } from '@/components/custom-ui/with-tooltip';
+import { prefetchRouteOnIntent } from '@/lib/prefetch';
 import { cn } from '@/lib/utils';
 
 import { BrandMark } from './brand-mark';
@@ -24,6 +25,8 @@ function RailLink({ menu, active, count }: { menu: CoreMenu; active: boolean; co
         to={menu.home}
         aria-current={active ? 'page' : undefined}
         data-active={active}
+        data-rail-menu
+        {...prefetchRouteOnIntent(menu.home)}
         className={cn(
           'relative flex size-9 items-center justify-center rounded-lg text-sidebar-foreground/70 outline-hidden transition-colors duration-100',
           'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring',

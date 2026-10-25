@@ -10,17 +10,19 @@ import {
   UsersRoundIcon,
   WorkflowIcon,
 } from 'lucide-react';
-import { Suspense, useState } from 'react';
+import { Suspense, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
 import { EmptyState } from '@/components/custom-ui/empty-state';
 import { IconButton } from '@/components/custom-ui/icon-button';
 import { ProjectStatusGlyph } from '@/components/custom-ui/issue-glyphs';
+import { staggerStyle } from '@/components/custom-ui/motion-presets';
 import { OptionSelect } from '@/components/custom-ui/option-select';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { ContentSkeleton, PageSkeleton } from '@/components/layout/page-skeleton';
+import { SettingsSkeleton } from '@/components/layout/page-skeleton';
+import { QueryErrorBoundary } from '@/components/layout/query-error-boundary';
 import { Seo } from '@/components/seo/seo';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -171,7 +173,8 @@ function TeamRoster({
   canManage: boolean;
 }) {
   const queryClient = useQueryClient();
-  const { data: members = [] } = useQuery(teamMembersQuery(workspace.id, team.id));
+  const membersResult = useQuery(teamMembersQuery(workspace.id, team.id));
+  const members = membersResult.data ?? [];
   // Guests cannot list workspace members; they never manage a team either.
   const { data: everyone = [] } = useQuery({
     ...membersQuery(workspace.id),
@@ -199,6 +202,21 @@ function TeamRoster({
 
   return (
     <div className="space-y-2 border-t pt-3">
+      {/* A roster that could not be read is not an empty one. */}
+      {membersResult.isPending ? (
+        <div role="status" aria-busy aria-label="Loading the members" className="space-y-1.5">
+          <Skeleton className="h-6 w-full" />
+          <Skeleton className="h-6 w-4/5" />
+        </div>
+      ) : membersResult.isError && !membersResult.data ? (
+        <div role="alert" className="flex items-center gap-2 text-sm text-muted-foreground">
+          <span className="flex-1">Couldn’t load the members.</span>
+          <Button variant="ghost" size="sm" onClick={() => void membersResult.refetch()}>
+            <RotateCcwIcon />
+            Try again
+          </Button>
+        </div>
+      ) : null}
       <ul className="space-y-1">
         {members.map((member) => (
           <li key={member.user_id} className="flex items-center gap-2 text-sm">
@@ -352,6 +370,7 @@ function TeamCard({
   projectsState,
   onRetryProjects,
   onCreateProject,
+  style,
 }: {
   workspace: Workspace;
   team: Team;
@@ -362,6 +381,8 @@ function TeamCard({
   projectsState: ProjectsState;
   onRetryProjects: () => void;
   onCreateProject: () => void;
+  /** Its place in the cards' entrance, one after another. */
+  style?: CSSProperties;
 }) {
   const queryClient = useQueryClient();
   const me = useAuthStore((s) => s.user?.id);
@@ -404,7 +425,10 @@ function TeamCard({
         : ` Its ${projects.length} projects stay, without a team.`;
 
   return (
-    <li className="min-w-0 space-y-3 rounded-xl border p-4">
+    <li
+      className="min-w-0 space-y-3 rounded-xl border p-4 motion-safe:animate-fade-up"
+      style={style}
+    >
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant="outline" className="font-mono">
           {team.key}
@@ -532,9 +556,10 @@ function TeamList({ workspace, onCreate }: { workspace: Workspace; onCreate?: ()
   return (
     <>
       <ul className="grid gap-3 md:grid-cols-2">
-        {teams.map((team) => (
+        {teams.map((team, i) => (
           <TeamCard
             key={team.id}
+            style={staggerStyle(i)}
             workspace={workspace}
             team={team}
             projects={projects.filter((p) => p.team_id === team.id)}
@@ -558,10 +583,21 @@ function TeamList({ workspace, onCreate }: { workspace: Workspace; onCreate?: ()
   );
 }
 
+/** The team cards while they load, two to a row as they will be. */
+function TeamsSkeleton() {
+  return (
+    <div role="status" aria-busy aria-label="Loading" className="grid gap-3 md:grid-cols-2">
+      {Array.from({ length: 4 }, (_, i) => (
+        <Skeleton key={i} className="h-44 rounded-xl" />
+      ))}
+    </div>
+  );
+}
+
 function Teams() {
   const { current } = useCurrentWorkspace();
   const [creating, setCreating] = useState(false);
-  if (!current) return <PageSkeleton width="narrow" />;
+  if (!current) return <SettingsSkeleton />;
   const canCreate = current.role !== 'guest';
   return (
     <PageContainer width="narrow">
@@ -577,13 +613,14 @@ function Teams() {
           )
         }
       />
-      <Suspense fallback={<ContentSkeleton />}>
-        <TeamList
-          key={current.id}
-          workspace={current}
-          onCreate={canCreate ? () => setCreating(true) : undefined}
-        />
-      </Suspense>
+      <QueryErrorBoundary key={current.id} title="Couldn’t load the teams">
+        <Suspense fallback={<TeamsSkeleton />}>
+          <TeamList
+            workspace={current}
+            onCreate={canCreate ? () => setCreating(true) : undefined}
+          />
+        </Suspense>
+      </QueryErrorBoundary>
       <NewTeamDialog workspace={current} open={creating} onClose={() => setCreating(false)} />
     </PageContainer>
   );

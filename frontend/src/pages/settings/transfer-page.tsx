@@ -9,12 +9,11 @@ import { EmptyState } from '@/components/custom-ui/empty-state';
 import { ErrorState } from '@/components/custom-ui/error-state';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { ContentSkeleton } from '@/components/layout/page-skeleton';
+import { ListSkeleton, SettingsCardsSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Skeleton } from '@/components/ui/skeleton';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { apiRequest, apiSend } from '@/lib/api/client';
 import { errorMessage } from '@/lib/api/errors';
@@ -221,7 +220,7 @@ function TransferForm({ workspace }: { workspace: Workspace }) {
             {errorMessage(check.error ?? start.error)}
           </p>
         )}
-        {history.isPending && <Skeleton className="h-16 w-full rounded-lg" />}
+        {history.isPending && <ListSkeleton rows={2} label="Loading the earlier transfers" />}
         {/* A failed poll keeps the list it had; only a list never read becomes an error. */}
         {history.error && !history.data && (
           <ErrorState
@@ -286,7 +285,7 @@ export default function TransferPage() {
         description="Hold your workspace’s data yourself: move everything to a database you control in one step, then remove it from this server."
       />
       {!current ? (
-        <ContentSkeleton />
+        <SettingsCardsSkeleton rows={4} />
       ) : current.role === 'owner' ? (
         <TransferForm key={current.id} workspace={current} />
       ) : (

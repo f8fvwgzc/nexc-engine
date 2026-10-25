@@ -19,7 +19,7 @@ import { IconButton } from '@/components/custom-ui/icon-button';
 import { OptionSelect } from '@/components/custom-ui/option-select';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { PageSkeleton } from '@/components/layout/page-skeleton';
+import { ListSkeleton, SettingsCardsSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -292,11 +292,7 @@ function Documents({ workspace }: { workspace: Workspace }) {
           onRetry={() => void refetch()}
         />
       ) : isPending ? (
-        <div className="space-y-2" aria-busy>
-          {[0, 1, 2].map((i) => (
-            <Skeleton key={i} className="h-10 w-full" />
-          ))}
-        </div>
+        <ListSkeleton rows={4} label="Loading the documents" />
       ) : documents.length === 0 && page === 0 ? (
         <EmptyState
           icon={BookOpenIcon}
@@ -707,7 +703,7 @@ function Knowledge({ workspace }: { workspace: Workspace }) {
           onRetry={() => void refetchSettings()}
         />
       ) : (
-        <Skeleton className="h-64 w-full rounded-lg" />
+        <SettingsCardsSkeleton rows={4} label="Loading the embedding settings" />
       )}
     </div>
   );
@@ -725,7 +721,7 @@ export default function KnowledgeSettingsPage() {
       {current ? (
         <Knowledge key={current.id} workspace={current} />
       ) : (
-        <PageSkeleton width="narrow" />
+        <SettingsCardsSkeleton cards={2} />
       )}
     </PageContainer>
   );

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarIcon, FolderKanbanIcon, KanbanIcon, ListIcon, PlusIcon } from 'lucide-react';
-import { useState } from 'react';
+import { useState, type ComponentProps } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 
 import { EmptyState } from '@/components/custom-ui/empty-state';
@@ -11,7 +11,7 @@ import { OptionSelect } from '@/components/custom-ui/option-select';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { ScrollRegion } from '@/components/custom-ui/scroll-region';
-import { PageSkeleton, TableSkeleton } from '@/components/layout/page-skeleton';
+import { BoardSkeleton, ListPageSkeleton, ListSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
@@ -25,6 +25,7 @@ import {
 } from '@/features/issues/project-status';
 import { membersQuery, teamsQuery } from '@/features/workspaces/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
+import { onIntent, prefetchProject } from '@/lib/prefetch';
 import { qk } from '@/lib/query-keys';
 import { cn } from '@/lib/utils';
 import type { Project, ProjectStatus } from '@/schemas/issue';
@@ -59,11 +60,19 @@ function ProjectProgress({ project, className }: { project: Project; className?:
   );
 }
 
+/** Loads a project's page while the pointer rests on a link to it, or the keyboard focuses it. */
+function useProjectIntent(project: Project) {
+  const queryClient = useQueryClient();
+  return onIntent(() => prefetchProject(queryClient, project.workspace_id, project.id));
+}
+
 function ProjectRow({ project, lead }: { project: Project; lead: string | undefined }) {
+  const intent = useProjectIntent(project);
   return (
     <li>
       <Link
         to={`/app/projects/${project.id}`}
+        {...intent}
         className="flex min-h-10 flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-[13px] transition-colors outline-none hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
       >
         <span className="flex min-w-0 flex-1 basis-48 items-center gap-2">
@@ -125,6 +134,15 @@ function ProjectList({ projects, leadName }: { projects: Project[]; leadName: Le
       ))}
     </div>
   );
+}
+
+/** A project's card on the board: a link to its page, loaded ahead on intent. */
+function ProjectCardLink({
+  project,
+  ...props
+}: { project: Project } & Omit<ComponentProps<typeof Link>, 'to'>) {
+  const intent = useProjectIntent(project);
+  return <Link to={`/app/projects/${project.id}`} {...intent} {...props} />;
 }
 
 /**
@@ -205,8 +223,8 @@ function ProjectBoard({
           <ul className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2">
             {column.projects.map((project) => (
               <li key={project.id}>
-                <Link
-                  to={`/app/projects/${project.id}`}
+                <ProjectCardLink
+                  project={project}
                   draggable={canMove}
                   onDragStart={(e) => {
                     e.dataTransfer.setData('text/plain', project.id);
@@ -233,7 +251,7 @@ function ProjectBoard({
                     </span>
                   )}
                   <ProjectProgress project={project} />
-                </Link>
+                </ProjectCardLink>
               </li>
             ))}
             {column.projects.length === 0 && (
@@ -326,7 +344,11 @@ function Projects({ workspace }: { workspace: Workspace }) {
           later refetch fails (the toast says so). */}
       {!projects ? (
         isPending ? (
-          <TableSkeleton rows={4} />
+          board ? (
+            <BoardSkeleton />
+          ) : (
+            <ListSkeleton rows={6} label="Loading the projects" />
+          )
         ) : (
           <ErrorState
             title="Couldn’t load the projects"
@@ -393,7 +415,7 @@ export default function ProjectsPage() {
   return (
     <>
       <Seo title="Projects" noIndex />
-      {current ? <Projects key={current.id} workspace={current} /> : <PageSkeleton />}
+      {current ? <Projects key={current.id} workspace={current} /> : <ListPageSkeleton filters />}
     </>
   );
 }

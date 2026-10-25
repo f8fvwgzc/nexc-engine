@@ -14,6 +14,7 @@ import {
 import { artifactFoldersQuery } from '@/features/artifacts/api';
 import { buildFolderTree, folderPath, type FolderNode } from '@/features/artifacts/files';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
+import { prefetchRouteOnIntent } from '@/lib/prefetch';
 import { cn } from '@/lib/utils';
 
 import { ROW } from './nav-section';
@@ -59,6 +60,7 @@ function FolderRows({ nodes, depth, open, isExpanded, onToggle }: FolderRowsProp
             <Link
               to={`/app/artifacts?folder=${folder.id}`}
               aria-current={open === folder.id ? 'page' : undefined}
+              {...prefetchRouteOnIntent('/app/artifacts')}
             >
               <FolderIcon className="text-muted-foreground" />
               <span>{folder.name}</span>
@@ -114,6 +116,7 @@ export function NavArtifactFolders() {
               <Link
                 to="/app/artifacts?folder=root"
                 aria-current={open === 'root' ? 'page' : undefined}
+                {...prefetchRouteOnIntent('/app/artifacts')}
               >
                 <FolderMinusIcon className="text-muted-foreground" />
                 <span>Not in a folder</span>

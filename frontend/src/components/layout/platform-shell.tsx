@@ -6,7 +6,7 @@ import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/s
 import { useAuthStore } from '@/stores/auth-store';
 
 import { itemMatches, PLATFORM_MENUS } from './nav-items';
-import { PageSkeleton } from './page-skeleton';
+import { SettingsSkeleton } from './page-skeleton';
 import { ShellSidebar } from './shell-sidebar';
 import { ThemeToggle } from './theme-toggle';
 import { SHELL_STYLE, usePanelOpen } from './panel';
@@ -33,16 +33,8 @@ export default function PlatformShell() {
       >
         Skip to content
       </a>
-      <ShellSidebar
-        menus={PLATFORM_MENUS}
-        home="/app/platform/workspaces"
-        header={
-          <div className="grid h-12 min-w-0 content-center px-2 text-left text-sm leading-tight">
-            <span className="truncate font-semibold">Nexc Platform</span>
-            <span className="truncate text-xs text-muted-foreground">Administrator</span>
-          </div>
-        }
-      />
+      {/* The panel's title row reads "Console"; the account menu says who administers it. */}
+      <ShellSidebar menus={PLATFORM_MENUS} home="/app/platform/workspaces" />
       <SidebarInset id="main" className="h-svh min-w-0 overflow-hidden">
         <header className="sticky top-0 z-20 flex h-11 shrink-0 items-center gap-2 border-b bg-background/80 px-3 backdrop-blur-lg sm:px-4">
           <SidebarTrigger className="-ml-1" aria-label="Toggle navigation" />
@@ -54,7 +46,7 @@ export default function PlatformShell() {
         </header>
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           <MainLandmarkProvider>
-            <Suspense fallback={<PageSkeleton width="narrow" />}>
+            <Suspense fallback={<SettingsSkeleton />}>
               <Outlet />
             </Suspense>
           </MainLandmarkProvider>

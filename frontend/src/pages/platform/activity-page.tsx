@@ -9,7 +9,7 @@ import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { Seo } from '@/components/seo/seo';
 import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
+import { ListSkeleton } from '@/components/layout/page-skeleton';
 import {
   platformEventsQuery,
   type PlatformAction,
@@ -71,7 +71,7 @@ export default function PlatformActivityPage() {
       {error ? (
         <ErrorState title="Couldn’t load the log" error={error} onRetry={() => void refetch()} />
       ) : isPending ? (
-        <Skeleton className="h-64 w-full rounded-lg" />
+        <ListSkeleton rows={8} label="Loading the log" />
       ) : rows.length === 0 && !page.q ? (
         <EmptyState
           icon={HistoryIcon}
@@ -87,7 +87,7 @@ export default function PlatformActivityPage() {
           }
         />
       ) : (
-        <ul className="divide-y overflow-hidden rounded-lg border">
+        <ul className="divide-y overflow-hidden rounded-lg border motion-safe:animate-fade-in">
           {rows.length === 0 && (
             <li className="px-3 py-6 text-center text-[13px] text-muted-foreground">
               Nothing in the log matches.

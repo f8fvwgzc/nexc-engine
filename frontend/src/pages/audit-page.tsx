@@ -7,10 +7,9 @@ import { ErrorState } from '@/components/custom-ui/error-state';
 import { PersonGlyph } from '@/components/custom-ui/issue-glyphs';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { PageSkeleton } from '@/components/layout/page-skeleton';
+import { ListSkeleton, SettingsSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
 import { AskAuditPanel } from '@/features/audit/components/ask-audit-panel';
 import { AUDIT_PAGE_SIZE, auditPage } from '@/features/workspaces/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
@@ -122,15 +121,7 @@ function Log({ workspace }: { workspace: Workspace }) {
       getNextPageParam: (last) =>
         last.length < AUDIT_PAGE_SIZE ? undefined : last[last.length - 1]?.created_at,
     });
-  if (isPending) {
-    return (
-      <div className="space-y-2" aria-busy>
-        {[0, 1, 2, 3, 4].map((i) => (
-          <Skeleton key={i} className="h-8 w-full" />
-        ))}
-      </div>
-    );
-  }
+  if (isPending) return <ListSkeleton rows={6} label="Loading the audit log" />;
   if (error) {
     return (
       <ErrorState
@@ -159,7 +150,7 @@ function Log({ workspace }: { workspace: Workspace }) {
     );
   }
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 motion-safe:animate-fade-in">
       <ol className="divide-y rounded-lg border">
         {entries.map((entry) => (
           <Entry key={entry.id} entry={entry} />
@@ -181,7 +172,7 @@ function Log({ workspace }: { workspace: Workspace }) {
 
 function Audit() {
   const { current } = useCurrentWorkspace();
-  if (!current) return <PageSkeleton width="narrow" />;
+  if (!current) return <SettingsSkeleton />;
   const allowed = current.role === 'owner' || current.role === 'admin';
   return (
     <PageContainer width="narrow">

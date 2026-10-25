@@ -9,7 +9,7 @@ import { ErrorState } from '@/components/custom-ui/error-state';
 import { IconButton } from '@/components/custom-ui/icon-button';
 import { ProjectStatusGlyph, TeamChip } from '@/components/custom-ui/issue-glyphs';
 import { PageContainer } from '@/components/custom-ui/page-container';
-import { PageSkeleton } from '@/components/layout/page-skeleton';
+import { DetailSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -69,7 +69,14 @@ function ProjectHeader({ workspace, project }: { workspace: Workspace; project: 
   const save = useMutation({
     mutationFn: (body: Parameters<typeof updateProject>[2]) =>
       updateProject(workspace.id, project.id, body),
-    onSuccess: refresh,
+    // The saved project shows at once in every list of projects; they are read again behind it.
+    onSuccess: (saved) => {
+      queryClient.setQueriesData<Project[]>(
+        { queryKey: qk.issues.projectLists(workspace.id) },
+        (list) => list?.map((p) => (p.id === saved.id ? saved : p)),
+      );
+      return refresh();
+    },
   });
   const remove = useMutation({
     mutationFn: () => deleteProject(workspace.id, project.id),
@@ -92,7 +99,7 @@ function ProjectHeader({ workspace, project }: { workspace: Workspace; project: 
   const done = projectProgress(project);
 
   return (
-    <header className="shrink-0 space-y-3 border-b pb-4">
+    <header className="shrink-0 space-y-3 border-b pb-4 motion-safe:animate-fade-in">
       {/* The name is edited in place; the heading names the page for assistive technology. */}
       <h1 className="sr-only">{project.name}</h1>
       <div className="flex items-start gap-2">
@@ -216,7 +223,7 @@ function ProjectHeader({ workspace, project }: { workspace: Workspace; project: 
 
 function ProjectView({ workspace, projectId }: { workspace: Workspace; projectId: string }) {
   const { data: projects, isPending, error, refetch } = useQuery(projectsQuery(workspace.id));
-  if (isPending) return <PageSkeleton />;
+  if (isPending) return <DetailSkeleton />;
   // Only a project list that was never read stands in for the page: once read, it stays on
   // screen when a later refetch fails.
   if (!projects) {
@@ -276,6 +283,6 @@ export default function ProjectPage() {
   return current ? (
     <ProjectView key={`${current.id}:${projectId}`} workspace={current} projectId={projectId} />
   ) : (
-    <PageSkeleton />
+    <DetailSkeleton />
   );
 }

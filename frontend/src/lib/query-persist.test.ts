@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/stores/auth-store';
 import * as f from '@/test/fixtures';
 
-import { startQueryPersistence } from './query-persist';
+import { CACHE_SCHEMA, startQueryPersistence } from './query-persist';
 
 const KEY = 'nexc.query-cache.v1';
 
@@ -61,20 +61,64 @@ describe('query persistence', () => {
     stopSecond();
   });
 
-  it('does not restore a copy written by another build of the app', () => {
+  it('does not restore a copy written under another cache schema', () => {
     const first = new QueryClient();
     const stop = startQueryPersistence(first);
     first.setQueryData(['issues', 'w', 'list', {}], [{ id: 1 }]);
     vi.advanceTimersByTime(1_500);
     stop();
-    const snapshot = JSON.parse(localStorage.getItem(KEY) ?? '{}') as { build: string };
-    localStorage.setItem(KEY, JSON.stringify({ ...snapshot, build: 'an-older-build' }));
+    const snapshot = JSON.parse(localStorage.getItem(KEY) ?? '{}') as { schema: number };
+    expect(snapshot.schema).toBe(CACHE_SCHEMA);
+    localStorage.setItem(KEY, JSON.stringify({ ...snapshot, schema: CACHE_SCHEMA - 1 }));
 
     const second = new QueryClient();
     const stopSecond = startQueryPersistence(second);
     expect(second.getQueryData(['issues', 'w', 'list', {}])).toBeUndefined();
     expect(localStorage.getItem(KEY)).toBeNull();
     stopSecond();
+  });
+
+  it('restores a copy another build wrote under the same schema, as after a deploy', () => {
+    const first = new QueryClient();
+    const stop = startQueryPersistence(first);
+    first.setQueryData(['issues', 'w', 'list', {}], [{ id: 1 }]);
+    vi.advanceTimersByTime(1_500);
+    stop();
+    // A copy from before CACHE_SCHEMA named its build; the build no longer matters.
+    const snapshot = JSON.parse(localStorage.getItem(KEY) ?? '{}') as object;
+    localStorage.setItem(KEY, JSON.stringify({ ...snapshot, build: 'an-older-build' }));
+
+    const second = new QueryClient();
+    const stopSecond = startQueryPersistence(second);
+    expect(second.getQueryData(['issues', 'w', 'list', {}])).toEqual([{ id: 1 }]);
+    stopSecond();
+  });
+
+  it('keeps the issue lists read last, but no searches, timelines or sub-issues', () => {
+    const client = new QueryClient();
+    const stop = startQueryPersistence(client);
+    client.setQueryData(['issues', 'w', 'list', { q: 'needle' }], [{ id: 'searched' }]);
+    client.setQueryData(['issues', 'w', 'list', { parent_id: 'p' }], [{ id: 'sub-issue' }]);
+    client.setQueryData(['issues', 'events', 'i'], [{ id: 'comment' }]);
+    client.setQueryData(['issues', 'w', 'states', 't'], [{ id: 'todo' }]);
+    client.setQueryData(['issues', 'w', 'list', { team_id: 'huge' }], Array(501).fill({ id: 0 }));
+    // Ten filtered lists, read one after another: only the last eight stay.
+    for (let i = 0; i < 10; i++) {
+      vi.setSystemTime(Date.now() + 1_000);
+      client.setQueryData(['issues', 'w', 'list', { team_id: `team-${i}` }], [{ id: `in-${i}` }]);
+    }
+    vi.advanceTimersByTime(1_500);
+    stop();
+    const saved = localStorage.getItem(KEY) ?? '';
+    expect(saved).toContain('todo');
+    expect(saved).not.toContain('searched');
+    expect(saved).not.toContain('sub-issue');
+    expect(saved).not.toContain('comment');
+    expect(saved).not.toContain('huge');
+    expect(saved).not.toContain('in-0');
+    expect(saved).not.toContain('in-1"');
+    expect(saved).toContain('in-2');
+    expect(saved).toContain('in-9');
   });
 
   it('does not restore another account’s copy', () => {

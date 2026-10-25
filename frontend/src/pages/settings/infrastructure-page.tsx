@@ -11,7 +11,7 @@ import { Seo } from '@/components/seo/seo';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Skeleton } from '@/components/ui/skeleton';
+import { ListSkeleton } from '@/components/layout/page-skeleton';
 import { checkConnection, infrastructureQuery, latencyQuery } from '@/features/insight/api';
 import { errorMessage } from '@/lib/api/errors';
 import { formatBytes } from '@/lib/format';
@@ -28,7 +28,7 @@ function Row({ name, children }: { name: string; children: React.ReactNode }) {
 
 function Status() {
   const { data, isPending, error, refetch } = useQuery(infrastructureQuery());
-  if (isPending) return <Skeleton className="h-64 w-full rounded-lg" />;
+  if (isPending) return <ListSkeleton rows={6} label="Loading the server’s status" />;
   if (error) {
     return (
       <ErrorState
@@ -42,7 +42,7 @@ function Status() {
   const db = data.database;
   const behind = db.migrations_known - db.migrations_applied;
   return (
-    <dl className="divide-y rounded-lg border">
+    <dl className="divide-y rounded-lg border motion-safe:animate-fade-in">
       <Row name="Database">
         <span className="font-mono text-xs">{db.location}</span>
       </Row>
@@ -149,7 +149,7 @@ const LATENCY_ROWS = 40;
 /** p50, p99 and max per endpoint over the last five minutes, from the instance that answers. */
 function Latency() {
   const { data, isPending, error, refetch } = useQuery(latencyQuery());
-  if (isPending) return <Skeleton className="h-40 w-full rounded-lg" />;
+  if (isPending) return <ListSkeleton rows={4} label="Loading the latency" />;
   if (error) {
     return (
       <ErrorState

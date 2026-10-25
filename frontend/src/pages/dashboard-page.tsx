@@ -5,6 +5,7 @@ import { Stagger } from '@/components/custom-ui/motion';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { PageSkeleton } from '@/components/layout/page-skeleton';
+import { QueryErrorBoundary } from '@/components/layout/query-error-boundary';
 import { Seo } from '@/components/seo/seo';
 import { graphsQuery } from '@/features/graphs/api';
 import { CreateGraphDialog } from '@/features/graphs/components/create-graph-dialog';
@@ -20,7 +21,8 @@ function Dashboard() {
   const sorted = [...graphs].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
 
   return (
-    <PageContainer>
+    // The page fades in as it replaces its placeholder; its cards follow one after another.
+    <PageContainer className="motion-safe:animate-fade-in">
       {graphs.length === 0 ? (
         <>
           <FirstRunHero />
@@ -53,12 +55,15 @@ function Dashboard() {
 }
 
 export default function DashboardPage() {
+  const workspaceId = useWorkspaceId();
   return (
     <>
       <Seo title="Graphs" noIndex />
-      <Suspense fallback={<PageSkeleton />}>
-        <Dashboard />
-      </Suspense>
+      <QueryErrorBoundary key={workspaceId} page="default" title="Couldn’t load the graphs">
+        <Suspense fallback={<PageSkeleton />}>
+          <Dashboard />
+        </Suspense>
+      </QueryErrorBoundary>
     </>
   );
 }

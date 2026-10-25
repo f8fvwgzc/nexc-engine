@@ -18,7 +18,7 @@ import { ErrorState } from '@/components/custom-ui/error-state';
 import { PersonGlyph } from '@/components/custom-ui/issue-glyphs';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { PageSkeleton } from '@/components/layout/page-skeleton';
+import { ListPageSkeleton, ListSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -30,7 +30,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { inboxQuery, markInboxRead } from '@/features/issues/api';
 import { issuePath } from '@/features/issues/links';
@@ -244,15 +243,7 @@ function List({ workspace }: { workspace: Workspace }) {
     mutationFn: (ids?: string[]) => markInboxRead(workspace.id, ids),
     onSuccess: (next) => queryClient.setQueryData(qk.issues.inbox(workspace.id), next),
   });
-  if (isPending) {
-    return (
-      <div className="space-y-2" aria-busy>
-        {[0, 1, 2, 3].map((i) => (
-          <Skeleton key={i} className="h-10 w-full" />
-        ))}
-      </div>
-    );
-  }
+  if (isPending) return <ListSkeleton rows={6} label="Loading the inbox" />;
   if (error) {
     return (
       <ErrorState title="Couldn’t load the inbox" error={error} onRetry={() => void refetch()} />
@@ -282,7 +273,7 @@ function List({ workspace }: { workspace: Workspace }) {
     else if (n.alert) void navigate('/app/settings/alerts');
   };
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 motion-safe:animate-fade-in">
       <div className="flex items-center justify-between text-[13px] text-muted-foreground">
         <span>{unread === 0 ? 'All read' : `${unread} unread`}</span>
         <Button
@@ -314,7 +305,7 @@ function List({ workspace }: { workspace: Workspace }) {
 
 function Inbox() {
   const { current } = useCurrentWorkspace();
-  if (!current) return <PageSkeleton />;
+  if (!current) return <ListPageSkeleton filters={false} />;
   return (
     <PageContainer>
       <PageHeader
