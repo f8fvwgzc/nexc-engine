@@ -7,11 +7,14 @@ import { qk } from '@/lib/query-keys';
 import { onIntent, prefetchIssue, routeChunk } from './prefetch';
 
 // The pages themselves are not loaded: each loader is a stub that says it was asked.
-vi.mock('@/app/route-modules', () => ({
-  routeModules: new Proxy({} as Record<string, () => Promise<unknown>>, {
-    get: (stubs, name: string) => (stubs[name] ??= vi.fn(() => Promise.resolve({}))),
-  }),
-}));
+vi.mock('@/app/route-modules', () => {
+  const stubs: Record<string, () => Promise<unknown>> = {};
+  return {
+    routeModules: new Proxy(stubs, {
+      get: (target, name: string) => (target[name] ??= vi.fn(() => Promise.resolve({}))),
+    }),
+  };
+});
 
 afterEach(() => {
   vi.useRealTimers();
