@@ -141,17 +141,78 @@ use crate::domain::AppError;
 /// Embedded migrations from `backend/migrations`.
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
-/// Opens a connection pool of `max_connections`.
+/// Opens a connection pool of `max_connections`, without a limit on how long
+/// a statement may run: the workspace transfer and `nexc doctor` use it.
 pub async fn connect(url: &str, max_connections: u32) -> anyhow::Result<PgPool> {
+    connect_limited(url, max_connections, Duration::ZERO).await
+}
+
+/// Opens a connection pool of `max_connections` whose statements are cut off
+/// after `statement_timeout` (zero: never), as the server's are
+/// (`NEXC_DB_STATEMENT_TIMEOUT_SECS`).
+///
+/// A connection is not pinged before it is handed out (sqlx pings by
+/// default): that ping is a whole round trip to PostgreSQL before every
+/// query run on the pool, which costs little next to a local database and a
+/// millisecond or more per query next to a managed one. A connection the
+/// server closed fails its query instead, and is replaced; connections are
+/// renewed after 30 minutes, and after ten idle minutes, anyway.
+///
+/// The limits are `SET` once each connection is opened, rather than sent as
+/// startup options, which PgBouncer refuses. A transaction left open is
+/// ended after twice the statement limit (at least a minute), so a stuck
+/// request cannot hold its locks and its connection for ever.
+pub async fn connect_limited(
+    url: &str,
+    max_connections: u32,
+    statement_timeout: Duration,
+) -> anyhow::Result<PgPool> {
     let options = PgConnectOptions::from_str(url)?.application_name("nexc");
+    let session: Option<std::sync::Arc<str>> = session_limits(statement_timeout).map(Into::into);
     let pool = PgPoolOptions::new()
         .max_connections(max_connections)
-        .min_connections(1)
+        .min_connections(max_connections.div_ceil(4).min(4))
         .acquire_timeout(Duration::from_secs(10))
         .idle_timeout(Duration::from_secs(600))
+        .max_lifetime(Duration::from_secs(30 * 60))
+        .test_before_acquire(false)
+        .after_connect(move |conn, _| {
+            let session = session.clone();
+            Box::pin(async move {
+                if let Some(sql) = session {
+                    sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
+                        .execute(conn)
+                        .await?;
+                }
+                Ok(())
+            })
+        })
         .connect_with(options)
         .await?;
     Ok(pool)
+}
+
+/// The `SET`s that put `statement_timeout` on a new connection; `None` for no limit.
+fn session_limits(statement_timeout: Duration) -> Option<String> {
+    let ms = statement_timeout.as_millis();
+    (ms > 0).then(|| {
+        let idle = (ms * 2).max(60_000);
+        format!("SET statement_timeout = {ms}; SET idle_in_transaction_session_timeout = {idle}")
+    })
+}
+
+/// A small pool beside the server's own, for what must not wait behind a
+/// burst of requests: renewing the leases of the runs executing here. Its
+/// connections open when first needed.
+pub fn connect_lazy_small(pool: &PgPool, max_connections: u32) -> PgPool {
+    PgPoolOptions::new()
+        .max_connections(max_connections)
+        .min_connections(0)
+        .acquire_timeout(Duration::from_secs(5))
+        .idle_timeout(Duration::from_secs(600))
+        .max_lifetime(Duration::from_secs(30 * 60))
+        .test_before_acquire(false)
+        .connect_lazy_with((*pool.connect_options()).clone())
 }
 
 /// Taken by the server that applies migrations; the others ask for it again until it is free.
@@ -173,6 +234,12 @@ const MIGRATION_LOCK_POLL: Duration = Duration::from_millis(500);
 /// workspace transfer needs: it migrates its target inside a spawned task.
 pub async fn migrate(pool: &PgPool) -> anyhow::Result<()> {
     let mut conn = pool.acquire().await?;
+    // An index built on a large table takes longer than any request may: the migrations run
+    // without the pool's limits, on a connection that is closed afterwards rather than reused.
+    conn.close_on_drop();
+    sqlx::raw_sql("SET statement_timeout = 0; SET idle_in_transaction_session_timeout = 0")
+        .execute(&mut *conn)
+        .await?;
     loop {
         let locked: bool = sqlx::query_scalar(MIGRATION_LOCK)
             .fetch_one(&mut *conn)
@@ -182,12 +249,9 @@ pub async fn migrate(pool: &PgPool) -> anyhow::Result<()> {
         }
         tokio::time::sleep(MIGRATION_LOCK_POLL).await;
     }
-    if let Err(err) = MIGRATOR.run_direct(None, &mut *conn, false).await {
-        // A run that failed may still hold sqlx's lock: the connection is closed, and its locks
-        // go with it.
-        conn.close_on_drop();
-        return Err(err.into());
-    }
+    // A run that failed may still hold sqlx's lock: the connection is closed, and its locks go
+    // with it.
+    MIGRATOR.run_direct(None, &mut *conn, false).await?;
     sqlx::query(MIGRATION_UNLOCK).execute(&mut *conn).await?;
     Ok(())
 }
@@ -235,5 +299,25 @@ pub(crate) trait OrNotFound<T> {
 impl<T> OrNotFound<T> for Result<Option<T>, sqlx::Error> {
     fn or_not_found(self, resource: &'static str) -> Result<T, AppError> {
         self?.ok_or(AppError::NotFound(resource))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_pool_limits_statements_only_when_asked_to() {
+        assert_eq!(session_limits(Duration::ZERO), None);
+        let limited = session_limits(Duration::from_secs(30)).unwrap();
+        assert_eq!(
+            limited,
+            "SET statement_timeout = 30000; SET idle_in_transaction_session_timeout = 60000"
+        );
+        let long = session_limits(Duration::from_secs(45)).unwrap();
+        assert!(
+            long.ends_with("idle_in_transaction_session_timeout = 90000"),
+            "{long}"
+        );
     }
 }

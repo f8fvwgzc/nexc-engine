@@ -27,7 +27,12 @@ pub const HAND_OFF_LIMIT: std::time::Duration = std::time::Duration::from_secs(1
 
 /// Connects to the database and applies migrations.
 pub async fn connect_db(settings: &Settings) -> anyhow::Result<sqlx::PgPool> {
-    let pool = repo::connect(settings.database_url.expose(), settings.db_max_connections).await?;
+    let pool = repo::connect_limited(
+        settings.database_url.expose(),
+        settings.db_max_connections,
+        settings.db_statement_timeout,
+    )
+    .await?;
     repo::migrate(&pool).await?;
     Ok(pool)
 }
@@ -85,7 +90,7 @@ pub async fn seed_missing_workspaces(state: &AppState) -> anyhow::Result<()> {
 pub async fn serve(settings: Settings) -> anyhow::Result<()> {
     let db = connect_db(&settings).await?;
     let addr = SocketAddr::new(settings.host, settings.port);
-    let state = AppState::new(settings, db)?;
+    let state = AppState::new(settings, db)?.with_lease_pool();
     if memory::vectors::ensure(&state.db).await? {
         let filled = memory::vectors::backfill(&state.db).await?;
         state.memories.set_vector_search(true);

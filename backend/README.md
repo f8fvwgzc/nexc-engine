@@ -56,6 +56,7 @@ empty values count as unset.
 | `NEXC_DATABASE_URL` | built from `POSTGRES_*` | `postgres://user:password@host:5432/db`; add `sslmode=require` outside development. |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `nexc` / – / `nexc` | Used when `NEXC_DATABASE_URL` is unset. |
 | `NEXC_DB_MAX_CONNECTIONS` | `20` | Pool size. |
+| `NEXC_DB_STATEMENT_TIMEOUT_SECS` | `30` | Longest a query of the server may run (`0` = no limit); a transaction left open ends after twice that, at least a minute. Migrations are exempt. Pooled connections are not pinged before each use (a round trip per query saved). |
 | `NEXC_DATA_DIR` | `./data` | Artifacts live in `<data>/artifacts/<run_id>/<node_id>/`. |
 | `NEXC_JWT_SECRET` | **required** | ≥ 32 bytes. |
 | `NEXC_MASTER_KEY` | **required** | Base64 of 32 bytes; AES-256-GCM key for stored API keys. |
