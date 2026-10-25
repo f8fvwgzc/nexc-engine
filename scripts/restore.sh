@@ -10,6 +10,7 @@
 # and removed again, and nothing of the installation is touched.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# shellcheck source=/dev/null # the local .env, absent from a fresh checkout
 [ -f .env ] && { set -a; . ./.env; set +a; }
 SOURCE="${1:?usage: scripts/restore.sh <backup-dir>}"
 if [ ! -f "$SOURCE/database.dump" ] || [ ! -f "$SOURCE/files.tar.gz" ]; then echo "not a backup: $SOURCE" >&2; exit 1; fi

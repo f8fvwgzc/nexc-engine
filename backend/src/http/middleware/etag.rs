@@ -74,7 +74,15 @@ fn never_kept(path: &str) -> bool {
         // What an agent read or wrote, as recorded.
         ["", "api", "v1", "spans", _, "payload"] => true,
         // The SIEM pulls: the audit trail and the alert history.
-        ["", "api", "v1", "workspaces", _, "audit" | "alerts", "export"] => true,
+        [
+            "",
+            "api",
+            "v1",
+            "workspaces",
+            _,
+            "audit" | "alerts",
+            "export",
+        ] => true,
         _ => false,
     }
 }

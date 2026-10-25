@@ -20,7 +20,10 @@ use crate::repo::outbox;
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 enum Notification {
-    Parked { origin: Uuid, parked: i64 },
+    Parked {
+        origin: Uuid,
+        parked: i64,
+    },
     Invalidate {
         origin: Uuid,
         #[serde(deserialize_with = "known_keys")]
