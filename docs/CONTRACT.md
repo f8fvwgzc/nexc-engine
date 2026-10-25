@@ -1692,12 +1692,14 @@ the authorization code flow with PKCE (`S256`), as a confidential client.
    be the same). The address and `email_verified` go together: userinfo's `email_verified` counts
    only for the address the ID token gave, or, when the ID token gave none, for userinfo's own.
 4. The account is the one linked to the `(issuer, subject)` pair. At an identity's first sign-in
-   it is linked to the account with its address only when the provider says the address is
-   verified and that account has no identity of this provider yet (`sso_linked` in the account's
-   activity), and never when that account administers the platform, is the break-glass account or
-   has two-factor sign-in (`link_required`): the provider's word on an address alone does not open
-   those, and single sign-on would skip their second factor. Their holders link it from the account
-   page: `POST /auth/oidc/link` (the password confirms) starts the same trip, and the identity that
+   it is linked to the account with its address only when that account has no password (the
+   provider created it, or a transfer brought it), the provider says the address is verified and
+   the account has no identity of this provider yet (`sso_linked` in the account's activity). It
+   is never linked when the account has a password, administers the platform, is the break-glass
+   account or has two-factor sign-in (`link_required`): the provider's word on an address alone
+   does not open those (a sign-up never proves its address, so whoever signed up with it would
+   share the account), and single sign-on would skip their second factor. Their holders link it
+   from the account page, with the account's own password: `POST /auth/oidc/link` (the password confirms) starts the same trip, and the identity that
    signs in is linked to that account whatever address it gives (`identity_taken` when it is
    another account's, or the account has another identity of the provider); the break-glass
    account is never linked, nor created by the provider. With no account of that address one is

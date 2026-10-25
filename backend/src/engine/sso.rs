@@ -3,16 +3,21 @@
 //! platform and workspace roles the provider's groups give, applied at every
 //! sign-in.
 //!
-//! An identity is its `(issuer, subject)` pair. The first time one signs in
-//! it is linked to the account with its e-mail address, but only when the
-//! provider says the address is verified and that account has no identity of
-//! this provider yet; with no such account one is created. Anything else is
-//! refused: an address cannot belong to two accounts. Nor is an account
-//! linked by address that a provider's word alone must not open: a platform
-//! administrator's, the break-glass account, or one with two-factor sign-in
-//! (which the provider's sign-in would skip). Their holders link the
-//! identity from their account page, signed in and with their password
-//! ([`link_requested`]); the break-glass account is never linked.
+//! An identity is its `(issuer, subject)` pair, never its e-mail address. At
+//! an identity's first sign-in with no account of its address, one is
+//! created. An account that has the address already is never opened by the
+//! provider's word on the address alone: a sign-up does not prove an
+//! address, so whoever signed up with it first (and holds the password)
+//! would share the account with the person the provider vouches for. Its
+//! holder links the identity from the account page, signed in and with the
+//! account's password ([`link_requested`]): the account's own credential,
+//! in the same session. The one account a verified address links by itself
+//! is one nobody holds a credential of: no password (the provider created
+//! it, or a transfer brought it), no identity of this provider any more (an
+//! administrator unlinked it), and neither a platform administrator's, the
+//! break-glass account nor one with two-factor sign-in. Anything else is
+//! refused: an address cannot belong to two accounts, and the break-glass
+//! account is never linked.
 //!
 //! The group mapping only ever takes back what it gave: a workspace role is
 //! recorded as the mapping's (with the role it replaced), and a sign-in
@@ -112,8 +117,8 @@ pub async fn sign_in(
     Ok(Resolution::Account(user))
 }
 
-/// The account of a linked identity; else links the account with the
-/// identity's verified address; else creates one.
+/// The account of a linked identity; else links the password-less account
+/// of the identity's verified address; else creates one.
 async fn find_or_create(
     state: &AppState,
     settings: &OidcSettings,
@@ -146,15 +151,20 @@ async fn find_or_create(
             note(state, id, AccountEventKind::SignInFailed, Some(ip), detail).await;
             return Ok(Found::Refused(Refusal::Suspended));
         }
-        let guarded = existing.user.role == Role::Admin
+        // A password is a credential someone holds; an account signed up for with this
+        // address may be anyone's who typed it.
+        let held = existing.password_hash != "!";
+        let guarded = held
+            || existing.user.role == Role::Admin
             || settings.is_break_glass(&email)
             || repo::two_factor::find(&state.db, id)
                 .await?
                 .is_some_and(|stored| stored.enabled);
         if guarded {
             tracing::warn!(user_id = %id, issuer,
-                "single sign-on not linked by address: the account administers the platform, is the \
-                 break-glass account or has two-factor sign-in; its holder links it from the account page");
+                "single sign-on not linked by address: the account has a password, administers the \
+                 platform, is the break-glass account or has two-factor sign-in; its holder links it \
+                 from the account page");
             return Ok(Found::Refused(Refusal::LinkRequired));
         }
         if !repo::sso::link(&state.db, id, issuer, &identity.subject, &given).await? {
@@ -162,7 +172,8 @@ async fn find_or_create(
         }
         let detail = format!("{} ({issuer})", settings.display_name);
         note(state, id, AccountEventKind::SsoLinked, Some(ip), &detail).await;
-        tracing::info!(user_id = %id, issuer, "single sign-on identity linked by verified e-mail");
+        tracing::info!(user_id = %id, issuer,
+            "single sign-on identity linked by verified e-mail to an account without a password");
         return Ok(Found::Account(id));
     }
     if settings.require_verified_email && !verified {

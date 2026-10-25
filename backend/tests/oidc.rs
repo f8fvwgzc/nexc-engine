@@ -317,22 +317,58 @@ fn base32_decode(text: &str) -> Vec<u8> {
     out
 }
 
+/// The pre-account takeover: whoever signs up first with an address (a
+/// sign-up proves nothing about it) must not get the account the provider
+/// later vouches for. A first sign-in never opens an account with a
+/// password by its address; the account's holder links the identity from
+/// its page, with the account's own password, in the same session.
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
-async fn a_verified_address_links_the_existing_account(pool: PgPool) {
+async fn a_verified_address_never_opens_an_account_someone_signed_up_for(pool: PgPool) {
     let stub = Stub::start().await;
     let app = app(pool.clone(), &stub, &[]).await;
-    let (registered, _) = app.register("grace@example.com").await;
-    let (_, me) = call(&app, Method::GET, "/auth/me", &registered, None).await;
+    // Someone signs up with Grace's address before she ever signs in.
+    let (planted, _) = app.register("grace@example.com").await;
+    let (_, account) = call(&app, Method::GET, "/auth/me", &planted, None).await;
 
-    let (token, user) = signed_in(
+    // Grace's first sign-in through the provider, which vouches for the address, is refused,
+    // and makes no second account of the address.
+    let t = trip(
         &app,
         &stub,
         Assertion::person("sub-grace", "GRACE@example.com"),
+        None,
     )
     .await;
-    assert_eq!(user["id"], me["id"], "linked, not created");
+    assert_eq!(t.location, "/login?sso_error=link_required");
+    assert!(t.refresh.is_none());
+    assert_eq!(
+        count(&pool, "SELECT count(*) FROM user_identities").await,
+        0,
+        "nothing is linked by the address alone"
+    );
+    assert_eq!(count(&pool, "SELECT count(*) FROM users").await, 1);
+
+    // The account's holder links an identity from its page: the password, then the provider.
+    let (location, refresh) = link(
+        &app,
+        &stub,
+        &planted,
+        Assertion::person("sub-grace", "grace@example.com"),
+    )
+    .await;
+    assert_eq!(location, "/app/settings/profile");
+    let session = session_of(&app, &refresh.expect("signed in")).await;
+    assert_eq!(session.body["user"]["id"], account["id"]);
+    let token = session.body["access_token"].as_str().unwrap().to_owned();
     let kinds = activity(&app, &token).await;
     assert_eq!(&kinds[..2], ["sso_signed_in", "sso_linked"], "{kinds:?}");
+    let (_, user) = signed_in(
+        &app,
+        &stub,
+        Assertion::person("sub-grace", "grace@example.com"),
+    )
+    .await;
+    assert_eq!(user["id"], account["id"], "linked, not created");
 
     // Another identity of the provider with the same address is not linked as well.
     let other = trip(
@@ -1035,7 +1071,8 @@ async fn groups_give_roles_and_take_back_only_what_they_gave(pool: PgPool) {
     assert_eq!(role_in(&pool, &wid, &user).await.as_deref(), Some("admin"));
 
     // A member before the mapping is raised by it and goes back to what it was without it.
-    plain.register("guest@example.com").await;
+    let guest = || Assertion::person("sub-guest", "guest@example.com");
+    signed_in(&app, &stub, guest().groups(&[])).await;
     let (status, _) = call(
         &plain,
         Method::POST,
@@ -1045,7 +1082,6 @@ async fn groups_give_roles_and_take_back_only_what_they_gave(pool: PgPool) {
     )
     .await;
     assert!(status.is_success());
-    let guest = || Assertion::person("sub-guest", "guest@example.com");
     let (_, user) = signed_in(&app, &stub, guest().groups(&["leads"])).await;
     assert_eq!(role_in(&pool, &wid, &user).await.as_deref(), Some("admin"));
     let (_, user) = signed_in(&app, &stub, guest().groups(&[])).await;
@@ -1195,13 +1231,22 @@ async fn password_sign_in_can_be_off_but_for_the_break_glass_administrator(pool:
         login("root@example.com", "a wrong password!").await.status,
         StatusCode::UNAUTHORIZED
     );
-    // Single sign-on still signs in.
+    // Single sign-on still signs in, but never opens an account with a password by its
+    // address: its holder links the provider while passwords still sign in.
     signed_in(
         &app,
         &stub,
-        Assertion::person("sub-w", "worker@example.com"),
+        Assertion::person("sub-n", "newcomer@example.com"),
     )
     .await;
+    let t = trip(
+        &app,
+        &stub,
+        Assertion::person("sub-w", "worker@example.com"),
+        None,
+    )
+    .await;
+    assert_eq!(t.location, "/login?sso_error=link_required");
 
     // The break-glass address only opens a platform administrator's account.
     let misnamed = self::app(
