@@ -1,117 +1,78 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronRightIcon, NetworkIcon, Trash2Icon, XIcon } from 'lucide-react';
+import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { PanelRightOpenIcon } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
 
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
-import { CopyButton } from '@/components/custom-ui/copy-button';
-import { GithubChip } from '@/components/custom-ui/github-chip';
 import { IconButton } from '@/components/custom-ui/icon-button';
-import { PriorityGlyph, StateGlyph } from '@/components/custom-ui/issue-glyphs';
-import { OptionSelect } from '@/components/custom-ui/option-select';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
-import { OntologyLink } from '@/features/ontology/ontology-link';
-import { membersQuery, teamsQuery } from '@/features/workspaces/api';
+import { teamsQuery } from '@/features/workspaces/api';
 import { errorMessage } from '@/lib/api/errors';
-import { formatRelative } from '@/lib/format';
-import { githubUrlError } from '@/lib/github';
 import { qk } from '@/lib/query-keys';
-import { cycleLabel } from '@/schemas/cycle';
-import { PRIORITY_LABEL, type Issue, type IssueInput } from '@/schemas/issue';
-import { ontoEntity } from '@/schemas/ontology';
+import type { Issue, IssueInput } from '@/schemas/issue';
 import type { Workspace } from '@/schemas/workspace';
 
-import { cyclesQuery, deleteIssue, projectsQuery, statesQuery, updateIssue } from './api';
+import { deleteIssue, updateIssue, type IssueFilter } from './api';
+import { IssueProperties, PropertiesSkeleton } from './issue-properties';
 import { IssueRun } from './issue-run';
 import { IssueTimeline } from './issue-timeline';
-import { LabelPicker } from './label-picker';
-import { issuePath, useLeaveIssue } from './links';
+import { useLeaveIssue } from './links';
 import { SubIssues } from './sub-issues';
 
-const NONE = '__none__';
+/** Where the member's choice to show or hide the properties panel is kept, for every issue. */
+const PANEL_KEY = 'nexc.issue.properties';
 
-/** One property of an issue in the side panel: its name beside its control. */
-function Property({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-start gap-2">
-      <p className="flex min-h-8 items-center text-xs text-muted-foreground">{label}</p>
-      <div className="flex min-h-8 min-w-0 items-center">{children}</div>
-    </div>
-  );
+/** Whether the properties panel is shown: it is, unless the member closed it. */
+function readPanelOpen(): boolean {
+  try {
+    return localStorage.getItem(PANEL_KEY) !== 'closed';
+  } catch {
+    return true;
+  }
+}
+
+function writePanelOpen(open: boolean) {
+  try {
+    localStorage.setItem(PANEL_KEY, open ? 'open' : 'closed');
+  } catch {
+    // The choice lasts for this visit only.
+  }
 }
 
 /**
- * The GitHub issue or pull request the issue is linked to, with a button that removes the link;
- * without one, a field to paste a URL, saved when it is left or on Enter. A URL the server
- * refuses stays in the field with the server's reason under it.
+ * Shows a copy of the issue just saved: on its page at once, then read again where the change
+ * shows: the workspace's issue lists (not its own sub-issues, which do not carry it), its
+ * timeline, the inbox when it was assigned or moved, its parent's count of closed parts, and the
+ * counts of projects and cycles (only marked stale: nothing on this page shows them). The issue
+ * itself is not read again: the copy the server just answered with is the newest.
  */
-function GithubLink({ issue }: { issue: Issue }) {
-  const queryClient = useQueryClient();
-  const [draft, setDraft] = useState('');
-  const link = useMutation({
-    mutationFn: (github_url: string | null) => updateIssue(issue.id, { github_url }),
-    meta: { errorToast: false },
-    onSuccess: (updated) => {
-      setDraft('');
-      queryClient.setQueryData(qk.issues.one(updated.id), updated);
-      void queryClient.invalidateQueries({ queryKey: qk.issues.all });
-    },
+function showSaved(queryClient: QueryClient, updated: Issue, body: Partial<IssueInput>) {
+  const ws = updated.workspace_id;
+  queryClient.setQueryData(qk.issues.one(updated.id), updated);
+  void queryClient.invalidateQueries({
+    queryKey: qk.issues.lists(ws),
+    predicate: (query) => (query.queryKey[3] as IssueFilter | undefined)?.parent_id !== updated.id,
   });
-  const failure = link.error && (
-    <p role="alert" className="text-xs text-destructive">
-      {githubUrlError(link.error)}
-    </p>
-  );
-  if (issue.github_url) {
-    return (
-      <div className="w-full min-w-0 space-y-1">
-        <div className="flex min-w-0 items-center gap-1">
-          <GithubChip url={issue.github_url} form="repo" className="min-w-0 shrink" />
-          <IconButton
-            label="Remove the GitHub link"
-            className="size-6 text-muted-foreground"
-            disabled={link.isPending}
-            onClick={() => link.mutate(null)}
-          >
-            <XIcon />
-          </IconButton>
-        </div>
-        {failure}
-      </div>
-    );
+  void queryClient.invalidateQueries({ queryKey: qk.issues.events(updated.id) });
+  const moved = 'state_id' in body;
+  if (moved || 'assignee_id' in body) {
+    void queryClient.invalidateQueries({ queryKey: qk.issues.inbox(ws) });
   }
-  const commit = () => {
-    const url = draft.trim();
-    // The same refused URL is not sent again until it is changed.
-    if (!url || link.isPending || (link.isError && link.variables === url)) return;
-    link.mutate(url);
-  };
-  return (
-    <div className="w-full space-y-1">
-      <Input
-        value={draft}
-        inputMode="url"
-        placeholder="Paste an issue or PR URL"
-        aria-label="GitHub issue or PR URL"
-        aria-invalid={link.isError || undefined}
-        className="h-8 text-[13px]"
-        onChange={(e) => {
-          setDraft(e.target.value);
-          if (link.isError) link.reset();
-        }}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            commit();
-          }
-        }}
-      />
-      {failure}
-    </div>
-  );
+  if (moved && updated.parent) {
+    void queryClient.invalidateQueries({ queryKey: qk.issues.one(updated.parent.id) });
+  }
+  if (moved || 'project_id' in body) {
+    void queryClient.invalidateQueries({
+      queryKey: qk.issues.projectLists(ws),
+      refetchType: 'none',
+    });
+  }
+  if (moved || 'cycle_id' in body) {
+    void queryClient.invalidateQueries({
+      queryKey: qk.issues.cycles(ws, updated.team_id),
+      refetchType: 'none',
+    });
+  }
 }
 
 /**
@@ -133,8 +94,7 @@ function useInlineText(issue: Issue, field: 'title' | 'description') {
     mutationFn: (text: string) =>
       updateIssue(issue.id, field === 'title' ? { title: text } : { description: text }),
     onSuccess: (updated, text) => {
-      queryClient.setQueryData(qk.issues.one(updated.id), updated);
-      void queryClient.invalidateQueries({ queryKey: qk.issues.all });
+      showSaved(queryClient, updated, field === 'title' ? { title: text } : { description: text });
       // Typing that went on while it saved stays, measured from what was saved.
       setDraft((d) => (d && clean(d.text) !== text ? { ...d, from: text } : null));
     },
@@ -155,17 +115,22 @@ function useInlineText(issue: Issue, field: 'title' | 'description') {
 
 /**
  * Everything about one issue, editable in place, laid out like Linear: a main column that scrolls
- * (title, description, the agents' work, sub-issues, files, activity) beside a properties panel
- * with its own scroll; on a phone the panel follows the main column. It fills the height its page
- * gives it (`flex-1` in a flex column) from `md` up.
+ * (title, description, the agents' work, sub-issues, files, activity), its sections set apart by
+ * space rather than lines, beside a properties panel with its own scroll that the member can
+ * close (and open again from the top of the main column); on a phone the panel follows the main
+ * column. It fills the height its page gives it (`flex-1` in a flex column) from `md` up, and
+ * fades in where the skeleton was. `descriptionPending` holds the description back (a skeleton
+ * line) while the issue shown is a list's copy, which has none.
  */
 export function IssueDetail({
   workspace,
   issue,
+  descriptionPending = false,
   artifacts,
 }: {
   workspace: Workspace;
   issue: Issue;
+  descriptionPending?: boolean;
   /** The issue's files, shown between its sub-issues and its activity. */
   artifacts?: ReactNode;
 }) {
@@ -174,33 +139,35 @@ export function IssueDetail({
   const title = useInlineText(issue, 'title');
   const description = useInlineText(issue, 'description');
   const [confirming, setConfirming] = useState(false);
-  const { data: states = [] } = useQuery(statesQuery(workspace.id, issue.team_id));
-  const { data: projects = [] } = useQuery(projectsQuery(workspace.id));
-  const { data: cycles = [] } = useQuery(cyclesQuery(workspace.id, issue.team_id));
-  const { data: teams = [] } = useQuery(teamsQuery(workspace.id));
-  // Guests cannot list the workspace's members; they keep whoever is assigned.
-  const { data: members = [] } = useQuery({
-    ...membersQuery(workspace.id),
-    enabled: workspace.role !== 'guest',
-  });
-  const team = teams.find((t) => t.id === issue.team_id);
+  const [panelOpen, setPanelOpen] = useState(readPanelOpen);
+  const showPanel = (open: boolean) => {
+    setPanelOpen(open);
+    writePanelOpen(open);
+  };
+  // Fills the cache the header's team crumb reads; the page itself does not name the team.
+  useQuery(teamsQuery(workspace.id));
   const save = useMutation({
     mutationFn: (body: Partial<IssueInput>) => updateIssue(issue.id, body),
-    onSuccess: (updated) => {
-      queryClient.setQueryData(qk.issues.one(updated.id), updated);
-      void queryClient.invalidateQueries({ queryKey: qk.issues.all });
-    },
+    onSuccess: (updated, body) => showSaved(queryClient, updated, body),
   });
   const remove = useMutation({
     mutationFn: () => deleteIssue(issue.id),
     meta: { successMessage: 'Issue deleted' },
     onSuccess: () => {
       leave();
-      // Everything else about issues is read again; the deleted issue's own entries just go.
+      // Where it was counted or listed is read again where it shows next; the deleted issue's
+      // own entries just go, and its parts' copies (which name it as their parent) go stale.
+      const ws = issue.workspace_id;
+      void queryClient.invalidateQueries({ queryKey: qk.issues.lists(ws) });
+      void queryClient.invalidateQueries({ queryKey: qk.issues.inbox(ws) });
       void queryClient.invalidateQueries({
         queryKey: qk.issues.all,
-        predicate: (query) => !query.queryKey.includes(issue.id),
+        predicate: (query) => query.queryKey[1] === 'detail' && !query.queryKey.includes(issue.id),
+        refetchType: 'none',
       });
+      for (const queryKey of [qk.issues.projectLists(ws), qk.issues.cycles(ws, issue.team_id)]) {
+        void queryClient.invalidateQueries({ queryKey, refetchType: 'none' });
+      }
       // Its files went with it (a private team's) or lost their issue: every file list and file
       // is read again where it is next shown, not here on the way out.
       void queryClient.invalidateQueries({ queryKey: qk.artifacts.all, refetchType: 'none' });
@@ -209,91 +176,64 @@ export function IssueDetail({
   const saveError = title.error ?? description.error ?? save.error;
 
   return (
-    <div className="flex flex-col md:min-h-0 md:flex-1">
+    <div className="flex flex-col motion-safe:animate-fade-in md:min-h-0 md:flex-1">
       <h1 className="sr-only">
         {issue.identifier} {issue.title}
       </h1>
-      <div className="flex h-11 shrink-0 items-center gap-2 border-b px-4 sm:px-6">
-        <nav
-          aria-label="Where the issue belongs"
-          className="flex min-w-0 flex-1 items-center gap-1.5 text-[13px] text-muted-foreground"
-        >
-          <Link
-            to={`/app/issues?team=${issue.team_id}`}
-            className="truncate underline-offset-2 hover:text-foreground hover:underline"
-          >
-            {team?.name ?? 'Team'}
-          </Link>
-          <ChevronRightIcon className="size-3.5 shrink-0" aria-hidden />
-          {issue.parent && (
-            <>
-              <Link
-                to={issuePath(issue.parent.id)}
-                className="truncate underline-offset-2 hover:text-foreground hover:underline"
-              >
-                {issue.parent.identifier} {issue.parent.title}
-              </Link>
-              <ChevronRightIcon className="size-3.5 shrink-0" aria-hidden />
-            </>
-          )}
-          <span className="shrink-0 font-mono text-xs text-foreground">{issue.identifier}</span>
-        </nav>
-        {issue.graph_id && (
-          <Button variant="outline" size="sm" asChild>
-            <Link to={`/app/graphs/${issue.graph_id}`}>
-              <NetworkIcon />
-              Open graph
-            </Link>
-          </Button>
-        )}
-        <OntologyLink entity={ontoEntity('issue', issue.id)} compact />
-        <CopyButton value={`${window.location.origin}${issuePath(issue.id)}`} label="Copy link" />
-        <IconButton
-          className="text-muted-foreground hover:text-destructive"
-          label={`Delete ${issue.identifier}`}
-          onClick={() => setConfirming(true)}
-        >
-          <Trash2Icon />
-        </IconButton>
-      </div>
       <div className="flex flex-col md:min-h-0 md:flex-1 md:flex-row">
         <div className="min-w-0 flex-1 md:overflow-y-auto">
-          <div className="w-full space-y-4 px-4 py-6 sm:px-8">
-            {/* Text saves when the field is left, like every property saves when it is picked. */}
-            <textarea
-              value={title.value}
-              rows={1}
-              maxLength={200}
-              aria-label="Title"
-              placeholder="Issue title"
-              className="field-sizing-content w-full resize-none bg-transparent text-xl font-semibold tracking-tight outline-none placeholder:text-muted-foreground"
-              onChange={(e) => title.onChange(e.target.value)}
-              onBlur={title.commit}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  e.currentTarget.blur();
-                }
-              }}
-            />
-            <Textarea
-              value={description.value}
-              aria-label="Description"
-              placeholder="Add a description. Agents work from it when the issue is handed to them."
-              className="min-h-24 resize-none rounded-none border-0 bg-transparent px-0 shadow-none focus-visible:ring-0 dark:bg-transparent"
-              onChange={(e) => description.onChange(e.target.value)}
-              onBlur={description.commit}
-            />
-            {issue.github_url && (
-              <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
-                Linked to <GithubChip url={issue.github_url} />
-              </p>
-            )}
-            {saveError && (
-              <p role="alert" className="text-sm text-destructive">
-                {errorMessage(saveError)}
-              </p>
-            )}
+          <div className="w-full space-y-10 px-4 py-6 sm:px-8">
+            <div className="space-y-2">
+              <div className="flex items-start gap-2">
+                {/* Text saves when the field is left, like every property saves when it is picked. */}
+                <textarea
+                  value={title.value}
+                  rows={1}
+                  maxLength={200}
+                  aria-label="Title"
+                  placeholder="Issue title"
+                  className="field-sizing-content min-w-0 flex-1 resize-none bg-transparent text-xl font-semibold tracking-tight outline-none placeholder:text-muted-foreground"
+                  onChange={(e) => title.onChange(e.target.value)}
+                  onBlur={title.commit}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      e.currentTarget.blur();
+                    }
+                  }}
+                />
+                {!panelOpen && (
+                  <IconButton
+                    label="Open properties"
+                    className="text-muted-foreground hover:text-foreground"
+                    onClick={() => showPanel(true)}
+                  >
+                    <PanelRightOpenIcon />
+                  </IconButton>
+                )}
+              </div>
+              {descriptionPending ? (
+                // A list's copy has no description: nothing to edit (or to save) until it lands.
+                <div role="status" aria-label="Loading the description" className="space-y-2 py-2">
+                  <Skeleton className="h-4 w-5/6" />
+                  <Skeleton className="h-4 w-1/2" />
+                </div>
+              ) : (
+                <Textarea
+                  value={description.value}
+                  aria-label="Description"
+                  placeholder="Add a description. Agents work from it when the issue is handed to them."
+                  className="min-h-24 resize-none rounded-none border-0 bg-transparent px-0 shadow-none focus-visible:ring-0 dark:bg-transparent"
+                  onChange={(e) => description.onChange(e.target.value)}
+                  onBlur={description.commit}
+                />
+              )}
+              {saveError && (
+                <p role="alert" className="text-sm text-destructive">
+                  {errorMessage(saveError)}
+                </p>
+              )}
+            </div>
             <IssueRun issue={issue} />
             <SubIssues workspace={workspace} issue={issue} />
             {artifacts}
@@ -303,128 +243,15 @@ export function IssueDetail({
             />
           </div>
         </div>
-        {/* Its right padding is the page's gutter, clear of the assistant's notch. */}
-        <aside
-          aria-label="Properties"
-          className="space-y-1 border-t bg-muted/20 p-4 md:w-72 md:shrink-0 md:overflow-y-auto md:border-t-0 md:border-l md:pr-6"
-        >
-          <Property label="Status">
-            <OptionSelect
-              value={issue.state.id}
-              onValueChange={(state_id) => save.mutate({ state_id })}
-              options={states.map((s) => ({
-                value: s.id,
-                label: (
-                  <span className="flex items-center gap-2">
-                    <StateGlyph category={s.category} color={s.color} />
-                    {s.name}
-                  </span>
-                ),
-              }))}
-              aria-label="State"
-              className="w-full"
-            />
-          </Property>
-          <Property label="Priority">
-            <OptionSelect
-              value={String(issue.priority)}
-              onValueChange={(p) => save.mutate({ priority: Number(p) })}
-              options={PRIORITY_LABEL.map((label, value) => ({
-                value: String(value),
-                label: (
-                  <span className="flex items-center gap-2">
-                    <PriorityGlyph priority={value} />
-                    {label}
-                  </span>
-                ),
-              }))}
-              aria-label="Priority"
-              className="w-full"
-            />
-          </Property>
-          <Property label="Assignee">
-            <OptionSelect
-              value={issue.assignee?.user_id ?? NONE}
-              onValueChange={(id) => save.mutate({ assignee_id: id === NONE ? null : id })}
-              options={[
-                { value: NONE, label: 'Unassigned' },
-                ...(issue.assignee && !members.some((m) => m.user_id === issue.assignee?.user_id)
-                  ? [{ value: issue.assignee.user_id, label: issue.assignee.name }]
-                  : []),
-                ...members.map((m) => ({ value: m.user_id, label: m.name })),
-              ]}
-              aria-label="Assignee"
-              className="w-full"
-            />
-          </Property>
-          <Property label="Labels">
-            <LabelPicker
-              workspace={workspace}
-              selected={issue.labels}
-              onChange={(label_ids) => save.mutate({ label_ids })}
-            />
-          </Property>
-          <Property label="Project">
-            <OptionSelect
-              value={issue.project_id ?? NONE}
-              onValueChange={(id) => save.mutate({ project_id: id === NONE ? null : id })}
-              options={[
-                { value: NONE, label: 'No project' },
-                ...projects.map((p) => ({ value: p.id, label: p.name })),
-              ]}
-              aria-label="Project"
-              className="w-full"
-            />
-          </Property>
-          <Property label="Due date">
-            <Input
-              type="date"
-              aria-label="Due date"
-              value={issue.due_date ?? ''}
-              className="h-8 w-full text-[13px]"
-              onChange={(e) => {
-                const next = e.target.value || null;
-                if (next !== issue.due_date) save.mutate({ due_date: next });
-              }}
-            />
-          </Property>
-          {(cycles.length > 0 || issue.cycle) && (
-            <Property label="Cycle">
-              <OptionSelect
-                value={issue.cycle?.id ?? NONE}
-                onValueChange={(id) => save.mutate({ cycle_id: id === NONE ? null : id })}
-                options={[
-                  { value: NONE, label: 'No cycle' },
-                  ...cycles.map((c) => ({
-                    value: c.id,
-                    label: c.status === 'active' ? `${cycleLabel(c)} · active` : cycleLabel(c),
-                  })),
-                ]}
-                aria-label="Cycle"
-                className="w-full"
-              />
-            </Property>
-          )}
-          <Property label="GitHub">
-            <GithubLink issue={issue} />
-          </Property>
-          <dl className="mt-3 space-y-1 border-t pt-3 text-xs text-muted-foreground">
-            <div className="flex justify-between gap-2">
-              <dt>Created</dt>
-              <dd>{formatRelative(issue.created_at)}</dd>
-            </div>
-            <div className="flex justify-between gap-2">
-              <dt>Updated</dt>
-              <dd>{formatRelative(issue.updated_at)}</dd>
-            </div>
-            {issue.completed_at && (
-              <div className="flex justify-between gap-2">
-                <dt>Closed</dt>
-                <dd>{formatRelative(issue.completed_at)}</dd>
-              </div>
-            )}
-          </dl>
-        </aside>
+        <IssueProperties
+          workspace={workspace}
+          issue={issue}
+          open={panelOpen}
+          onClose={() => showPanel(false)}
+          save={(body) => save.mutate(body)}
+          onSaved={(updated, body) => showSaved(queryClient, updated, body)}
+          onDelete={() => setConfirming(true)}
+        />
       </div>
       <ConfirmDialog
         open={confirming}
@@ -435,6 +262,35 @@ export function IssueDetail({
         destructive
         onConfirm={() => remove.mutate()}
       />
+    </div>
+  );
+}
+
+/**
+ * The issue page's frame while the issue loads, laid out like the page: the main column and,
+ * unless the member closed it, the properties panel.
+ */
+export function IssueDetailSkeleton() {
+  const [panelOpen] = useState(readPanelOpen);
+  return (
+    <div
+      role="status"
+      aria-busy
+      aria-label="Loading the issue"
+      className="flex flex-col md:min-h-0 md:flex-1 md:flex-row"
+    >
+      <div className="w-full min-w-0 flex-1 space-y-10 px-4 py-6 sm:px-8">
+        <div className="space-y-3">
+          <Skeleton className="h-7 w-2/3" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-5/6" />
+        </div>
+        <div className="space-y-2">
+          <Skeleton className="h-3.5 w-24" />
+          <Skeleton className="h-8 w-full" />
+        </div>
+      </div>
+      {panelOpen && <PropertiesSkeleton />}
     </div>
   );
 }
