@@ -9,6 +9,52 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 
+- **The backend never starts a command for an MCP server (breaking; see the upgrade checklist
+  below).** Anyone who could register a server (any workspace admin, and with sign-up open,
+  anyone) chose a command the backend ran: a remote code execution. The stdio transport is gone
+  from the gateway's client: registering one answers 422 (`errors.transport`), and a server
+  registered before is listed but never started (its check fails, its tools are not offered, a
+  call is refused as `mcp.transport`). Run a stdio server in a sandbox of its own behind an HTTP
+  bridge and register the bridge's URL. The console's form offers HTTP only.
+- **Sign-up is off unless the operator turns it on (breaking).** `NEXC_ALLOW_SIGNUP` defaults to
+  `false`: an account opened by sign-up owns a workspace of its own. `.env.example` keeps `true`
+  for the local trial.
+- **Every connection a user aims is judged by the address it resolves to (breaking).** The new
+  SSRF guard is a DNS resolver in the HTTP client that judges the resolved addresses as each
+  connection opens, plus a check of IP literals. Loopback, private, link-local, CGNAT, multicast,
+  documentation and reserved ranges are refused, IPv4 and IPv6, with IPv4-mapped,
+  IPv4-compatible, NAT64 and 6to4 addresses judged by the IPv4 address inside. It covers
+  `fetch_url`, MCP over HTTP, alert deliveries, A2A, the LLM, embeddings and model-list base URLs
+  a user or a workspace chose (the operator's `NEXC_LLM_BASE_URL` and `NEXC_EMBED_BASE_URL` are
+  not guarded), and a workspace transfer's PostgreSQL and Redis, in every environment rather than
+  production only. The operator opens private ranges with `NEXC_EGRESS_ALLOW_PRIVATE` (CIDRs,
+  comma separated); link-local and cloud metadata addresses stay refused whatever it lists. MCP
+  servers lose their exemption from `egress.private`. A transfer's database is pinned to the
+  address checked. `fetch_url` follows redirects on the same host only: a redirect to another
+  host comes back as an error with its location.
+- **Capabilities that name no host reach none (breaking).** `egress_hosts: null` used to allow
+  every host; it now denies every host, in the backend and in the runtime. This covers
+  `fetch_url`, MCP over HTTP and A2A calls, and the Agent Firewall API's answers for `egress`.
+  Registering an A2A counterpart is not refused because the workspace policy names no hosts; each
+  call is decided under the calling agent's own list.
+- **Single sign-on never opens an account that has a password by its address (breaking).** Local
+  sign-up never verifies an address, so whoever signed up first with someone's address shared the
+  account the provider later vouched for (pre-account takeover). A first sign-in through the
+  provider now answers `link_required` for any account with a password. Its holder links the
+  identity from the profile page, with the account's password. A verified address still links an
+  account nobody holds a credential of: no password (the provider created it, or a transfer
+  brought it), no identity of the provider any more, and not an administrator's, the break-glass
+  account or one with two-factor sign-in.
+- **The Helm chart and the kustomize base ship production defaults (breaking).**
+  - `NEXC_ENV=production`, `Secure` cookies, sign-up off.
+  - The ingress serves TLS from the Secret `nexc-tls` (Helm: `ingress.tlsSecretName`).
+    `NEXC_PUBLIC_URL` and `NEXC_CORS_ORIGINS` are derived from the host when left empty.
+  - The chart refuses to render production over plain http unless `ingress.tlsUpstream=true`.
+  - One backend replica, because `backend-data` is `ReadWriteOnce`. The chart refuses to render
+    more replicas, or the autoscaler, unless `backend.dataAccessMode=ReadWriteMany`.
+  - The backend's PodDisruptionBudget is `maxUnavailable: 1`, so a drain can move its one pod.
+  - The plain-http minikube trial moved to the overlay `deploy/minikube`, which
+    `make minikube-up` applies.
 - CI fails on any RustSec advisory, unapproved licence or unknown source: `cargo deny check`
   (`backend/deny.toml`) and `cargo audit` run on every push. To pass, rustls 0.23.46, tokio 1.54.1,
   zip 9.1 and the webpki crates were updated. Released images carry Sigstore-signed build
@@ -83,6 +129,54 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 6. Rolling back, or replicas of two versions side by side: an older backend cannot read the new
    audit actions, so `GET /workspaces/{wid}/audit` answers 500 there for a workspace that has
    `agent_created` or `agent_deleted` entries until every replica runs this release.
+
+**Upgrade checklist for the MCP, SSRF, egress, single sign-on and deployment changes.**
+
+1. **Agents' hosts.** Find every agent and policy that reaches out with no host list: they stop
+   reaching anything. Name the hosts in each agent's capabilities (`egress_hosts`) or in a
+   workspace or team policy before upgrading. External agents that ask the Agent Firewall API
+   about `egress` get `deny` for any host their capabilities do not name.
+2. **Private targets.** List the ranges of in-cluster or private targets in
+   `NEXC_EGRESS_ALLOW_PRIVATE` (for example `10.20.0.0/16`). That covers MCP servers, alert
+   receivers, A2A counterparts, LLM or embeddings endpoints saved under Settings, and transfer
+   databases and Redis. An agent also needs such an MCP server's host in its `egress_hosts`.
+   Metadata and link-local addresses cannot be opened. Development stacks with stand-ins on this
+   machine need `127.0.0.0/8,::1`.
+3. **stdio MCP servers.** They stop working. Before upgrading, find them with
+   `SELECT workspace_id, name, command FROM mcp_servers WHERE transport = 'stdio'`. Run each one
+   behind an HTTP bridge, in a sandbox of its own, and register the bridge's URL. Then remove the
+   old entry.
+4. **Sign-up.** If people open their own accounts, set `NEXC_ALLOW_SIGNUP=true` explicitly.
+   Otherwise create accounts with `nexc user create`, invite them, or use single sign-on.
+5. **Helm.**
+   - Create the TLS Secret `nexc-tls` for `ingress.host` (or let cert-manager issue it), or set
+     `ingress.tlsSecretName` to yours, or `ingress.tlsUpstream=true` when TLS ends in front of
+     the ingress.
+   - A plain-http trial sets `config.NEXC_ENV=development`, `config.NEXC_COOKIE_SECURE=false` and
+     `ingress.tlsSecretName=""`.
+   - A release with `replicas.backend` above 1, or `autoscaling.backend.enabled`, needs
+     `backend.dataAccessMode=ReadWriteMany` and a storage class that offers it, or
+     `replicas.backend=1`; otherwise the chart refuses to render.
+   - If you set `config.NEXC_CORS_ORIGINS` or `config.NEXC_PUBLIC_URL` before, keep them;
+     otherwise they now follow `ingress.host`.
+6. **Kustomize.** `kubectl apply -k deploy/k8s` is now production: TLS from `nexc-tls`, one
+   backend replica. Put your host in `ingress.yaml` and in `NEXC_CORS_ORIGINS` and
+   `NEXC_PUBLIC_URL` in `config.env`. A minikube trial applies `deploy/minikube` instead.
+7. **Single sign-on, password accounts.** Any account with a password is now refused at its first
+   sign-in through the provider (`link_required`), until its holder links the identity from the
+   profile page (Single sign-on, *Link*, which asks for the password). Identities linked before
+   this release keep working. If `NEXC_OIDC_ALLOW_LOCAL_LOGIN=false` is already set, unlinked
+   password users cannot sign in to link. To recover:
+   1. Set `NEXC_OIDC_ALLOW_LOCAL_LOGIN=true` for the time it takes.
+   2. Have those users sign in with their password and link the provider from their profile. For
+      someone who no longer knows theirs, a platform administrator issues a one-time reset link
+      (`POST /admin/users/{uid}/password-reset`) and hands it over.
+   3. Set it back to `false`.
+
+   Find the accounts concerned with
+   `SELECT u.email FROM users u WHERE u.password_hash <> '!' AND NOT EXISTS (SELECT 1 FROM user_identities i WHERE i.user_id = u.id)`.
+8. **fetch_url redirects.** A page that redirects to another host now answers with the new
+   location. The agent fetches that URL itself, and the new host must be allowed too.
 
 ### Added
 
