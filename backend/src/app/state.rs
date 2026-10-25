@@ -235,10 +235,12 @@ impl AppState {
         })
     }
 
-    /// The state with run leases renewed on a pool of their own (two connections, opened when
-    /// first needed) rather than on `db`.
-    pub fn with_lease_pool(mut self) -> Self {
-        self.lease_db = crate::repo::connect_lazy_small(&self.db, 2);
+    /// The state with run leases renewed on a pool of their own (`connections`, opened when
+    /// first needed) rather than on `db`; none asked for keeps them on `db`.
+    pub fn with_lease_pool(mut self, connections: u32) -> Self {
+        if connections > 0 {
+            self.lease_db = crate::repo::connect_lazy_small(&self.db, connections);
+        }
         self
     }
 }
