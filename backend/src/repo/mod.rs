@@ -134,7 +134,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgRow};
-use sqlx::{PgPool, Row};
+use sqlx::{PgConnection, PgPool, Row};
 
 use crate::domain::AppError;
 
@@ -159,15 +159,27 @@ pub async fn connect(url: &str, max_connections: u32) -> anyhow::Result<PgPool> 
 /// renewed after 30 minutes, and after ten idle minutes, anyway.
 ///
 /// The limits are `SET` once each connection is opened, rather than sent as
-/// startup options, which PgBouncer refuses. A transaction left open is
-/// ended after twice the statement limit (at least a minute), so a stuck
-/// request cannot hold its locks and its connection for ever.
+/// startup options, which PgBouncer refuses. A transaction left idle is
+/// ended after ten times the statement limit (at least five minutes): long
+/// enough for one that waits on onto-intelli between its statements, short
+/// enough that a stuck request cannot hold its locks and its connection for
+/// ever. Work that is long by nature lifts both for its own transaction
+/// ([`lift_limits`]).
 pub async fn connect_limited(
     url: &str,
     max_connections: u32,
     statement_timeout: Duration,
 ) -> anyhow::Result<PgPool> {
     let options = PgConnectOptions::from_str(url)?.application_name("nexc");
+    Ok(connect_limited_with(options, max_connections, statement_timeout).await?)
+}
+
+/// [`connect_limited`], from connect options rather than a URL.
+pub async fn connect_limited_with(
+    options: PgConnectOptions,
+    max_connections: u32,
+    statement_timeout: Duration,
+) -> Result<PgPool, sqlx::Error> {
     let session: Option<std::sync::Arc<str>> = session_limits(statement_timeout).map(Into::into);
     let pool = PgPoolOptions::new()
         .max_connections(max_connections)
@@ -196,9 +208,25 @@ pub async fn connect_limited(
 fn session_limits(statement_timeout: Duration) -> Option<String> {
     let ms = statement_timeout.as_millis();
     (ms > 0).then(|| {
-        let idle = (ms * 2).max(60_000);
+        let idle = (ms * 10).max(300_000);
         format!("SET statement_timeout = {ms}; SET idle_in_transaction_session_timeout = {idle}")
     })
+}
+
+/// Lifts the pool's statement and idle limits for the rest of the
+/// transaction on `conn`, and only for it: for work that is one long
+/// statement by nature (the retention purge, erasing a workspace or an
+/// account, an index built at startup), and for the onto-intelli export,
+/// which holds its claim while onto-intelli answers. They come back when the
+/// transaction ends; outside one, this changes nothing.
+pub async fn lift_limits(conn: &mut PgConnection) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "SELECT set_config('statement_timeout', '0', true),
+                set_config('idle_in_transaction_session_timeout', '0', true)",
+    )
+    .execute(conn)
+    .await?;
+    Ok(())
 }
 
 /// A small pool beside the server's own, for what must not wait behind a
@@ -312,11 +340,11 @@ mod tests {
         let limited = session_limits(Duration::from_secs(30)).unwrap();
         assert_eq!(
             limited,
-            "SET statement_timeout = 30000; SET idle_in_transaction_session_timeout = 60000"
+            "SET statement_timeout = 30000; SET idle_in_transaction_session_timeout = 300000"
         );
         let long = session_limits(Duration::from_secs(45)).unwrap();
         assert!(
-            long.ends_with("idle_in_transaction_session_timeout = 90000"),
+            long.ends_with("idle_in_transaction_session_timeout = 450000"),
             "{long}"
         );
     }

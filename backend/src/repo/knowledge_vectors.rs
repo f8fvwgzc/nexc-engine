@@ -34,8 +34,12 @@ impl Support {
 }
 
 /// Creates the extension and the column when the server has pgvector.
-/// Returns whether vector search is available.
+/// Returns whether vector search is available. The pool's statement limit
+/// does not apply: the partial index over many passages, or waiting for
+/// another instance that builds it, takes longer.
 pub async fn ensure(db: &PgPool, support: &Support) -> Result<bool, sqlx::Error> {
+    let mut tx = db.begin().await?;
+    super::lift_limits(&mut tx).await?;
     sqlx::query(
         "DO $$
          BEGIN
@@ -52,8 +56,9 @@ pub async fn ensure(db: &PgPool, support: &Support) -> Result<bool, sqlx::Error>
            RAISE NOTICE 'pgvector is installed but this role may not enable it';
          END $$",
     )
-    .execute(db)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     let column: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM information_schema.columns
                         WHERE table_schema = current_schema()
@@ -80,7 +85,8 @@ fn indexable(dims: usize) -> bool {
     (2..=MAX_INDEXED_DIMS).contains(&dims)
 }
 
-/// Creates the HNSW index for vectors of `dims` dimensions if it is missing.
+/// Creates the HNSW index for vectors of `dims` dimensions if it is missing,
+/// however long the build takes (the pool's statement limit is lifted for it).
 /// `dims` is a checked integer, the only thing spliced into the statement.
 pub async fn ensure_index(db: &PgPool, support: &Support, dims: usize) -> Result<(), sqlx::Error> {
     if !support.available() || !indexable(dims) {
@@ -94,6 +100,7 @@ pub async fn ensure_index(db: &PgPool, support: &Support, dims: usize) -> Result
     // Built without parallel workers: they share memory through /dev/shm, which a container
     // gives 64 MB by default, and a build on a table that already has rows then fails.
     let mut tx = db.begin().await?;
+    super::lift_limits(&mut tx).await?;
     sqlx::query("SET LOCAL max_parallel_maintenance_workers = 0")
         .execute(&mut *tx)
         .await?;

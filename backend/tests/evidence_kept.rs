@@ -679,3 +679,59 @@ async fn a_transfer_carries_the_same_chain_and_refuses_a_broken_one(pool: PgPool
         "{refused}"
     );
 }
+
+/// The server's pool cuts a request's statement off after its limit, but a
+/// purge path lifts the limits for its own transaction (a retention purge or
+/// an erasure is one long cascade, which would fail the same way on every
+/// retry), and the onto-intelli export lifts them while it holds its claim;
+/// the next transaction has them back.
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_purge_outlasts_the_pools_statement_limit(pool: PgPool) {
+    let options = (*pool.connect_options()).clone();
+    let limited =
+        nexc::repo::connect_limited_with(options, 2, std::time::Duration::from_millis(500))
+            .await
+            .unwrap();
+    let cut = sqlx::query("SELECT pg_sleep(1)")
+        .execute(&limited)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        cut.as_database_error().and_then(|e| e.code()).as_deref(),
+        Some("57014"),
+        "{cut}"
+    );
+
+    let mut tx = limited.begin().await.unwrap();
+    nexc::repo::evidence::allow_purge(&mut tx).await.unwrap();
+    sqlx::query("SELECT pg_sleep(1)")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    let mut tx = limited.begin().await.unwrap();
+    nexc::repo::onto_export::claim(&mut tx, Uuid::now_v7(), 10)
+        .await
+        .unwrap();
+    let idle: String = sqlx::query_scalar("SHOW idle_in_transaction_session_timeout")
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    assert_eq!(idle, "0");
+    tx.rollback().await.unwrap();
+
+    for (setting, value) in [
+        ("statement_timeout", "500ms"),
+        ("idle_in_transaction_session_timeout", "5min"),
+    ] {
+        let now: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SHOW {setting}")))
+            .fetch_one(&limited)
+            .await
+            .unwrap();
+        assert_eq!(now, value, "{setting}");
+    }
+    nexc::repo::evidence::purge_payloads(&limited)
+        .await
+        .unwrap();
+}

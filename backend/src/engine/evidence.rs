@@ -63,13 +63,17 @@ pub async fn delete_graph(state: &AppState, user: Uuid, gid: Uuid) -> Result<(),
 /// `repo::evidence::EVIDENCE_DAYS_MIN` days), each removal written to the
 /// workspace's audit log in the transaction that makes it.
 pub async fn purge_expired(state: &AppState) -> anyhow::Result<()> {
-    let payloads = repo::evidence::purge_payloads(&state.db).await?;
-    if payloads > 0 {
-        tracing::info!(payloads, "recorded payloads past their retention deleted");
+    // Payloads that cannot be purged now do not hold up the deleted graphs.
+    match repo::evidence::purge_payloads(&state.db).await {
+        Ok(0) => {}
+        Ok(payloads) => tracing::info!(payloads, "recorded payloads past their retention deleted"),
+        Err(err) => {
+            tracing::warn!(error = %err, "recorded payloads not purged; tried again later");
+        }
     }
     for graph in repo::evidence::expired_graphs(&state.db, PURGE_BATCH).await? {
-        // One graph that cannot be removed (a statement timeout on a huge cascade) does not
-        // hold up the others.
+        // One graph that cannot be removed (a lock held elsewhere, say) does not hold up the
+        // others.
         if let Err(err) = remove_expired(state, &graph).await {
             tracing::warn!(graph_id = %graph.id, error = %err, "deleted graph not purged; tried again later");
         }
