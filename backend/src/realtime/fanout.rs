@@ -137,8 +137,11 @@ async fn send(db: &PgPool, envelope: Envelope) -> anyhow::Result<()> {
 }
 
 async fn listener(hub: Arc<Hub>, caches: Arc<Caches>, db: PgPool, shutdown: CancellationToken) {
+    // Whether invalidations may have been sent while no LISTEN was open.
+    let mut gap = false;
     while !shutdown.is_cancelled() {
-        if let Err(err) = listen(&hub, &caches, &db, &shutdown).await {
+        if let Err(err) = listen(&hub, &caches, &db, &shutdown, gap).await {
+            gap = true;
             tracing::warn!(error = %err, "realtime LISTEN connection lost; reconnecting");
             tokio::select! {
                 _ = shutdown.cancelled() => return,
@@ -148,18 +151,39 @@ async fn listener(hub: Arc<Hub>, caches: Arc<Caches>, db: PgPool, shutdown: Canc
     }
 }
 
+/// What the other replicas sent while this one was not listening never
+/// arrives: every entry kept here is dropped, once LISTEN is open again, so
+/// nothing they invalidated meanwhile is served until its TTL runs out.
+fn listening_again(caches: &Caches) {
+    caches.drop_all_local();
+    tracing::info!("realtime LISTEN connection back; every cached entry dropped");
+}
+
 async fn listen(
     hub: &Hub,
     caches: &Caches,
     db: &PgPool,
     shutdown: &CancellationToken,
+    gap: bool,
 ) -> anyhow::Result<()> {
     let mut listener = PgListener::connect_with(db).await?;
     listener.listen(outbox::CHANNEL).await?;
+    if gap {
+        listening_again(caches);
+    }
     loop {
+        // `try_recv`, not `recv`: the listener reconnects by itself when its
+        // connection drops, and `recv` would hide that. `None` is the drop,
+        // with LISTEN open again on a new connection.
         let notification = tokio::select! {
             _ = shutdown.cancelled() => return Ok(()),
-            n = listener.recv() => n?,
+            n = listener.try_recv() => match n? {
+                Some(n) => n,
+                None => {
+                    listening_again(caches);
+                    continue;
+                }
+            },
         };
         let envelope = match serde_json::from_str::<Notification>(notification.payload()) {
             Ok(Notification::Inline(e)) if e.origin != hub.instance() => e,

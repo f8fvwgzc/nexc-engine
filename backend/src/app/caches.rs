@@ -127,6 +127,20 @@ impl<K: Eq + std::hash::Hash + Clone, T> Cache<K, T> {
     fn prune(&self, ttl: Duration) {
         self.entries.retain(|_, e| e.at.elapsed() < ttl);
     }
+
+    /// Makes every entry at least `age` old: past a lifetime of `age`, still
+    /// within a longer one. An entry that cannot be dated back that far (a
+    /// clock that started less than `age` ago) is dropped instead.
+    fn age(&self, age: Duration) {
+        let Some(then) = Instant::now().checked_sub(age) else {
+            self.entries.clear();
+            return;
+        };
+        self.entries.retain(|_, e| {
+            e.at = e.at.min(then);
+            true
+        });
+    }
 }
 
 /// What one read of onto-intelli answered, whatever its type.
@@ -205,6 +219,12 @@ impl OntoReads {
     /// Sweeps expired reads.
     pub fn prune(&self) {
         self.entries.retain(|_, s| s.at.elapsed() < self.ttl);
+    }
+
+    /// Forgets every read kept, whatever its tenant. A read on the wire
+    /// still answers its callers, but is not kept.
+    pub fn clear(&self) {
+        self.entries.clear();
     }
 
     /// Reads kept right now.
@@ -415,6 +435,22 @@ impl Caches {
                 self.onto_reads.invalidate_tenant(tenant);
             }
         }
+    }
+
+    /// Drops every entry on this instance, for when invalidations the other
+    /// replicas sent may have gone missing: the realtime fan-out lost its
+    /// LISTEN connection (a database failover, an idle timeout on the way)
+    /// and what was sent meanwhile never arrived. A vocabulary is only made
+    /// stale: asked for again on its next read, but still served while
+    /// onto-intelli cannot be reached, as one past its lifetime is.
+    pub fn drop_all_local(&self) {
+        self.cards.entries.clear();
+        self.policies.entries.clear();
+        self.resolved.entries.clear();
+        self.guardrails.entries.clear();
+        self.workspace_llm.entries.clear();
+        self.vocabularies.age(self.vocabulary_ttl);
+        self.onto_reads.clear();
     }
 
     /// Sweeps expired entries (housekeeping).
@@ -631,6 +667,38 @@ mod tests {
             m.render()
                 .contains("nexc_cache_lookups_total{cache=\"guardrails\",result=\"miss\"} 1")
         );
+    }
+
+    #[tokio::test]
+    async fn dropping_everything_keeps_only_stale_vocabularies() {
+        let c = caches(Duration::from_secs(60)).with_onto_read_ttl(Duration::from_secs(60));
+        let (w, a, g) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
+        c.guardrails.put(w, Arc::new(Guardrails::default()), c.ttl);
+        c.policies.put(w, Arc::new(Vec::new()), c.ttl);
+        c.workspace_llm.put(w, Arc::new(None), c.ttl);
+        c.resolved.put(
+            (w, a, 1),
+            Arc::new(ResolvedPolicy {
+                resolved: Arc::new(resolve(&[], None)),
+                versions: PolicyVersions::default(),
+            }),
+            c.ttl,
+        );
+        c.put_vocabulary(g, Arc::new(Ontology::default()));
+        let read: Result<u32, ()> = c.onto_read("ws_1", "find a".into(), async { Ok(1) }).await;
+        assert_eq!(read, Ok(1));
+        assert!(matches!(c.vocabulary(g), Some((_, true))));
+        assert_eq!(c.onto_reads().len(), 1);
+
+        c.drop_all_local();
+        let kept: Vec<_> = c.sizes().into_iter().filter(|(_, n)| *n > 0).collect();
+        assert_eq!(kept, vec![("vocabulary", 1)], "only the vocabulary stays");
+        assert!(
+            matches!(c.vocabulary(g), Some((_, false))),
+            "a kept vocabulary is stale: asked for again, served only as a fallback"
+        );
+        let again: Result<u32, ()> = c.onto_read("ws_1", "find a".into(), async { Ok(2) }).await;
+        assert_eq!(again, Ok(2), "the read asks onto-intelli again");
     }
 
     #[tokio::test]

@@ -161,6 +161,53 @@ async fn a_write_drops_the_entry_on_every_replica(pool: PgPool) {
     shutdown.cancel();
 }
 
+/// A replica whose LISTEN connection dropped may have missed what the others
+/// invalidated meanwhile: it drops everything it kept once it listens again,
+/// and hears the next write as before.
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_lost_listen_connection_drops_every_entry(pool: PgPool) {
+    let (here, there, shutdown) = replicas(&pool).await;
+    let (owner, _) = here.register("owner@example.com").await;
+    let (_, list) = call(&here, Method::GET, "/workspaces", &owner, None).await;
+    let wid = list[0]["id"].as_str().unwrap().to_owned();
+    let workspace: Uuid = wid.parse().unwrap();
+    let guardrails = format!("/workspaces/{wid}/guardrails");
+    for app in [&here, &there] {
+        let (status, _) = call(app, Method::GET, &guardrails, &owner, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(app.state.caches.has_guardrails(workspace));
+    }
+
+    // The database ends both LISTEN connections, as a failover would.
+    let ended: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM (SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
+         WHERE datname = current_database() AND query LIKE 'LISTEN %') ended",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(ended, 2, "one LISTEN connection per replica");
+    for app in [&here, &there] {
+        assert!(
+            eventually(|| !app.state.caches.has_guardrails(workspace)).await,
+            "the entry went once the replica listened again"
+        );
+    }
+
+    // Listening again: a write on one replica still drops the entry on the other.
+    let (_, current) = call(&there, Method::GET, &guardrails, &owner, None).await;
+    assert!(there.state.caches.has_guardrails(workspace));
+    let mut changed = current.clone();
+    changed["monthly_token_budget"] = json!(777);
+    let (status, body) = call(&here, Method::PUT, &guardrails, &owner, Some(changed)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        eventually(|| !there.state.caches.has_guardrails(workspace)).await,
+        "the other replica heard the write"
+    );
+    shutdown.cancel();
+}
+
 fn hits(rendered: &str, cache: &str) -> u64 {
     rendered
         .lines()
