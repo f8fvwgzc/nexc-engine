@@ -275,7 +275,9 @@ function LiveRun({
 }) {
   const queryClient = useQueryClient();
   const { data: graph } = useQuery(graphQuery(graphId));
-  const { data: runs } = useQuery(graphRunsQuery(graphId));
+  // Only the latest run is shown, so only it is read.
+  const latest = graphRunsQuery(graphId, 1);
+  const { data: runs } = useQuery(latest);
   const run: Run | undefined = runs?.[0];
   const active = run ? isRunActive(run.status) : false;
   const { data: files = [] } = useQuery({
@@ -294,10 +296,8 @@ function LiveRun({
     switch (event.type) {
       case 'run.started':
         setLive({ runId: event.data.run.id, steps: {} });
-        queryClient.setQueryData<Run[]>(qk.graphs.runs(graphId), (prev) => [
-          event.data.run,
-          ...(prev ?? []).filter((r) => r.id !== event.data.run.id),
-        ]);
+        queryClient.setQueryData<Run[]>(latest.queryKey, [event.data.run]);
+        void queryClient.invalidateQueries({ queryKey: qk.runs.workspaces() });
         break;
       case 'node.status':
         step(event.data.run_id, event.data.node_id, (s) => ({
@@ -326,9 +326,10 @@ function LiveRun({
         void queryClient.invalidateQueries({ queryKey: qk.artifacts.runs(issue.id) });
         break;
       case 'run.finished':
-        queryClient.setQueryData<Run[]>(qk.graphs.runs(graphId), (prev) =>
+        queryClient.setQueryData<Run[]>(latest.queryKey, (prev) =>
           (prev ?? []).map((r) => (r.id === event.data.run.id ? event.data.run : r)),
         );
+        void queryClient.invalidateQueries({ queryKey: qk.runs.workspaces() });
         // The run reported back on this issue: a timeline entry, maybe a new state (in the
         // workspace's lists and projects too), an inbox entry, and the run's status on each file
         // it made. Nothing else of the workspace changed.
@@ -371,6 +372,7 @@ function LiveRun({
       onReconnect: () => {
         void queryClient.invalidateQueries({ queryKey: qk.graphs.runs(graphId) });
         void queryClient.invalidateQueries({ queryKey: qk.graphs.detail(graphId) });
+        void queryClient.invalidateQueries({ queryKey: qk.runs.workspaces() });
       },
     });
     stream.start();
@@ -392,14 +394,18 @@ function LiveRun({
     },
     onSuccess: (started) => {
       setLive({ runId: started.id, steps: {} });
-      queryClient.setQueryData<Run[]>(qk.graphs.runs(graphId), (prev) => [
-        started,
-        ...(prev ?? []).filter((r) => r.id !== started.id),
-      ]);
+      queryClient.setQueryData<Run[]>(latest.queryKey, [started]);
+      void queryClient.invalidateQueries({ queryKey: qk.runs.workspaces() });
     },
   });
   const stop = useMutation({
     mutationFn: () => (run ? cancelRun(run.id) : Promise.reject(new Error('nothing runs'))),
+    onSuccess: (cancelled) => {
+      queryClient.setQueryData<Run[]>(latest.queryKey, (prev) =>
+        (prev ?? []).map((r) => (r.id === cancelled.id ? cancelled : r)),
+      );
+      void queryClient.invalidateQueries({ queryKey: qk.runs.workspaces() });
+    },
   });
 
   const titles = useMemo(

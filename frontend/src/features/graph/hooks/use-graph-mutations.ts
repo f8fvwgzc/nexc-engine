@@ -161,6 +161,7 @@ export function useStartRun(graphId: string) {
       useGraphStore.getState().runUpdated(run);
       queryClient.setQueryData(qk.runs.detail(run.id), run);
       void queryClient.invalidateQueries({ queryKey: qk.graphs.runs(graphId) });
+      void queryClient.invalidateQueries({ queryKey: qk.runs.workspaces() });
     },
   });
 }

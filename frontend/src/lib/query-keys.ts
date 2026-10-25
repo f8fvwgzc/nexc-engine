@@ -46,8 +46,10 @@ export const qk = {
     artifacts: (runId: string) => [...qk.runs.all, runId, 'artifacts'] as const,
     trace: (runId: string) => [...qk.runs.all, runId, 'trace'] as const,
     verify: (runId: string) => [...qk.runs.all, runId, 'trace', 'verify'] as const,
+    /** Every workspace's run list: read again whenever a run starts or ends anywhere. */
+    workspaces: () => [...qk.runs.all, 'workspace'] as const,
     /** The latest runs across a workspace's graphs (the Runs page). */
-    workspace: (workspaceId: string) => [...qk.runs.all, 'workspace', workspaceId] as const,
+    workspace: (workspaceId: string) => [...qk.runs.workspaces(), workspaceId] as const,
   },
   issues: {
     all: ['issues'] as const,
