@@ -14,7 +14,7 @@ import {
 import { ScrollRegion } from '@/components/custom-ui/scroll-region';
 import { onIntent, prefetchIssue } from '@/lib/prefetch';
 import { qk } from '@/lib/query-keys';
-import type { Issue, IssueState } from '@/schemas/issue';
+import type { IssueState, IssueSummary } from '@/schemas/issue';
 import type { Workspace } from '@/schemas/workspace';
 
 import { statesQuery, updateIssue } from './api';
@@ -40,7 +40,7 @@ export function IssueBoard({
 }: {
   workspace: Workspace;
   teamId: string;
-  issues: Issue[];
+  issues: IssueSummary[];
   hideClosed: boolean;
   /** Opens the new-issue dialog in this team, starting in the given state. */
   onCreate: (stateId: string) => void;
@@ -73,10 +73,10 @@ export function IssueBoard({
     // cannot put the card back in its old column.
     onMutate: async ({ id, state_id }) => {
       await queryClient.cancelQueries({ queryKey: lists });
-      const before = queryClient.getQueriesData<Issue[]>({ queryKey: lists });
+      const before = queryClient.getQueriesData<IssueSummary[]>({ queryKey: lists });
       const state = states.find((s) => s.id === state_id);
       if (state) {
-        queryClient.setQueriesData<Issue[]>({ queryKey: lists }, (list) =>
+        queryClient.setQueriesData<IssueSummary[]>({ queryKey: lists }, (list) =>
           list?.map((i) => (i.id === id ? { ...i, state } : i)),
         );
       }
@@ -194,7 +194,7 @@ export function IssueBoard({
  * the card, and its tooltip names what the glyphs under it show) and drags it; the GitHub chip
  * opens GitHub instead.
  */
-function BoardCard({ issue }: { issue: Issue }) {
+function BoardCard({ issue }: { issue: IssueSummary }) {
   const queryClient = useQueryClient();
   return (
     <div
