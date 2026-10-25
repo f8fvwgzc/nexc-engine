@@ -6,6 +6,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use super::cycle::CycleRef;
+use super::run::RunStatus;
 use super::string_enum;
 
 /// Maximum issue and project title length.
@@ -159,6 +160,101 @@ pub struct Issue {
     pub updated_at: DateTime<Utc>,
     #[schema(required = true)]
     pub completed_at: Option<DateTime<Utc>>,
+    /// The status of the latest run of the issue's graph; `null` without a graph or runs.
+    #[schema(required = true)]
+    pub run_status: Option<RunStatus>,
+}
+
+/// An issue as a list shows it: every field of [`Issue`] but its
+/// description, which only the issue's own page reads (it may be 64 KiB).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct IssueSummary {
+    pub id: Uuid,
+    pub workspace_id: Uuid,
+    pub team_id: Uuid,
+    /// The team key and the issue number, e.g. `ENG-12`.
+    pub identifier: String,
+    pub number: i32,
+    pub title: String,
+    pub state: IssueState,
+    /// `0` none, `1` urgent, `2` high, `3` medium, `4` low.
+    pub priority: i16,
+    /// The issue's labels, by name.
+    pub labels: Vec<Label>,
+    /// The issue this one is part of, if the caller can see it.
+    #[schema(required = true)]
+    pub parent: Option<IssueRef>,
+    pub sub_issues: SubIssueCount,
+    /// The cycle of its team the issue is planned in.
+    #[schema(required = true)]
+    pub cycle: Option<CycleRef>,
+    #[schema(required = true)]
+    pub assignee: Option<IssuePerson>,
+    /// The agent the issue is delegated to.
+    #[schema(required = true)]
+    pub agent_id: Option<Uuid>,
+    #[schema(required = true)]
+    pub project_id: Option<Uuid>,
+    /// The graph that plans and executes the issue, if one was created.
+    #[schema(required = true)]
+    pub graph_id: Option<Uuid>,
+    #[schema(required = true)]
+    pub creator_id: Option<Uuid>,
+    /// The day the issue is due, if it has one.
+    #[schema(required = true)]
+    pub due_date: Option<NaiveDate>,
+    /// The GitHub issue or pull request the issue is about (a link only; nothing is synced).
+    #[schema(required = true)]
+    pub github_url: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    #[schema(required = true)]
+    pub completed_at: Option<DateTime<Utc>>,
+    /// The status of the latest run of the issue's graph; `null` without a graph or runs.
+    #[schema(required = true)]
+    pub run_status: Option<RunStatus>,
+}
+
+impl IssueSummary {
+    /// The whole issue, given its description.
+    pub fn with_description(self, description: String) -> Issue {
+        Issue {
+            id: self.id,
+            workspace_id: self.workspace_id,
+            team_id: self.team_id,
+            identifier: self.identifier,
+            number: self.number,
+            title: self.title,
+            description,
+            state: self.state,
+            priority: self.priority,
+            labels: self.labels,
+            parent: self.parent,
+            sub_issues: self.sub_issues,
+            cycle: self.cycle,
+            assignee: self.assignee,
+            agent_id: self.agent_id,
+            project_id: self.project_id,
+            graph_id: self.graph_id,
+            creator_id: self.creator_id,
+            due_date: self.due_date,
+            github_url: self.github_url,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            completed_at: self.completed_at,
+            run_status: self.run_status,
+        }
+    }
+}
+
+/// Most unread notifications counted for the sidebar's badge.
+pub const UNREAD_MAX: i64 = 1000;
+
+/// How many of a member's notifications are unread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+pub struct UnreadCount {
+    /// At most [`UNREAD_MAX`].
+    pub count: i64,
 }
 
 /// A team, as much as a project shows of the team that owns it.
@@ -616,6 +712,7 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
             completed_at: None,
+            run_status: None,
         };
         let link = "https://github.com/acme/app/issues/1";
         assert_eq!(

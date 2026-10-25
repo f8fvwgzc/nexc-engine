@@ -34,8 +34,9 @@ export interface paths {
         /**
          * The public keys everything nexc signs verifies with, as a JWK set: the
          *     current key and the keys it replaced, each under its `kid` (the RFC 7638
-         *     thumbprint of the key). Public. Run seals, firewall decisions and
-         *     evidence bundles name the key they are signed with.
+         *     thumbprint of the key). Public, and kept by any cache for five minutes
+         *     (`PUBLIC_CACHE_CONTROL`). Run seals, firewall decisions and evidence
+         *     bundles name the key they are signed with.
          */
         get: operations["jwks"];
         put?: never;
@@ -425,7 +426,8 @@ export interface paths {
          * The keys agent tokens verify with: the one the backend signs with first,
          *     then the others it still accepts (`NEXC_AGENT_TOKEN_VERIFY_KEYS`: the
          *     previous key after a rotation, the next one before it). Public: they are
-         *     public keys, and the runtime fetches them without credentials.
+         *     public keys, and the runtime fetches them without credentials; any cache
+         *     may keep them for five minutes (`PUBLIC_CACHE_CONTROL`).
          */
         get: operations["jwks"];
         put?: never;
@@ -2368,8 +2370,8 @@ export interface paths {
         };
         /**
          * Files of a workspace the caller can see: those directly in a folder, at
-         *     the top level, or of an issue, by name; or every one, most recently
-         *     saved first. At most 1,000.
+         *     the top level, or of an issue, by name (at most 1,000); or every one, most
+         *     recently saved first, a page of `limit` at a time (`before` continues).
          */
         get: operations["list_files"];
         put?: never;
@@ -2723,6 +2725,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{wid}/inbox/unread-count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * How many of the caller's notifications in a workspace are unread (at
+         *     most 1,000): what the sidebar shows, without reading the inbox itself.
+         */
+        get: operations["unread_count"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{wid}/invites": {
         parameters: {
             query?: never;
@@ -2766,7 +2788,7 @@ export interface paths {
         };
         /**
          * Issues of a workspace in the teams the caller can see, most recently
-         *     updated first.
+         *     updated first, without their descriptions (`GET /issues/{iid}` has it).
          */
         get: operations["list"];
         put?: never;
@@ -3188,6 +3210,27 @@ export interface paths {
         head?: never;
         /** Updates a project (members and above). */
         patch: operations["update_project"];
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The latest runs across the graphs of a workspace the caller may work on,
+         *     newest first (at most 100), each with its graph's name: what the Runs page
+         *     lists, in one request.
+         */
+        get: operations["workspace_runs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/workspaces/{wid}/search": {
@@ -5763,6 +5806,7 @@ export interface components {
             priority: number;
             /** Format: uuid */
             project_id: string | null;
+            run_status: components["schemas"]["RunStatus"] | null;
             state: components["schemas"]["IssueState"];
             sub_issues: components["schemas"]["SubIssueCount"];
             /** Format: uuid */
@@ -5833,6 +5877,63 @@ export interface components {
             position: number;
             /** Format: uuid */
             team_id: string;
+        };
+        /**
+         * @description An issue as a list shows it: every field of [`Issue`] but its
+         *     description, which only the issue's own page reads (it may be 64 KiB).
+         */
+        IssueSummary: {
+            /**
+             * Format: uuid
+             * @description The agent the issue is delegated to.
+             */
+            agent_id: string | null;
+            assignee: components["schemas"]["IssuePerson"] | null;
+            /** Format: date-time */
+            completed_at: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            creator_id: string | null;
+            cycle: components["schemas"]["CycleRef"] | null;
+            /**
+             * Format: date
+             * @description The day the issue is due, if it has one.
+             */
+            due_date: string | null;
+            /** @description The GitHub issue or pull request the issue is about (a link only; nothing is synced). */
+            github_url: string | null;
+            /**
+             * Format: uuid
+             * @description The graph that plans and executes the issue, if one was created.
+             */
+            graph_id: string | null;
+            /** Format: uuid */
+            id: string;
+            /** @description The team key and the issue number, e.g. `ENG-12`. */
+            identifier: string;
+            /** @description The issue's labels, by name. */
+            labels: components["schemas"]["Label"][];
+            /** Format: int32 */
+            number: number;
+            parent: components["schemas"]["IssueRef"] | null;
+            /**
+             * Format: int32
+             * @description `0` none, `1` urgent, `2` high, `3` medium, `4` low.
+             */
+            priority: number;
+            /** Format: uuid */
+            project_id: string | null;
+            run_status: components["schemas"]["RunStatus"] | null;
+            state: components["schemas"]["IssueState"];
+            sub_issues: components["schemas"]["SubIssueCount"];
+            /** Format: uuid */
+            team_id: string;
+            title: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: uuid */
+            workspace_id: string;
         };
         /** @description `POST /agents/{id}/tokens` body. */
         IssueToken: {
@@ -7901,6 +8002,14 @@ export interface components {
         TwoFactorCode: {
             code: string;
         };
+        /** @description How many of a member's notifications are unread. */
+        UnreadCount: {
+            /**
+             * Format: int64
+             * @description At most [`UNREAD_MAX`].
+             */
+            count: number;
+        };
         /** @description `PATCH /agents/{id}` body (any subset; `reports_to: null` and `team_id: null` detach). */
         UpdateAgent: {
             /**
@@ -8273,6 +8382,10 @@ export interface components {
          * @enum {string}
          */
         WorkspaceRole: "owner" | "admin" | "member" | "guest";
+        /** @description A run as the workspace's run list shows it: the run with its graph's name. */
+        WorkspaceRun: components["schemas"]["Run"] & {
+            graph_name: string;
+        };
         /** @description A server → client WebSocket message. */
         WsMessage: {
             node: components["schemas"]["GraphNode"];
@@ -11252,6 +11365,8 @@ export interface operations {
             query?: {
                 /** @description Only graphs of this workspace. */
                 workspace_id?: string | null;
+                /** @description Only the most recently updated ones, 1-500 (the sidebar shows 8); all of them by default. */
+                limit?: number | null;
             };
             header?: never;
             path?: never;
@@ -11984,7 +12099,10 @@ export interface operations {
     };
     list: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description 1-100, default 100: the issue page asks for the latest run only. */
+                limit?: number | null;
+            };
             header?: never;
             path: {
                 /** @description Graph id */
@@ -14265,6 +14383,16 @@ export interface operations {
                 issue_id?: string | null;
                 /** @description Part of the name, any case; without control characters. */
                 q?: string | null;
+                /**
+                 * @description Every file, most recently saved first: how many, 1-1000 (default 200).
+                 *     Ignored with a folder, `root` or an issue, whose files all come at once.
+                 */
+                limit?: number | null;
+                /**
+                 * @description Every file: only those saved before `<updated_at>,<id>`, the last file of the
+                 *     previous page (its `updated_at` as given and its id).
+                 */
+                before?: string | null;
             };
             header?: never;
             path: {
@@ -15415,6 +15543,36 @@ export interface operations {
             };
         };
     };
+    unread_count: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnreadCount"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     invites: {
         parameters: {
             query?: never;
@@ -15527,7 +15685,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Issue"][];
+                    "application/json": components["schemas"]["IssueSummary"][];
                 };
             };
             404: {
@@ -16923,6 +17081,41 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    workspace_runs: {
+        parameters: {
+            query?: {
+                /** @description 1-100, default 100. */
+                limit?: number | null;
+                /** @description Only runs older than this run (the last one of the previous page). */
+                before?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceRun"][];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

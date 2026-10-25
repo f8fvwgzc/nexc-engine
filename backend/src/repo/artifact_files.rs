@@ -7,6 +7,7 @@
 
 use std::collections::HashSet;
 
+use chrono::{DateTime, Utc};
 use sqlx::postgres::PgRow;
 use sqlx::{FromRow, PgConnection, PgExecutor, Row};
 use uuid::Uuid;
@@ -380,30 +381,53 @@ pub struct FileFilter {
     pub q: Option<String>,
     /// By name rather than most recently saved first.
     pub by_name: bool,
+    /// Most recently saved first: only those saved before this `(updated_at, id)`.
+    pub before: Option<(DateTime<Utc>, Uuid)>,
     pub limit: i64,
 }
 
-/// Files of a workspace that `user_id` can read.
+/// Files of a workspace that `user_id` can read: those of a folder or an
+/// issue by name, or every one most recently saved first. Each is its own
+/// statement, so each reads its own index: `artifact_files_name_idx` (the
+/// folder and the issue are matched as that index spells them) or
+/// `artifact_files_updated_idx`.
 pub async fn files(
     db: impl PgExecutor<'_>,
     user_id: Uuid,
     workspace_id: Uuid,
     f: &FileFilter,
 ) -> Result<Vec<ArtifactFile>, sqlx::Error> {
+    if f.by_name {
+        return sqlx::query_as(file_for_user!(
+            "f.workspace_id = $2
+             AND (NOT $3 OR COALESCE(f.folder_id, '00000000-0000-0000-0000-000000000000'::uuid)
+                          = COALESCE($4, '00000000-0000-0000-0000-000000000000'::uuid))
+             AND ($5::uuid IS NULL OR f.issue_id = $5)
+             AND ($6::text IS NULL OR f.name ILIKE '%' || $6 || '%')
+             ORDER BY lower(f.name), f.updated_at DESC, f.id LIMIT $7"
+        ))
+        .bind(user_id)
+        .bind(workspace_id)
+        .bind(f.folder.is_some())
+        .bind(f.folder.flatten())
+        .bind(f.issue_id)
+        .bind(f.q.as_deref())
+        .bind(f.limit)
+        .fetch_all(db)
+        .await;
+    }
+    let (before_at, before_id) = f.before.unzip();
     sqlx::query_as(file_for_user!(
         "f.workspace_id = $2
-         AND (NOT $3 OR f.folder_id IS NOT DISTINCT FROM $4)
-         AND ($5::uuid IS NULL OR f.issue_id = $5)
-         AND ($6::text IS NULL OR f.name ILIKE '%' || $6 || '%')
-         ORDER BY CASE WHEN $7 THEN lower(f.name) END, f.updated_at DESC, f.id LIMIT $8"
+         AND ($3::text IS NULL OR f.name ILIKE '%' || $3 || '%')
+         AND ($4::timestamptz IS NULL OR (f.updated_at, f.id) < ($4, $5))
+         ORDER BY f.updated_at DESC, f.id DESC LIMIT $6"
     ))
     .bind(user_id)
     .bind(workspace_id)
-    .bind(f.folder.is_some())
-    .bind(f.folder.flatten())
-    .bind(f.issue_id)
     .bind(f.q.as_deref())
-    .bind(f.by_name)
+    .bind(before_at)
+    .bind(before_id)
     .bind(f.limit)
     .fetch_all(db)
     .await

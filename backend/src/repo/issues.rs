@@ -10,10 +10,10 @@ use uuid::Uuid;
 use super::enum_col;
 use crate::domain::cycle::CycleRef;
 use crate::domain::issue::{
-    Issue, IssueChange, IssueEvent, IssuePerson, IssueRef, IssueState, Label, NodeOutcome,
-    Notification, NotificationAlert, NotificationApproval, NotificationIssue, NotificationKind,
-    Project, ProjectStatus, RUN_REPORT_MAX_CHARS, STARTER_STATES, StateCategory, SubIssueCount,
-    TeamRef,
+    Issue, IssueChange, IssueEvent, IssuePerson, IssueRef, IssueState, IssueSummary, Label,
+    NodeOutcome, Notification, NotificationAlert, NotificationApproval, NotificationIssue,
+    NotificationKind, Project, ProjectStatus, RUN_REPORT_MAX_CHARS, STARTER_STATES, StateCategory,
+    SubIssueCount, TeamRef,
 };
 use crate::domain::run::RunStatus;
 
@@ -30,7 +30,7 @@ impl FromRow<'_, PgRow> for IssueState {
     }
 }
 
-impl FromRow<'_, PgRow> for Issue {
+impl FromRow<'_, PgRow> for IssueSummary {
     fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
         let team_id = row.try_get("team_id")?;
         let number: i32 = row.try_get("number")?;
@@ -51,14 +51,16 @@ impl FromRow<'_, PgRow> for Issue {
             }
             None => None,
         };
-        Ok(Issue {
+        // `[total, closed]`, from one look at the sub-issues.
+        let sub: Vec<i64> = row.try_get("sub_counts")?;
+        let run_status: Option<String> = row.try_get("run_status")?;
+        Ok(IssueSummary {
             id: row.try_get("id")?,
             workspace_id: row.try_get("workspace_id")?,
             team_id,
             identifier: format!("{team_key}-{number}"),
             number,
             title: row.try_get("title")?,
-            description: row.try_get("description")?,
             state: IssueState {
                 id: row.try_get("state_id")?,
                 team_id,
@@ -71,8 +73,8 @@ impl FromRow<'_, PgRow> for Issue {
             labels,
             parent,
             sub_issues: SubIssueCount {
-                total: row.try_get("sub_total")?,
-                closed: row.try_get("sub_closed")?,
+                total: sub.first().copied().unwrap_or_default(),
+                closed: sub.get(1).copied().unwrap_or_default(),
             },
             cycle: match row.try_get::<Option<Uuid>, _>("cycle_id")? {
                 Some(id) => Some(CycleRef {
@@ -95,7 +97,15 @@ impl FromRow<'_, PgRow> for Issue {
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,
             completed_at: row.try_get("completed_at")?,
+            // A status this version does not know reads as none rather than failing the list.
+            run_status: run_status.and_then(|s| s.parse().ok()),
         })
+    }
+}
+
+impl FromRow<'_, PgRow> for Issue {
+    fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
+        Ok(IssueSummary::from_row(row)?.with_description(row.try_get("description")?))
     }
 }
 
@@ -128,12 +138,19 @@ impl FromRow<'_, PgRow> for Project {
 }
 
 /// An issue with its team key, state and assignee, for user `$1` who must be
-/// a member of the issue's workspace and able to see its team.
-macro_rules! issue_for_user {
-    ($tail:literal) => {
+/// a member of the issue's workspace and able to see its team; with its
+/// description (`issue_for_user!`) or without (`issue_summary_for_user!`).
+///
+/// What each row adds is read by subqueries in the select list, which
+/// PostgreSQL runs only for the rows a sort and `LIMIT` keep: the labels, the
+/// sub-issue counts (one look through `issues_parent_state_idx`) and the
+/// status of the latest run of the issue's graph (`runs_graph_idx`).
+macro_rules! issue_select {
+    ($description:literal, $tail:literal) => {
         concat!(
-            "SELECT i.id, i.workspace_id, i.team_id, t.key AS team_key, i.number, i.title,
-                    i.description, i.priority, i.assignee_id, au.name AS assignee_name, i.agent_id,
+            "SELECT i.id, i.workspace_id, i.team_id, t.key AS team_key, i.number, i.title, ",
+            $description,
+            " i.priority, i.assignee_id, au.name AS assignee_name, i.agent_id,
                     i.project_id, i.graph_id, i.creator_id, i.due_date, i.github_url, i.created_at,
                     i.updated_at, i.completed_at, s.id AS state_id, s.name AS state_name,
                     s.category AS state_category, s.color AS state_color,
@@ -146,10 +163,12 @@ macro_rules! issue_for_user {
                     p.id AS parent_id, pt.key AS parent_key, p.number AS parent_number,
                     p.title AS parent_title,
                     i.cycle_id, cy.number AS cycle_number, cy.name AS cycle_name,
-                    (SELECT count(*) FROM issues c WHERE c.parent_id = i.id) AS sub_total,
-                    (SELECT count(*) FROM issues c JOIN issue_states cs ON cs.id = c.state_id
-                     WHERE c.parent_id = i.id AND cs.category IN ('completed', 'canceled'))
-                        AS sub_closed
+                    (SELECT ARRAY[count(*),
+                                  count(*) FILTER (WHERE cs.category IN ('completed', 'canceled'))]
+                     FROM issues c JOIN issue_states cs ON cs.id = c.state_id
+                     WHERE c.parent_id = i.id) AS sub_counts,
+                    (SELECT r.status FROM runs r WHERE r.graph_id = i.graph_id
+                     ORDER BY r.created_at DESC LIMIT 1) AS run_status
              FROM issues i
              JOIN teams t ON t.id = i.team_id
              JOIN issue_states s ON s.id = i.state_id
@@ -165,6 +184,18 @@ macro_rules! issue_for_user {
             " AND ",
             $tail
         )
+    };
+}
+
+macro_rules! issue_for_user {
+    ($tail:literal) => {
+        issue_select!("i.description,", $tail)
+    };
+}
+
+macro_rules! issue_summary_for_user {
+    ($tail:literal) => {
+        issue_select!("", $tail)
     };
 }
 
@@ -314,42 +345,63 @@ pub struct IssueFilter {
     pub limit: i64,
 }
 
-/// Issues of a workspace that `user_id` can see, most recently updated first.
+/// Issues of a workspace that `user_id` can see, most recently updated
+/// first, without their descriptions.
+///
+/// Only the filters that are given are in the statement, each combination a
+/// statement of its own. One statement holding every filter as `($n IS NULL
+/// OR col = $n)` would be planned once for all of them after a few runs, and
+/// that plan walks the whole workspace for a sub-issue or project list
+/// (26 ms instead of 1 on 6,000 issues), where its own index answers at once.
 pub async fn list(
     db: impl PgExecutor<'_>,
     user_id: Uuid,
     workspace_id: Uuid,
     f: &IssueFilter,
-) -> Result<Vec<Issue>, sqlx::Error> {
-    sqlx::query_as(issue_for_user!(
-        "i.workspace_id = $2
-         AND ($3::uuid IS NULL OR i.team_id = $3)
-         AND ($4::uuid IS NULL OR i.assignee_id = $4)
-         AND ($5::uuid IS NULL OR i.project_id = $5)
-         AND (NOT $6 OR s.category NOT IN ('completed', 'canceled'))
-         AND ($7::text IS NULL OR i.title ILIKE '%' || $7 || '%'
-              OR (t.key || '-' || i.number) ILIKE $7 || '%')
-         AND ($9::uuid IS NULL OR EXISTS (
-              SELECT 1 FROM issue_labels fl WHERE fl.issue_id = i.id AND fl.label_id = $9))
-         AND ($10::uuid IS NULL OR i.parent_id = $10)
-         AND ($11::uuid IS NULL OR i.cycle_id = $11)
-         AND ($12::uuid IS NULL OR i.creator_id = $12)
-         ORDER BY i.updated_at DESC, i.id LIMIT $8"
-    ))
-    .bind(user_id)
-    .bind(workspace_id)
-    .bind(f.team_id)
-    .bind(f.assignee_id)
-    .bind(f.project_id)
-    .bind(f.open_only)
-    .bind(f.q.as_deref())
-    .bind(f.limit)
-    .bind(f.label_id)
-    .bind(f.parent_id)
-    .bind(f.cycle_id)
-    .bind(f.creator_id)
-    .fetch_all(db)
-    .await
+) -> Result<Vec<IssueSummary>, sqlx::Error> {
+    let mut sql = String::from(issue_summary_for_user!("i.workspace_id = $2"));
+    // A `?` in a clause is its parameter: the next one, in the order they are bound below.
+    let mut args = 2;
+    let mut push = |clause: &str| {
+        if clause.contains('?') {
+            args += 1;
+            sql.push_str(&clause.replace('?', &format!("${args}")));
+        } else {
+            sql.push_str(clause);
+        }
+    };
+    let uuids = [
+        (f.team_id, " AND i.team_id = ?"),
+        (f.assignee_id, " AND i.assignee_id = ?"),
+        (f.project_id, " AND i.project_id = ?"),
+        (f.parent_id, " AND i.parent_id = ?"),
+        (f.cycle_id, " AND i.cycle_id = ?"),
+        (f.creator_id, " AND i.creator_id = ?"),
+        (
+            f.label_id,
+            " AND EXISTS (SELECT 1 FROM issue_labels fl WHERE fl.issue_id = i.id AND fl.label_id = ?)",
+        ),
+    ];
+    for (_, clause) in uuids.iter().filter(|(id, _)| id.is_some()) {
+        push(clause);
+    }
+    if f.q.is_some() {
+        push(" AND (i.title ILIKE '%' || ? || '%' OR (t.key || '-' || i.number) ILIKE ? || '%')");
+    }
+    if f.open_only {
+        push(" AND s.category NOT IN ('completed', 'canceled')");
+    }
+    push(" ORDER BY i.updated_at DESC, i.id LIMIT ?");
+    let mut query = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        .bind(user_id)
+        .bind(workspace_id);
+    for id in uuids.iter().filter_map(|(id, _)| *id) {
+        query = query.bind(id);
+    }
+    if let Some(q) = &f.q {
+        query = query.bind(q.clone());
+    }
+    query.bind(f.limit).fetch_all(db).await
 }
 
 /// One issue, if `user_id` can see it.
@@ -363,6 +415,29 @@ pub async fn find(
         .bind(id)
         .fetch_optional(db)
         .await
+}
+
+/// Whether `user_id` can see issue `id` of workspace `workspace_id` (an
+/// index lookup, without the issue's columns).
+pub async fn visible_in(
+    db: impl PgExecutor<'_>,
+    user_id: Uuid,
+    workspace_id: Uuid,
+    id: Uuid,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(concat!(
+        "SELECT EXISTS (SELECT 1 FROM issues i
+             JOIN teams t ON t.id = i.team_id
+             JOIN workspace_members wm ON wm.workspace_id = i.workspace_id AND wm.user_id = $1
+             WHERE i.id = $3 AND i.workspace_id = $2 AND ",
+        team_visible!("t", "wm", "$1"),
+        ")"
+    ))
+    .bind(user_id)
+    .bind(workspace_id)
+    .bind(id)
+    .fetch_one(db)
+    .await
 }
 
 /// Fields of an issue to insert.
@@ -381,6 +456,11 @@ pub struct NewIssue<'a> {
     pub creator_id: Uuid,
     /// The canonical link to a GitHub issue or pull request ([`crate::domain::issue::github_url`]).
     pub github_url: Option<&'a str>,
+    /// The issue it is part of, checked by the caller.
+    pub parent_id: Option<Uuid>,
+    /// A cycle of its team, checked by the caller.
+    pub cycle_id: Option<Uuid>,
+    pub due_date: Option<NaiveDate>,
 }
 
 /// Inserts an issue with the team's next number. Must run in a transaction:
@@ -395,9 +475,10 @@ pub async fn create(db: &mut PgConnection, n: &NewIssue<'_>) -> Result<Uuid, sql
     .await?;
     sqlx::query_scalar(
         "INSERT INTO issues (id, workspace_id, team_id, number, title, description, state_id, priority,
-                             assignee_id, agent_id, project_id, creator_id, completed_at, github_url)
+                             assignee_id, agent_id, project_id, creator_id, completed_at, github_url,
+                             parent_id, cycle_id, due_date)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-                 CASE WHEN $13 THEN now() END, $14)
+                 CASE WHEN $13 THEN now() END, $14, $15, $16, $17)
          RETURNING id",
     )
     .bind(Uuid::now_v7())
@@ -414,16 +495,39 @@ pub async fn create(db: &mut PgConnection, n: &NewIssue<'_>) -> Result<Uuid, sql
     .bind(n.creator_id)
     .bind(n.closed)
     .bind(n.github_url)
+    .bind(n.parent_id)
+    .bind(n.cycle_id)
+    .bind(n.due_date)
     .fetch_one(&mut *db)
     .await
 }
 
-/// Writes the editable fields of an issue. `completed_at` follows the state:
-/// set when the issue enters a closed state, cleared when it is reopened.
-pub async fn save(db: impl PgExecutor<'_>, issue: &Issue) -> Result<(), sqlx::Error> {
+/// What a change to an issue moves besides its own fields; `None` leaves a
+/// dimension as it is, `Some(None)` clears it.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct IssueMoves {
+    /// The issue it is part of.
+    pub parent_id: Option<Option<Uuid>>,
+    /// The cycle of its team it is planned in.
+    pub cycle_id: Option<Option<Uuid>>,
+    /// The day it is due.
+    pub due_date: Option<Option<NaiveDate>>,
+}
+
+/// Writes the editable fields of an issue and `moves`, in one statement.
+/// `completed_at` follows the state: set when the issue enters a closed
+/// state, cleared when it is reopened.
+pub async fn save(
+    db: impl PgExecutor<'_>,
+    issue: &Issue,
+    moves: &IssueMoves,
+) -> Result<(), sqlx::Error> {
     sqlx::query(
         "UPDATE issues SET title = $2, description = $3, state_id = $4, priority = $5,
                 assignee_id = $6, agent_id = $7, project_id = $8, github_url = $10,
+                parent_id = CASE WHEN $11 THEN $12 ELSE parent_id END,
+                cycle_id = CASE WHEN $13 THEN $14 ELSE cycle_id END,
+                due_date = CASE WHEN $15 THEN $16 ELSE due_date END,
                 updated_at = now(),
                 completed_at = CASE WHEN NOT $9 THEN NULL
                                     ELSE COALESCE(completed_at, now()) END
@@ -439,50 +543,14 @@ pub async fn save(db: impl PgExecutor<'_>, issue: &Issue) -> Result<(), sqlx::Er
     .bind(issue.project_id)
     .bind(issue.state.category.is_closed())
     .bind(issue.github_url.as_deref())
+    .bind(moves.parent_id.is_some())
+    .bind(moves.parent_id.flatten())
+    .bind(moves.cycle_id.is_some())
+    .bind(moves.cycle_id.flatten())
+    .bind(moves.due_date.is_some())
+    .bind(moves.due_date.flatten())
     .execute(db)
     .await?;
-    Ok(())
-}
-
-/// Makes an issue part of another one, or an issue of its own.
-pub async fn set_parent(
-    db: impl PgExecutor<'_>,
-    id: Uuid,
-    parent_id: Option<Uuid>,
-) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE issues SET parent_id = $2, updated_at = now() WHERE id = $1")
-        .bind(id)
-        .bind(parent_id)
-        .execute(db)
-        .await?;
-    Ok(())
-}
-
-/// Plans an issue in a cycle, or takes it out of its cycle.
-pub async fn set_cycle(
-    db: impl PgExecutor<'_>,
-    id: Uuid,
-    cycle_id: Option<Uuid>,
-) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE issues SET cycle_id = $2, updated_at = now() WHERE id = $1")
-        .bind(id)
-        .bind(cycle_id)
-        .execute(db)
-        .await?;
-    Ok(())
-}
-
-/// Sets the day an issue is due, or removes it.
-pub async fn set_due(
-    db: impl PgExecutor<'_>,
-    id: Uuid,
-    due_date: Option<chrono::NaiveDate>,
-) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE issues SET due_date = $2, updated_at = now() WHERE id = $1")
-        .bind(id)
-        .bind(due_date)
-        .execute(db)
-        .await?;
     Ok(())
 }
 
@@ -625,29 +693,24 @@ pub async fn count_known_labels(
         .await
 }
 
-/// Makes `ids` the labels of an issue.
+/// Makes `ids` the labels of an issue, in one statement.
 pub async fn set_labels(
-    db: &mut PgConnection,
+    db: impl PgExecutor<'_>,
     issue_id: Uuid,
     ids: &[Uuid],
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("DELETE FROM issue_labels WHERE issue_id = $1 AND label_id <> ALL($2)")
-        .bind(issue_id)
-        .bind(ids)
-        .execute(&mut *db)
-        .await?;
     sqlx::query(
-        "INSERT INTO issue_labels (issue_id, label_id) SELECT $1, unnest($2::uuid[])
-         ON CONFLICT DO NOTHING",
+        "WITH gone AS (
+             DELETE FROM issue_labels WHERE issue_id = $1 AND label_id <> ALL($2)),
+         added AS (
+             INSERT INTO issue_labels (issue_id, label_id) SELECT $1, unnest($2::uuid[])
+             ON CONFLICT DO NOTHING)
+         UPDATE issues SET updated_at = now() WHERE id = $1",
     )
     .bind(issue_id)
     .bind(ids)
-    .execute(&mut *db)
+    .execute(db)
     .await?;
-    sqlx::query("UPDATE issues SET updated_at = now() WHERE id = $1")
-        .bind(issue_id)
-        .execute(&mut *db)
-        .await?;
     Ok(())
 }
 
@@ -755,27 +818,35 @@ pub async fn delete_comment(db: impl PgExecutor<'_>, id: Uuid) -> Result<(), sql
     Ok(())
 }
 
-/// Records changes to an issue in its timeline.
+/// Records changes to an issue in its timeline, in one statement.
 pub async fn record_changes(
-    db: &mut PgConnection,
+    db: impl PgExecutor<'_>,
     issue_id: Uuid,
     actor_id: Uuid,
     changes: &[IssueChange],
 ) -> Result<(), sqlx::Error> {
-    for change in changes {
-        sqlx::query(
-            "INSERT INTO issue_events (id, issue_id, actor_id, kind, from_value, to_value)
-             VALUES ($1, $2, $3, $4, $5, $6)",
-        )
-        .bind(Uuid::now_v7())
-        .bind(issue_id)
-        .bind(actor_id)
-        .bind(change.kind.as_str())
-        .bind(&change.from)
-        .bind(&change.to)
-        .execute(&mut *db)
-        .await?;
+    if changes.is_empty() {
+        return Ok(());
     }
+    // Ids are made one after another, so the entries keep the order of the changes.
+    let ids: Vec<Uuid> = changes.iter().map(|_| Uuid::now_v7()).collect();
+    let kinds: Vec<&str> = changes.iter().map(|c| c.kind.as_str()).collect();
+    let from: Vec<Option<&str>> = changes.iter().map(|c| c.from.as_deref()).collect();
+    let to: Vec<Option<&str>> = changes.iter().map(|c| c.to.as_deref()).collect();
+    sqlx::query(
+        "INSERT INTO issue_events (id, issue_id, actor_id, kind, from_value, to_value)
+         SELECT c.id, $1, $2, c.kind, c.from_value, c.to_value
+         FROM unnest($3::uuid[], $4::text[], $5::text[], $6::text[])
+              AS c (id, kind, from_value, to_value)",
+    )
+    .bind(issue_id)
+    .bind(actor_id)
+    .bind(&ids)
+    .bind(&kinds)
+    .bind(&from)
+    .bind(&to)
+    .execute(db)
+    .await?;
     Ok(())
 }
 
@@ -1142,11 +1213,43 @@ pub async fn mark_read_about_approval(
     Ok(())
 }
 
+/// How many of a member's notifications in a workspace are unread, of
+/// those their inbox would show (issues they can still see), counted up to
+/// `cap`. Reads `notifications_unread_idx`, the unread ones only.
+pub async fn unread_count(
+    db: impl PgExecutor<'_>,
+    user_id: Uuid,
+    workspace_id: Uuid,
+    cap: i64,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(concat!(
+        "SELECT count(*) FROM (
+             SELECT 1 FROM notifications n
+             JOIN workspace_members wm ON wm.workspace_id = n.workspace_id AND wm.user_id = $1
+             LEFT JOIN issues i ON i.id = n.issue_id
+             LEFT JOIN teams t ON t.id = i.team_id
+             WHERE n.user_id = $1 AND n.workspace_id = $2 AND n.read_at IS NULL
+               AND (n.issue_id IS NULL OR ",
+        team_visible!("t", "wm", "$1"),
+        ") LIMIT $3) unread"
+    ))
+    .bind(user_id)
+    .bind(workspace_id)
+    .bind(cap)
+    .fetch_one(db)
+    .await
+}
+
 // ---------- projects ----------
 
 /// A project with its team and the counts of its issues that user `$1` can
 /// see, if `$1` is a member of its workspace and can see its team (a project
 /// without a team is the whole workspace's).
+///
+/// The counts read only `issues_project_state_idx (project_id, state_id,
+/// team_id)`, never the issues themselves: the issues of a project are in its
+/// workspace, so the caller's membership there (`pm`) decides which of their
+/// teams they see.
 macro_rules! project_for_user {
     ($tail:literal) => {
         concat!(
@@ -1161,11 +1264,10 @@ macro_rules! project_for_user {
                 SELECT count(*) AS issue_count,
                        count(*) FILTER (WHERE s.category IN ('completed', 'canceled')) AS closed_count
                 FROM issues i
-                JOIN teams t ON t.id = i.team_id
+                JOIN teams t ON t.id = i.team_id AND t.workspace_id = p.workspace_id
                 JOIN issue_states s ON s.id = i.state_id
-                JOIN workspace_members wm ON wm.workspace_id = i.workspace_id AND wm.user_id = $1
                 WHERE i.project_id = p.id AND ",
-            team_visible!("t", "wm", "$1"),
+            team_visible!("t", "pm", "$1"),
             ") c ON true WHERE (p.team_id IS NULL OR ",
             team_visible!("pt", "pm", "$1"),
             ") AND ",
@@ -1189,6 +1291,32 @@ pub async fn projects(
     .bind(user_id)
     .bind(workspace_id)
     .bind(team_id)
+    .fetch_all(db)
+    .await
+}
+
+/// Projects of a workspace that `user_id` can see whose name contains `q`
+/// (any case), oldest first, at most `limit`: `(id, name, status)`, for search.
+pub async fn search_projects(
+    db: impl PgExecutor<'_>,
+    user_id: Uuid,
+    workspace_id: Uuid,
+    q: &str,
+    limit: i64,
+) -> Result<Vec<(Uuid, String, String)>, sqlx::Error> {
+    sqlx::query_as(concat!(
+        "SELECT p.id, p.name, p.status FROM projects p
+         JOIN workspace_members pm ON pm.workspace_id = p.workspace_id AND pm.user_id = $1
+         LEFT JOIN teams pt ON pt.id = p.team_id
+         WHERE p.workspace_id = $2 AND strpos(lower(p.name), lower($3)) > 0
+           AND (p.team_id IS NULL OR ",
+        team_visible!("pt", "pm", "$1"),
+        ") ORDER BY p.created_at, p.id LIMIT $4"
+    ))
+    .bind(user_id)
+    .bind(workspace_id)
+    .bind(q)
+    .bind(limit)
     .fetch_all(db)
     .await
 }

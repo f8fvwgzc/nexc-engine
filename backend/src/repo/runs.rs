@@ -5,6 +5,8 @@
 //! renewed while it executes, taken over by another instance when it runs
 //! out, and checked by every write the executor makes (docs/HA.md).
 
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 use sqlx::postgres::PgRow;
 use sqlx::{FromRow, PgExecutor, Row};
@@ -314,24 +316,103 @@ pub async fn node_runs(db: impl PgExecutor<'_>, run_id: Uuid) -> Result<Vec<Node
     .await
 }
 
-/// Runs of a graph, newest first, with their node results. The caller has
+/// Node results of several runs in one statement, by run, each in submission order.
+pub async fn node_runs_of(
+    db: impl PgExecutor<'_>,
+    run_ids: &[Uuid],
+) -> Result<HashMap<Uuid, Vec<NodeRun>>, sqlx::Error> {
+    let mut by_run: HashMap<Uuid, Vec<NodeRun>> = HashMap::with_capacity(run_ids.len());
+    if run_ids.is_empty() {
+        return Ok(by_run);
+    }
+    let rows = sqlx::query(
+        "SELECT run_id, node_id, status, attempt, executor, tokens_in, tokens_out, cached, error,
+                started_at, finished_at, left(output, $2) AS output_preview, policy_versions,
+                context_labels, evidence
+         FROM node_runs WHERE run_id = ANY($1) ORDER BY run_id, position",
+    )
+    .bind(run_ids)
+    .bind(OUTPUT_PREVIEW_CHARS as i32)
+    .fetch_all(db)
+    .await?;
+    for row in &rows {
+        let run_id: Uuid = row.try_get("run_id")?;
+        by_run
+            .entry(run_id)
+            .or_default()
+            .push(NodeRun::from_row(row)?);
+    }
+    Ok(by_run)
+}
+
+/// Joins run rows with their node results, read in one statement.
+async fn with_node_runs(
+    db: impl PgExecutor<'_>,
+    rows: Vec<RunRow>,
+) -> Result<Vec<Run>, sqlx::Error> {
+    let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+    let mut nodes = node_runs_of(db, &ids).await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let nrs = nodes.remove(&row.id).unwrap_or_default();
+            row.into_run(nrs)
+        })
+        .collect())
+}
+
+/// The latest `limit` runs of a graph, newest first, with their node
+/// results (two statements whatever the number of runs). The caller has
 /// checked that the graph may be opened (a deleted graph's runs are listed
 /// for those who may read their evidence).
 pub async fn list_for_graph(
     conn: &mut sqlx::PgConnection,
     graph_id: Uuid,
+    limit: i64,
 ) -> Result<Vec<Run>, sqlx::Error> {
     let rows: Vec<RunRow> =
-        sqlx::query_as("SELECT * FROM runs WHERE graph_id = $1 ORDER BY created_at DESC LIMIT 100")
+        sqlx::query_as("SELECT * FROM runs WHERE graph_id = $1 ORDER BY created_at DESC LIMIT $2")
             .bind(graph_id)
+            .bind(limit)
             .fetch_all(&mut *conn)
             .await?;
+    with_node_runs(&mut *conn, rows).await
+}
+
+/// The latest `limit` runs of the graphs of a workspace that `user` may work
+/// on, newest first, with their node results and their graph's name; older
+/// than run `before` when it is given. Two statements whatever the number of
+/// graphs and runs.
+pub async fn list_for_workspace(
+    conn: &mut sqlx::PgConnection,
+    user: Uuid,
+    workspace_id: Uuid,
+    before: Option<Uuid>,
+    limit: i64,
+) -> Result<Vec<(Run, String)>, sqlx::Error> {
+    let rows = sqlx::query(concat!(
+        "SELECT r.*, g.name AS graph_name
+         FROM runs r JOIN graphs g ON g.id = r.graph_id
+         WHERE g.workspace_id = $2 AND ",
+        graph_access!("g", "$1"),
+        " AND ($3::uuid IS NULL OR (r.created_at, r.id) <
+                (SELECT b.created_at, b.id FROM runs b WHERE b.id = $3))
+         ORDER BY r.created_at DESC, r.id DESC LIMIT $4"
+    ))
+    .bind(user)
+    .bind(workspace_id)
+    .bind(before)
+    .bind(limit)
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut names = Vec::with_capacity(rows.len());
     let mut runs = Vec::with_capacity(rows.len());
-    for row in rows {
-        let nrs = node_runs(&mut *conn, row.id).await?;
-        runs.push(row.into_run(nrs));
+    for row in &rows {
+        names.push(row.try_get::<String, _>("graph_name")?);
+        runs.push(RunRow::from_row(row)?);
     }
-    Ok(runs)
+    let runs = with_node_runs(&mut *conn, runs).await?;
+    Ok(runs.into_iter().zip(names).collect())
 }
 
 /// Claims the oldest queued run for `instance`, marking it running under a

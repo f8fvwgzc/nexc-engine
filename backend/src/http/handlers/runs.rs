@@ -5,20 +5,20 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
-use super::workspaces::audit;
+use super::workspaces::{audit, member_of};
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::audit::AuditAction;
 use crate::domain::graph::MAX_NODES;
-use crate::domain::run::{Run, RunStatus};
+use crate::domain::run::{RUNS_LIST_MAX, Run, RunStatus, WorkspaceRun};
 use crate::domain::trace::SpanKind;
 use crate::domain::validation::{FieldErrors, Validate, check_max_len};
 use crate::engine::commands;
 use crate::engine::scheduler::{self, RunOptions};
-use crate::http::extract::{AuthUser, Path, ValidatedJson};
+use crate::http::extract::{AuthUser, Path, Query, ValidatedJson};
 use crate::http::problem::Problem;
 use crate::repo::audit::Subject;
 use crate::repo::{self, OrNotFound};
@@ -81,22 +81,67 @@ pub async fn create(
     ))
 }
 
+/// Query of `GET /graphs/{gid}/runs`.
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+pub struct RunListQuery {
+    /// 1-100, default 100: the issue page asks for the latest run only.
+    pub limit: Option<i64>,
+}
+
 /// Runs of a graph, newest first (at most 100). A deleted graph's runs are
 /// listed too, for those who could open it: their evidence is kept until the
 /// retention purge (`GET /runs/{rid}/evidence`).
 #[utoipa::path(get, path = "/graphs/{gid}/runs", tag = "runs", security(("bearer" = [])),
-    params(("gid" = Uuid, Path, description = "Graph id")),
+    params(("gid" = Uuid, Path, description = "Graph id"), RunListQuery),
     responses((status = 200, body = [Run]), (status = 404, body = Problem)))]
 pub async fn list(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(gid): Path<Uuid>,
+    Query(query): Query<RunListQuery>,
 ) -> Result<Json<Vec<Run>>, AppError> {
-    if !repo::graphs::evidence_readable(&state.db, auth.id, gid).await? {
+    let limit = query.limit.unwrap_or(RUNS_LIST_MAX).clamp(1, RUNS_LIST_MAX);
+    let mut conn = state.db.acquire().await?;
+    if !repo::graphs::evidence_readable(&mut *conn, auth.id, gid).await? {
         return Err(AppError::NotFound("graph"));
     }
+    Ok(Json(
+        repo::runs::list_for_graph(&mut conn, gid, limit).await?,
+    ))
+}
+
+/// Query of `GET /workspaces/{wid}/runs`.
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceRunQuery {
+    /// 1-100, default 100.
+    pub limit: Option<i64>,
+    /// Only runs older than this run (the last one of the previous page).
+    pub before: Option<Uuid>,
+}
+
+/// The latest runs across the graphs of a workspace the caller may work on,
+/// newest first (at most 100), each with its graph's name: what the Runs page
+/// lists, in one request.
+#[utoipa::path(get, path = "/workspaces/{wid}/runs", tag = "runs", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id"), WorkspaceRunQuery),
+    responses((status = 200, body = [WorkspaceRun]), (status = 404, body = Problem)))]
+pub async fn workspace_runs(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(wid): Path<Uuid>,
+    Query(query): Query<WorkspaceRunQuery>,
+) -> Result<Json<Vec<WorkspaceRun>>, AppError> {
+    member_of(&state, auth, wid).await?;
+    let limit = query.limit.unwrap_or(RUNS_LIST_MAX).clamp(1, RUNS_LIST_MAX);
     let mut conn = state.db.acquire().await?;
-    Ok(Json(repo::runs::list_for_graph(&mut conn, gid).await?))
+    let runs = repo::runs::list_for_workspace(&mut conn, auth.id, wid, query.before, limit).await?;
+    Ok(Json(
+        runs.into_iter()
+            .map(|(run, graph_name)| WorkspaceRun { run, graph_name })
+            .collect(),
+    ))
 }
 
 /// One run with its node results.

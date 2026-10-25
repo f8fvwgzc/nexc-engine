@@ -15,9 +15,9 @@ use crate::domain::AppError;
 use crate::domain::audit::AuditAction;
 use crate::domain::issue::{
     COMMENT_MAX_BYTES, DESCRIPTION_MAX_BYTES, ISSUE_LABELS_MAX, Issue, IssueEvent, IssueEventKind,
-    IssuePerson, IssueState, LABEL_NAME_MAX, LABELS_MAX, Label, Notification, NotificationKind,
-    PRIORITY_MAX, Project, ProjectStatus, STATE_NAME_MAX, STATES_MAX, StateCategory, TITLE_MAX,
-    changes, github_url, is_hex_color,
+    IssuePerson, IssueState, IssueSummary, LABEL_NAME_MAX, LABELS_MAX, Label, Notification,
+    NotificationKind, PRIORITY_MAX, Project, ProjectStatus, STATE_NAME_MAX, STATES_MAX,
+    StateCategory, TITLE_MAX, UNREAD_MAX, UnreadCount, changes, github_url, is_hex_color,
 };
 use crate::domain::validation::{FieldErrors, Validate, check_text, search_text};
 use crate::domain::workspace::TeamAccess;
@@ -25,7 +25,7 @@ use crate::engine::editor;
 use crate::http::extract::{AuthUser, Path, Query, ValidatedJson};
 use crate::http::problem::Problem;
 use crate::repo::audit::Subject;
-use crate::repo::issues::{IssueFilter, NewIssue, NewProject};
+use crate::repo::issues::{IssueFilter, IssueMoves, NewIssue, NewProject};
 use crate::repo::{self, OrNotFound};
 
 /// Reads a nullable PATCH field: absent is `None`, `null` is `Some(None)`.
@@ -69,10 +69,7 @@ fn check_github_url(errors: &mut FieldErrors, raw: Option<&str>) {
 
 /// Checks that `cycle_id` is a cycle of the team.
 async fn check_cycle(state: &AppState, team_id: Uuid, cycle_id: Uuid) -> Result<(), AppError> {
-    if repo::cycles::find(&state.db, team_id, cycle_id)
-        .await?
-        .is_none()
-    {
+    if !repo::cycles::exists(&state.db, team_id, cycle_id).await? {
         return Err(AppError::field("cycle_id", "not a cycle of this team"));
     }
     Ok(())
@@ -85,12 +82,13 @@ async fn check_parent(
     workspace_id: Uuid,
     parent_id: Uuid,
 ) -> Result<(), AppError> {
-    match repo::issues::find(&state.db, auth.id, parent_id).await? {
-        Some(parent) if parent.workspace_id == workspace_id => Ok(()),
-        _ => Err(AppError::field(
+    if repo::issues::visible_in(&state.db, auth.id, workspace_id, parent_id).await? {
+        Ok(())
+    } else {
+        Err(AppError::field(
             "parent_id",
             "unknown issue in this workspace",
-        )),
+        ))
     }
 }
 
@@ -103,6 +101,9 @@ async fn known_labels(
     let mut ids = ids.to_vec();
     ids.sort_unstable();
     ids.dedup();
+    if ids.is_empty() {
+        return Ok(ids);
+    }
     let known = repo::issues::count_known_labels(&state.db, workspace_id, &ids).await?;
     if usize::try_from(known).ok() != Some(ids.len()) {
         return Err(AppError::field(
@@ -288,16 +289,16 @@ impl Validate for UpdateIssue {
 }
 
 /// Issues of a workspace in the teams the caller can see, most recently
-/// updated first.
+/// updated first, without their descriptions (`GET /issues/{iid}` has it).
 #[utoipa::path(get, path = "/workspaces/{wid}/issues", tag = "issues", security(("bearer" = [])),
     params(("wid" = Uuid, Path, description = "Workspace id"), IssueQuery),
-    responses((status = 200, body = [Issue]), (status = 404, body = Problem)))]
+    responses((status = 200, body = [IssueSummary]), (status = 404, body = Problem)))]
 pub async fn list(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(wid): Path<Uuid>,
     Query(query): Query<IssueQuery>,
-) -> Result<Json<Vec<Issue>>, AppError> {
+) -> Result<Json<Vec<IssueSummary>>, AppError> {
     member_of(&state, auth, wid).await?;
     let filter = IssueFilter {
         team_id: query.team_id,
@@ -370,20 +371,14 @@ pub async fn create(
         project_id: req.project_id,
         creator_id: auth.id,
         github_url: github.as_deref(),
+        parent_id: req.parent_id,
+        cycle_id: req.cycle_id,
+        due_date: req.due_date,
     };
     let mut tx = state.db.begin().await?;
     let id = repo::issues::create(&mut tx, &new).await?;
-    if req.parent_id.is_some() {
-        repo::issues::set_parent(&mut *tx, id, req.parent_id).await?;
-    }
-    if req.cycle_id.is_some() {
-        repo::issues::set_cycle(&mut *tx, id, req.cycle_id).await?;
-    }
-    if req.due_date.is_some() {
-        repo::issues::set_due(&mut *tx, id, req.due_date).await?;
-    }
     if !labels.is_empty() {
-        repo::issues::set_labels(&mut tx, id, &labels).await?;
+        repo::issues::set_labels(&mut *tx, id, &labels).await?;
     }
     if let Some(assignee) = req.assignee_id.filter(|a| *a != auth.id) {
         repo::issues::notify(&mut *tx, id, assignee, auth.id, NotificationKind::Assigned).await?;
@@ -490,26 +485,22 @@ pub async fn update(
     if let Some(url) = &req.github_url {
         issue.github_url = github_link(url.as_deref())?;
     }
+    let moves = IssueMoves {
+        parent_id: req.parent_id,
+        cycle_id: req.cycle_id,
+        due_date: req.due_date,
+    };
     let mut tx = state.db.begin().await?;
-    repo::issues::save(&mut *tx, &issue).await?;
-    if let Some(parent) = req.parent_id {
-        repo::issues::set_parent(&mut *tx, iid, parent).await?;
-    }
-    if let Some(cycle) = req.cycle_id {
-        repo::issues::set_cycle(&mut *tx, iid, cycle).await?;
-    }
-    if let Some(due) = req.due_date {
-        repo::issues::set_due(&mut *tx, iid, due).await?;
-    }
+    repo::issues::save(&mut *tx, &issue, &moves).await?;
     if let Some(labels) = &labels {
-        repo::issues::set_labels(&mut tx, iid, labels).await?;
+        repo::issues::set_labels(&mut *tx, iid, labels).await?;
     }
     // Read back for the assignee's name, which the timeline shows.
     let after = repo::issues::find(&mut *tx, auth.id, iid)
         .await
         .or_not_found("issue")?;
     let changed = changes(&before, &after);
-    repo::issues::record_changes(&mut tx, iid, auth.id, &changed).await?;
+    repo::issues::record_changes(&mut *tx, iid, auth.id, &changed).await?;
     for change in &changed {
         match change.kind {
             IssueEventKind::Assignee => {
@@ -577,6 +568,21 @@ pub async fn inbox(
     Ok(Json(
         repo::issues::inbox(&state.db, auth.id, wid, 100).await?,
     ))
+}
+
+/// How many of the caller's notifications in a workspace are unread (at
+/// most 1,000): what the sidebar shows, without reading the inbox itself.
+#[utoipa::path(get, path = "/workspaces/{wid}/inbox/unread-count", tag = "issues", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id")),
+    responses((status = 200, body = UnreadCount), (status = 404, body = Problem)))]
+pub async fn unread_count(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(wid): Path<Uuid>,
+) -> Result<Json<UnreadCount>, AppError> {
+    member_of(&state, auth, wid).await?;
+    let count = repo::issues::unread_count(&state.db, auth.id, wid, UNREAD_MAX).await?;
+    Ok(Json(UnreadCount { count }))
 }
 
 /// Marks the caller's notifications read and returns the inbox.

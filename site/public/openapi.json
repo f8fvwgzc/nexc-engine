@@ -58,7 +58,7 @@
         "tags": [
           "runs"
         ],
-        "summary": "The public keys everything nexc signs verifies with, as a JWK set: the\ncurrent key and the keys it replaced, each under its `kid` (the RFC 7638\nthumbprint of the key). Public. Run seals, firewall decisions and\nevidence bundles name the key they are signed with.",
+        "summary": "The public keys everything nexc signs verifies with, as a JWK set: the\ncurrent key and the keys it replaced, each under its `kid` (the RFC 7638\nthumbprint of the key). Public, and kept by any cache for five minutes\n(`PUBLIC_CACHE_CONTROL`). Run seals, firewall decisions and evidence\nbundles name the key they are signed with.",
         "operationId": "jwks",
         "responses": {
           "200": {
@@ -1197,7 +1197,7 @@
         "tags": [
           "agents"
         ],
-        "summary": "The keys agent tokens verify with: the one the backend signs with first,\nthen the others it still accepts (`NEXC_AGENT_TOKEN_VERIFY_KEYS`: the\nprevious key after a rotation, the next one before it). Public: they are\npublic keys, and the runtime fetches them without credentials.",
+        "summary": "The keys agent tokens verify with: the one the backend signs with first,\nthen the others it still accepts (`NEXC_AGENT_TOKEN_VERIFY_KEYS`: the\nprevious key after a rotation, the next one before it). Public: they are\npublic keys, and the runtime fetches them without credentials; any cache\nmay keep them for five minutes (`PUBLIC_CACHE_CONTROL`).",
         "operationId": "jwks",
         "responses": {
           "200": {
@@ -4191,6 +4191,19 @@
               ],
               "format": "uuid"
             }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Only the most recently updated ones, 1-500 (the sidebar shows 8); all of them by default.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
           }
         ],
         "responses": {
@@ -5303,6 +5316,19 @@
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "1-100, default 100: the issue page asks for the latest run only.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
             }
           }
         ],
@@ -8808,7 +8834,7 @@
         "tags": [
           "artifact-files"
         ],
-        "summary": "Files of a workspace the caller can see: those directly in a folder, at\nthe top level, or of an issue, by name; or every one, most recently\nsaved first. At most 1,000.",
+        "summary": "Files of a workspace the caller can see: those directly in a folder, at\nthe top level, or of an issue, by name (at most 1,000); or every one, most\nrecently saved first, a page of `limit` at a time (`before` continues).",
         "operationId": "list_files",
         "parameters": [
           {
@@ -8863,6 +8889,31 @@
             "name": "q",
             "in": "query",
             "description": "Part of the name, any case; without control characters.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Every file, most recently saved first: how many, 1-1000 (default 200).\nIgnored with a folder, `root` or an issue, whose files all come at once.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "description": "Every file: only those saved before `<updated_at>,<id>`, the last file of the\nprevious page (its `updated_at` as given and its id).",
             "required": false,
             "schema": {
               "type": [
@@ -10686,6 +10737,52 @@
         ]
       }
     },
+    "/api/v1/workspaces/{wid}/inbox/unread-count": {
+      "get": {
+        "tags": [
+          "issues"
+        ],
+        "summary": "How many of the caller's notifications in a workspace are unread (at\nmost 1,000): what the sidebar shows, without reading the inbox itself.",
+        "operationId": "unread_count",
+        "parameters": [
+          {
+            "name": "wid",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnreadCount"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/workspaces/{wid}/invites": {
       "get": {
         "tags": [
@@ -10808,7 +10905,7 @@
         "tags": [
           "issues"
         ],
-        "summary": "Issues of a workspace in the teams the caller can see, most recently\nupdated first.",
+        "summary": "Issues of a workspace in the teams the caller can see, most recently\nupdated first, without their descriptions (`GET /issues/{iid}` has it).",
         "operationId": "list",
         "parameters": [
           {
@@ -10954,7 +11051,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/Issue"
+                    "$ref": "#/components/schemas/IssueSummary"
                   }
                 }
               }
@@ -13119,6 +13216,81 @@
             }
           },
           "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/workspaces/{wid}/runs": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "The latest runs across the graphs of a workspace the caller may work on,\nnewest first (at most 100), each with its graph's name: what the Runs page\nlists, in one request.",
+        "operationId": "workspace_runs",
+        "parameters": [
+          {
+            "name": "wid",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "1-100, default 100.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "description": "Only runs older than this run (the last one of the previous page).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WorkspaceRun"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
             "content": {
               "application/json": {
                 "schema": {
@@ -20983,7 +21155,8 @@
           "github_url",
           "created_at",
           "updated_at",
-          "completed_at"
+          "completed_at",
+          "run_status"
         ],
         "properties": {
           "agent_id": {
@@ -21100,6 +21273,17 @@
               "null"
             ],
             "format": "uuid"
+          },
+          "run_status": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RunStatus",
+                "description": "The status of the latest run of the issue's graph; `null` without a graph or runs."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "state": {
             "$ref": "#/components/schemas/IssueState"
@@ -21287,6 +21471,181 @@
             "description": "Order within the workflow, lowest first."
           },
           "team_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "IssueSummary": {
+        "type": "object",
+        "description": "An issue as a list shows it: every field of [`Issue`] but its\ndescription, which only the issue's own page reads (it may be 64 KiB).",
+        "required": [
+          "id",
+          "workspace_id",
+          "team_id",
+          "identifier",
+          "number",
+          "title",
+          "state",
+          "priority",
+          "labels",
+          "parent",
+          "sub_issues",
+          "cycle",
+          "assignee",
+          "agent_id",
+          "project_id",
+          "graph_id",
+          "creator_id",
+          "due_date",
+          "github_url",
+          "created_at",
+          "updated_at",
+          "completed_at",
+          "run_status"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The agent the issue is delegated to."
+          },
+          "assignee": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IssuePerson"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "creator_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "cycle": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CycleRef",
+                "description": "The cycle of its team the issue is planned in."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "due_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "The day the issue is due, if it has one."
+          },
+          "github_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The GitHub issue or pull request the issue is about (a link only; nothing is synced)."
+          },
+          "graph_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The graph that plans and executes the issue, if one was created."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "identifier": {
+            "type": "string",
+            "description": "The team key and the issue number, e.g. `ENG-12`."
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Label"
+            },
+            "description": "The issue's labels, by name."
+          },
+          "number": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "parent": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IssueRef",
+                "description": "The issue this one is part of, if the caller can see it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int32",
+            "description": "`0` none, `1` urgent, `2` high, `3` medium, `4` low."
+          },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "run_status": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RunStatus",
+                "description": "The status of the latest run of the issue's graph; `null` without a graph or runs."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/IssueState"
+          },
+          "sub_issues": {
+            "$ref": "#/components/schemas/SubIssueCount"
+          },
+          "team_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "workspace_id": {
             "type": "string",
             "format": "uuid"
           }
@@ -26686,6 +27045,20 @@
         },
         "additionalProperties": false
       },
+      "UnreadCount": {
+        "type": "object",
+        "description": "How many of a member's notifications are unread.",
+        "required": [
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "At most [`UNREAD_MAX`]."
+          }
+        }
+      },
       "UpdateAgent": {
         "type": "object",
         "description": "`PATCH /agents/{id}` body (any subset; `reports_to: null` and `team_id: null` detach).",
@@ -27799,6 +28172,25 @@
           "member",
           "guest"
         ]
+      },
+      "WorkspaceRun": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Run"
+          },
+          {
+            "type": "object",
+            "required": [
+              "graph_name"
+            ],
+            "properties": {
+              "graph_name": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "description": "A run as the workspace's run list shows it: the run with its graph's name."
       },
       "WsMessage": {
         "oneOf": [
