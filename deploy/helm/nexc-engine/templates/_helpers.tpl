@@ -82,3 +82,65 @@ older release, which has no runtime.egress). */}}
 {{- define "nexc.egressAllow" -}}
 {{ dig "egress" "allow" "api.anthropic.com:443" .Values.runtime }}
 {{- end }}
+
+{{/*
+The most backend pods that run at once: the autoscaler's maximum (or replicas.backend), plus the
+one a rollout adds (maxSurge 1).
+*/}}
+{{- define "nexc.backendPods" -}}
+{{- $b := .Values.autoscaling.backend -}}
+{{- add1 (ternary $b.maxReplicas .Values.replicas.backend $b.enabled) -}}
+{{- end }}
+
+{{/*
+The connections postgres.maxConnections leaves the backend: less postgres.reservedConnections and
+onto-intelli's pools (guarded for --reuse-values from a release without them).
+*/}}
+{{- define "nexc.dbBudget" -}}
+{{- $pg := .Values.postgres -}}
+{{- $onto := 0 -}}
+{{- if .Values.ontoIntelli.enabled -}}
+{{- $onto = mul .Values.ontoIntelli.replicas .Values.ontoIntelli.maxConnections -}}
+{{- end -}}
+{{- sub (sub (dig "maxConnections" 100 $pg) (dig "reservedConnections" 10 $pg)) $onto -}}
+{{- end }}
+
+{{/*
+The backend's PostgreSQL pool per pod (NEXC_DB_MAX_CONNECTIONS): config.NEXC_DB_MAX_CONNECTIONS when
+set, else each pod's share of the budget, at most 20 (the backend's own default). The realtime
+listener holds one connection of it for good, so a share under 4 (one set under 2) is refused, and,
+with the chart's PostgreSQL, so is a pool set that does not fit.
+*/}}
+{{- define "nexc.dbPool" -}}
+{{- $pods := int (include "nexc.backendPods" .) -}}
+{{- $budget := int (include "nexc.dbBudget" .) -}}
+{{- $set := toString (.Values.config.NEXC_DB_MAX_CONNECTIONS | default "") -}}
+{{- $pool := 0 -}}
+{{- $least := 2 -}}
+{{- if $set -}}
+{{- $pool = int $set -}}
+{{- else -}}
+{{- $pool = int (min 20 (div (max $budget 0) $pods)) -}}
+{{- $least = 4 -}}
+{{- end -}}
+{{- if or (lt $pool $least) (and .Values.postgres.enabled (gt (mul $pool $pods) $budget)) -}}
+{{- fail (printf "PostgreSQL connections: %d backend pods at most (replicas.backend or autoscaling.backend.maxReplicas, plus one during a rollout) with a pool of %d each do not fit in the %d that postgres.maxConnections leaves after postgres.reservedConnections and onto-intelli's pools: raise postgres.maxConnections, or lower config.NEXC_DB_MAX_CONNECTIONS, the replicas or ontoIntelli.maxConnections" $pods $pool $budget) -}}
+{{- end -}}
+{{- $pool -}}
+{{- end }}
+
+{{/* The backend's environment, the same for `serve` and for the `migrate` init container. */}}
+{{- define "nexc.backendEnv" -}}
+envFrom:
+  - configMapRef: { name: nexc-config }
+  - secretRef: { name: {{ include "nexc.secretName" . }} }
+{{- if .Values.oidc.enabled }}
+env:
+  # Single sign-on's client secret, from a Secret of its own.
+  - name: NEXC_OIDC_CLIENT_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: {{ .Values.oidc.existingSecret | quote }}
+        key: {{ .Values.oidc.existingSecretKey | quote }}
+{{- end }}
+{{- end }}

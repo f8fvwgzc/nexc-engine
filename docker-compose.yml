@@ -23,7 +23,7 @@
 # connections to PostgreSQL, whose max_connections is 100: replicas x pool stays under it.
 #
 # Without --build, the images are pulled: `latest` is the last release tag (v*), not main. Set
-# NEXC_IMAGE_TAG to an image of your own, or build (docs/INFRASTRUCTURE.md, Deploying).
+# NEXC_IMAGE_TAG to an image of your own, or build (docs/INFRASTRUCTURE.md, Images).
 
 name: nexc
 
