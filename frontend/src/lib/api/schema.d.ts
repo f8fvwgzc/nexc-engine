@@ -2748,8 +2748,9 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * How many of the caller's notifications in a workspace are unread (at
-         *     most 1,000): what the sidebar shows, without reading the inbox itself.
+         * How many of the notifications the caller's inbox shows in a workspace
+         *     (the newest 100) are unread: what the sidebar shows, without reading the
+         *     inbox itself.
          */
         get: operations["unread_count"];
         put?: never;
