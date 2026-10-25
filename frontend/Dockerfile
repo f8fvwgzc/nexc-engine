@@ -28,10 +28,11 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
 COPY . .
 ARG VITE_API_BASE_URL=/api/v1
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
-RUN pnpm build
-# Compressed once, at the best level, so nginx sends the .gz (gzip_static) instead of
-# compressing every response; -n leaves the name and time out, so the build stays reproducible.
-RUN find dist -type f \( -name '*.js' -o -name '*.mjs' -o -name '*.css' -o -name '*.html' \
+# The build output is compressed once, at the best level, so nginx sends the .gz (gzip_static)
+# instead of compressing every response; -n leaves the name and time out, so the build stays
+# reproducible.
+RUN pnpm build \
+ && find dist -type f \( -name '*.js' -o -name '*.mjs' -o -name '*.css' -o -name '*.html' \
       -o -name '*.svg' -o -name '*.json' -o -name '*.txt' -o -name '*.webmanifest' -o -name '*.ttf' \) \
       -size +1k -exec gzip -9 -k -n {} +
 
