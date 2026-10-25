@@ -17,11 +17,10 @@ import { NavArtifactFolders } from './nav-artifact-folders';
 import { NavGraphs } from './nav-graphs';
 import { WORKSPACE_MENUS } from './nav-items';
 import { NavTeams } from './nav-teams';
-import { PageSkeleton } from './page-skeleton';
+import { PageSkeleton, SettingsSkeleton } from './page-skeleton';
 import { ShellSidebar } from './shell-sidebar';
 import { SHELL_STYLE, usePanelOpen } from './panel';
 import { useUnread } from './use-unread';
-import { WorkspaceSwitcher } from './workspace-switcher';
 
 /**
  * The signed-in shell: the rail of core menus, the panel of the open menu's pages, the header
@@ -48,7 +47,6 @@ export default function AppShell() {
       <ShellSidebar
         menus={WORKSPACE_MENUS}
         home="/app/inbox"
-        header={<WorkspaceSwitcher />}
         admin={current ? isWorkspaceAdmin(current.role) : false}
         badges={{ '/app/inbox': unread }}
         extras={{
@@ -66,7 +64,7 @@ export default function AppShell() {
             {/* A settings page is narrow; so is its placeholder, so nothing moves when it arrives. */}
             <Suspense
               fallback={
-                <PageSkeleton width={pathname.startsWith('/app/settings') ? 'narrow' : 'default'} />
+                pathname.startsWith('/app/settings') ? <SettingsSkeleton /> : <PageSkeleton />
               }
             >
               <Outlet />

@@ -69,22 +69,56 @@ test.describe('the Runs page', () => {
 });
 
 test.describe('a page that failed to load', () => {
-  for (const name of ['runs', 'agents']) {
+  // The route's error page stands in for a page without a boundary of its own (runs); a page
+  // that has one (agents) keeps its header and shows the error under it.
+  for (const { name, heading, loaded, first } of [
+    { name: 'runs', heading: 'Something went wrong', loaded: 'Runs', first: undefined },
+    { name: 'agents', heading: 'Agents', loaded: 'Agents', first: fixtures.agents[0]?.name },
+  ]) {
     test(`${name}: Try again reads it again`, async ({ page }) => {
       await page.setViewportSize({ width: 1280, height: 800 });
       const target = route(name);
       await openRoute(page, target, { mode: 'error', theme: 'light' });
-      await expect(page.getByRole('heading', { level: 1 })).toHaveText('Something went wrong');
+      await expect(page.getByRole('heading', { level: 1 })).toHaveText(heading);
+      await expect(page.getByRole('alert').filter({ hasText: 'Try again' })).toBeVisible();
 
       // The server is back.
       await page.unrouteAll({ behavior: 'ignoreErrors' });
       await mockApi(page, { mode: 'full', persona: target.persona });
       await page.getByRole('button', { name: 'Try again' }).click();
 
-      await expect(page.getByRole('heading', { level: 1 })).not.toHaveText('Something went wrong');
+      // The list itself is back, not just its placeholder.
+      await expect(page.getByRole('heading', { level: 1 })).toHaveText(loaded);
+      const rows = page.getByRole('table').first().getByRole('row');
+      await expect(rows.nth(1)).toBeVisible();
+      if (first) await expect(rows.filter({ hasText: first }).first()).toBeVisible();
       await expect(page.getByRole('button', { name: 'Try again' })).toHaveCount(0);
     });
   }
+
+  test('run-detail: the next run opened shows itself, not the last one’s error', async ({
+    page,
+  }) => {
+    const next = fixtures.runs[1];
+    if (!next) throw new Error('the fixtures need a second run');
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const target = route('run-detail');
+    await openRoute(page, target, { mode: 'error', theme: 'light' });
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Couldn’t load the run');
+
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+    await mockApi(page, { mode: 'full', persona: target.persona });
+    // In the app, as Back or a link would go there: the page stays mounted with a new run id.
+    await page.evaluate((path) => {
+      window.history.pushState({}, '', path);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, `/app/runs/${next.id}`);
+
+    await expect(page.getByRole('heading', { level: 1 })).toContainText(
+      `Run ${next.id.slice(0, 8)}`,
+    );
+    await expect(page.getByRole('button', { name: 'Try again' })).toHaveCount(0);
+  });
 });
 
 test.describe('a background refetch that fails', () => {

@@ -10,6 +10,7 @@ import {
   SidebarMenuItem,
 } from '@/components/ui/sidebar';
 import { teamsQuery } from '@/features/workspaces/api';
+import { prefetchRouteOnIntent } from '@/lib/prefetch';
 import { useWorkspaceStore } from '@/stores/workspace-store';
 
 import { itemMatches, type NavItem } from './nav-items';
@@ -62,7 +63,11 @@ export function NavSection({ label, items, badges = {} }: NavSectionProps) {
               {/* Marked current by the same rule as the highlight: a team's page marks its row
                   under "Your teams" instead. */}
               <SidebarMenuButton asChild isActive={active} className={ROW}>
-                <Link to={item.to} aria-current={active ? 'page' : undefined}>
+                <Link
+                  to={item.to}
+                  aria-current={active ? 'page' : undefined}
+                  {...prefetchRouteOnIntent(item.to)}
+                >
                   <item.icon />
                   <span>
                     {item.title}

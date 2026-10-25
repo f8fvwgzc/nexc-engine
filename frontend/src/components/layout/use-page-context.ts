@@ -4,14 +4,16 @@ import { useLocation, useMatches } from 'react-router-dom';
 import { artifactFileQuery } from '@/features/artifacts/api';
 import { graphQuery } from '@/features/graphs/api';
 import { issueQuery, projectsQuery } from '@/features/issues/api';
+import { teamsQuery } from '@/features/workspaces/api';
 import type { PageContext } from '@/schemas/assistant';
 import { useWorkspaceStore } from '@/stores/workspace-store';
 
 import { isRouteHandle } from './route-handle';
 
 /**
- * Where the member is, said the way the breadcrumbs say it (`Graphs › Research report`), so
- * the assistant knows what "this graph" or "this issue" refers to.
+ * Where the member is, said the way the breadcrumbs say it (`Graphs › Research report`,
+ * `Issues › Engineering › ENG-7 › ENG-9 Pick the bus`), so the assistant knows what "this
+ * graph" or "this issue" refers to.
  */
 export function usePageContext(): PageContext {
   const { pathname } = useLocation();
@@ -29,11 +31,8 @@ export function usePageContext(): PageContext {
     enabled: false,
     select: (g) => g.name,
   });
-  const { data: issueName } = useQuery({
-    ...issueQuery(issueId),
-    enabled: false,
-    select: (i) => `${i.identifier} ${i.title}`,
-  });
+  const { data: issue } = useQuery({ ...issueQuery(issueId), enabled: false });
+  const { data: teams } = useQuery({ ...teamsQuery(issue?.workspace_id ?? ''), enabled: false });
   const { data: projectName } = useQuery({
     ...projectsQuery(workspaceId),
     enabled: false,
@@ -46,10 +45,17 @@ export function usePageContext(): PageContext {
   });
   const labels = matches
     .flatMap((m) => (isRouteHandle(m.handle) ? m.handle.crumbs : []))
-    .map((crumb) => {
+    .flatMap((crumb) => {
       if ('label' in crumb) return crumb.label;
       if (crumb.dynamic === 'graph') return graphName ?? 'Graph';
-      if (crumb.dynamic === 'issue') return issueName ?? 'Issue';
+      if (crumb.dynamic === 'issue') {
+        if (!issue) return 'Issue';
+        return [
+          teams?.find((t) => t.id === issue.team_id)?.name ?? 'Team',
+          ...(issue.parent ? [issue.parent.identifier] : []),
+          `${issue.identifier} ${issue.title}`,
+        ];
+      }
       if (crumb.dynamic === 'project') return projectName ?? 'Project';
       if (crumb.dynamic === 'artifact') return fileName ?? 'File';
       return `Run ${runId.slice(0, 8)}`;

@@ -1,4 +1,7 @@
-/** Static breadcrumb or a dynamic one resolved from cached server data. */
+/**
+ * Static breadcrumb or a dynamic one resolved from cached server data. An `issue` crumb stands
+ * for several: the issue's team, its parent (if any) and the issue.
+ */
 export type Crumb =
   { label: string; to?: string } | { dynamic: 'graph' | 'run' | 'issue' | 'project' | 'artifact' };
 

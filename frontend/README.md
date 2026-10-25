@@ -46,13 +46,17 @@ Validated with zod at startup (`src/lib/env.ts`); invalid values fail fast.
 ```
 src/
   main.tsx                 entry (StrictMode + <App/>)
-  app/                     App.tsx, router.tsx (createBrowserRouter, lazy routes), route-modules.ts,
+  app/                     App.tsx, router.tsx (createBrowserRouter, lazy routes whose loaders
+                           start each page's first reads), route-modules.ts,
                            providers/ (theme, query, helmet, auth bootstrap)
   components/
     ui/                    shadcn/ui (generated — `shadcn add`, do not hand-edit beyond theming)
     custom-ui/             product design layer built on shadcn (see below)
-    layout/                AppShell, ShellSidebar (the rail of core menus + the panel), AppHeader,
-                           PlatformShell, PublicLayout, PrivateRoute, PublicRoute, …
+    layout/                AppShell, ShellSidebar (the rail of core menus + the panel, topped by
+                           the menu's title row, as tall as the header), NavUser (the account
+                           menu at the foot of the rail: workspaces to switch to and a new one,
+                           profile, theme, help), AppHeader, PlatformShell, page skeletons,
+                           QueryErrorBoundary, PublicLayout, PrivateRoute, PublicRoute, …
     seo/                   <Seo title description />
   features/<name>/         auth, issues (issue page, board, timeline), artifacts (folders, files,
                            versions, previews), graphs (dashboard/templates), graph (canvas, panels,
@@ -102,8 +106,18 @@ src/
   `public/theme-init.js`, so `script-src 'self'` suffices). Its `frame-src` is the origin of
   `NEXC_ONTO_PUBLIC_URL`, onto-intelli's UI that the workspace map embeds, written at the
   container's start by `docker-entrypoint.d/40-nexc-frame-src.sh` (`'none'` without one).
-- Motion is CSS-only (Tailwind keyframes in `styles/index.css`) and disabled under
-  `prefers-reduced-motion`.
+- Motion: entrances are CSS (`FadeIn`, `Stagger`, Tailwind keyframes in `styles/index.css`), so
+  a page's content fades in as it replaces its skeleton. What appears, disappears or moves (the
+  assistant's panel, rows coming and going) uses `motion/react` through `LazyMotion` + `m.*` with
+  the shared `spring`/`rise` of `custom-ui/motion-presets.ts`, inside
+  `MotionConfig reducedMotion="user"`. Both are off under `prefers-reduced-motion`.
+- Loading: each page's placeholder has the page's shape (`components/layout/page-skeleton.tsx`:
+  list, detail, board and settings skeletons). A page that reads with suspense puts a
+  `QueryErrorBoundary` around its `Suspense`, so a failed read shows in place under the header.
+  A route's loader starts the page's first reads while its code downloads, and links load the
+  page they open on hover or focus (`lib/prefetch.ts`). The query cache and the ETags kept in
+  the browser survive a deploy until `CACHE_SCHEMA` (`lib/query-persist.ts`) is bumped, which a
+  change to the shape of a kept list must do.
 
 ## The custom-ui layer
 

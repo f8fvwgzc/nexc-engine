@@ -28,7 +28,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Skeleton } from '@/components/ui/skeleton';
+import { ListSkeleton } from '@/components/layout/page-skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import {
   accountIdentitiesQuery,
@@ -226,7 +226,7 @@ function IdentitiesDialog({ user, onClose }: { user: PlatformUser | null; onClos
             {errorMessage(error)}
           </p>
         ) : isPending ? (
-          <Skeleton className="h-16 w-full" />
+          <ListSkeleton rows={2} label="Loading the identities" />
         ) : data.length === 0 ? (
           <p className="text-sm text-muted-foreground">No identity is linked to this account.</p>
         ) : (
@@ -391,9 +391,9 @@ export default function PlatformUsersPage() {
           onRetry={() => void refetch()}
         />
       ) : isPending ? (
-        <Skeleton className="h-64 w-full rounded-lg" />
+        <ListSkeleton rows={8} label="Loading the accounts" />
       ) : (
-        <ul className="divide-y overflow-hidden rounded-lg border">
+        <ul className="divide-y overflow-hidden rounded-lg border motion-safe:animate-fade-in">
           {rows.length === 0 && (
             <li className="px-3 py-6 text-center text-[13px] text-muted-foreground">
               No account matches.

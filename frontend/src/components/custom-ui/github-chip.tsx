@@ -2,7 +2,7 @@ import { githubLabel, githubRef, type GithubLabelForm } from '@/lib/github';
 import { cn } from '@/lib/utils';
 
 /** The GitHub mark (lucide has no brand icons). */
-function GithubMark({ className }: { className?: string }) {
+export function GithubMark({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 16 16" aria-hidden className={className}>
       <path
@@ -13,6 +13,12 @@ function GithubMark({ className }: { className?: string }) {
   );
 }
 
+/** How a chip looks: a small outlined pill (rows, cards), or plain text like a property value. */
+const VARIANT_CLASS = {
+  pill: 'h-5 gap-1 rounded-full border bg-background px-1.5 font-mono text-[11px] hover:border-ring/60',
+  plain: 'h-7 gap-2 rounded-md px-1.5 text-[13px] hover:bg-muted',
+} as const;
+
 /**
  * The GitHub issue or pull request an issue is linked to: the mark and `owner/repo#12` (shorter
  * with `form`), opening GitHub in a new tab. A click on it never opens the row or card it sits
@@ -21,10 +27,12 @@ function GithubMark({ className }: { className?: string }) {
 export function GithubChip({
   url,
   form = 'full',
+  variant = 'pill',
   className,
 }: {
   url: string;
   form?: GithubLabelForm;
+  variant?: keyof typeof VARIANT_CLASS;
   className?: string;
 }) {
   const what = githubRef(url)?.kind === 'pull' ? 'pull request' : 'issue';
@@ -37,11 +45,12 @@ export function GithubChip({
       draggable={false}
       onClick={(e) => e.stopPropagation()}
       className={cn(
-        'relative z-10 inline-flex h-5 max-w-full min-w-0 shrink-0 items-center gap-1 rounded-full border bg-background px-1.5 font-mono text-[11px] text-muted-foreground transition-colors outline-none hover:border-ring/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50',
+        'relative z-10 inline-flex max-w-full min-w-0 shrink-0 items-center text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50',
+        VARIANT_CLASS[variant],
         className,
       )}
     >
-      <GithubMark className="size-3 shrink-0" />
+      <GithubMark className={cn('shrink-0', variant === 'pill' ? 'size-3' : 'size-3.5')} />
       <span className="sr-only">GitHub {what} </span>
       <span className="truncate">{githubLabel(url, form)}</span>
       <span className="sr-only"> (opens in a new tab)</span>

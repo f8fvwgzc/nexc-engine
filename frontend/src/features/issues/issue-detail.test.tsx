@@ -2,25 +2,31 @@ import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-quer
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { qk } from '@/lib/query-keys';
 import type { Issue } from '@/schemas/issue';
 import type { Workspace } from '@/schemas/workspace';
 
+import { dueLabel, localToday } from './due';
 import { IssueDetail } from './issue-detail';
 
-const { updateIssue, deleteIssue, empty } = vi.hoisted(() => ({
+const { updateIssue, deleteIssue, empty, slow } = vi.hoisted(() => ({
   updateIssue: vi.fn(),
   deleteIssue: vi.fn(),
   /** A query that reads an empty list, under its own key. */
   empty: (key: string) => () => ({ queryKey: [key], queryFn: () => Promise.resolve([]) }),
+  /** Whether the team's states are still on their way (they never arrive). */
+  slow: { states: false },
 }));
 
 vi.mock('./api', () => ({
   updateIssue,
   deleteIssue,
-  statesQuery: empty('states'),
+  statesQuery: () => ({
+    queryKey: ['states', slow.states],
+    queryFn: () => (slow.states ? new Promise(() => undefined) : Promise.resolve([])),
+  }),
   projectsQuery: empty('projects'),
   cyclesQuery: empty('cycles'),
 }));
@@ -28,12 +34,21 @@ vi.mock('@/features/workspaces/api', () => ({
   teamsQuery: empty('teams'),
   membersQuery: empty('members'),
 }));
+vi.mock('@/features/ontology/api', () => ({ ontologyStatusQuery: empty('ontology') }));
 // The sections that read their own data are not what these tests are about.
 vi.mock('./issue-run', () => ({ IssueRun: () => null }));
 vi.mock('./issue-timeline', () => ({ IssueTimeline: () => null }));
 vi.mock('./sub-issues', () => ({ SubIssues: () => null }));
 vi.mock('./label-picker', () => ({ LabelPicker: () => null }));
-vi.mock('@/features/ontology/ontology-link', () => ({ OntologyLink: () => null }));
+
+beforeAll(() => {
+  // jsdom has no scrolling; the pickers' lists scroll the picked option into view.
+  Element.prototype.scrollIntoView = () => undefined;
+});
+afterEach(() => {
+  localStorage.clear();
+  slow.states = false;
+});
 
 const at = '2026-10-20T09:00:00Z';
 
@@ -87,17 +102,25 @@ const fresh: Issue = {
   updated_at: '2026-10-20T10:00:00Z',
 };
 
-function renderDetail(first: Issue, artifacts?: ReactNode) {
+function renderDetail(first: Issue, artifacts?: ReactNode, firstPending = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const ui = (copy: Issue) => (
+  const ui = (copy: Issue, pending: boolean) => (
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <IssueDetail workspace={workspace} issue={copy} artifacts={artifacts} />
+        <IssueDetail
+          workspace={workspace}
+          issue={copy}
+          descriptionPending={pending}
+          artifacts={artifacts}
+        />
       </MemoryRouter>
     </QueryClientProvider>
   );
-  const view = render(ui(first));
-  return { client, rerender: (copy: Issue) => view.rerender(ui(copy)) };
+  const view = render(ui(first, firstPending));
+  return {
+    client,
+    rerender: (copy: Issue, pending = false) => view.rerender(ui(copy, pending)),
+  };
 }
 
 const titleField = () => screen.getByRole('textbox', { name: 'Title' });
@@ -165,6 +188,142 @@ describe('the title and description of an issue', () => {
     expect(await screen.findByRole('alert')).toBeInTheDocument();
     expect(updateIssue).toHaveBeenCalledWith(listed.id, { description: 'Use EtherCAT.' });
     expect(descriptionField()).toHaveValue('Use EtherCAT.');
+  });
+});
+
+describe('a list’s copy without a description', () => {
+  beforeEach(() => {
+    updateIssue.mockReset();
+  });
+
+  it('holds the description back until the issue’s own copy lands, and saves nothing', () => {
+    const { client, rerender } = renderDetail({ ...listed, description: '' }, undefined, true);
+    expect(screen.queryByRole('textbox', { name: 'Description' })).not.toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Loading the description' })).toBeInTheDocument();
+    // The title is there to edit at once.
+    expect(titleField()).toHaveValue(listed.title);
+
+    rerender(fresh);
+    expect(descriptionField()).toHaveValue(fresh.description);
+    fireEvent.focus(descriptionField());
+    fireEvent.blur(descriptionField());
+    expect(client.getMutationCache().getAll()).toHaveLength(0);
+  });
+});
+
+describe('the properties panel', () => {
+  beforeEach(() => {
+    updateIssue.mockReset();
+  });
+
+  const panel = () => screen.queryByRole('complementary', { name: 'Properties' });
+
+  it('is open by default, closes, and stays closed on the next issue', async () => {
+    renderDetail(listed);
+    expect(panel()).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close properties' }));
+    await waitFor(() => expect(panel()).not.toBeInTheDocument());
+    expect(localStorage.getItem('nexc.issue.properties')).toBe('closed');
+    // Only the one way back stays on the page.
+    expect(screen.queryByRole('button', { name: `Delete ${listed.identifier}` })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Open properties' }));
+    expect(panel()).toBeInTheDocument();
+    expect(localStorage.getItem('nexc.issue.properties')).toBe('open');
+  });
+
+  it('hands the focus to the button that undoes the toggle', async () => {
+    renderDetail(listed);
+    fireEvent.click(screen.getByRole('button', { name: 'Close properties' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Open properties' })).toHaveFocus(),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Open properties' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Close properties' })).toHaveFocus(),
+    );
+  });
+
+  it('does not take the focus when the page opens', () => {
+    renderDetail(listed);
+    expect(document.body).toHaveFocus();
+  });
+
+  it('opens closed when the member closed it before', () => {
+    localStorage.setItem('nexc.issue.properties', 'closed');
+    renderDetail(listed);
+    expect(panel()).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open properties' })).toBeInTheDocument();
+  });
+
+  it('saves a picked priority and reads again only what shows it', async () => {
+    const saved = { ...fresh, priority: 1 };
+    updateIssue.mockResolvedValue(saved);
+    const { client } = renderDetail(fresh);
+    const invalidated = vi.spyOn(client, 'invalidateQueries');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Priority: High' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Urgent' }));
+    await waitFor(() => expect(client.isMutating()).toBe(0));
+
+    expect(updateIssue).toHaveBeenCalledWith(listed.id, { priority: 1 });
+    expect(client.getQueryData(qk.issues.one(listed.id))).toEqual(saved);
+    const keys = invalidated.mock.calls.map(([filters]) => filters?.queryKey);
+    expect(keys).toContainEqual(qk.issues.lists(workspace.id));
+    expect(keys).toContainEqual(qk.issues.events(listed.id));
+    // Not every issue query, not the issue just saved, not the inbox or the projects.
+    expect(keys).not.toContainEqual(qk.issues.all);
+    expect(keys).not.toContainEqual(qk.issues.one(listed.id));
+    expect(keys).not.toContainEqual(qk.issues.inbox(workspace.id));
+    expect(keys).not.toContainEqual(qk.issues.projectLists(workspace.id));
+  });
+
+  it('reads the inbox again when the assignee changes', async () => {
+    const assigned = { ...fresh, assignee: { user_id: workspace.id, name: 'Ada Lovelace' } };
+    updateIssue.mockResolvedValue({ ...assigned, assignee: null });
+    const { client } = renderDetail(assigned);
+    const invalidated = vi.spyOn(client, 'invalidateQueries');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Assignee: Ada Lovelace' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Unassigned' }));
+    await waitFor(() => expect(client.isMutating()).toBe(0));
+
+    expect(updateIssue).toHaveBeenCalledWith(listed.id, { assignee_id: null });
+    const keys = invalidated.mock.calls.map(([filters]) => filters?.queryKey);
+    expect(keys).toContainEqual(qk.issues.inbox(workspace.id));
+  });
+
+  it('names the due date by what it shows, and keeps it when its day is clicked again', async () => {
+    const due = { ...fresh, due_date: '2026-10-17' };
+    const { client } = renderDetail(due);
+    const shown = dueLabel('2026-10-17', localToday(), true).text;
+    const button = screen.getByRole('button', { name: `Due date: ${shown}` });
+    expect(button).toHaveTextContent(shown);
+
+    fireEvent.click(button);
+    fireEvent.click(await screen.findByRole('button', { name: /selected/ }));
+    expect(client.getMutationCache().getAll()).toHaveLength(0);
+  });
+
+  it('names an unset due date by its prompt', () => {
+    renderDetail(fresh);
+    expect(screen.getByRole('button', { name: 'Set due date' })).toHaveTextContent('Set due date');
+  });
+
+  it('shows loading rows in a picker whose choices are on their way', async () => {
+    slow.states = true;
+    renderDetail(fresh);
+    fireEvent.click(screen.getByRole('button', { name: 'Status: Todo' }));
+    expect(await screen.findByRole('status', { name: 'Loading the choices' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Todo' })).toBeInTheDocument();
+    expect(screen.queryByText('Nothing matches.')).not.toBeInTheDocument();
+  });
+
+  it('picking the value it already has saves nothing', async () => {
+    const { client } = renderDetail(fresh);
+    fireEvent.click(screen.getByRole('button', { name: 'Status: Todo' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Todo' }));
+    expect(client.getMutationCache().getAll()).toHaveLength(0);
   });
 });
 

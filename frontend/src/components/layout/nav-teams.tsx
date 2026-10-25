@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/sidebar';
 import { teamsQuery } from '@/features/workspaces/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
+import { prefetchRouteOnIntent } from '@/lib/prefetch';
 
 import { ROW } from './nav-section';
 import { useTeamExpansion } from './team-expansion';
@@ -85,6 +86,7 @@ export function NavTeams() {
                             <Link
                               to={`${page.path}?team=${team.id}`}
                               aria-current={active ? 'page' : undefined}
+                              {...prefetchRouteOnIntent(page.path)}
                             >
                               <page.icon />
                               <span>

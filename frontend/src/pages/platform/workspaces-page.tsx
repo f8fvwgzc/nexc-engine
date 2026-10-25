@@ -5,7 +5,7 @@ import { ErrorState } from '@/components/custom-ui/error-state';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { Seo } from '@/components/seo/seo';
-import { Skeleton } from '@/components/ui/skeleton';
+import { ListSkeleton } from '@/components/layout/page-skeleton';
 import { platformWorkspacesQuery } from '@/features/platform/api';
 import { PLATFORM_PAGE_SIZE, usePlatformPage } from '@/features/platform/paged-list';
 import { WorkspaceSheet } from '@/features/platform/workspace-sheet';
@@ -31,9 +31,9 @@ export default function PlatformWorkspacesPage() {
           onRetry={() => void refetch()}
         />
       ) : isPending ? (
-        <Skeleton className="h-64 w-full rounded-lg" />
+        <ListSkeleton rows={8} label="Loading the workspaces" />
       ) : (
-        <div className="overflow-hidden rounded-lg border">
+        <div className="overflow-hidden rounded-lg border motion-safe:animate-fade-in">
           <div className="hidden h-8 items-center gap-3 border-b bg-muted/40 px-3 text-xs text-muted-foreground sm:flex">
             <span className="flex-1">Workspace</span>
             <span className="w-56">Owner</span>

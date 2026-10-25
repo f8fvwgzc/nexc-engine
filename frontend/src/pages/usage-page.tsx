@@ -16,7 +16,8 @@ import { OptionSelect } from '@/components/custom-ui/option-select';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { StatTile } from '@/components/custom-ui/stat-tile';
-import { ContentSkeleton, PageSkeleton } from '@/components/layout/page-skeleton';
+import { ContentSkeleton, SettingsSkeleton } from '@/components/layout/page-skeleton';
+import { QueryErrorBoundary } from '@/components/layout/query-error-boundary';
 import { Seo } from '@/components/seo/seo';
 import { Button } from '@/components/ui/button';
 import {
@@ -147,7 +148,7 @@ function Report({ workspace, days }: { workspace: Workspace; days: number }) {
     );
   }
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 motion-safe:animate-fade-in">
       {report.scope === 'own' && (
         <p className="rounded-xl border p-3 text-sm text-muted-foreground">
           This is your own usage in {workspace.name}. Workspace admins see every member.
@@ -234,7 +235,7 @@ function Report({ workspace, days }: { workspace: Workspace; days: number }) {
 function Usage() {
   const { current } = useCurrentWorkspace();
   const [days, setDays] = useState('30');
-  if (!current) return <PageSkeleton width="narrow" />;
+  if (!current) return <SettingsSkeleton />;
   return (
     <PageContainer width="narrow">
       <PageHeader
@@ -250,9 +251,11 @@ function Usage() {
           />
         }
       />
-      <Suspense fallback={<ContentSkeleton />}>
-        <Report key={`${current.id}:${days}`} workspace={current} days={Number(days)} />
-      </Suspense>
+      <QueryErrorBoundary key={`${current.id}:${days}`} title="Couldn’t load the usage">
+        <Suspense fallback={<ContentSkeleton />}>
+          <Report workspace={current} days={Number(days)} />
+        </Suspense>
+      </QueryErrorBoundary>
     </PageContainer>
   );
 }
