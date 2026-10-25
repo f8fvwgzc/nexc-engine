@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { RunArtifact } from '@/schemas/artifact';
 import type { Issue, IssueEvent } from '@/schemas/issue';
@@ -108,6 +108,11 @@ function renderReport(...events: IssueEvent[]) {
   );
 }
 
+beforeAll(async () => {
+  // A report's Markdown is loaded with the first report; a cold import can outlast `findBy`.
+  await import('@/components/custom-ui/markdown');
+});
+
 beforeEach(() => {
   files.list = [];
   files.ofRun = [];
@@ -167,6 +172,33 @@ describe('RunReport', () => {
     fireEvent.click(ask);
     expect(await screen.findByRole('button', { name: /final-deliverable\.docx/ })).toBeEnabled();
     expect(reads.run).toBe(1);
+  });
+
+  it('offers all the files of the oldest run a full list holds, which it may have cut short', async () => {
+    const newer = { ...file, run_id: '0199bbbb-0000-7000-8000-00000000b009' };
+    files.list = [...Array.from({ length: 499 }, () => newer), file];
+    files.ofRun = [file, { ...file, id: `${file.id.slice(0, -1)}2`, path: 'appendix.md' }];
+    renderReport(report());
+    expect(await screen.findByRole('button', { name: /final-deliverable\.docx/ })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole('button', { name: /Show all the run’s files/ }));
+    expect(await screen.findByRole('button', { name: /appendix\.md/ })).toBeEnabled();
+    expect(reads.run).toBe(1);
+  });
+
+  it('says so when the run, read on its own, made no files', async () => {
+    const someoneElse = { ...file, run_id: '0199bbbb-0000-7000-8000-00000000b009' };
+    files.list = Array.from({ length: 500 }, () => someoneElse);
+    renderReport(report());
+    fireEvent.click(await screen.findByRole('button', { name: /Show the run’s files/ }));
+    expect(await screen.findByText('The run made no files.')).toBeInTheDocument();
+  });
+
+  it('offers nothing more when the list is short enough to hold every file', async () => {
+    files.list = [file];
+    renderReport(report());
+    await screen.findByRole('button', { name: /final-deliverable\.docx/ });
+    expect(screen.queryByRole('button', { name: /run’s files/ })).not.toBeInTheDocument();
   });
 });
 

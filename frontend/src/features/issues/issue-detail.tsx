@@ -1,6 +1,6 @@
 import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PanelRightOpenIcon } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
 import { IconButton } from '@/components/custom-ui/icon-button';
@@ -140,10 +140,21 @@ export function IssueDetail({
   const description = useInlineText(issue, 'description');
   const [confirming, setConfirming] = useState(false);
   const [panelOpen, setPanelOpen] = useState(readPanelOpen);
+  const openButton = useRef<HTMLButtonElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
+  // Set when the member shows or hides the panel, whose button then leaves the page.
+  const refocus = useRef(false);
   const showPanel = (open: boolean) => {
+    refocus.current = true;
     setPanelOpen(open);
     writePanelOpen(open);
   };
+  // Focus moves to the button that undoes it, instead of falling back to the top of the page.
+  useEffect(() => {
+    if (!refocus.current) return;
+    refocus.current = false;
+    (panelOpen ? closeButton : openButton).current?.focus();
+  }, [panelOpen]);
   // Fills the cache the header's team crumb reads; the page itself does not name the team.
   useQuery(teamsQuery(workspace.id));
   const save = useMutation({
@@ -196,6 +207,8 @@ export function IssueDetail({
                   onChange={(e) => title.onChange(e.target.value)}
                   onBlur={title.commit}
                   onKeyDown={(e) => {
+                    // The Enter that ends an IME composition only confirms the text.
+                    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                     if (e.key === 'Enter') {
                       e.preventDefault();
                       e.currentTarget.blur();
@@ -204,6 +217,7 @@ export function IssueDetail({
                 />
                 {!panelOpen && (
                   <IconButton
+                    ref={openButton}
                     label="Open properties"
                     className="text-muted-foreground hover:text-foreground"
                     onClick={() => showPanel(true)}
@@ -247,6 +261,7 @@ export function IssueDetail({
           workspace={workspace}
           issue={issue}
           open={panelOpen}
+          closeRef={closeButton}
           onClose={() => showPanel(false)}
           save={(body) => save.mutate(body)}
           onSaved={(updated, body) => showSaved(queryClient, updated, body)}

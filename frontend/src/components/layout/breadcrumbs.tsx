@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { type QueryClient, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { Link, useMatches, useParams } from 'react-router-dom';
 
@@ -16,6 +16,7 @@ import { graphQuery } from '@/features/graphs/api';
 import { issueQuery, projectsQuery } from '@/features/issues/api';
 import { issuePath } from '@/features/issues/links';
 import { teamsQuery } from '@/features/workspaces/api';
+import type { Issue } from '@/schemas/issue';
 import { useWorkspaceStore } from '@/stores/workspace-store';
 
 import { isRouteHandle, type Crumb } from './route-handle';
@@ -46,15 +47,36 @@ interface CrumbItem {
   title?: string;
 }
 
+/** What an issue's crumbs need of it, which a list's copy of the issue has too. */
+type CrumbIssue = Pick<
+  Issue,
+  'id' | 'workspace_id' | 'team_id' | 'identifier' | 'title' | 'parent'
+>;
+
+/** The copy of an issue in a list already read, as the issue page shows it while its own loads. */
+function listedIssue(queryClient: QueryClient, issueId: string): CrumbIssue | undefined {
+  const lists = queryClient.getQueriesData<CrumbIssue[]>({
+    predicate: (query) => query.queryKey[0] === 'issues' && query.queryKey[2] === 'list',
+  });
+  for (const [, issues] of lists) {
+    const found = issues?.find((i) => i.id === issueId);
+    if (found) return found;
+  }
+  return undefined;
+}
+
 /**
  * The crumbs of an issue's page, after "Issues": its team, its parent if it has one, then the
  * issue itself (`ENG-7 Pick the bus`, cut short when long). Read from the caches the issue page
- * fills (the teams of the issue's own workspace, which need not be the current one); a team not
- * read yet is just "Team", so nothing is left loading once the issue is there.
+ * fills (the teams of the issue's own workspace, which need not be the current one), or from a
+ * list's copy of the issue until the page's own read lands; a team not read yet is just "Team",
+ * so nothing is left loading once the issue is there.
  */
 function IssueCrumbs({ first, last }: { first: boolean; last: boolean }) {
   const { issueId = '' } = useParams();
-  const { data: issue, status } = useQuery({ ...issueQuery(issueId), enabled: false });
+  const queryClient = useQueryClient();
+  const { data: read, status } = useQuery({ ...issueQuery(issueId), enabled: false });
+  const issue: CrumbIssue | undefined = read ?? listedIssue(queryClient, issueId);
   const { data: teams } = useQuery({
     ...teamsQuery(issue?.workspace_id ?? ''),
     enabled: false,

@@ -8,19 +8,25 @@ import { qk } from '@/lib/query-keys';
 import type { Issue } from '@/schemas/issue';
 import type { Workspace } from '@/schemas/workspace';
 
+import { dueLabel, localToday } from './due';
 import { IssueDetail } from './issue-detail';
 
-const { updateIssue, deleteIssue, empty } = vi.hoisted(() => ({
+const { updateIssue, deleteIssue, empty, slow } = vi.hoisted(() => ({
   updateIssue: vi.fn(),
   deleteIssue: vi.fn(),
   /** A query that reads an empty list, under its own key. */
   empty: (key: string) => () => ({ queryKey: [key], queryFn: () => Promise.resolve([]) }),
+  /** Whether the team's states are still on their way (they never arrive). */
+  slow: { states: false },
 }));
 
 vi.mock('./api', () => ({
   updateIssue,
   deleteIssue,
-  statesQuery: empty('states'),
+  statesQuery: () => ({
+    queryKey: ['states', slow.states],
+    queryFn: () => (slow.states ? new Promise(() => undefined) : Promise.resolve([])),
+  }),
   projectsQuery: empty('projects'),
   cyclesQuery: empty('cycles'),
 }));
@@ -39,7 +45,10 @@ beforeAll(() => {
   // jsdom has no scrolling; the pickers' lists scroll the picked option into view.
   Element.prototype.scrollIntoView = () => undefined;
 });
-afterEach(() => localStorage.clear());
+afterEach(() => {
+  localStorage.clear();
+  slow.states = false;
+});
 
 const at = '2026-10-20T09:00:00Z';
 
@@ -223,6 +232,23 @@ describe('the properties panel', () => {
     expect(localStorage.getItem('nexc.issue.properties')).toBe('open');
   });
 
+  it('hands the focus to the button that undoes the toggle', async () => {
+    renderDetail(listed);
+    fireEvent.click(screen.getByRole('button', { name: 'Close properties' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Open properties' })).toHaveFocus(),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Open properties' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Close properties' })).toHaveFocus(),
+    );
+  });
+
+  it('does not take the focus when the page opens', () => {
+    renderDetail(listed);
+    expect(document.body).toHaveFocus();
+  });
+
   it('opens closed when the member closed it before', () => {
     localStorage.setItem('nexc.issue.properties', 'closed');
     renderDetail(listed);
@@ -265,6 +291,32 @@ describe('the properties panel', () => {
     expect(updateIssue).toHaveBeenCalledWith(listed.id, { assignee_id: null });
     const keys = invalidated.mock.calls.map(([filters]) => filters?.queryKey);
     expect(keys).toContainEqual(qk.issues.inbox(workspace.id));
+  });
+
+  it('names the due date by what it shows, and keeps it when its day is clicked again', async () => {
+    const due = { ...fresh, due_date: '2026-10-17' };
+    const { client } = renderDetail(due);
+    const shown = dueLabel('2026-10-17', localToday(), true).text;
+    const button = screen.getByRole('button', { name: `Due date: ${shown}` });
+    expect(button).toHaveTextContent(shown);
+
+    fireEvent.click(button);
+    fireEvent.click(await screen.findByRole('button', { name: /selected/ }));
+    expect(client.getMutationCache().getAll()).toHaveLength(0);
+  });
+
+  it('names an unset due date by its prompt', () => {
+    renderDetail(fresh);
+    expect(screen.getByRole('button', { name: 'Set due date' })).toHaveTextContent('Set due date');
+  });
+
+  it('shows loading rows in a picker whose choices are on their way', async () => {
+    slow.states = true;
+    renderDetail(fresh);
+    fireEvent.click(screen.getByRole('button', { name: 'Status: Todo' }));
+    expect(await screen.findByRole('status', { name: 'Loading the choices' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Todo' })).toBeInTheDocument();
+    expect(screen.queryByText('Nothing matches.')).not.toBeInTheDocument();
   });
 
   it('picking the value it already has saves nothing', async () => {

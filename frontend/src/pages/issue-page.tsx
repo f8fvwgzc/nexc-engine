@@ -44,8 +44,9 @@ function IssueView({ issueId }: { issueId: string }) {
   } = useQuery({
     ...issueQuery(issueId),
     // Read again on every visit: the list it was opened from may be minutes old, and its copy
-    // shows until the fresh one lands.
-    staleTime: 0,
+    // shows until the fresh one lands. A copy read moments ago (pointed at from a sub-issue's
+    // row, say) is not asked for twice.
+    staleTime: 5_000,
     placeholderData: () => {
       const listed = listedIssue(queryClient, issueId);
       return listed && { ...listed, description: listed.description ?? '' };

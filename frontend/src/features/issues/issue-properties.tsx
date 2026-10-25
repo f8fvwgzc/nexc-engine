@@ -12,7 +12,7 @@ import {
   XIcon,
 } from 'lucide-react';
 import { m } from 'motion/react';
-import { useState, useSyncExternalStore, type ReactNode } from 'react';
+import { useState, useSyncExternalStore, type ReactNode, type Ref } from 'react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -68,14 +68,16 @@ const GHOST =
 /** Below `md` the panel follows the main column instead of standing beside it. */
 const PHONE = '(max-width: 767px)';
 
+function subscribePhone(onChange: () => void): () => void {
+  const query = window.matchMedia(PHONE);
+  query.addEventListener('change', onChange);
+  return () => query.removeEventListener('change', onChange);
+}
+
 /** Whether the screen is phone-sized, read in the same render that lays the panel out. */
 function usePhone(): boolean {
   return useSyncExternalStore(
-    (onChange) => {
-      const query = window.matchMedia(PHONE);
-      query.addEventListener('change', onChange);
-      return () => query.removeEventListener('change', onChange);
-    },
+    subscribePhone,
     () => window.matchMedia(PHONE).matches,
     () => false,
   );
@@ -99,7 +101,8 @@ interface Choice {
 
 /**
  * A property's value that opens a searchable list of what it can be, with a tick on the current
- * one. Picking another saves it; picking the same one only closes the list.
+ * one. Picking another saves it; picking the same one only closes the list. While the rest of the
+ * list loads, it offers what it already has above a few loading rows.
  */
 function PropertyPicker({
   label,
@@ -107,6 +110,7 @@ function PropertyPicker({
   value,
   text,
   choices,
+  loading = false,
   onPick,
   children,
   className,
@@ -119,6 +123,8 @@ function PropertyPicker({
   /** The current value as words, for the button's name. */
   text: string;
   choices: Choice[];
+  /** The choices are still being read. */
+  loading?: boolean;
   onPick: (value: string) => void;
   /** What the button shows: the value's glyph and name. */
   children: ReactNode;
@@ -141,7 +147,7 @@ function PropertyPicker({
         <Command>
           <CommandInput placeholder={search} aria-label={search} />
           <CommandList>
-            <CommandEmpty>Nothing matches.</CommandEmpty>
+            {!loading && <CommandEmpty>Nothing matches.</CommandEmpty>}
             <CommandGroup>
               {choices.map((choice) => (
                 <CommandItem
@@ -164,6 +170,13 @@ function PropertyPicker({
                 </CommandItem>
               ))}
             </CommandGroup>
+            {loading && (
+              <div role="status" aria-label="Loading the choices" className="space-y-2 px-3 pb-3">
+                <Skeleton className="h-3.5 w-32" />
+                <Skeleton className="h-3.5 w-24" />
+                <Skeleton className="h-3.5 w-28" />
+              </div>
+            )}
           </CommandList>
         </Command>
       </PopoverContent>
@@ -189,7 +202,8 @@ function DueDate({ issue, onPick }: { issue: Issue; onPick: (due: string | null)
         <Button
           variant="ghost"
           size="sm"
-          aria-label={`Due date: ${issue.due_date ?? 'none'}`}
+          // Named by what it shows, so it can be asked for by what is seen; the day is its title.
+          aria-label={due ? `Due date: ${due.text}` : 'Set due date'}
           title={issue.due_date ? `Due ${issue.due_date}` : undefined}
           className={cn(GHOST, due?.late && 'text-destructive', !due && 'text-muted-foreground')}
         >
@@ -198,11 +212,13 @@ function DueDate({ issue, onPick }: { issue: Issue; onPick: (due: string | null)
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-auto gap-0 p-0">
+        {/* Clicking the day already picked keeps it; only the button below clears it. */}
         <Calendar
           mode="single"
+          required
           selected={issue.due_date ? dayDate(issue.due_date) : undefined}
           defaultMonth={issue.due_date ? dayDate(issue.due_date) : undefined}
-          onSelect={(date) => pick(date ? localToday(date) : null)}
+          onSelect={(date) => pick(localToday(date))}
         />
         {issue.due_date && (
           <div className="px-2 pb-2">
@@ -307,6 +323,7 @@ function GithubField({
         }}
         onBlur={commit}
         onKeyDown={(e) => {
+          if (e.nativeEvent.isComposing || e.keyCode === 229) return;
           if (e.key === 'Enter') {
             e.preventDefault();
             commit();
@@ -402,6 +419,7 @@ export function IssueProperties({
   workspace,
   issue,
   open,
+  closeRef,
   onClose,
   save,
   onSaved,
@@ -410,6 +428,8 @@ export function IssueProperties({
   workspace: Workspace;
   issue: Issue;
   open: boolean;
+  /** The panel's close button, which takes the focus when the panel is opened from its button. */
+  closeRef?: Ref<HTMLButtonElement>;
   onClose: () => void;
   /** Saves a change to the issue. */
   save: (body: Partial<IssueInput>) => void;
@@ -419,22 +439,30 @@ export function IssueProperties({
 }) {
   const phone = usePhone();
   // What the pickers offer, read while the panel is open.
-  const { data: states = [] } = useQuery({
+  const { data: states = [], isPending: statesLoading } = useQuery({
     ...statesQuery(workspace.id, issue.team_id),
     enabled: open,
   });
   const projects = useQuery({ ...projectsQuery(workspace.id), enabled: open });
-  const { data: cycles = [] } = useQuery({
+  const { data: cycles = [], isPending: cyclesLoading } = useQuery({
     ...cyclesQuery(workspace.id, issue.team_id),
     enabled: open,
   });
   // Guests cannot list the workspace's members; they keep whoever is assigned.
-  const { data: members = [] } = useQuery({
+  const guest = workspace.role === 'guest';
+  const { data: members = [], isPending: membersLoading } = useQuery({
     ...membersQuery(workspace.id),
-    enabled: workspace.role !== 'guest' && open,
+    enabled: !guest && open,
   });
   const project = projects.data?.find((p) => p.id === issue.project_id);
-  const hidden = phone ? { height: 0, opacity: 0 } : { width: 0, opacity: 0 };
+  // Both sizes move, so a window that crosses the phone breakpoint while the panel is open does
+  // not keep the other layout's size (a phone's panel 18rem wide).
+  const hidden = phone
+    ? { height: 0, width: 'auto', opacity: 0 }
+    : { width: 0, height: 'auto', opacity: 0 };
+  const shown = phone
+    ? { height: 'auto', width: 'auto', opacity: 1 }
+    : { width: '18rem', height: 'auto', opacity: 1 };
 
   const stateChoices = (states.length > 0 ? states : [issue.state]).map((s) => ({
     value: s.id,
@@ -480,7 +508,7 @@ export function IssueProperties({
           key="properties"
           aria-label="Properties"
           initial={hidden}
-          animate={phone ? { height: 'auto', opacity: 1 } : { width: '18rem', opacity: 1 }}
+          animate={shown}
           exit={hidden}
           transition={spring}
           className="shrink-0 overflow-hidden md:overflow-y-auto"
@@ -503,6 +531,7 @@ export function IssueProperties({
               </IconButton>
               <MoreMenu workspace={workspace} issue={issue} />
               <IconButton
+                ref={closeRef}
                 label="Close properties"
                 className="text-muted-foreground hover:text-foreground"
                 onClick={onClose}
@@ -518,6 +547,7 @@ export function IssueProperties({
                   value={issue.state.id}
                   text={issue.state.name}
                   choices={stateChoices}
+                  loading={statesLoading}
                   onPick={(state_id) => save({ state_id })}
                 >
                   <StateGlyph category={issue.state.category} color={issue.state.color} />
@@ -551,6 +581,7 @@ export function IssueProperties({
                   value={issue.assignee?.user_id ?? NONE}
                   text={issue.assignee?.name ?? 'Unassigned'}
                   choices={assigneeChoices}
+                  loading={!guest && membersLoading}
                   onPick={(id) => save({ assignee_id: id === NONE ? null : id })}
                   className={issue.assignee ? undefined : 'text-muted-foreground'}
                 >
@@ -572,6 +603,7 @@ export function IssueProperties({
                   value={issue.project_id ?? NONE}
                   text={project?.name ?? (issue.project_id ? 'Unknown project' : 'No project')}
                   choices={projectChoices}
+                  loading={projects.isPending}
                   onPick={(id) => save({ project_id: id === NONE ? null : id })}
                   className={issue.project_id ? undefined : 'text-muted-foreground'}
                 >
@@ -599,6 +631,7 @@ export function IssueProperties({
                     value={issue.cycle?.id ?? NONE}
                     text={issue.cycle ? cycleLabel(issue.cycle) : 'No cycle'}
                     choices={cycleChoices}
+                    loading={cyclesLoading}
                     onPick={(id) => save({ cycle_id: id === NONE ? null : id })}
                     className={issue.cycle ? undefined : 'text-muted-foreground'}
                   >

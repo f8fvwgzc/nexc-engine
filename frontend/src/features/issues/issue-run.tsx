@@ -50,8 +50,9 @@ const Markdown = lazy(() =>
 );
 
 /**
- * The most files `/issues/{id}/run-artifacts` answers with (newest runs first). A report whose
- * run is older than that many files reads its own when asked.
+ * The most files `/issues/{id}/run-artifacts` answers with, newest run first (the server's
+ * `RUN_ARTIFACTS_MAX`). A list that long may have been cut off: a report whose run it leaves out,
+ * or holds only part of, reads its own files when asked.
  */
 const RUN_ARTIFACTS_MAX = 500;
 
@@ -575,8 +576,9 @@ function LiveRun({
 /**
  * The files a run made, for its report. Every report of the issue shares one read of the files
  * its runs made (the same one its "From runs" list shows), so a timeline of many runs costs one
- * request, not one per report. A run too old for that list reads its own files, but only when
- * the reader asks for them.
+ * request, not one per report. When that list may have been cut off before all of this run's
+ * files (it holds none of them, or the run is the oldest in it), the run reads its own files,
+ * but only when the reader asks for them.
  */
 function useReportFiles(issueId: string, runId: string | null) {
   const [asked, setAsked] = useState(false);
@@ -584,17 +586,23 @@ function useReportFiles(issueId: string, runId: string | null) {
     ...issueRunArtifactsQuery(issueId),
     enabled: Boolean(runId),
   });
-  const mine = (shared.data ?? []).filter((file) => file.run_id === runId);
-  // The shared list was cut off and holds nothing of this run: it may still have files.
-  const beyond = mine.length === 0 && (shared.data?.length ?? 0) >= RUN_ARTIFACTS_MAX;
+  const listed = shared.data ?? [];
+  const mine = listed.filter((file) => file.run_id === runId);
+  // Newest run first: a list cut off leaves out older runs, and may split the oldest it holds.
+  const partial =
+    listed.length >= RUN_ARTIFACTS_MAX && (mine.length === 0 || listed.at(-1)?.run_id === runId);
   const own = useQuery({
     ...artifactsQuery(runId ?? ''),
-    enabled: Boolean(runId) && beyond && asked,
+    enabled: Boolean(runId) && partial && asked,
   });
   return {
-    files: beyond ? (own.data ?? []) : mine,
-    /** Reads the run's own files: set when the shared list may not hold them. */
-    ask: beyond && !asked ? () => setAsked(true) : null,
+    files: partial && own.data ? own.data : mine,
+    /** Reads the run's own files: set when the shared list may not hold them all. */
+    ask: partial && !asked ? () => setAsked(true) : null,
+    /** Whether more files may be read (some of the run's are shown already). */
+    more: mine.length > 0,
+    /** The run's own files were read, and it made none. */
+    none: partial && own.data?.length === 0,
   };
 }
 
@@ -605,7 +613,7 @@ function useReportFiles(issueId: string, runId: string | null) {
  */
 export function RunReport({ event }: { event: IssueEvent }) {
   const runId = event.run_id;
-  const { files, ask } = useReportFiles(event.issue_id, runId);
+  const { files, ask, more, none } = useReportFiles(event.issue_id, runId);
   const status = event.to ?? 'finished';
   const verb =
     status === 'succeeded'
@@ -659,9 +667,10 @@ export function RunReport({ event }: { event: IssueEvent }) {
             onClick={ask}
           >
             <FileIcon className="size-3.5" />
-            Show the run’s files
+            {more ? 'Show all the run’s files' : 'Show the run’s files'}
           </Button>
         )}
+        {none && <p className="text-xs text-muted-foreground">The run made no files.</p>}
       </div>
     </li>
   );
