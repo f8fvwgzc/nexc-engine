@@ -9,6 +9,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 
+- CI fails on any RustSec advisory, unapproved licence or unknown source: `cargo deny check`
+  (`backend/deny.toml`) and `cargo audit` run on every push. To pass, rustls 0.23.46, tokio 1.54.1,
+  zip 9.1 and the webpki crates were updated. Released images carry Sigstore-signed build
+  provenance: `gh attestation verify oci://ghcr.io/f8fvwgzc/nexc-engine-<image>:<version> --owner f8fvwgzc`.
 - **Only the backend can sign an agent token (breaking; see the upgrade note below).** The per-run
   agent token was HS256 under a key derived from the runtime's bearer secret, so the runtime,
   which the design treats as untrusted, could mint any token it liked. It is now EdDSA (Ed25519):
