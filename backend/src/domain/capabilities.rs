@@ -143,7 +143,7 @@ pub struct Capabilities {
     #[schema(required = true)]
     pub data: DataScopes,
     /// Hosts the agent may call out to (`api.example.com`, `*.example.com`);
-    /// `null` allows any, `[]` none.
+    /// `null` and `[]` allow none: egress is denied unless a host is named.
     #[serde(default)]
     #[schema(required = true)]
     pub egress_hosts: Option<Vec<String>>,

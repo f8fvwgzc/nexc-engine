@@ -543,7 +543,14 @@ async fn a_decisions_only_agent_is_contained_by_the_decision_that_crosses(pool: 
         json!({"alerts": {"quarantine_risk_score": 5.0}}),
     )
     .await;
-    let (agent, secret) = external_agent(&app, &owner, "Sidecar", json!({})).await;
+    // Egress reaches only the hosts named: the partner, and the new hosts it asks for below.
+    let (agent, secret) = external_agent(
+        &app,
+        &owner,
+        "Sidecar",
+        json!({"egress_hosts": ["api.partner.example", "*.evil.example"]}),
+    )
+    .await;
     let aid: Uuid = agent["id"].as_str().unwrap().parse().unwrap();
     let principal = format!("agent://{wid}/Sidecar");
     let mut client = client(&server.url()).await;

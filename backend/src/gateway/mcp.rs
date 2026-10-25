@@ -1,21 +1,14 @@
-//! A small MCP client: JSON-RPC 2.0 to a server over the standard streams
-//! of a child process, or over streamable HTTP. One session per call:
-//! `initialize`, `notifications/initialized`, then `tools/list` or
-//! `tools/call`, so a server's state never crosses calls and a crashed
-//! server costs one call.
+//! A small MCP client: JSON-RPC 2.0 to a server over streamable HTTP. One
+//! session per call: `initialize`, `notifications/initialized`, then
+//! `tools/list` or `tools/call`, so a server's state never crosses calls.
+//! Every message read is bounded in size.
 //!
-//! A child process is started with an empty environment (`PATH` and a
-//! scratch `HOME` only), in a scratch directory of its own, with its
-//! standard error discarded, and is killed when the session ends. Every
-//! message read is bounded in size.
-
-use std::path::{Path, PathBuf};
-use std::process::Stdio;
+//! There is no stdio transport: the backend never starts a server's
+//! command. A stdio server runs in a sandbox of its own behind an HTTP
+//! bridge, and is registered by that bridge's URL.
 
 use futures::StreamExt;
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
 use crate::domain::mcp::{McpTool, TOOL_NAME_MAX};
 
@@ -29,8 +22,8 @@ const TOOLS_MAX: usize = 256;
 /// Why a session failed.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum McpError {
-    #[error("the server could not be started: {0}")]
-    Spawn(String),
+    #[error("{0}")]
+    Disabled(String),
     #[error("the server is not reachable: {0}")]
     Transport(String),
     #[error("the server answered badly: {0}")]
@@ -50,43 +43,20 @@ pub struct ToolCallOutput {
     pub bytes: usize,
 }
 
-/// Where a session goes.
-pub enum Target<'a> {
-    Stdio {
-        command: &'a str,
-        args: &'a [String],
-        /// A directory of the session's own, the child's working directory and `HOME`.
-        scratch: &'a Path,
-    },
-    Http {
-        client: &'a reqwest::Client,
-        url: &'a str,
-        auth_header: Option<&'a str>,
-    },
-}
-
-/// A child speaking JSON-RPC over its pipes; boxed so that `Transport`'s
-/// variants stay close in size (a `Child` is large on Linux).
-struct StdioTransport {
-    child: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
-    scratch: PathBuf,
-}
-
-enum Transport {
-    Stdio(Box<StdioTransport>),
-    Http {
-        client: reqwest::Client,
-        url: String,
-        auth_header: Option<String>,
-        session_id: Option<String>,
-    },
+/// Where a session goes: a streamable HTTP endpoint.
+pub struct Target<'a> {
+    /// The gateway's client, behind the SSRF guard.
+    pub client: &'a reqwest::Client,
+    pub url: &'a str,
+    pub auth_header: Option<&'a str>,
 }
 
 /// An open session with a server.
 pub struct Session {
-    transport: Transport,
+    client: reqwest::Client,
+    url: String,
+    auth_header: Option<String>,
+    session_id: Option<String>,
     next_id: u64,
     max_bytes: usize,
     /// What the server said it is.
@@ -94,61 +64,13 @@ pub struct Session {
 }
 
 impl Session {
-    /// Opens a session: starts the child or the HTTP exchange, then
-    /// `initialize` and `notifications/initialized`.
+    /// Opens a session: `initialize`, then `notifications/initialized`.
     pub async fn open(target: Target<'_>, max_bytes: usize) -> Result<Self, McpError> {
-        let transport = match target {
-            Target::Stdio {
-                command,
-                args,
-                scratch,
-            } => {
-                tokio::fs::create_dir_all(scratch)
-                    .await
-                    .map_err(|e| McpError::Spawn(format!("scratch directory: {e}")))?;
-                let path = std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".into());
-                let mut child = Command::new(command)
-                    .args(args)
-                    .env_clear()
-                    .env("PATH", path)
-                    .env("HOME", scratch)
-                    .env("TMPDIR", scratch)
-                    .env("LANG", "C.UTF-8")
-                    .current_dir(scratch)
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::null())
-                    .kill_on_drop(true)
-                    .spawn()
-                    .map_err(|e| McpError::Spawn(format!("{command}: {e}")))?;
-                let stdin = child
-                    .stdin
-                    .take()
-                    .ok_or_else(|| McpError::Spawn("no stdin".into()))?;
-                let stdout = child
-                    .stdout
-                    .take()
-                    .ok_or_else(|| McpError::Spawn("no stdout".into()))?;
-                Transport::Stdio(Box::new(StdioTransport {
-                    child,
-                    stdin,
-                    stdout: BufReader::new(stdout),
-                    scratch: scratch.to_path_buf(),
-                }))
-            }
-            Target::Http {
-                client,
-                url,
-                auth_header,
-            } => Transport::Http {
-                client: client.clone(),
-                url: url.to_owned(),
-                auth_header: auth_header.map(str::to_owned),
-                session_id: None,
-            },
-        };
         let mut session = Session {
-            transport,
+            client: target.client.clone(),
+            url: target.url.to_owned(),
+            auth_header: target.auth_header.map(str::to_owned),
+            session_id: None,
             next_id: 0,
             max_bytes,
             server_info: String::new(),
@@ -250,18 +172,6 @@ impl Session {
         })
     }
 
-    /// Ends the session; a child is killed.
-    pub async fn close(self) {
-        if let Transport::Stdio(stdio) = self.transport {
-            let StdioTransport {
-                mut child, scratch, ..
-            } = *stdio;
-            let _ = child.start_kill();
-            let _ = child.wait().await;
-            let _ = tokio::fs::remove_dir_all(scratch).await;
-        }
-    }
-
     async fn request(&mut self, method: &str, params: Value) -> Result<Value, McpError> {
         self.request_sized(method, params).await.map(|(v, _)| v)
     }
@@ -275,54 +185,28 @@ impl Session {
         self.next_id += 1;
         let id = self.next_id;
         let message = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
-        let (reply, bytes) = match &mut self.transport {
-            Transport::Stdio(stdio) => {
-                let StdioTransport { stdin, stdout, .. } = &mut **stdio;
-                write_line(stdin, &message).await?;
-                read_reply(stdin, stdout, id, self.max_bytes).await?
-            }
-            Transport::Http {
-                client,
-                url,
-                auth_header,
-                session_id,
-            } => {
-                let mut request = client
-                    .post(url.as_str())
-                    .header("content-type", "application/json")
-                    .header("accept", "application/json, text/event-stream")
-                    .header("mcp-protocol-version", PROTOCOL_VERSION)
-                    .json(&message);
-                if let Some(auth) = auth_header {
-                    request = request.header("authorization", auth.as_str());
-                }
-                if let Some(session) = session_id {
-                    request = request.header("mcp-session-id", session.as_str());
-                }
-                let response = request
-                    .send()
-                    .await
-                    .map_err(|e| McpError::Transport(e.without_url().to_string()))?;
-                if let Some(session) = response
-                    .headers()
-                    .get("mcp-session-id")
-                    .and_then(|v| v.to_str().ok())
-                {
-                    *session_id = Some(session.to_owned());
-                }
-                let status = response.status();
-                if !status.is_success() {
-                    return Err(McpError::Transport(format!("HTTP {status}")));
-                }
-                let event_stream = response
-                    .headers()
-                    .get("content-type")
-                    .and_then(|v| v.to_str().ok())
-                    .is_some_and(|ct| ct.starts_with("text/event-stream"));
-                let (body, bytes) = read_body(response, self.max_bytes, event_stream, id).await?;
-                (body, bytes)
-            }
-        };
+        let response = self
+            .post(&message)
+            .send()
+            .await
+            .map_err(|e| McpError::Transport(super::fetch::describe(e)))?;
+        if let Some(session) = response
+            .headers()
+            .get("mcp-session-id")
+            .and_then(|v| v.to_str().ok())
+        {
+            self.session_id = Some(session.to_owned());
+        }
+        let status = response.status();
+        if !status.is_success() {
+            return Err(McpError::Transport(format!("HTTP {status}")));
+        }
+        let event_stream = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|ct| ct.starts_with("text/event-stream"));
+        let (reply, bytes) = read_body(response, self.max_bytes, event_stream, id).await?;
         if let Some(error) = reply.get("error") {
             return Err(McpError::Rpc {
                 code: error["code"].as_i64().unwrap_or(0),
@@ -340,100 +224,38 @@ impl Session {
         }
     }
 
+    /// A JSON-RPC message posted to the server, with the session's headers.
+    fn post(&self, message: &Value) -> reqwest::RequestBuilder {
+        let mut request = self
+            .client
+            .post(self.url.as_str())
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("mcp-protocol-version", PROTOCOL_VERSION)
+            .json(message);
+        if let Some(auth) = &self.auth_header {
+            request = request.header("authorization", auth.as_str());
+        }
+        if let Some(session) = &self.session_id {
+            request = request.header("mcp-session-id", session.as_str());
+        }
+        request
+    }
+
     async fn notify(&mut self, method: &str, params: Value) -> Result<(), McpError> {
         let message = json!({"jsonrpc": "2.0", "method": method, "params": params});
-        match &mut self.transport {
-            Transport::Stdio(stdio) => write_line(&mut stdio.stdin, &message).await,
-            Transport::Http {
-                client,
-                url,
-                auth_header,
-                session_id,
-            } => {
-                let mut request = client
-                    .post(url.as_str())
-                    .header("content-type", "application/json")
-                    .header("accept", "application/json, text/event-stream")
-                    .header("mcp-protocol-version", PROTOCOL_VERSION)
-                    .json(&message);
-                if let Some(auth) = auth_header {
-                    request = request.header("authorization", auth.as_str());
-                }
-                if let Some(session) = session_id {
-                    request = request.header("mcp-session-id", session.as_str());
-                }
-                let response = request
-                    .send()
-                    .await
-                    .map_err(|e| McpError::Transport(e.without_url().to_string()))?;
-                if !response.status().is_success() {
-                    return Err(McpError::Transport(format!(
-                        "HTTP {} to a notification",
-                        response.status()
-                    )));
-                }
-                Ok(())
-            }
+        let response = self
+            .post(&message)
+            .send()
+            .await
+            .map_err(|e| McpError::Transport(super::fetch::describe(e)))?;
+        if !response.status().is_success() {
+            return Err(McpError::Transport(format!(
+                "HTTP {} to a notification",
+                response.status()
+            )));
         }
-    }
-}
-
-async fn write_line(stdin: &mut ChildStdin, message: &Value) -> Result<(), McpError> {
-    let mut line = serde_json::to_vec(message).expect("a JSON-RPC message serialises");
-    line.push(b'\n');
-    stdin
-        .write_all(&line)
-        .await
-        .map_err(|e| McpError::Transport(format!("writing to the server: {e}")))?;
-    stdin
-        .flush()
-        .await
-        .map_err(|e| McpError::Transport(format!("writing to the server: {e}")))
-}
-
-/// Reads lines until the reply to `id`; notifications are ignored and
-/// requests of the server are refused politely.
-async fn read_reply(
-    stdin: &mut ChildStdin,
-    stdout: &mut BufReader<ChildStdout>,
-    id: u64,
-    max_bytes: usize,
-) -> Result<(Value, usize), McpError> {
-    loop {
-        let mut line = Vec::new();
-        let read = {
-            let mut bounded = stdout.take(max_bytes as u64 + 1);
-            bounded
-                .read_until(b'\n', &mut line)
-                .await
-                .map_err(|e| McpError::Transport(format!("reading from the server: {e}")))?
-        };
-        if read == 0 {
-            return Err(McpError::Transport("the server closed its output".into()));
-        }
-        if line.len() > max_bytes {
-            return Err(McpError::Oversized(max_bytes));
-        }
-        let text = String::from_utf8_lossy(&line);
-        let text = text.trim();
-        if text.is_empty() {
-            continue;
-        }
-        let Ok(message) = serde_json::from_str::<Value>(text) else {
-            // Servers that log to stdout break the protocol; skip the noise.
-            continue;
-        };
-        match (message.get("id"), message.get("method")) {
-            (Some(reply_id), None) if reply_id.as_u64() == Some(id) => {
-                return Ok((message, line.len()));
-            }
-            (Some(request_id), Some(_)) => {
-                let refusal = json!({"jsonrpc": "2.0", "id": request_id,
-                    "error": {"code": -32601, "message": "not supported by this client"}});
-                write_line(stdin, &refusal).await?;
-            }
-            _ => {}
-        }
+        Ok(())
     }
 }
 

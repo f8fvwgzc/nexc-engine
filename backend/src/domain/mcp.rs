@@ -29,10 +29,17 @@ pub const TOOL_PREFIX: &str = "mcp:";
 /// The built-in gateway tool that fetches a URL.
 pub const FETCH_URL: &str = "fetch_url";
 
+/// Why the stdio transport is refused: the backend never starts a server's
+/// command, since whoever registers a server would run code on it.
+pub const STDIO_DISABLED: &str = "stdio MCP servers are not started by the backend: run the \
+    server in a sandbox of its own behind an HTTP bridge and register the bridge's URL \
+    (transport http)";
+
 string_enum!(
     /// How the backend reaches a server.
     McpTransport {
-        /// A child process the backend starts for each call, JSON-RPC over its stdin and stdout.
+        /// A child process, JSON-RPC over its stdin and stdout. Refused: kept so that a
+        /// server registered before is still listed (and removed), never started.
         Stdio => "stdio",
         /// Streamable HTTP: JSON-RPC posted to the URL.
         Http => "http",
@@ -228,18 +235,7 @@ impl McpServerInput {
             );
         }
         match self.transport {
-            McpTransport::Stdio => {
-                match self.command.as_deref().map(str::trim) {
-                    Some(command) if !command.is_empty() && command.len() <= TEXT_MAX => {}
-                    _ => errors.add("command", "names the executable of a stdio server"),
-                }
-                if self.url.is_some() {
-                    errors.add("url", "a stdio server has no URL");
-                }
-                if self.auth_header.is_some() {
-                    errors.add("auth_header", "a stdio server takes no header");
-                }
-            }
+            McpTransport::Stdio => errors.add("transport", STDIO_DISABLED),
             McpTransport::Http => {
                 match self.url.as_deref().map(str::trim) {
                     Some(url)
@@ -333,8 +329,20 @@ mod tests {
             allowed_tools: vec![],
             max_label: DataLabel::Internal,
         };
+        // The backend never starts a command: whoever registers a server would run code on it.
         let mut errors = FieldErrors::default();
         stdio.check(&mut errors);
+        let fields: Vec<&String> = errors.as_map().keys().collect();
+        assert_eq!(fields, ["transport"]);
+        let http = McpServerInput {
+            transport: McpTransport::Http,
+            command: None,
+            args: vec![],
+            url: Some("https://mcp.example.com/mcp".into()),
+            ..stdio
+        };
+        let mut errors = FieldErrors::default();
+        http.check(&mut errors);
         assert!(errors.is_empty(), "{:?}", errors.as_map());
         let bad = McpServerInput {
             name: "Bad Name".into(),

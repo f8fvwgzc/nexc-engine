@@ -387,9 +387,17 @@ async fn a_dropped_stream_fails_the_node_cleanly(pool: PgPool) {
 }
 
 /// A small HTTP server the gateway may fetch from: JSON at `/status`, a
-/// redirect at `/moved`, a binary at `/image`, something large at `/large`.
+/// redirect at `/moved`, a redirect to another host (this one by its name)
+/// at `/elsewhere`, a binary at `/image`, something large at `/large`.
 async fn fetchable() -> (String, u16) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let elsewhere = format!("http://localhost:{port}/status");
     let app = Router::new()
+        .route(
+            "/elsewhere",
+            get(move || async move { axum::response::Redirect::temporary(&elsewhere) }),
+        )
         .route(
             "/status",
             get(|| async { axum::Json(json!({"ok": true, "service": "fetchable"})) }),
@@ -416,8 +424,6 @@ async fn fetchable() -> (String, u16) {
                 )
             }),
         );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     (format!("http://127.0.0.1:{port}"), port)
 }
@@ -538,6 +544,97 @@ async fn a_gateway_tool_request_is_performed_by_the_backend_and_answered(pool: P
             .any(|a| a["rule"] == "egress.hosts" && a["run_id"] == rid),
         "{alerts}"
     );
+}
+
+/// Runs a graph of one `TOOL fetch_url` node of `target` as `role`; returns
+/// the run id and the gateway's answer.
+async fn fetch(
+    app: &TestApp,
+    token: &str,
+    seen: &common::grpc_runtime::Seen,
+    role: &str,
+    target: &str,
+) -> (String, String, bool) {
+    let gid = app.graph(token, "Fetch").await;
+    app.node(
+        token,
+        &gid,
+        json!({"title": "TOOL fetch_url", "kind": "task", "executor": "agent",
+            "agent_role": role, "content": json!({"url": target}).to_string()}),
+    )
+    .await;
+    let (rid, events) = run(app, token, &gid).await;
+    assert_eq!(events.last().unwrap().1["run"]["status"], "succeeded");
+    let (_, output, is_error) = seen.tool_results.lock().unwrap().last().cloned().unwrap();
+    (rid, output, is_error)
+}
+
+/// The SSRF guard on `fetch_url`: an allow-list that names a private
+/// address is not enough, the operator opens the range
+/// (`NEXC_EGRESS_ALLOW_PRIVATE`); the cloud metadata address is never
+/// reached; a redirect to another host is not followed; and an agent whose
+/// capabilities name no host reaches none.
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn fetch_url_reaches_only_what_the_operator_and_the_policy_open(pool: PgPool) {
+    let (url, seen) = fake_grpc_runtime().await;
+    let (site, port) = fetchable().await;
+    let closed = TestApp::new(
+        pool.clone(),
+        &[
+            ("NEXC_RUNTIME_PROTOCOL", "grpc"),
+            ("NEXC_RUNTIME_GRPC_URL", &url),
+            ("NEXC_EGRESS_ALLOW_PRIVATE", ""),
+        ],
+    )
+    .await;
+    let (token, _) = closed.register("owner@example.com").await;
+    agent(
+        &closed,
+        &token,
+        "Fetcher",
+        "fetcher",
+        json!({"egress_hosts": ["127.0.0.1", "localhost", "169.254.169.254"]}),
+    )
+    .await;
+    for target in [
+        format!("{site}/status"),
+        format!("http://localhost:{port}/status"),
+        "http://169.254.169.254/latest/meta-data/".to_owned(),
+    ] {
+        let (rid, output, is_error) = fetch(&closed, &token, &seen, "fetcher", &target).await;
+        assert!(
+            is_error && output.contains("egress.private"),
+            "{target}: {output}"
+        );
+        let spans = spans_of(&closed, &token, &rid).await;
+        assert!(
+            !spans.iter().any(|s| s["kind"] == "egress"),
+            "{target}: nothing left the platform"
+        );
+    }
+
+    // Loopback opened, as the test settings open it: a redirect to another host is not followed.
+    let open = grpc_app(pool, &url).await;
+    let elsewhere = format!("{site}/elsewhere");
+    let (rid, output, is_error) = fetch(&open, &token, &seen, "fetcher", &elsewhere).await;
+    assert!(is_error, "{output}");
+    assert!(
+        output.contains("redirected to another host (localhost)"),
+        "{output}"
+    );
+    let spans = spans_of(&open, &token, &rid).await;
+    let egress = spans.iter().find(|s| s["kind"] == "egress").unwrap();
+    assert_eq!(
+        egress["name"], "127.0.0.1",
+        "only the first host was reached"
+    );
+
+    // No host list is no host.
+    agent(&open, &token, "Wanderer", "wanderer", json!({})).await;
+    let status = format!("{site}/status");
+    let (_, output, is_error) = fetch(&open, &token, &seen, "wanderer", &status).await;
+    assert!(is_error && output.contains("egress.hosts"), "{output}");
+    assert!(output.contains("name no host"), "{output}");
 }
 
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]

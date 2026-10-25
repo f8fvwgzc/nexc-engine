@@ -21,10 +21,9 @@
 //! the graph's first read there (`docs/ONTOLOGY.md` §7). A transfer fails
 //! rather than leave them behind when onto-intelli does not answer.
 
-use std::net::IpAddr;
-
 use serde::Serialize;
 use serde_json::{Value, json};
+use sqlx::postgres::{PgConnectOptions, PgSslMode};
 use sqlx::{AssertSqlSafe, PgPool};
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -34,6 +33,7 @@ use crate::domain::ontology::Ontology;
 use crate::ontology::vocabulary::graph_key;
 use crate::ontology::{OntoError, Principal};
 use crate::repo;
+use crate::security::egress::EgressGuard;
 
 /// Rows copied per statement for the tables that can be paged by `id`.
 const BATCH: i64 = 1_000;
@@ -272,44 +272,43 @@ pub fn location(url: &str) -> String {
     format!("{scheme}://{rest}")
 }
 
-fn is_internal(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            v4.is_loopback() || v4.is_private() || v4.is_link_local() || v4.is_unspecified()
-        }
-        IpAddr::V6(v6) => {
-            v6.is_loopback() || v6.is_unspecified() || (v6.segments()[0] & 0xfe00) == 0xfc00
-        }
-    }
-}
-
-/// In production a workspace owner must not be able to make the server
-/// connect to its own network: targets that resolve to loopback, private or
-/// link-local addresses are refused.
-pub async fn check_target(url: &str, production: bool) -> Result<(), String> {
+/// A workspace owner must not be able to make the server connect to its
+/// own network: the target's host must resolve only to addresses the SSRF
+/// guard lets users reach (`NEXC_EGRESS_ALLOW_PRIVATE` opens private
+/// ranges). Returns the URL to connect with, pinned to the address checked
+/// so that the name cannot answer differently when the driver resolves it
+/// again; with `sslmode=verify-full` the name stays, since a server that
+/// is not the name's fails the certificate check anyway.
+pub async fn check_target(url: &str, guard: &EgressGuard) -> Result<String, String> {
     if !(url.starts_with("postgres://") || url.starts_with("postgresql://")) {
         return Err("the target must be a postgres:// URL".into());
     }
-    if !production {
-        return Ok(());
+    let mut parsed =
+        reqwest::Url::parse(url).map_err(|_| "the target is not a valid URL".to_owned())?;
+    if parsed
+        .query_pairs()
+        .any(|(key, _)| matches!(key.as_ref(), "host" | "hostaddr" | "port"))
+    {
+        return Err("name the target's host and port in the URL itself, not as parameters".into());
     }
-    let place = location(url);
-    let host_port = place
-        .split_once("://")
-        .map_or("", |(_, rest)| rest.split('/').next().unwrap_or(""));
-    let lookup = if host_port.contains(':') {
-        host_port.to_owned()
-    } else {
-        format!("{host_port}:5432")
-    };
-    let addresses: Vec<_> = tokio::net::lookup_host(&lookup)
+    let options: PgConnectOptions = url
+        .parse()
+        .map_err(|_| "the target is not a valid postgres:// URL".to_owned())?;
+    let host = options.get_host().to_owned();
+    if host.starts_with('/') || parsed.host_str().is_none() {
+        return Err("the target must name a host reached over the network".into());
+    }
+    let addresses = guard
+        .resolve(&host, options.get_port())
         .await
-        .map_err(|_| "the target's host name does not resolve".to_owned())?
-        .collect();
-    if addresses.is_empty() || addresses.iter().any(|a| is_internal(a.ip())) {
-        return Err("the target must be a public address".into());
+        .map_err(|why| format!("the target is not reached: {why}"))?;
+    if matches!(options.get_ssl_mode(), PgSslMode::VerifyFull) {
+        return Ok(url.to_owned());
     }
-    Ok(())
+    parsed
+        .set_ip_host(addresses[0].ip())
+        .map_err(|()| "the target's host cannot be pinned".to_owned())?;
+    Ok(parsed.to_string())
 }
 
 /// The columns of `table` on the target that a row can be written to:
@@ -601,28 +600,16 @@ pub async fn copy_files(
 /// Tells the Redis at `url` that the workspace now lives there: a small key
 /// the owner's own systems can look for. The server keeps nothing durable
 /// in Redis, so there is nothing more to move; the check is what matters.
-pub async fn hand_over_redis(url: &str, workspace: Uuid, target: &str) -> anyhow::Result<()> {
+pub async fn hand_over_redis(
+    url: &str,
+    guard: &EgressGuard,
+    workspace: Uuid,
+    target: &str,
+) -> anyhow::Result<()> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    crate::http::handlers::infrastructure::check_redis(url).await?;
-    let rest = url.trim_start_matches("redis://");
-    let (credentials, address) = match rest.rsplit_once('@') {
-        Some((credentials, address)) => (Some(credentials), address),
-        None => (None, rest),
-    };
-    let address = address.split('/').next().unwrap_or(address);
-    let address = if address.contains(':') {
-        address.to_owned()
-    } else {
-        format!("{address}:6379")
-    };
-    let mut stream = tokio::net::TcpStream::connect(&address).await?;
+    // The same connection the check makes (AUTH included), to the address the guard let through.
+    let mut stream = crate::http::handlers::infrastructure::connect_redis(url, Some(guard)).await?;
     let mut reply = [0u8; 256];
-    if let Some(password) = credentials.map(|c| c.rsplit_once(':').map_or(c, |(_, p)| p)) {
-        let auth = format!("*2\r\n$4\r\nAUTH\r\n${}\r\n{password}\r\n", password.len());
-        stream.write_all(auth.as_bytes()).await?;
-        // Only +OK or an error comes back; the check above already proved the password.
-        let _ = stream.read(&mut reply).await?;
-    }
     let key = format!("nexc:workspace:{workspace}");
     let value =
         json!({"workspace_id": workspace, "database": target, "moved_at": chrono::Utc::now()})
@@ -697,7 +684,7 @@ pub async fn run(
         report.push(copy_files(state, &target, workspace).await?);
         target.close().await;
         if let Some(redis) = redis_url.as_deref() {
-            hand_over_redis(redis, workspace, &location(&url))
+            hand_over_redis(redis, &state.egress, workspace, &location(&url))
                 .await
                 .map_err(|err| anyhow::anyhow!("the rows and files are there, but Redis: {err}"))?;
         }
@@ -744,24 +731,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn production_refuses_targets_inside_the_servers_network() {
+    async fn targets_inside_the_servers_network_are_refused() {
+        let guard = EgressGuard::default();
         for url in [
             "postgres://u:p@127.0.0.1:5432/db",
             "postgres://u:p@localhost/db",
             "postgres://u:p@10.0.0.8/db",
             "postgres://u:p@192.168.1.4:5432/db",
             "postgres://u:p@169.254.169.254/db",
+            "postgres://u:p@[::1]/db",
+            "postgres://u:p@db.example.com/db?host=/var/run/postgresql",
+            "postgres://u:p@db.example.com/db?hostaddr=127.0.0.1",
+            "mysql://u:p@db.example.com/db",
         ] {
-            assert!(check_target(url, true).await.is_err(), "{url}");
-            assert!(
-                check_target(url, false).await.is_ok(),
-                "{url} is fine in development"
-            );
+            assert!(check_target(url, &guard).await.is_err(), "{url}");
         }
-        assert!(
-            check_target("mysql://u:p@db.example.com/db", false)
+        // A range the operator opened is reached, at the address that was checked.
+        let open = EgressGuard::new(crate::security::egress::parse_allowed("127.0.0.0/8").unwrap());
+        assert_eq!(
+            check_target("postgres://u:p@127.0.0.1:5432/db", &open)
                 .await
-                .is_err()
+                .unwrap(),
+            "postgres://u:p@127.0.0.1:5432/db"
+        );
+        assert_eq!(
+            check_target("postgres://u:p%40ss@8.8.8.8/db?sslmode=require", &guard)
+                .await
+                .unwrap(),
+            "postgres://u:p%40ss@8.8.8.8/db?sslmode=require"
         );
     }
 

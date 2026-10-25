@@ -42,7 +42,10 @@ impl Validate for A2aCounterpartInput {
 
 /// The host of a card URL, checked as the gateway checks an egress host:
 /// http(s) without credentials, not private or loopback unless the server
-/// allows it in development, not denied by the workspace's policy.
+/// allows it in development (and the SSRF guard lets it through), not
+/// denied by the workspace's policy. A workspace policy that names no hosts
+/// does not refuse the counterpart here: an agent's call to it is decided
+/// under that agent's own host list.
 async fn checked_host(state: &AppState, wid: Uuid, url: &str) -> Result<String, AppError> {
     let host = check_url(url).map_err(|problem| AppError::field("card_url", problem))?;
     if is_private_host(&host) && !state.settings.a2a_allow_private_hosts {
@@ -53,6 +56,10 @@ async fn checked_host(state: &AppState, wid: Uuid, url: &str) -> Result<String, 
             ),
         ));
     }
+    state
+        .egress
+        .check_host(&host)
+        .map_err(|why| AppError::field("card_url", why))?;
     let policies = state.caches.policies(&state.db, wid).await?;
     let resolved = resolve(&levels_for(&policies, None, None), None);
     let decision = decide_with(
@@ -61,7 +68,8 @@ async fn checked_host(state: &AppState, wid: Uuid, url: &str) -> Result<String, 
         &[],
         &Action::Egress(&host),
     );
-    if !decision.allowed {
+    let unnamed = decision.rule == "egress.hosts" && resolved.capabilities.egress_hosts.is_none();
+    if !decision.allowed && !unnamed {
         return Err(AppError::field(
             "card_url",
             format!(

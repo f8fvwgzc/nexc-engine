@@ -34,8 +34,9 @@ export interface paths {
         /**
          * The public keys everything nexc signs verifies with, as a JWK set: the
          *     current key and the keys it replaced, each under its `kid` (the RFC 7638
-         *     thumbprint of the key). Public. Run seals, firewall decisions and
-         *     evidence bundles name the key they are signed with.
+         *     thumbprint of the key). Public, and kept by any cache for five minutes
+         *     (`PUBLIC_CACHE_CONTROL`). Run seals, firewall decisions and evidence
+         *     bundles name the key they are signed with.
          */
         get: operations["jwks"];
         put?: never;
@@ -425,7 +426,8 @@ export interface paths {
          * The keys agent tokens verify with: the one the backend signs with first,
          *     then the others it still accepts (`NEXC_AGENT_TOKEN_VERIFY_KEYS`: the
          *     previous key after a rotation, the next one before it). Public: they are
-         *     public keys, and the runtime fetches them without credentials.
+         *     public keys, and the runtime fetches them without credentials; any cache
+         *     may keep them for five minutes (`PUBLIC_CACHE_CONTROL`).
          */
         get: operations["jwks"];
         put?: never;
@@ -4644,7 +4646,7 @@ export interface components {
             delegation: components["schemas"]["Delegation"];
             /**
              * @description Hosts the agent may call out to (`api.example.com`, `*.example.com`);
-             *     `null` allows any, `[]` none.
+             *     `null` and `[]` allow none: egress is denied unless a host is named.
              */
             egress_hosts: string[] | null;
             /** @description Models the agent may run on; `null` allows any. */

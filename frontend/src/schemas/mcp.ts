@@ -3,6 +3,10 @@ import { z } from 'zod';
 import { dataLabelSchema } from './agent';
 import { idSchema, nullableTimestampSchema, timestampSchema } from './common';
 
+/**
+ * `stdio` is only ever listed, for a server registered before: the backend never starts a
+ * command, so a stdio server runs behind an HTTP bridge and is registered by its URL.
+ */
 export const MCP_TRANSPORTS = ['stdio', 'http'] as const;
 export const mcpTransportSchema = z.enum(MCP_TRANSPORTS);
 export type McpTransport = z.infer<typeof mcpTransportSchema>;
@@ -47,7 +51,7 @@ export const mcpCheckSchema = z.object({
 });
 export type McpCheck = z.infer<typeof mcpCheckSchema>;
 
-/** What a server is registered with. */
+/** What a server is registered with: streamable HTTP, the one transport the backend speaks. */
 export const mcpServerInputSchema = z.object({
   name: z
     .string()
@@ -55,11 +59,7 @@ export const mcpServerInputSchema = z.object({
     .min(1, { error: 'Name is required' })
     .max(64)
     .regex(/^[a-z0-9_-]+$/, { error: 'Use lowercase letters, digits, - or _' }),
-  transport: mcpTransportSchema,
-  command: z.string().trim().max(2000),
-  /** One argument per line. */
-  args: z.string().max(8000),
-  url: z.string().trim().max(2000),
+  url: z.string().trim().min(1, { error: 'URL is required' }).max(2000),
   /** Kept encrypted; never shown again. */
   auth_header: z.string().max(2000),
   /** Tool names, one per line; empty allows every tool. */
@@ -70,9 +70,6 @@ export type McpServerInput = z.infer<typeof mcpServerInputSchema>;
 
 export const EMPTY_MCP_SERVER: McpServerInput = {
   name: '',
-  transport: 'stdio',
-  command: '',
-  args: '',
   url: '',
   auth_header: '',
   allowed_tools: '',
@@ -86,12 +83,11 @@ export function toMcpServerBody(input: McpServerInput) {
       .split('\n')
       .map((line) => line.trim())
       .filter(Boolean);
-  const stdio = input.transport === 'stdio';
   return {
     name: input.name,
-    transport: input.transport,
-    ...(stdio ? { command: input.command, args: lines(input.args) } : { url: input.url }),
-    ...(!stdio && input.auth_header ? { auth_header: input.auth_header } : {}),
+    transport: 'http' as const,
+    url: input.url,
+    ...(input.auth_header ? { auth_header: input.auth_header } : {}),
     allowed_tools: lines(input.allowed_tools),
     max_label: input.max_label,
   };

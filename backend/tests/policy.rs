@@ -1335,7 +1335,15 @@ async fn credentials_personal_data_and_external_calls_are_caught_on_the_way_out(
     let app = TestApp::new(pool, &[("NEXC_RUNTIME_URL", &runtime)]).await;
     let (owner, _) = app.register("owner@example.com").await;
     let wid = workspace(&app, &owner).await;
-    agent(&app, &owner, "Clerk", "clerk", json!({})).await;
+    // The partner host the `EGRESS` behaviour calls is named: egress reaches only those.
+    agent(
+        &app,
+        &owner,
+        "Clerk",
+        "clerk",
+        json!({"egress_hosts": ["api.partner.example"]}),
+    )
+    .await;
     let principal = format!("agent://{wid}/Clerk");
     let gid = app.graph(&owner, "Collect what we know").await;
     for title in ["LEAK the key", "PII contacts", "EGRESS post"] {
@@ -1398,7 +1406,7 @@ async fn credentials_personal_data_and_external_calls_are_caught_on_the_way_out(
     // The trace never carries the content, only counts.
     let text = serde_json::to_string(&spans).unwrap();
     assert!(!text.contains("sk-ant") && !text.contains("ada@example.org"));
-    // An external call the policy allows (no host restriction) with internal content: fine.
+    // An external call to a host the capabilities name, with internal content: fine.
     assert!(
         !spans
             .iter()
@@ -1485,7 +1493,8 @@ async fn confidential_content_stays_off_the_wire(pool: PgPool) {
         &owner,
         "Clerk",
         "clerk",
-        json!({"data": {"labels": ["public", "internal", "confidential"]}}),
+        json!({"data": {"labels": ["public", "internal", "confidential"]},
+            "egress_hosts": ["api.partner.example"]}),
     )
     .await;
     let gid = app.graph(&owner, "Release the Rotterdam invoices").await;

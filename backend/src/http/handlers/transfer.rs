@@ -159,10 +159,9 @@ pub async fn check(
         &member_of(&state, auth, wid).await?,
         WorkspaceAction::Delete,
     )?;
-    let production = state.settings.is_production();
-    let database = match transfer::check_target(&req.url, production).await {
+    let database = match transfer::check_target(&req.url, &state.egress).await {
         Err(reason) => (false, reason),
-        Ok(()) => match transfer::probe_target(&req.url, wid).await {
+        Ok(pinned) => match transfer::probe_target(&pinned, wid).await {
             Ok(version) => (true, version),
             Err(err) => (false, err.to_string()),
         },
@@ -171,7 +170,7 @@ pub async fn check(
         None => (None, None),
         Some(url) => match tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            super::infrastructure::check_redis(url),
+            super::infrastructure::check_redis(url, Some(&state.egress)),
         )
         .await
         {
@@ -208,7 +207,8 @@ pub async fn start(
         WorkspaceAction::Delete,
     )?;
     let url = req.url.trim().to_owned();
-    transfer::check_target(&url, state.settings.is_production())
+    // Connected to at the address the guard checked.
+    let pinned = transfer::check_target(&url, &state.egress)
         .await
         .map_err(|reason| AppError::field("url", reason))?;
     // A transfer whose server went away would block the next one for ever.
@@ -261,6 +261,6 @@ pub async fn start(
     .await;
     let id = started.id;
     let redis_url = req.redis_url.clone();
-    tokio::spawn(async move { transfer::run(&state, id, wid, url, redis_url).await });
+    tokio::spawn(async move { transfer::run(&state, id, wid, pinned, redis_url).await });
     Ok((StatusCode::ACCEPTED, Json(started)))
 }

@@ -25,6 +25,7 @@ use crate::http::extract::{PlatformAdmin, ValidatedJson};
 use crate::http::problem::Problem;
 use crate::otlp::OtlpStatus;
 use crate::repo;
+use crate::security::egress::EgressGuard;
 
 const CHECK_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -200,23 +201,41 @@ async fn check_postgres(url: &str) -> Result<ConnectionCheck, sqlx::Error> {
     })
 }
 
-/// Says PING to a Redis server (after AUTH when the URL carries a password)
-/// and returns its reply.
-pub(crate) async fn check_redis(url: &str) -> anyhow::Result<String> {
+/// A connection to the Redis of `url`, after AUTH when the URL carries a
+/// password. With `guard` (a target a workspace owner names) the host must
+/// resolve only to addresses the SSRF guard lets users reach, and the
+/// connection goes to the address checked.
+pub(crate) async fn connect_redis(
+    url: &str,
+    guard: Option<&EgressGuard>,
+) -> anyhow::Result<tokio::net::TcpStream> {
     let rest = url.trim_start_matches("redis://");
     let (credentials, address) = match rest.rsplit_once('@') {
         Some((credentials, address)) => (Some(credentials), address),
         None => (None, rest),
     };
     let address = address.split('/').next().unwrap_or(address);
-    let address = if address.contains(':') {
-        address.to_owned()
-    } else {
-        format!("{address}:6379")
+    let (host, port) = match address.rsplit_once(':') {
+        Some((host, port)) if !host.ends_with(':') && !port.contains(']') => (
+            host,
+            port.parse::<u16>()
+                .map_err(|_| anyhow::anyhow!("the Redis port is not a number"))?,
+        ),
+        _ => (address, 6379),
     };
-    let mut stream = tokio::net::TcpStream::connect(&address).await?;
-    let mut reply = [0u8; 256];
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    let mut stream = match guard {
+        Some(guard) => {
+            let addresses = guard
+                .resolve(host, port)
+                .await
+                .map_err(|why| anyhow::anyhow!("the Redis is not reached: {why}"))?;
+            tokio::net::TcpStream::connect(addresses.as_slice()).await?
+        }
+        None => tokio::net::TcpStream::connect((host, port)).await?,
+    };
     if let Some(password) = credentials.map(|c| c.rsplit_once(':').map_or(c, |(_, p)| p)) {
+        let mut reply = [0u8; 256];
         let auth = format!("*2\r\n$4\r\nAUTH\r\n${}\r\n{password}\r\n", password.len());
         stream.write_all(auth.as_bytes()).await?;
         let read = stream.read(&mut reply).await?;
@@ -225,6 +244,14 @@ pub(crate) async fn check_redis(url: &str) -> anyhow::Result<String> {
             "the server refused the password"
         );
     }
+    Ok(stream)
+}
+
+/// Says PING to a Redis server (after AUTH when the URL carries a password)
+/// and returns its reply; `guard` as for [`connect_redis`].
+pub(crate) async fn check_redis(url: &str, guard: Option<&EgressGuard>) -> anyhow::Result<String> {
+    let mut stream = connect_redis(url, guard).await?;
+    let mut reply = [0u8; 256];
     stream.write_all(b"*1\r\n$4\r\nPING\r\n").await?;
     let read = stream.read(&mut reply).await?;
     let text = String::from_utf8_lossy(&reply[..read]).trim().to_owned();
@@ -250,7 +277,7 @@ pub async fn check(
         migrations_applied: None,
     };
     let result = if req.url.starts_with("redis://") {
-        match tokio::time::timeout(CHECK_TIMEOUT, check_redis(&req.url)).await {
+        match tokio::time::timeout(CHECK_TIMEOUT, check_redis(&req.url, None)).await {
             Ok(Ok(detail)) => ConnectionCheck {
                 reachable: true,
                 detail,

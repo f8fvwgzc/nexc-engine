@@ -26,7 +26,7 @@ use crate::domain::alert::AlertKind;
 use crate::domain::capabilities::{Capabilities, DataLabel};
 use crate::domain::dlp::{self, Destination};
 use crate::domain::mcp::{
-    FETCH_URL, GatewayTool, McpCheck, McpServer, McpTransport, split_tool_name,
+    FETCH_URL, GatewayTool, McpCheck, McpServer, McpTransport, STDIO_DISABLED, split_tool_name,
 };
 use crate::domain::policy::{Action, Decision, Effect, Rules, decide_with};
 use crate::domain::policy_document::Severity;
@@ -37,6 +37,7 @@ use crate::engine::executor::ExecContext;
 use crate::realtime::events::LogLevel;
 use crate::repo;
 use crate::repo::mcp_servers::McpServerRow;
+use crate::security::egress::EgressGuard;
 
 /// Opening a connection for a gateway call.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -89,14 +90,16 @@ pub const CHECK_TIMEOUT: Duration = Duration::from_secs(15);
 /// Longest tool output handed to the model, in characters.
 const OUTPUT_MAX_CHARS: usize = 200_000;
 
-/// The gateway's own HTTP client: no redirects of its own (every hop's host
-/// is decided), short connect timeout, no cookies.
-pub fn http_client() -> anyhow::Result<reqwest::Client> {
-    Ok(reqwest::Client::builder()
-        .connect_timeout(CONNECT_TIMEOUT)
-        .redirect(reqwest::redirect::Policy::none())
-        .user_agent(concat!("nexc-engine-gateway/", env!("CARGO_PKG_VERSION")))
-        .build()?)
+/// The gateway's own HTTP client: behind the SSRF guard (every address a
+/// host resolves to is judged as the connection opens), no redirects of its
+/// own (every hop's host is decided), no proxy, short connect timeout, no
+/// cookies.
+pub fn http_client(guard: &EgressGuard) -> anyhow::Result<reqwest::Client> {
+    Ok(guard.client(
+        reqwest::Client::builder()
+            .connect_timeout(CONNECT_TIMEOUT)
+            .user_agent(concat!("nexc-engine-gateway/", env!("CARGO_PKG_VERSION"))),
+    )?)
 }
 
 /// What the runtime asked the backend to do.
@@ -194,7 +197,11 @@ pub async fn tools_for(
     let mut tools = vec![GatewayTool::fetch_url()];
     match repo::mcp_servers::list(&state.db, workspace).await {
         Ok(servers) => {
-            for row in servers {
+            // A stdio server's tools are not offered: the backend does not start it.
+            for row in servers
+                .iter()
+                .filter(|row| row.server.transport == McpTransport::Http)
+            {
                 tools.extend(row.server.gateway_tools());
             }
         }
@@ -231,14 +238,6 @@ fn auth_header_of(state: &AppState, row: &McpServerRow) -> Option<String> {
     }
 }
 
-fn scratch_dir(state: &AppState) -> std::path::PathBuf {
-    state
-        .settings
-        .data_dir
-        .join("gateway")
-        .join(Uuid::now_v7().to_string())
-}
-
 /// Opens a session with a registered server.
 async fn open_session(
     state: &AppState,
@@ -247,22 +246,11 @@ async fn open_session(
 ) -> Result<mcp::Session, mcp::McpError> {
     let server = &row.server;
     match server.transport {
-        McpTransport::Stdio => {
-            let scratch = scratch_dir(state);
-            mcp::Session::open(
-                mcp::Target::Stdio {
-                    command: server.command.as_deref().unwrap_or_default(),
-                    args: &server.args,
-                    scratch: &scratch,
-                },
-                max_bytes,
-            )
-            .await
-        }
+        McpTransport::Stdio => Err(mcp::McpError::Disabled(STDIO_DISABLED.into())),
         McpTransport::Http => {
             let auth = auth_header_of(state, row);
             mcp::Session::open(
-                mcp::Target::Http {
+                mcp::Target {
                     client: &state.gateway_http,
                     url: server.url.as_deref().unwrap_or_default(),
                     auth_header: auth.as_deref(),
@@ -281,9 +269,7 @@ pub async fn check_server(state: &AppState, row: &McpServerRow) -> McpCheck {
     let attempt = async {
         let mut session = open_session(state, row, max_bytes).await?;
         let tools = session.list_tools().await;
-        let info = session.server_info.clone();
-        session.close().await;
-        tools.map(|t| (t, info))
+        tools.map(|t| (t, session.server_info))
     };
     let found = match tokio::time::timeout(CHECK_TIMEOUT, attempt).await {
         Ok(Ok((tools, info))) => McpCheck {
@@ -522,6 +508,11 @@ fn decide_host(ctx: &ExecContext, host: &str) -> Decision {
             ),
         );
     }
+    // Named or not, a private address is reached only in a range the operator opened; a name
+    // is judged again by its addresses as the connection opens.
+    if let Err(why) = ctx.state.egress.check_host(host) {
+        return Decision::deny("egress.private", why);
+    }
     hosts
 }
 
@@ -758,6 +749,10 @@ async fn perform_timed(
         );
         return call.refuse("tool_call", &req.tool, &decision, false).await;
     }
+    if server.transport == McpTransport::Stdio {
+        let decision = Decision::deny("mcp.transport", STDIO_DISABLED);
+        return call.refuse("tool_call", &req.tool, &decision, false).await;
+    }
     let host = server.host();
     let label = ctx.strictest_label();
     if label.rank() > server.max_label.rank() {
@@ -770,21 +765,9 @@ async fn perform_timed(
         );
         return call.refuse("egress", &host, &decision, false).await;
     }
-    if server.transport == McpTransport::Http {
-        let host_decision = decide_host(ctx, &host);
-        if !host_decision.allowed && host_decision.rule != "egress.private" {
-            return call.refuse("egress", &host, &host_decision, false).await;
-        }
-    } else {
-        let labels = dlp::decide(
-            &ctx.rules.dlp,
-            label,
-            &dlp::Findings::default(),
-            Destination::Egress(&host),
-        );
-        if !labels.allowed {
-            return call.refuse("egress", &host, &labels, false).await;
-        }
+    let host_decision = decide_host(ctx, &host);
+    if !host_decision.allowed {
+        return call.refuse("egress", &host, &host_decision, false).await;
     }
     let screened = screen_arguments(ctx, args_text, &host);
     if !screened.allowed {
@@ -793,9 +776,7 @@ async fn perform_timed(
     let transport = server.transport.as_str();
     let work = async {
         let mut session = open_session(&ctx.state, &row, max_bytes).await?;
-        let result = session.call_tool(tool_name, &req.arguments).await;
-        session.close().await;
-        result
+        session.call_tool(tool_name, &req.arguments).await
     };
     let outcome = match overhead.tool(tokio::time::timeout(timeout, work)).await {
         Ok(Ok(output)) => {
