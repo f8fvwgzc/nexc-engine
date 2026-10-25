@@ -1,7 +1,7 @@
 # nexc-engine as a product on four cores: the migration plan
 
-_Written 2026-10-26 against `main` at `c8ecd34`, with the security PRs #20 (audit blockers) and
-#21 (gRPC TLS) open. This is a plan. It moves no code._
+_Written 2026-10-26 against `main` at `c259cb6` (after Phase 0's #19 merged), with the security
+PRs #20 (audit blockers) and #21 (gRPC TLS) open. This is a plan. It moves no code._
 
 The owner decided on 2026-10-26: nexc-engine becomes a **product**, a Linear-style project tool
 (issues, projects, cycles, teams, boards, notifications). It is built on four core repositories,
@@ -68,7 +68,7 @@ dependency, a sibling checkout or a copied file.
 
 ## 3. `backend/src/`, module by module
 
-Line counts are from `c8ecd34`. Where a module mixes concerns, its files are split by
+Line counts are from `c259cb6`. Where a module mixes concerns, its files are split by
 destination.
 
 ### 3.1 Top-level files and small modules
@@ -76,13 +76,13 @@ destination.
 | Module | Lines | What it is | Decision |
 | --- | ---: | --- | --- |
 | `main.rs`, `lib.rs` | — | Entry points | **Stays.** |
-| `app/` (`router`, `state`, `caches`, `workers`) | 1,399 | Router, shared state, hot-read caches, background workers | **Stays**, shrinking. `AppState` loses the clients and workers of moved modules and gains the core clients. |
+| `app/` (`router`, `state`, `caches`, `workers`) | 1,352 | Router, shared state, hot-read caches, background workers | **Stays**, shrinking. `AppState` loses the clients and workers of moved modules and gains the core clients. |
 | `http/` (`extract`, `problem`, `middleware/`) | — | Extractors, problem details, ETag, idempotency, rate limit | **Stays.** `extract.rs` (the `AuthUser`/`Caller` extractor) verifies Tutela tokens with `tutela-sdk` (Tutela §5 step 1). |
-| `realtime/` | 851 | SSE and WebSocket fan-out through PostgreSQL `LISTEN/NOTIFY` | **Stays.** It is the product's push channel to browsers. |
+| `realtime/` | 854 | SSE and WebSocket fan-out through PostgreSQL `LISTEN/NOTIFY` | **Stays.** It is the product's push channel to browsers. |
 | `observability/` | 798 | Metrics, latency | **Stays.** |
 | `dsa/` | 1,026 | BM25, graph, LRU, priority queue, token bucket, union-find | **Stays** as product utilities. `bm25` leaves with knowledge (onto-intelli) and `priority` with the scheduler (symphony), each once its last user is gone. |
 | `kernel/` (C `ffi`, `reference`) | 289 | SHA-256 and the word-hash embedding in C | **Goes with its users.** The trace hash chain goes to attache, the built-in embedding to onto-intelli. The product keeps a plain `sha2` call where it needs a digest (tickets, idempotency keys). |
-| `config/` (`mod`, `vars`, `secret`, `oidc`) | 2,122 | Typed settings | **Stays.** `oidc.rs` goes to Tutela (the trust config of `tutela-sdk`). The `NEXC_LLM_*` settings follow the LLM contract (§8). |
+| `config/` (`mod`, `vars`, `secret`, `oidc`) | 2,078 | Typed settings | **Stays.** `oidc.rs` goes to Tutela (the trust config of `tutela-sdk`). The `NEXC_LLM_*` settings follow the LLM contract (§9). |
 | `cli/` (`doctor`, `init`) | 1,066 | `nexc doctor`, `nexc init`, `nexc user create`, `nexc onto migrate` | **Stays.** `user create` goes to Tutela (users are made at the issuer), and `onto migrate` is deleted once onto-intelli holds every vocabulary. |
 | `orchestrator/` | 360 | Health of the runtime and of symphony | **Stays, replaced.** It becomes the health of the four cores, shown on the infrastructure page. |
 | `rpc.rs` | — | Generated `nexc.runtime.v1` and `nexc.firewall.v1` services, channel pool, TLS (#21) | **Moves to attache.** Both protocols are attache's. The product keeps the channel/TLS helper only if a core it calls speaks gRPC (onto-intelli does). |
@@ -90,9 +90,9 @@ destination.
 | `bin/nexc_verify.rs` | 106 | Offline verifier of evidence bundles | **Moves to attache** with the ledger. Bundles exported before the move keep verifying with the published keys (§7.2). |
 | `otlp/` | 425 | OTLP export of the agent trace | **Moves to attache** (it exports the ledger's spans). |
 | `firewall/` | 2,380 | Agent Firewall API (gRPC), live decisions, approvals over gRPC | **Moves to attache.** |
-| `gateway/` (`fetch`, `mcp`, `a2a`) | 1,733 | Tools gateway: `fetch_url`, MCP over HTTP, A2A as a tool | **Moves to attache.** |
+| `gateway/` (`fetch`, `mcp`, `a2a`) | 1,902 | Tools gateway: `fetch_url`, MCP over HTTP, A2A as a tool | **Moves to attache.** |
 | `a2a/` (`card`, `client`, `inbound`) | 1,542 | Agent-to-agent: the card, outbound tasks, the inbound endpoint | **Moves to attache.** |
-| `alerting/` | 1,072 | Routing of security alerts to webhooks and Slack | **Moves to attache.** The product's own notifications (the inbox) are separate and stay. |
+| `alerting/` | 1,058 | Routing of security alerts to webhooks and Slack | **Moves to attache.** The product's own notifications (the inbox) are separate and stay. |
 | `memory/` (`index`, `topics`, `vectors`) | 1,105 | Agent memory: extraction, index, vectors | **Moves to onto-intelli.** |
 | `ontology/` | 8,234 | The product's client of onto-intelli: vocabulary, projection of issues and projects, the map, ask, facts | **Stays as the onto-intelli client**, shrinking. `migrate.rs` is deleted after the vocabulary migration. `facts.rs` (trace → facts, "ask the audit") moves to attache, which then feeds onto-intelli itself. `stub.rs` stays as the contract-test stub. |
 
@@ -113,14 +113,14 @@ destination.
 | Files | Decision | Notes |
 | --- | --- | --- |
 | `issue_report.rs` | **Stays** | A finished run reports back to its issue. It becomes a finished symphony task reporting to its issue. |
-| `assistant.rs`, `summary.rs` | **Stays** | The issue assistant and day summaries are product features. Their model calls go through the LLM contract (§8). |
+| `assistant.rs`, `summary.rs` | **Stays** | The issue assistant and day summaries are product features. Their model calls go through the LLM contract (§9). |
 | `editor.rs`, `deps.rs`, `analysis.rs`, `templates.rs`, `planner.rs` | **Stays** | A graph is the product's breakdown of an issue into work: editing, dependency detection, critical path, starter templates and the planner's proposal. Executing it moves (below). |
 | `json_stream.rs` | **Stays** | Utility. |
 | `transfer.rs` | **Stays**, shrinking | Moves a workspace's product data to the owner's database. Each moved table leaves its list (the test `every_table_is_listed_once_and_after_what_it_refers_to` keeps it honest). |
 | `workspaces.rs` | **Stays**, coordinating | Erasing a workspace (its rows, its files, its evidence). After the moves it erases the product's data and asks each core to erase the org's data in it (Tutela, attache, symphony, onto-intelli). |
 | `account.rs`, `sso.rs`, `two_factor.rs` | **Tutela** | Account events, SSO linking (#20 already hardened it), the second factor. |
-| `credentials.rs` | **Stays, rewritten** | Resolves the LLM settings for a call: becomes the LLM contract client (§8). BYOK keys are read from `tutela-vault`. |
-| `scheduler.rs` (101.8K), `lease.rs`, `commands.rs` | **texc-symphony** | DAG execution, run leases and takeover (docs/HA.md), operator commands to a run. The product hands each runnable node to symphony as a task and lets symphony block and unblock it (§7.3). |
+| `credentials.rs` | **Stays, rewritten** | Resolves the LLM settings for a call: becomes the LLM contract client (§9). BYOK keys are read from `tutela-vault`. |
+| `scheduler.rs` (101.8K), `lease.rs`, `commands.rs` | **texc-symphony**, once it has the prerequisites of §6 phase 4 | DAG execution, run leases and takeover (docs/HA.md), operator commands to a run. The product hands each node to symphony as a task with its dependencies (§7.3). Until symphony can hold dependencies, plan without executing and retry, these stay in the product. |
 | `executor/llm.rs`, `executor/symphony.rs` | **texc-symphony** | The built-in one-call executor becomes symphony's API agent loop. The bridge becomes `symphony-tasks-client`. |
 | `executor/agent.rs`, `executor/runtime_grpc.rs` | **attache** | Driving the agent runtime (NDJSON and gRPC). Symphony's tasks reach agents through attache. |
 | `artifacts.rs` | **texc-symphony** | Run outputs on disk. The product keeps issue attachments (`artifact_files`), which are separate. |
@@ -133,7 +133,7 @@ destination.
 | --- | --- |
 | `issues`, `cycles`, `search`, `insight`, `artifact_files`, `realtime`, `health`, `latency`, `templates`, `graphs`, `nodes`, `edges`, `plans` | **Stays.** |
 | `teams`, `workspaces` | **Split.** Product metadata stays: the team's key, name, workflow and issue states; the workspace's name, slug and settings, keyed by the Tutela org id. Members, invites and roles go to Tutela. |
-| `settings` | **Split.** Product preferences stay. LLM settings follow the contract (§8); their keys go to `tutela-vault`. |
+| `settings` | **Split.** Product preferences stay. LLM settings follow the contract (§9); their keys go to `tutela-vault`. |
 | `ontology` | **Stays** (it mints the onto-intelli UI session and proxies the map). |
 | `transfer`, `infrastructure` | **Stays.** `infrastructure` shows the cores' health. |
 | `auth`, `account`, `sso`, `agent_token_keys` | **Tutela.** |
@@ -159,7 +159,7 @@ These follow their handlers and engine files. Concretely:
 
 | Files | Decision |
 | --- | --- |
-| `mod.rs`, `service.rs`, `retry.rs`, `sse.rs` | **Stays** as the LLM contract client (§8): one interface for the product's own calls (assistant, planner, summaries), in direct mode or gateway mode. |
+| `mod.rs`, `service.rs`, `retry.rs`, `sse.rs` | **Stays** as the LLM contract client (§9): one interface for the product's own calls (assistant, planner, summaries), in direct mode or gateway mode. |
 | `demo.rs` | **Stays.** The offline provider for trials, tests and `make seed-demo`. It is product-local and not part of the contract. |
 | `anthropic.rs`, `openai_compat.rs`, `router.rs`, `breaker.rs`, `pricing.rs`, `catalog.rs` | **attache** (the model gateway owns providers, limits, pricing and metering). In direct mode the product keeps the two adapters until every installation runs a gateway. |
 | `claude_code.rs` | **texc-symphony** (its Claude Code backend). It also stops a workspace from running the operator's CLI login on the backend (an open item of #20). |
@@ -173,7 +173,10 @@ The whole runtime **moves to attache**: its agents, the runner, the per-run poli
 already routes every model call of attache's runtime through its model gateway.
 
 One exception: **document parsing** (`parsing/`: PDF, DOCX, PPTX, XLSX, HTML, Markdown, tables)
-moves to **onto-intelli** with knowledge, which is what ingestion needs it for.
+moves to **onto-intelli** with knowledge, which is what ingestion needs it for. The backend's
+`engine/knowledge.rs` calls the runtime's `/v1/parse` for every non-text upload, so between
+phase 3 (the agent runtime leaves) and phase 5 (knowledge leaves) `parsing/` runs alone as a
+parse-only service: the same image without agents, keys or egress.
 
 Its tests (`agent-runtime/tests/`) move with it: `test_parsing.py` to onto-intelli, everything
 else to attache.
@@ -200,11 +203,11 @@ remove stage, so the product never carries two copies of one concern for longer 
 
 | Phase | Move | Needs | Done when |
 | --- | --- | --- | --- |
-| 0 | Security fixes land: #20, #21 (and Phase 0's #19, which makes `main` green) | — | Merged; CI green on `main` |
-| 1 | **LLM connection contract v1** (§8): the product reads `LLM_*` keys from `llm-config`/`llm-credentials` and can call attache's model gateway | attache's model gateway (attache #13) for gateway mode; nothing for direct mode | Both modes run in CI; old `NEXC_LLM_*` names are read with a deprecation warning for one release |
+| 0 | Security fixes land: #20 and #21 (Phase 0's #19, which made `main` green, merged on 2026-10-26) | — | Merged; CI green on `main` |
+| 1 | **LLM connection contract v1** (§9): the product reads `LLM_*` keys from `llm-config`/`llm-credentials` and can call attache's model gateway | attache's model gateway (attache #13) for gateway mode; nothing for direct mode | Both modes run in CI; old `NEXC_LLM_*` names are read with a deprecation warning for one release |
 | 2 | **Identity to Tutela** (§7.1): token check, users, orgs, memberships and roles, vault, safenet | Tutela phase A (`tutela-sdk`, `tutela-pdp`, `tutela-vault`, `tutela-safenet`); phase B for the Console and runtime roles | 1–2 weeks of shadow role decisions with no unexplained mismatch, one release flipped, old auth deleted |
-| 3 | **AgentSecOps to attache** (§7.2): agents, policies, firewall, approvals, risk, DLP, the gateways, A2A, the ledger, the runtime | Phase 2 (agent principals and delegated tokens are Tutela phase B); attache's registry, ledger import and runtime protocol | Shadow firewall decisions match for 1–2 weeks, the ledger verifies after import, `agent-runtime/` deleted here |
-| 4 | **Execution to texc-symphony** (§7.3): the scheduler, leases, executors, run outputs | Phase 3 (symphony tasks reach agents through attache); symphony PRs #4 (task API auth) and #5 (task API, client crate) | 1–2 weeks of shadow plans (below) with no unexplained difference, then cut-over, then `scheduler.rs` deleted |
+| 3 | **AgentSecOps to attache** (§7.2): agents, policies, firewall, approvals, risk, DLP, the gateways, A2A, the ledger, the runtime | Phase 2 (agent principals and delegated tokens are Tutela phase B); attache's registry, ledger import and runtime protocol; **and document parsing kept alive**: knowledge ingestion parses every non-text upload through the runtime's `/v1/parse` until phase 5 | Shadow firewall decisions match for 1–2 weeks and the ledger verifies after import. Then `agent-runtime/` is deleted **except `parsing/`**, which keeps serving `/v1/parse` as a parse-only service (no agents, no keys, no egress) until phase 5 moves it to onto-intelli |
+| 4 | **Execution to texc-symphony** (§7.3): the scheduler, leases, executors, run outputs | Phase 3 (symphony tasks reach agents through attache); symphony PRs #4 (task API auth) and #5 (task API, client crate); **and three features #5 does not have, to add to symphony first:** (1) dependencies on create: a task names the tasks it waits for, and is queued only when they have succeeded; (2) a plan or dry-run endpoint that returns the order and the waiting set of a set of tasks without running them; (3) a retry policy per task (attempts, backoff, which failures are retried). Leases and takeover come with them, so a symphony replica that dies hands its tasks on. | 1–2 weeks of shadow plans (below) with no unexplained difference, then cut-over, then `scheduler.rs` deleted. Until (1)–(3) exist, phase 4 does not start and the product keeps its scheduler |
 | 5 | **Knowledge and memory to onto-intelli** (§7.4) | onto-intelli's Tutela work (per-property masking, `ai_reach`, about 6–9 person-weeks by Tutela's estimate) | 1–2 weeks of shadow retrieval with agreed overlap, then cut-over, then the tables dropped |
 | 6 | Clean-up: drop moved tables and settings, slim `AppState`, shrink `transfer.rs`, update `docs/` | 1–5 | The product builds with only its own modules and the core clients |
 
@@ -267,7 +270,8 @@ gateway, and the same counter is reused.
 **Cut-over.**
 1. New runs start on attache's runtime.
 2. Runs in flight finish on nexc's: the lease keeper stops claiming new runs.
-3. Once none are left, nexc's runtime, gateways and firewall are switched off.
+3. Once none are left, nexc's runtime, gateways and firewall are switched off. The runtime's
+   `/v1/parse` stays up as the parse-only service until phase 5 (§4).
 
 ### 7.3 Execution to texc-symphony
 
@@ -277,13 +281,18 @@ gateway, and the same counter is reused.
 | `runs`, `node_runs`, `run_lease_events`, `run_commands` | History stays read-only in the product, or is exported to symphony's store if symphony offers an import. New runs are symphony tasks. A product table maps `(run, node)` to a symphony task id. |
 | `artifacts` (run outputs on disk) | Existing outputs stay where they are, read-only. New outputs are symphony's, linked from the task. |
 
-A node becomes a symphony task. Its upstream nodes become the task's blockers, released with the
-task API's `unblock` as they finish; the product follows each task with the SSE watch. Retries,
-leases and takeover (docs/HA.md) are symphony's from then on.
+A node becomes a symphony task that names its upstream nodes' tasks as its dependencies
+(prerequisite (1) of phase 4); symphony queues it when they have succeeded, and the product
+follows each task with the SSE watch. This is not what `blocked` and `unblock` mean in symphony
+#5: there, `blocked` is an agent waiting for an operator or out of budget, `unblock` re-queues a
+blocked or failed task (409 otherwise), a task never retries by itself, and a create request
+with unknown fields is refused. Retries, leases and takeover (docs/HA.md) become symphony's only
+once prerequisites (1)–(3) are in symphony. Until then the product keeps them, and phase 4 waits.
 
 **Shadow** (work must never run twice, so nothing executes in shadow). For 1–2 weeks, each run
-also asks symphony to plan the same graph without executing it. The waves, order and blocked set
-are compared with `scheduler.rs`'s, and any difference is logged.
+also asks symphony's plan endpoint (prerequisite (2) of phase 4) to plan the same graph without
+executing it. Its order and waiting set are compared with `scheduler.rs`'s waves, and any
+difference is logged.
 
 ### 7.4 Knowledge and memory to onto-intelli
 
@@ -304,7 +313,7 @@ a label, the embedding).
 | --- | --- | --- |
 | Identity → Tutela | `tests/auth.rs`, `account.rs`, `oidc.rs` (+ `common/oidc.rs`, the provider stub), `platform.rs`, the membership and role parts of `workspaces.rs`, the authentication parts of `worst_case.rs`, and the unit tests of `security/` (password, TOTP, JWT, session, `secret_box`, `egress`) | A contract test of the `Caller` extractor against `tutela-sdk` in library mode; the shadow-mismatch logging test; `worst_case.rs` keeps "nobody gets in without a token" and "an outsider reads nothing of another workspace", now with Tutela tokens |
 | AgentSecOps → attache | `tests/firewall.rs`, `firewall_risk.rs`, `gateway.rs`, `a2a.rs`, `alerting.rs`, `policy.rs`, `secops.rs`, `identity.rs`, `trace.rs`, `recording.rs`, `evidence.rs`, `evidence_kept.rs`, `audit.rs` ("ask the audit"), `otlp.rs`, `runtime_grpc.rs`, `grpc_tls.rs` (#21), `sessions.rs` (roll-ups), and all of `agent-runtime/tests/` except `test_parsing.py` | A contract test of the product's calls to attache (start a run, read its outcome and roll-ups) with a stub, and a live job |
-| Execution → texc-symphony | `tests/engine.rs`, `ha.rs`, `artifacts.rs`, and the execution parts of `graphs.rs` | `graphs.rs` keeps graph editing, dependency detection and analysis; `issues.rs` keeps the issue ↔ graph link (`issue_report`); a contract test against `symphony-tasks-client` with a stub |
+| Execution → texc-symphony | `tests/engine.rs`, `ha.rs`, `artifacts.rs`, and the execution parts of `graphs.rs` | `graphs.rs` keeps graph editing, dependency detection and analysis; `issues.rs` keeps the issue ↔ graph link (`issue_report`); a contract test against `symphony-tasks-client` with a stub that covers dependency release, the plan endpoint and retries (phase 4's prerequisites) |
 | Knowledge and memory → onto-intelli | `tests/knowledge.rs`, `memory_scale.rs`, `memory_vectors.rs`, and `agent-runtime/tests/test_parsing.py` | `ontology.rs` and `onto_live.rs` (the onto-intelli contract, stub and live) |
 | Stays | — | `issues.rs`, `search.rs`, `insight.rs`, `realtime.rs`, `caches.rs`, `idempotency.rs`, `schema.rs`, `transfer.rs`, `api_latency.rs` (re-seeded without the moved endpoints) |
 
@@ -368,6 +377,9 @@ When `LLM_GATEWAY_URL` is set the product runs in gateway mode; otherwise in dir
   a workspace's own key only works in direct mode.
 - **Product calls outside runs** (assistant, summaries) must be bindable at attache's gateway, which
   today accepts only calls bound to a run (attache #13).
+- **Symphony's missing features.** Phase 4 needs three features texc-symphony #5 does not have:
+  dependencies on create, a plan or dry-run endpoint, and a retry policy (§6). They are symphony
+  work, in symphony's repository, before phase 4 starts.
 - **Run history.** Whether symphony imports old runs or the product keeps them read-only is
   symphony's call. Either works for the product.
 - **Embeddings.** Re-embedding a large knowledge base costs model calls. Copy vectors when the
