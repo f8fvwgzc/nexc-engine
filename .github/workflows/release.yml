@@ -79,6 +79,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Sigstore-signed build provenance for each image (actions/attest-build-provenance).
+      id-token: write
+      attestations: write
     strategy:
       matrix:
         image: [backend, frontend, runtime]
@@ -111,8 +114,20 @@ jobs:
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf "${IMAGE}@sha256:%s " *)
-      - name: Inspect
-        run: docker buildx imagetools inspect "${{ env.IMAGE_PREFIX }}-${{ matrix.image }}:${{ steps.meta.outputs.version }}"
+      - id: inspect
+        name: Inspect
+        env:
+          REF: ${{ env.IMAGE_PREFIX }}-${{ matrix.image }}:${{ steps.meta.outputs.version }}
+        run: |
+          docker buildx imagetools inspect "$REF"
+          echo "digest=$(docker buildx imagetools inspect "$REF" --format '{{json .Manifest}}' | jq -r .digest)" >>"$GITHUB_OUTPUT"
+      # Verify with: gh attestation verify oci://ghcr.io/f8fvwgzc/nexc-engine-<image>:<version> --owner f8fvwgzc
+      - name: Sign the image's build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ env.IMAGE_PREFIX }}-${{ matrix.image }}
+          subject-digest: ${{ steps.inspect.outputs.digest }}
+          push-to-registry: true
 
   github-release:
     name: GitHub release
@@ -137,7 +152,7 @@ jobs:
             echo
             echo "### Container images"
             for image in backend frontend runtime; do
-              echo "- \`${IMAGE_PREFIX}-${image}:${version}\` (linux/amd64, linux/arm64, SBOM + provenance)"
+              echo "- \`${IMAGE_PREFIX}-${image}:${version}\` (linux/amd64, linux/arm64, SBOM + provenance, signed: \`gh attestation verify oci://${IMAGE_PREFIX}-${image}:${version} --owner ${GITHUB_REPOSITORY_OWNER}\`)"
             done
           } >> "${RUNNER_TEMP}/notes.md"
       - uses: softprops/action-gh-release@v3
