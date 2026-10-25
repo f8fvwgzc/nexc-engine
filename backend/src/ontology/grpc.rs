@@ -85,7 +85,7 @@ impl GrpcOntology {
         settings: &ChannelSettings,
         metrics: Arc<Metrics>,
     ) -> Result<Self, OntoError> {
-        let settings = settings.connect_timeout(CONNECT_TIMEOUT);
+        let settings = settings.clone().connect_timeout(CONNECT_TIMEOUT);
         let channel = crate::rpc::channel(url, &settings)
             .map_err(|err| OntoError::Invalid(format!("NEXC_ONTO_URL: {err}")))?;
         let bearer = token.map(str::to_owned);
