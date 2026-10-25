@@ -12,13 +12,18 @@
 # NEXC_BACKEND_REPLICAS=2 in .env, so every later `docker compose up -d` keeps both, then
 #
 #   docker compose up -d
-#   docker compose restart frontend     # its nginx resolves every backend replica when it starts
 #
-# The replicas share PostgreSQL and the nexc-data volume. A run executes on one of them; when
-# that one stops (a crash, `docker stop nexc-backend-1`, an upgrade), the other takes the run
-# over: at once after a clean stop, which hands runs over, or once the lease ran out after a crash
-# (NEXC_RUN_LEASE_SECS, 30 s by default, plus a few seconds). `docker compose stop backend` stops
-# every replica. Restart frontend again whenever the number of replicas changes.
+# The frontend's nginx looks the backend up again every 10 s, so it reaches every replica, and a
+# backend that is recreated (`docker compose up -d --build backend`) at its new address, without
+# a restart of its own. The replicas share PostgreSQL and the nexc-data volume. A run executes on
+# one of them; when that one stops (a crash, `docker stop nexc-backend-1`, an upgrade), the other
+# takes the run over: at once after a clean stop, which hands runs over, or once the lease ran out
+# after a crash (NEXC_RUN_LEASE_SECS, 30 s by default, plus a few seconds). `docker compose stop
+# backend` stops every replica. Each replica keeps a pool of NEXC_DB_MAX_CONNECTIONS (20)
+# connections to PostgreSQL, whose max_connections is 100: replicas x pool stays under it.
+#
+# Without --build, the images are pulled: `latest` is the last release tag (v*), not main. Set
+# NEXC_IMAGE_TAG to an image of your own, or build (docs/INFRASTRUCTURE.md, Deploying).
 
 name: nexc
 
