@@ -53,6 +53,26 @@ jobs:
       - name: Test
         run: cargo test --locked
 
+  supply-chain:
+    name: Supply chain (cargo-deny, cargo-audit)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.99.0
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.20.2,cargo-audit@0.22.2
+      # Advisories, licences, bans and sources, per backend/deny.toml.
+      - name: cargo deny check
+        run: cargo deny --locked check
+      - name: cargo audit
+        if: ${{ !cancelled() }}
+        run: cargo audit
+
   api-latency:
     name: API latency smoke (make prove-api, reduced)
     runs-on: ubuntu-24.04
@@ -256,7 +276,7 @@ jobs:
 
   images:
     name: Docker image (${{ matrix.image }})
-    needs: [backend, frontend, runtime, infra]
+    needs: [backend, frontend, runtime, infra, supply-chain]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
