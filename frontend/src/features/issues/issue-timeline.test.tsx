@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -11,12 +11,15 @@ import * as f from '@/test/fixtures';
 
 import { IssueTimeline } from './issue-timeline';
 
-const { listEvents, createComment, updateComment, deleteComment } = vi.hoisted(() => ({
-  listEvents: vi.fn(),
-  createComment: vi.fn(),
-  updateComment: vi.fn(),
-  deleteComment: vi.fn(),
-}));
+const { listEvents, createComment, updateComment, deleteComment, addReaction, removeReaction } =
+  vi.hoisted(() => ({
+    listEvents: vi.fn(),
+    createComment: vi.fn(),
+    updateComment: vi.fn(),
+    deleteComment: vi.fn(),
+    addReaction: vi.fn(),
+    removeReaction: vi.fn(),
+  }));
 
 vi.mock('./api', () => ({
   issueEventsQuery: (issueId: string) => ({
@@ -26,6 +29,8 @@ vi.mock('./api', () => ({
   createComment,
   updateComment,
   deleteComment,
+  addReaction,
+  removeReaction,
 }));
 vi.mock('./issue-run', () => ({ RunReport: () => null }));
 
@@ -149,6 +154,8 @@ function event(id: string, change: Partial<IssueEvent>): IssueEvent {
     created_at: at,
     edited_at: null,
     run_id: null,
+    reactions: [],
+    parent_id: null,
     ...change,
   };
 }
@@ -176,6 +183,13 @@ async function show(label: string) {
 const foldToggle = () => screen.getByRole('button', { name: /^Activity/ });
 const editField = () => screen.queryByRole('textbox', { name: 'Edit comment' });
 
+/** Opens the menu of a comment by `author` and picks Edit. */
+async function edit(author = me.name) {
+  const menu = await screen.findByRole('button', { name: `Actions for the comment by ${author}` });
+  fireEvent.keyDown(menu, { key: 'Enter' });
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Edit' }));
+}
+
 beforeEach(() => {
   localStorage.clear();
   useAuthStore.setState({ user: f.user });
@@ -202,7 +216,7 @@ describe('a comment posted while the activity hides comments', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'New comment' }), {
       target: { value: 'Latency budget: 1 ms.' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(await screen.findByText('Latency budget: 1 ms.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Show: All activity' })).toBeInTheDocument();
@@ -213,7 +227,7 @@ describe('a comment posted while the activity hides comments', () => {
 describe('a comment edit in progress', () => {
   async function startEditing() {
     renderTimeline();
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    await edit();
     fireEvent.change(editField()!, { target: { value: 'Use EtherCAT.' } });
   }
 
@@ -272,7 +286,7 @@ describe('mentions', () => {
     fireEvent.keyDown(field, { key: 'Tab' });
     expect(field).toHaveValue('Ask @Grace Hopper and @Researcher ');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() =>
       expect(createComment).toHaveBeenCalledWith(issue.id, `Ask ${grace} and ${agent}`),
     );
@@ -321,7 +335,7 @@ describe('mentions', () => {
     updateComment.mockReset();
     updateComment.mockReturnValue(new Promise(() => {}));
     renderTimeline();
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    await edit();
     fireEvent.change(editField()!, { target: { value: 'Use EtherCAT.' } });
     fireEvent.keyDown(editField()!, { key: 'Enter', metaKey: true });
     await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled());
@@ -333,7 +347,7 @@ describe('mentions', () => {
     updateComment.mockResolvedValue(event('2', { body: 'edited' }));
     listEvents.mockResolvedValue([event('2', { body: `${grace} check this` })]);
     renderTimeline();
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    await edit();
     expect(editField()).toHaveValue('@Grace Hopper check this');
     fireEvent.change(editField()!, { target: { value: '@Grace Hopper check this again' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
@@ -344,5 +358,170 @@ describe('mentions', () => {
         `${grace} check this again`,
       ),
     );
+  });
+});
+
+describe('reactions', () => {
+  const grace = { user_id: GRACE, name: 'Grace Hopper' };
+  const liked = event('5', {
+    actor: grace,
+    body: 'Ship it.',
+    reactions: [{ emoji: '👍', count: 1, reacted: false, users: [grace] }],
+  });
+
+  beforeEach(() => {
+    addReaction.mockReset();
+    removeReaction.mockReset();
+  });
+
+  it('show at once when clicked, then what the server answers', async () => {
+    listEvents.mockResolvedValue([liked]);
+    let answer: (reactions: IssueEvent['reactions']) => void = () => {};
+    addReaction.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    renderTimeline();
+    const chip = await screen.findByRole('button', { name: '👍 1' });
+    expect(chip).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByText('Grace Hopper reacted')).toBeInTheDocument();
+
+    fireEvent.click(chip);
+    // Before the server answers.
+    expect(await screen.findByRole('button', { name: '👍 2' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(screen.getByText('Grace Hopper and you reacted')).toBeInTheDocument();
+    expect(addReaction).toHaveBeenCalledWith(issue.id, liked.id, '👍');
+
+    // The server knows of a third person who reacted meanwhile.
+    const alan = { user_id: '0199bbbb-0000-7000-8000-00000000a003', name: 'Alan Turing' };
+    answer([{ emoji: '👍', count: 3, reacted: true, users: [me, alan, grace] }]);
+    expect(await screen.findByRole('button', { name: '👍 3' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(screen.getByText('Alan Turing and 2 others reacted')).toBeInTheDocument();
+  });
+
+  it('come back as they were when the server refuses', async () => {
+    const mineLiked = event('5', {
+      body: 'Ship it.',
+      reactions: [{ emoji: '🎉', count: 1, reacted: true, users: [me] }],
+    });
+    listEvents.mockResolvedValue([mineLiked]);
+    let refuse: (error: Error) => void = () => {};
+    removeReaction.mockReturnValue(new Promise((_, reject) => (refuse = reject)));
+    renderTimeline();
+    fireEvent.click(await screen.findByRole('button', { name: '🎉 1' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: '🎉 1' })).not.toBeInTheDocument(),
+    );
+    expect(removeReaction).toHaveBeenCalledWith(issue.id, mineLiked.id, '🎉');
+
+    refuse(new Error('Not allowed'));
+    expect(await screen.findByRole('button', { name: '🎉 1' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(screen.getByText('You reacted')).toBeInTheDocument();
+  });
+
+  it('are added from the picker of allowed emoji', async () => {
+    addReaction.mockResolvedValue([{ emoji: '🚀', count: 1, reacted: true, users: [me] }]);
+    renderTimeline();
+    fireEvent.click(await screen.findByRole('button', { name: 'Add a reaction' }));
+    const picker = await screen.findByRole('group', { name: 'Pick a reaction' });
+    expect(within(picker).getAllByRole('button')).toHaveLength(10);
+    fireEvent.click(within(picker).getByRole('button', { name: 'rocket' }));
+
+    expect(await screen.findByRole('button', { name: '🚀 1' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(addReaction).toHaveBeenCalledWith(issue.id, mine.id, '🚀');
+  });
+});
+
+describe('replies', () => {
+  const grace = { user_id: GRACE, name: 'Grace Hopper' };
+  const answer = event('6', {
+    actor: grace,
+    body: 'Agreed, CAN FD.',
+    parent_id: mine.id,
+    created_at: '2026-10-20T09:30:00Z',
+  });
+
+  beforeEach(() => createComment.mockReset());
+
+  it('show in their comment’s thread, and Enter sends one there', async () => {
+    const posted = event('7', { body: 'Ordering the parts.', parent_id: mine.id });
+    listEvents.mockResolvedValue([moved, mine, answer]);
+    createComment.mockResolvedValue(posted);
+    renderTimeline();
+    const box = await screen.findByRole('textbox', { name: `Reply to ${me.name}` });
+    const thread = box.closest('li');
+    expect(thread).toHaveTextContent('Agreed, CAN FD.');
+
+    listEvents.mockResolvedValue([moved, mine, answer, posted]);
+    fireEvent.change(box, { target: { value: 'Ordering the parts.' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    await waitFor(() =>
+      expect(createComment).toHaveBeenCalledWith(issue.id, 'Ordering the parts.', mine.id),
+    );
+    await waitFor(() => expect(thread).toHaveTextContent('Ordering the parts.'));
+    expect(screen.getByRole('textbox', { name: `Reply to ${me.name}` })).toHaveValue('');
+    // Shift+Enter is a new line, not a reply.
+    expect(createComment).toHaveBeenCalledTimes(1);
+  });
+
+  it('open from Reply with the focus in the box, which Escape closes while empty', async () => {
+    renderTimeline();
+    fireEvent.click(await screen.findByRole('button', { name: 'Reply' }));
+    const box = await screen.findByRole('textbox', { name: `Reply to ${me.name}` });
+    await waitFor(() => expect(box).toHaveFocus());
+    fireEvent.keyDown(box, { key: 'Enter', shiftKey: true });
+    expect(createComment).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(box, { key: 'Escape' });
+    await waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: /^Reply to/ })).not.toBeInTheDocument(),
+    );
+  });
+
+  it('to a reply start by mentioning its author', async () => {
+    listEvents.mockResolvedValue([mine, answer]);
+    createComment.mockResolvedValue(event('7', { body: 'ok', parent_id: mine.id }));
+    renderTimeline();
+    fireEvent.click(await screen.findByRole('button', { name: 'Reply to Grace Hopper' }));
+    const box = screen.getByRole('textbox', { name: `Reply to ${me.name}` });
+    await waitFor(() => expect(box).toHaveValue('@Grace Hopper '));
+    // The caret waits after the mention.
+    await waitFor(() => expect(box).toHaveFocus());
+    expect((box as HTMLTextAreaElement).selectionStart).toBe('@Grace Hopper '.length);
+
+    fireEvent.change(box, { target: { value: '@Grace Hopper ordered.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send reply' }));
+    await waitFor(() =>
+      expect(createComment).toHaveBeenCalledWith(
+        issue.id,
+        `@[Grace Hopper](user:${GRACE}) ordered.`,
+        mine.id,
+      ),
+    );
+  });
+});
+
+describe('changes', () => {
+  it('one person made in a row read as one entry, under its first change', async () => {
+    const priority = event('8', {
+      kind: 'priority',
+      to: 'High',
+      created_at: '2026-10-20T09:02:00Z',
+    });
+    listEvents.mockResolvedValue([moved, priority, mine]);
+    renderTimeline();
+    const first = await screen.findByText(/moved this from Backlog to Todo/);
+    expect(first.closest('li')).toHaveTextContent('set priority to High');
+    expect(screen.getByText(/Use CAN FD\./).closest('li')).not.toHaveTextContent('priority');
   });
 });

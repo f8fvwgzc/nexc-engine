@@ -51,6 +51,10 @@ export const runSchema = z.object({
 });
 export type Run = z.infer<typeof runSchema>;
 
+/** A run of `GET /workspaces/{wid}/runs`: the run with its graph's name. */
+export const workspaceRunSchema = runSchema.extend({ graph_name: z.string() });
+export type WorkspaceRun = z.infer<typeof workspaceRunSchema>;
+
 export const artifactSchema = z.object({
   id: idSchema,
   run_id: idSchema,

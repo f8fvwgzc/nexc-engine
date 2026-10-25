@@ -81,6 +81,9 @@ const OF_ITS_GRAPHS: &str = "t.graph_id IN (SELECT id FROM graphs WHERE workspac
 const OF_ITS_RUNS: &str = "t.run_id IN (SELECT r.id FROM runs r JOIN graphs g ON g.id = r.graph_id
                                         WHERE g.workspace_id = $1)";
 const OF_ITS_ISSUES: &str = "t.issue_id IN (SELECT id FROM issues WHERE workspace_id = $1)";
+const OF_ITS_ISSUE_EVENTS: &str = "t.event_id IN (SELECT e.id FROM issue_events e
+                                                 JOIN issues i ON i.id = e.issue_id
+                                                 WHERE i.workspace_id = $1)";
 const OF_ITS_ARTIFACT_FILES: &str =
     "t.file_id IN (SELECT id FROM artifact_files WHERE workspace_id = $1)";
 const OF_ITS_CONVERSATIONS: &str =
@@ -107,6 +110,8 @@ const REFERENCED_USERS: &str = "t.id IN (
     UNION SELECT creator_id FROM issues WHERE workspace_id = $1
     UNION SELECT e.actor_id FROM issue_events e JOIN issues i ON i.id = e.issue_id
           WHERE i.workspace_id = $1
+    UNION SELECT r.user_id FROM issue_event_reactions r JOIN issue_events e ON e.id = r.event_id
+          JOIN issues i ON i.id = e.issue_id WHERE i.workspace_id = $1
     UNION SELECT tm.user_id FROM team_members tm JOIN teams tt ON tt.id = tm.team_id
           WHERE tt.workspace_id = $1
     UNION SELECT r.owner_id FROM runs r JOIN graphs g ON g.id = r.graph_id
@@ -226,7 +231,14 @@ const TABLES: &[Table] = &[
     // One statement for all issues: a sub-issue and its parent arrive together.
     table("issues", IN_WORKSPACE, false),
     table("issue_labels", OF_ITS_ISSUES, false),
+    // By id: a reply's key to its comment waits for the commit (`copy_workspace`).
     table("issue_events", OF_ITS_ISSUES, true),
+    Table {
+        name: "issue_event_reactions",
+        belongs: OF_ITS_ISSUE_EVENTS,
+        page: Page::ByOrder("t.event_id, t.user_id, t.emoji", BATCH),
+        overlay: None,
+    },
     table("notifications", IN_WORKSPACE, true),
     // Folders refer to their parents and files to the file they were copied from: each table
     // in one statement. The versions hold the content, up to 1 MiB each.
@@ -504,6 +516,11 @@ pub async fn copy_workspace(
         columns.push(writable_columns(&target, t.name).await?);
     }
     let mut tx = target.begin().await?;
+    // issue_events arrive in batches by id, and a reply's id may sort before its comment's when
+    // another server's clock wrote it: the key between them is checked once everything is there.
+    sqlx::query("SET CONSTRAINTS issue_events_parent_id_fkey DEFERRED")
+        .execute(&mut *tx)
+        .await?;
     let mut reports = Vec::with_capacity(TABLES.len());
     for (t, columns) in TABLES.iter().zip(&columns) {
         let report = copy_table(source, &mut tx, columns, t, workspace)
@@ -792,6 +809,7 @@ mod tests {
             ("memories", "graphs"),
             ("llm_usage", "runs"),
             ("notifications", "issues"),
+            ("issue_event_reactions", "issue_events"),
             ("projects", "teams"),
             ("artifact_files", "artifact_folders"),
             ("artifact_files", "issues"),

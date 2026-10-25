@@ -25,6 +25,7 @@ import type {
   GraphNode,
   GraphSummary,
 } from '@/schemas/graph';
+import type { IssueEvent, Notification, Reaction } from '@/schemas/issue';
 import type { KnowledgeDocument } from '@/schemas/knowledge';
 import type { Memory } from '@/schemas/memory';
 import type { PlannerStatus } from '@/schemas/planner';
@@ -93,4 +94,7 @@ export type ContractDrift = [
   Assert<Matches<'AuditAnswer', AuditAnswer>>,
   Assert<Matches<'AuditFact', AuditFact>>,
   Assert<Matches<'CannedQuestion', CannedQuestion>>,
+  Assert<Matches<'Reaction', Reaction>>,
+  Assert<Matches<'IssueEvent', IssueEvent>>,
+  Assert<Matches<'Notification', Notification>>,
 ];

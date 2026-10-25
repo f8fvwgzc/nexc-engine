@@ -1631,15 +1631,17 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Comments on an issue. Whoever may edit the issue may comment on it.
+         * Comments on an issue, or replies to one of its comments. Whoever may edit
+         *     the issue may comment on it.
          * @description Each member the comment mentions who can see the issue hears of it in
          *     their inbox (`mention`), in place of the `comment` entry the assignee and
-         *     the creator get. The first active agent it mentions is delegated an issue
-         *     that has none; then, when the author is a member of the issue's team and
-         *     the issue's graph is idle, one mentioned agent is asked for a plan (the
-         *     issue gets its graph if it has none). The plan waits to be applied like
-         *     any other: nothing runs by itself. Both show in the timeline as `agent`
-         *     entries.
+         *     the creator get; a reply also tells the author of the comment it answers
+         *     (`comment`, once, whether or not they watch the issue). The first active
+         *     agent it mentions is delegated an issue that has none; then, when the
+         *     author is a member of the issue's team and the issue's graph is idle, one
+         *     mentioned agent is asked for a plan (the issue gets its graph if it has
+         *     none). The plan waits to be applied like any other: nothing runs by
+         *     itself. Both show in the timeline as `agent` entries.
          */
         post: operations["create_comment"];
         delete?: never;
@@ -1658,7 +1660,10 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Deletes a comment: its author, or whoever manages the team. */
+        /**
+         * Deletes a comment, with its replies: its author, or whoever manages the
+         *     team.
+         */
         delete: operations["delete_comment"];
         options?: never;
         head?: never;
@@ -1679,14 +1684,42 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The timeline of an issue, oldest first: its comments, the changes to its
-         *     state, priority, assignee, title, due date and GitHub link, what happened
-         *     to its files, and what its runs reported.
+         * The timeline of an issue, oldest first: its comments and their replies,
+         *     the changes to its state, priority, assignee, title, due date and GitHub
+         *     link, what happened to its files, and what its runs reported; comments
+         *     and run reports with their reactions.
          */
         get: operations["events"];
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/issues/{iid}/events/{eid}/reactions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reacts to a comment or a run report with an emoji; giving the same emoji
+         *     again changes nothing. Whoever may comment on the issue may react.
+         * @description The comment's author hears of it in their inbox (`reaction`, with the
+         *     emoji): never of their own, and once a day for the same emoji from the
+         *     same person on the issue, however often it is taken back and given again.
+         */
+        post: operations["add_reaction"];
+        /**
+         * Takes the caller's emoji back from a comment or a run report; one they
+         *     never gave is no error. The inbox entry it gave stays.
+         */
+        delete: operations["remove_reaction"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2461,8 +2494,8 @@ export interface paths {
         };
         /**
          * Files of a workspace the caller can see: those directly in a folder, at
-         *     the top level, or of an issue, by name; or every one, most recently
-         *     saved first. At most 1,000.
+         *     the top level, or of an issue, by name (at most 1,000); or every one, most
+         *     recently saved first, a page of `limit` at a time (`before` continues).
          */
         get: operations["list_files"];
         put?: never;
@@ -2816,6 +2849,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{wid}/inbox/unread-count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * How many of the notifications the caller's inbox shows in a workspace
+         *     (the newest 100) are unread: what the sidebar shows, without reading the
+         *     inbox itself.
+         */
+        get: operations["unread_count"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{wid}/invites": {
         parameters: {
             query?: never;
@@ -2859,7 +2913,7 @@ export interface paths {
         };
         /**
          * Issues of a workspace in the teams the caller can see, most recently
-         *     updated first.
+         *     updated first, without their descriptions (`GET /issues/{iid}` has it).
          */
         get: operations["list"];
         put?: never;
@@ -3281,6 +3335,27 @@ export interface paths {
         head?: never;
         /** Updates a project (members and above). */
         patch: operations["update_project"];
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The latest runs across the graphs of a workspace the caller may work on,
+         *     newest first (at most 100), each with its graph's name: what the Runs page
+         *     lists, in one request.
+         */
+        get: operations["workspace_runs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/workspaces/{wid}/search": {
@@ -4810,7 +4885,7 @@ export interface components {
          * @enum {string}
          */
         ChunkKind: "text" | "table";
-        /** @description `POST /issues/{iid}/comments` and `PATCH /issues/{iid}/comments/{cid}` body. */
+        /** @description `PATCH /issues/{iid}/comments/{cid}` body. */
         CommentBody: {
             /**
              * @description Markdown, 1 byte to 16 KiB. `@[Name](user:<uuid>)` mentions a member and
@@ -5877,6 +5952,7 @@ export interface components {
             priority: number;
             /** Format: uuid */
             project_id: string | null;
+            run_status: components["schemas"]["RunStatus"] | null;
             state: components["schemas"]["IssueState"];
             sub_issues: components["schemas"]["SubIssueCount"];
             /** Format: uuid */
@@ -5906,6 +5982,16 @@ export interface components {
             /** Format: uuid */
             issue_id: string;
             kind: components["schemas"]["IssueEventKind"];
+            /**
+             * Format: uuid
+             * @description The top-level comment a reply answers; `null` for every other entry.
+             */
+            parent_id: string | null;
+            /**
+             * @description The emoji given to a comment or a run report, each once, in the order
+             *     they were first given; empty for other entries.
+             */
+            reactions: components["schemas"]["Reaction"][];
             /**
              * Format: uuid
              * @description The run a `run` entry reports; `null` for other entries and once the run is deleted.
@@ -5947,6 +6033,63 @@ export interface components {
             position: number;
             /** Format: uuid */
             team_id: string;
+        };
+        /**
+         * @description An issue as a list shows it: every field of [`Issue`] but its
+         *     description, which only the issue's own page reads (it may be 64 KiB).
+         */
+        IssueSummary: {
+            /**
+             * Format: uuid
+             * @description The agent the issue is delegated to.
+             */
+            agent_id: string | null;
+            assignee: components["schemas"]["IssuePerson"] | null;
+            /** Format: date-time */
+            completed_at: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            creator_id: string | null;
+            cycle: components["schemas"]["CycleRef"] | null;
+            /**
+             * Format: date
+             * @description The day the issue is due, if it has one.
+             */
+            due_date: string | null;
+            /** @description The GitHub issue or pull request the issue is about (a link only; nothing is synced). */
+            github_url: string | null;
+            /**
+             * Format: uuid
+             * @description The graph that plans and executes the issue, if one was created.
+             */
+            graph_id: string | null;
+            /** Format: uuid */
+            id: string;
+            /** @description The team key and the issue number, e.g. `ENG-12`. */
+            identifier: string;
+            /** @description The issue's labels, by name. */
+            labels: components["schemas"]["Label"][];
+            /** Format: int32 */
+            number: number;
+            parent: components["schemas"]["IssueRef"] | null;
+            /**
+             * Format: int32
+             * @description `0` none, `1` urgent, `2` high, `3` medium, `4` low.
+             */
+            priority: number;
+            /** Format: uuid */
+            project_id: string | null;
+            run_status: components["schemas"]["RunStatus"] | null;
+            state: components["schemas"]["IssueState"];
+            sub_issues: components["schemas"]["SubIssueCount"];
+            /** Format: uuid */
+            team_id: string;
+            title: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: uuid */
+            workspace_id: string;
         };
         /** @description `POST /agents/{id}/tokens` body. */
         IssueToken: {
@@ -6399,6 +6542,19 @@ export interface components {
             /** Format: int64 */
             tokens_out: number;
         };
+        /** @description `POST /issues/{iid}/comments` body. */
+        NewComment: {
+            /**
+             * @description Markdown, 1 byte to 16 KiB. `@[Name](user:<uuid>)` mentions a member and
+             *     `@[Name](agent:<uuid>)` an agent of the workspace, at most 20 of them.
+             */
+            body: string;
+            /**
+             * Format: uuid
+             * @description The comment this one replies to: a top-level comment of the same issue.
+             */
+            parent_id?: string | null;
+        };
         /**
          * @description Who created a node.
          * @enum {string}
@@ -6482,6 +6638,8 @@ export interface components {
             approval: components["schemas"]["NotificationApproval"] | null;
             /** Format: date-time */
             created_at: string;
+            /** @description What the actor reacted with (`reaction`); `null` for the other kinds. */
+            emoji: string | null;
             /** Format: uuid */
             id: string;
             issue: components["schemas"]["NotificationIssue"] | null;
@@ -6532,7 +6690,7 @@ export interface components {
          * @description Why an issue is in someone's inbox.
          * @enum {string}
          */
-        NotificationKind: "assigned" | "comment" | "state" | "due" | "approval" | "alert" | "run" | "mention";
+        NotificationKind: "assigned" | "comment" | "state" | "due" | "approval" | "alert" | "run" | "mention" | "reaction";
         /**
          * @description How nexc reaches onto-intelli (`NEXC_ONTO_MODE`).
          * @enum {string}
@@ -6976,6 +7134,25 @@ export interface components {
             ref: string;
             tags: string[];
             title: string;
+        };
+        /**
+         * @description One emoji given to a comment or a run report: how many gave it, whether
+         *     the reader did, and who, newest first.
+         */
+        Reaction: {
+            /** Format: int64 */
+            count: number;
+            /** @description One of 👍 👎 😄 🎉 😕 ❤️ 🚀 👀 🔥 ✅. */
+            emoji: string;
+            /** @description Whether the reader is one of them. */
+            reacted: boolean;
+            /** @description Up to 10 of them, newest first. */
+            users: components["schemas"]["IssuePerson"][];
+        };
+        /** @description `POST /issues/{iid}/events/{eid}/reactions` body. */
+        ReactionBody: {
+            /** @description One of 👍 👎 😄 🎉 😕 ❤️ 🚀 👀 🔥 ✅. */
+            emoji: string;
         };
         /**
          * @description What is kept of what agents say and hear, off by default: the prompt and
@@ -8047,6 +8224,14 @@ export interface components {
         TwoFactorCode: {
             code: string;
         };
+        /** @description How many of a member's notifications are unread. */
+        UnreadCount: {
+            /**
+             * Format: int64
+             * @description At most [`UNREAD_MAX`].
+             */
+            count: number;
+        };
         /** @description `PATCH /agents/{id}` body (any subset; `reports_to: null` and `team_id: null` detach). */
         UpdateAgent: {
             /**
@@ -8424,6 +8609,10 @@ export interface components {
          * @enum {string}
          */
         WorkspaceRole: "owner" | "admin" | "member" | "guest";
+        /** @description A run as the workspace's run list shows it: the run with its graph's name. */
+        WorkspaceRun: components["schemas"]["Run"] & {
+            graph_name: string;
+        };
         /** @description A server → client WebSocket message. */
         WsMessage: {
             node: components["schemas"]["GraphNode"];
@@ -11449,6 +11638,8 @@ export interface operations {
             query?: {
                 /** @description Only graphs of this workspace. */
                 workspace_id?: string | null;
+                /** @description Only the most recently updated ones, 1-500 (the sidebar shows 8); all of them by default. */
+                limit?: number | null;
             };
             header?: never;
             path?: never;
@@ -12181,7 +12372,10 @@ export interface operations {
     };
     list: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description 1-100, default 100: the issue page asks for the latest run only. */
+                limit?: number | null;
+            };
             header?: never;
             path: {
                 /** @description Graph id */
@@ -12493,7 +12687,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CommentBody"];
+                "application/json": components["schemas"]["NewComment"];
             };
         };
         responses: {
@@ -12521,6 +12715,7 @@ export interface operations {
                     "application/json": components["schemas"]["Problem"];
                 };
             };
+            /** @description Invalid fields, or `parent_id` is not a top-level comment of the issue */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -12643,6 +12838,113 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    add_reaction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Issue id */
+                iid: string;
+                /** @description Timeline entry id */
+                eid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReactionBody"];
+            };
+        };
+        responses: {
+            /** @description The entry's reactions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Reaction"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description An emoji not on the list, or an entry that is not a comment or a run report */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    remove_reaction: {
+        parameters: {
+            query: {
+                /** @description The emoji to take back: one of 👍 👎 😄 🎉 😕 ❤️ 🚀 👀 🔥 ✅. */
+                emoji: string;
+            };
+            header?: never;
+            path: {
+                /** @description Issue id */
+                iid: string;
+                /** @description Timeline entry id */
+                eid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The entry's reactions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Reaction"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description An emoji not on the list, or an entry that is not a comment or a run report */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14557,6 +14859,16 @@ export interface operations {
                 issue_id?: string | null;
                 /** @description Part of the name, any case; without control characters. */
                 q?: string | null;
+                /**
+                 * @description Every file, most recently saved first: how many, 1-1000 (default 200).
+                 *     Ignored with a folder, `root` or an issue, whose files all come at once.
+                 */
+                limit?: number | null;
+                /**
+                 * @description Every file: only those saved before `<updated_at>,<id>`, the last file of the
+                 *     previous page (its `updated_at` as given and its id).
+                 */
+                before?: string | null;
             };
             header?: never;
             path: {
@@ -15707,6 +16019,36 @@ export interface operations {
             };
         };
     };
+    unread_count: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnreadCount"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     invites: {
         parameters: {
             query?: never;
@@ -15819,7 +16161,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Issue"][];
+                    "application/json": components["schemas"]["IssueSummary"][];
                 };
             };
             404: {
@@ -17215,6 +17557,41 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    workspace_runs: {
+        parameters: {
+            query?: {
+                /** @description 1-100, default 100. */
+                limit?: number | null;
+                /** @description Only runs older than this run (the last one of the previous page). */
+                before?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceRun"][];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -14,6 +14,7 @@ export function useCancelRun() {
       if (store.run?.id === run.id) store.runUpdated(run);
       queryClient.setQueryData(qk.runs.detail(run.id), run);
       void queryClient.invalidateQueries({ queryKey: qk.graphs.runs(run.graph_id) });
+      void queryClient.invalidateQueries({ queryKey: qk.runs.workspaces() });
     },
   });
 }

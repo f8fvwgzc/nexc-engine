@@ -47,6 +47,12 @@ pub const ENV_VARS: &[EnvVar] = &[
     ),
     var("NEXC_DB_MAX_CONNECTIONS", "20", false, "database pool size"),
     var(
+        "NEXC_DB_STATEMENT_TIMEOUT_SECS",
+        "30",
+        false,
+        "longest a query of the server may run (0 = no limit); migrations are exempt",
+    ),
+    var(
         "NEXC_DATA_DIR",
         "./data",
         false,

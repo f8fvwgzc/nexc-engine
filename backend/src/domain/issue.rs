@@ -6,6 +6,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use super::cycle::CycleRef;
+use super::run::RunStatus;
 use super::string_enum;
 
 /// Maximum issue and project title length.
@@ -84,7 +85,7 @@ pub const STARTER_STATES: [(&str, StateCategory, &str); 6] = [
 ];
 
 /// Someone an issue refers to.
-#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct IssuePerson {
     pub user_id: Uuid,
     pub name: String,
@@ -159,6 +160,104 @@ pub struct Issue {
     pub updated_at: DateTime<Utc>,
     #[schema(required = true)]
     pub completed_at: Option<DateTime<Utc>>,
+    /// The status of the latest run of the issue's graph; `null` without a graph or runs.
+    #[schema(required = true)]
+    pub run_status: Option<RunStatus>,
+}
+
+/// An issue as a list shows it: every field of [`Issue`] but its
+/// description, which only the issue's own page reads (it may be 64 KiB).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct IssueSummary {
+    pub id: Uuid,
+    pub workspace_id: Uuid,
+    pub team_id: Uuid,
+    /// The team key and the issue number, e.g. `ENG-12`.
+    pub identifier: String,
+    pub number: i32,
+    pub title: String,
+    pub state: IssueState,
+    /// `0` none, `1` urgent, `2` high, `3` medium, `4` low.
+    pub priority: i16,
+    /// The issue's labels, by name.
+    pub labels: Vec<Label>,
+    /// The issue this one is part of, if the caller can see it.
+    #[schema(required = true)]
+    pub parent: Option<IssueRef>,
+    pub sub_issues: SubIssueCount,
+    /// The cycle of its team the issue is planned in.
+    #[schema(required = true)]
+    pub cycle: Option<CycleRef>,
+    #[schema(required = true)]
+    pub assignee: Option<IssuePerson>,
+    /// The agent the issue is delegated to.
+    #[schema(required = true)]
+    pub agent_id: Option<Uuid>,
+    #[schema(required = true)]
+    pub project_id: Option<Uuid>,
+    /// The graph that plans and executes the issue, if one was created.
+    #[schema(required = true)]
+    pub graph_id: Option<Uuid>,
+    #[schema(required = true)]
+    pub creator_id: Option<Uuid>,
+    /// The day the issue is due, if it has one.
+    #[schema(required = true)]
+    pub due_date: Option<NaiveDate>,
+    /// The GitHub issue or pull request the issue is about (a link only; nothing is synced).
+    #[schema(required = true)]
+    pub github_url: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    #[schema(required = true)]
+    pub completed_at: Option<DateTime<Utc>>,
+    /// The status of the latest run of the issue's graph; `null` without a graph or runs.
+    #[schema(required = true)]
+    pub run_status: Option<RunStatus>,
+}
+
+impl IssueSummary {
+    /// The whole issue, given its description.
+    pub fn with_description(self, description: String) -> Issue {
+        Issue {
+            id: self.id,
+            workspace_id: self.workspace_id,
+            team_id: self.team_id,
+            identifier: self.identifier,
+            number: self.number,
+            title: self.title,
+            description,
+            state: self.state,
+            priority: self.priority,
+            labels: self.labels,
+            parent: self.parent,
+            sub_issues: self.sub_issues,
+            cycle: self.cycle,
+            assignee: self.assignee,
+            agent_id: self.agent_id,
+            project_id: self.project_id,
+            graph_id: self.graph_id,
+            creator_id: self.creator_id,
+            due_date: self.due_date,
+            github_url: self.github_url,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            completed_at: self.completed_at,
+            run_status: self.run_status,
+        }
+    }
+}
+
+/// Most unread notifications counted for the sidebar's badge: the inbox
+/// shows the newest 100 (`GET /workspaces/{wid}/inbox`), and the badge counts
+/// the unread among those, so it never counts one the inbox cannot show or
+/// mark read.
+pub const UNREAD_MAX: i64 = 100;
+
+/// How many of a member's notifications are unread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+pub struct UnreadCount {
+    /// At most [`UNREAD_MAX`].
+    pub count: i64,
 }
 
 /// A team, as much as a project shows of the team that owns it.
@@ -219,6 +318,39 @@ string_enum!(
     }
 );
 
+impl IssueEventKind {
+    /// Whether people may react to an entry of this kind: comments and run reports.
+    pub fn takes_reactions(self) -> bool {
+        matches!(self, IssueEventKind::Comment | IssueEventKind::Run)
+    }
+}
+
+/// The emoji people may react with, in the order a picker shows them.
+pub const REACTION_EMOJI: [&str; 10] = ["👍", "👎", "😄", "🎉", "😕", "❤️", "🚀", "👀", "🔥", "✅"];
+/// Most people a reaction names, newest first; `count` has them all.
+pub const REACTION_USERS_MAX: usize = 10;
+
+/// The emoji of [`REACTION_EMOJI`] that `raw` is, surrounding spaces aside;
+/// a heart without its emoji presentation selector is the same heart.
+pub fn reaction_emoji(raw: &str) -> Option<&'static str> {
+    let raw = raw.trim();
+    let raw = if raw == "\u{2764}" { "❤️" } else { raw };
+    REACTION_EMOJI.into_iter().find(|emoji| *emoji == raw)
+}
+
+/// One emoji given to a comment or a run report: how many gave it, whether
+/// the reader did, and who, newest first.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct Reaction {
+    /// One of 👍 👎 😄 🎉 😕 ❤️ 🚀 👀 🔥 ✅.
+    pub emoji: String,
+    pub count: i64,
+    /// Whether the reader is one of them.
+    pub reacted: bool,
+    /// Up to 10 of them, newest first.
+    pub users: Vec<IssuePerson>,
+}
+
 /// One entry of an issue's timeline: a comment, or a change to the issue.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct IssueEvent {
@@ -243,6 +375,12 @@ pub struct IssueEvent {
     /// The run a `run` entry reports; `null` for other entries and once the run is deleted.
     #[schema(required = true)]
     pub run_id: Option<Uuid>,
+    /// The top-level comment a reply answers; `null` for every other entry.
+    #[schema(required = true)]
+    pub parent_id: Option<Uuid>,
+    /// The emoji given to a comment or a run report, each once, in the order
+    /// they were first given; empty for other entries.
+    pub reactions: Vec<Reaction>,
 }
 
 /// A change to record in an issue's timeline.
@@ -366,6 +504,8 @@ string_enum!(
         Run => "run",
         /// Someone mentioned the member in a comment on the issue.
         Mention => "mention",
+        /// Someone reacted to the member's comment on the issue (`emoji` says with what).
+        Reaction => "reaction",
     }
 );
 
@@ -412,8 +552,8 @@ pub struct NotificationAlert {
 pub struct Notification {
     pub id: Uuid,
     pub kind: NotificationKind,
-    /// The issue (`assigned`, `comment`, `state`, `due`, `run`, `mention`); `null` for the other
-    /// kinds.
+    /// The issue (`assigned`, `comment`, `state`, `due`, `run`, `mention`, `reaction`); `null` for
+    /// the other kinds.
     #[schema(required = true)]
     pub issue: Option<NotificationIssue>,
     /// The approval to decide (`approval`); `null` for the other kinds.
@@ -425,6 +565,9 @@ pub struct Notification {
     /// Who assigned, commented or moved the issue; `null` once the account is gone.
     #[schema(required = true)]
     pub actor: Option<IssuePerson>,
+    /// What the actor reacted with (`reaction`); `null` for the other kinds.
+    #[schema(required = true)]
+    pub emoji: Option<String>,
     pub created_at: DateTime<Utc>,
     #[schema(required = true)]
     pub read_at: Option<DateTime<Utc>>,
@@ -763,6 +906,7 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
             completed_at: None,
+            run_status: None,
         };
         let link = "https://github.com/acme/app/issues/1";
         assert_eq!(
@@ -774,6 +918,26 @@ mod tests {
             }]
         );
         assert!(changes(&issue(Some(link)), &issue(Some(link))).is_empty());
+    }
+
+    #[test]
+    fn only_the_listed_emoji_are_reactions() {
+        for emoji in REACTION_EMOJI {
+            assert_eq!(reaction_emoji(emoji), Some(emoji));
+        }
+        assert_eq!(reaction_emoji(" 🎉 "), Some("🎉"));
+        assert_eq!(reaction_emoji("\u{2764}"), Some("❤️"));
+        for other in ["", " ", "🙂", "👍🏽", "🎉🎉", ":tada:", "\u{0}", "❤️ ❤️"] {
+            assert_eq!(reaction_emoji(other), None, "{other}");
+        }
+        assert!(IssueEventKind::Comment.takes_reactions() && IssueEventKind::Run.takes_reactions());
+        for kind in [
+            IssueEventKind::State,
+            IssueEventKind::Artifact,
+            IssueEventKind::Agent,
+        ] {
+            assert!(!kind.takes_reactions(), "{kind:?}");
+        }
     }
 
     #[test]

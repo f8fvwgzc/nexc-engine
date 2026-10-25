@@ -43,6 +43,8 @@ pub struct CreateGraph {
 pub struct GraphQuery {
     /// Only graphs of this workspace.
     pub workspace_id: Option<Uuid>,
+    /// Only the most recently updated ones, 1-500 (the sidebar shows 8); all of them by default.
+    pub limit: Option<i64>,
 }
 
 impl Validate for CreateGraph {
@@ -94,7 +96,13 @@ pub async fn list(
     Query(query): Query<GraphQuery>,
 ) -> Result<Json<Vec<GraphSummary>>, AppError> {
     Ok(Json(
-        repo::graphs::list(&state.db, auth.id, query.workspace_id).await?,
+        repo::graphs::list(
+            &state.db,
+            auth.id,
+            query.workspace_id,
+            query.limit.map(|l| l.clamp(1, 500)),
+        )
+        .await?,
     ))
 }
 

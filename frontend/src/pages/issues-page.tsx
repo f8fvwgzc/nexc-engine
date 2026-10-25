@@ -42,7 +42,7 @@ import { formatRelative } from '@/lib/format';
 import { onIntent, prefetchIssue } from '@/lib/prefetch';
 import { cn } from '@/lib/utils';
 import { cycleLabel } from '@/schemas/cycle';
-import type { Issue, Project, StateCategory } from '@/schemas/issue';
+import type { IssueSummary, Project, StateCategory } from '@/schemas/issue';
 import type { Workspace } from '@/schemas/workspace';
 
 const VIEW_KEY = 'nexc.issues.view';
@@ -72,7 +72,7 @@ const CATEGORY_ORDER: StateCategory[] = [
  * over the row, and its tooltip names what the glyphs under it show); the GitHub chip opens
  * GitHub instead.
  */
-function IssueRow({ issue }: { issue: Issue }) {
+function IssueRow({ issue }: { issue: IssueSummary }) {
   const queryClient = useQueryClient();
   return (
     <li
@@ -285,7 +285,7 @@ export function IssueExplorer({
   };
 
   // One group per state name, ordered by what the state means and then by the workflow.
-  const groups = new Map<string, Issue[]>();
+  const groups = new Map<string, IssueSummary[]>();
   for (const issue of issues ?? []) {
     const group = groups.get(issue.state.name) ?? [];
     group.push(issue);

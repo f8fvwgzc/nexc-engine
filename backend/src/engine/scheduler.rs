@@ -336,7 +336,7 @@ async fn renew_leases(state: &AppState, limit: Duration) {
     let renewed = tokio::time::timeout(
         limit,
         repo::runs::renew(
-            &state.db,
+            &state.lease_db,
             state.engine.instance(),
             &pairs,
             lease_secs(state),

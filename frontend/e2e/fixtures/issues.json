@@ -45,7 +45,8 @@
     "github_url": "https://github.com/acme/platform/issues/198",
     "created_at": "2026-09-14T12:00:00Z",
     "updated_at": "2026-10-14T11:45:00Z",
-    "completed_at": null
+    "completed_at": null,
+    "run_status": null
   },
   {
     "id": "61456c3b-a4db-7db7-814a-046a471fd6ae",
@@ -98,7 +99,8 @@
     "github_url": null,
     "created_at": "2026-09-15T12:00:00Z",
     "updated_at": "2026-10-14T10:15:00Z",
-    "completed_at": null
+    "completed_at": null,
+    "run_status": null
   },
   {
     "id": "cccce954-1033-7b22-8b6c-765225669205",
@@ -146,7 +148,8 @@
     "github_url": "https://github.com/acme/platform/issues/212",
     "created_at": "2026-09-16T12:00:00Z",
     "updated_at": "2026-10-14T08:45:00Z",
-    "completed_at": null
+    "completed_at": null,
+    "run_status": null
   },
   {
     "id": "30070e84-b10b-75e3-8fa7-461577ef6236",
@@ -187,7 +190,8 @@
     "github_url": "https://github.com/acme/agent-runtime/pull/87",
     "created_at": "2026-09-17T12:00:00Z",
     "updated_at": "2026-10-14T07:15:00Z",
-    "completed_at": null
+    "completed_at": null,
+    "run_status": null
   },
   {
     "id": "ecbffac9-f9f9-75d9-893a-3d8a379ade42",
@@ -239,7 +243,8 @@
     "github_url": null,
     "created_at": "2026-09-18T12:00:00Z",
     "updated_at": "2026-10-14T05:45:00Z",
-    "completed_at": null
+    "completed_at": null,
+    "run_status": null
   },
   {
     "id": "37c4f7c9-5142-7626-8dbb-73bfdc8e15ce",
@@ -292,7 +297,8 @@
     "github_url": null,
     "created_at": "2026-09-19T12:00:00Z",
     "updated_at": "2026-10-14T04:15:00Z",
-    "completed_at": null
+    "completed_at": null,
+    "run_status": null
   },
   {
     "id": "384fcabe-e9b1-70f9-8933-21434a7393ab",
@@ -341,7 +347,8 @@
     "github_url": null,
     "created_at": "2026-09-20T12:00:00Z",
     "updated_at": "2026-10-14T02:45:00Z",
-    "completed_at": "2026-10-13T12:00:00Z"
+    "completed_at": "2026-10-13T12:00:00Z",
+    "run_status": null
   },
   {
     "id": "64404aa9-c670-7549-8846-75296a6dbee7",
@@ -382,7 +389,8 @@
     "github_url": null,
     "created_at": "2026-09-21T12:00:00Z",
     "updated_at": "2026-10-14T01:15:00Z",
-    "completed_at": null
+    "completed_at": null,
+    "run_status": null
   },
   {
     "id": "03c568d5-1f32-7304-8e4b-aed464e10579",
@@ -424,7 +432,8 @@
     "github_url": null,
     "created_at": "2026-09-22T12:00:00Z",
     "updated_at": "2026-10-13T23:45:00Z",
-    "completed_at": null
+    "completed_at": null,
+    "run_status": null
   },
   {
     "id": "182b2400-fb53-7f55-81e8-675150e4f6c3",
@@ -468,7 +477,8 @@
     "github_url": null,
     "created_at": "2026-09-23T12:00:00Z",
     "updated_at": "2026-10-13T22:15:00Z",
-    "completed_at": null
+    "completed_at": null,
+    "run_status": null
   },
   {
     "id": "6901b409-0b05-7f1e-8f54-7902f2520d6f",
@@ -516,7 +526,8 @@
     "github_url": null,
     "created_at": "2026-09-24T12:00:00Z",
     "updated_at": "2026-10-13T20:45:00Z",
-    "completed_at": "2026-10-13T12:00:00Z"
+    "completed_at": "2026-10-13T12:00:00Z",
+    "run_status": null
   },
   {
     "id": "60a5a03b-af83-737e-8c03-d30a94575d1d",
@@ -569,6 +580,7 @@
     "github_url": null,
     "created_at": "2026-09-25T12:00:00Z",
     "updated_at": "2026-10-13T19:15:00Z",
-    "completed_at": null
+    "completed_at": null,
+    "run_status": null
   }
 ]

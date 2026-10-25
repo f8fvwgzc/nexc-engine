@@ -178,7 +178,9 @@ anyway.
 ### Connections to PostgreSQL
 
 Every backend pod keeps a pool of `NEXC_DB_MAX_CONNECTIONS` connections (20 by default), and its
-realtime listener holds one of them for as long as it runs. Under load each pool fills, so the
+realtime listener holds one of them for as long as it runs. Two of them (from a setting of 4 up)
+form a small pool of their own that renews the leases of the pod's runs, so a burst of requests
+never holds a renewal up; the pod opens no more than the setting. Under load each pool fills, so the
 pods that can run at once must fit under PostgreSQL's `max_connections` together:
 
 ```

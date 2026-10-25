@@ -83,6 +83,9 @@ export interface MentionDraft {
   picked: PickedMention[];
 }
 
+/** Nothing written yet. */
+export const EMPTY_DRAFT: MentionDraft = { text: '', picked: [] };
+
 /**
  * `picked` with `m` added, unless it is there already. Each mention gets a label no other picked
  * one has, its name, then `Name (2)`, `Name (3)`…, so two people of one name stay two mentions.

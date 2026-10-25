@@ -86,7 +86,7 @@ async fn a_workspace_moves_to_its_owners_database(pool: PgPool) {
     let part = json!({"title": "Form", "parent_id": parent["id"]});
     call(&app, Method::POST, &issues, &member, Some(part)).await;
     let comments = format!("/issues/{}/comments", parent["id"].as_str().unwrap());
-    call(
+    let (_, comment) = call(
         &app,
         Method::POST,
         &comments,
@@ -94,6 +94,24 @@ async fn a_workspace_moves_to_its_owners_database(pool: PgPool) {
         Some(json!({"body": "Looks good"})),
     )
     .await;
+    // A reply to the comment, and a reaction to it.
+    let reply = json!({"body": "Thanks", "parent_id": comment["id"]});
+    let (status, _) = call(&app, Method::POST, &comments, &member, Some(reply)).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let reactions = format!(
+        "/issues/{}/events/{}/reactions",
+        parent["id"].as_str().unwrap(),
+        comment["id"].as_str().unwrap()
+    );
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &reactions,
+        &member,
+        Some(json!({"emoji": "🎉"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
     let graph = app
         .request(
             Method::POST,
@@ -184,8 +202,9 @@ async fn a_workspace_moves_to_its_owners_database(pool: PgPool) {
     assert_eq!(copied("workspace_members"), (2, 2));
     assert_eq!(copied("issues"), (2, 2));
     assert_eq!(copied("issue_labels"), (1, 1));
-    // The comment, and the upload, the new version and the copy of the issue's file.
-    assert_eq!(copied("issue_events"), (4, 4));
+    // The comment and its reply, and the upload, the new version and the copy of the issue's file.
+    assert_eq!(copied("issue_events"), (5, 5));
+    assert_eq!(copied("issue_event_reactions"), (1, 1));
     assert_eq!(copied("projects"), (1, 1));
     assert_eq!(copied("artifact_folders"), (1, 1));
     assert_eq!(copied("artifact_files"), (2, 2));
@@ -206,6 +225,18 @@ async fn a_workspace_moves_to_its_owners_database(pool: PgPool) {
     .await
     .unwrap();
     assert_eq!((parents, sub_issues), (1, 1));
+    let (replies, reacted): (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM issue_events e JOIN issue_events p ON p.id = e.parent_id
+                 JOIN issues i ON i.id = e.issue_id WHERE i.workspace_id = $1),
+                (SELECT count(*) FROM issue_event_reactions r
+                 JOIN issue_events e ON e.id = r.event_id AND e.parent_id IS NULL
+                 JOIN issues i ON i.id = e.issue_id WHERE i.workspace_id = $1 AND r.emoji = '🎉')",
+    )
+    .bind(workspace)
+    .fetch_one(&target)
+    .await
+    .unwrap();
+    assert_eq!((replies, reacted), (1, 1), "the thread travels whole");
     let (github, owned): (Option<String>, bool) = sqlx::query_as(
         "SELECT (SELECT github_url FROM issues WHERE workspace_id = $1 AND parent_id IS NULL),
                 (SELECT team_id IS NOT NULL FROM projects WHERE workspace_id = $1)",

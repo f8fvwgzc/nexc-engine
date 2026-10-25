@@ -30,11 +30,15 @@ macro_rules! cycle_select {
     ($tail:literal) => {
         concat!(
             "SELECT c.id, c.team_id, c.number, c.name, c.starts_on, c.ends_on, c.created_at,
-                    (SELECT count(*) FROM issues i WHERE i.cycle_id = c.id) AS issue_count,
-                    (SELECT count(*) FROM issues i JOIN issue_states s ON s.id = i.state_id
-                     WHERE i.cycle_id = c.id AND s.category IN ('completed', 'canceled'))
-                        AS closed_count
-             FROM cycles c WHERE ",
+                    COALESCE(n.issue_count, 0) AS issue_count,
+                    COALESCE(n.closed_count, 0) AS closed_count
+             FROM cycles c
+             LEFT JOIN LATERAL (
+                SELECT count(*) AS issue_count,
+                       count(*) FILTER (WHERE s.category IN ('completed', 'canceled')) AS closed_count
+                FROM issues i JOIN issue_states s ON s.id = i.state_id
+                WHERE i.cycle_id = c.id) n ON true
+             WHERE ",
             $tail
         )
     };
@@ -48,6 +52,15 @@ pub async fn list(db: impl PgExecutor<'_>, team_id: Uuid) -> Result<Vec<Cycle>, 
     .bind(team_id)
     .fetch_all(db)
     .await
+}
+
+/// Whether `id` is a cycle of the team (without counting its issues).
+pub async fn exists(db: impl PgExecutor<'_>, team_id: Uuid, id: Uuid) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM cycles WHERE team_id = $1 AND id = $2)")
+        .bind(team_id)
+        .bind(id)
+        .fetch_one(db)
+        .await
 }
 
 /// One cycle of a team.

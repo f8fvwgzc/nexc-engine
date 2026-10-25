@@ -37,8 +37,10 @@ type MentionTextareaProps = Omit<ComponentProps<'textarea'>, 'value' | 'onChange
   draft: MentionDraft;
   onDraftChange: (draft: MentionDraft) => void;
   candidates: MentionCandidate[];
-  /** Cmd/Ctrl+Enter. */
+  /** Cmd/Ctrl+Enter, and Enter too with `enterSends`. */
   onSubmit?: () => void;
+  /** Enter sends (Shift+Enter starts a new line), as in a reply box. */
+  enterSends?: boolean;
   /** A line under the list's agents. */
   agentNote?: string;
 };
@@ -47,13 +49,15 @@ type MentionTextareaProps = Omit<ComponentProps<'textarea'>, 'value' | 'onChange
  * A comment field where `@` opens a list of the members and agents the comment can mention,
  * narrowed as one types. Arrow keys move through it, Enter or Tab picks, Escape closes it; the
  * focus stays in the field. A pick writes `@Name` into the text and adds the mention to the draft,
- * so the comment can be sent with its tokens (`toWire`). Cmd/Ctrl+Enter sends.
+ * so the comment can be sent with its tokens (`toWire`). Cmd/Ctrl+Enter sends; with `enterSends`,
+ * Enter does too while the list is closed.
  */
 export function MentionTextarea({
   draft,
   onDraftChange,
   candidates,
   onSubmit,
+  enterSends = false,
   agentNote,
   onKeyDown,
   onBlur,
@@ -129,7 +133,13 @@ export function MentionTextarea({
       onSubmit?.();
       return;
     }
-    if (!open || !query || !current) return;
+    if (!open || !query || !current) {
+      if (enterSends && e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        onSubmit?.();
+      }
+      return;
+    }
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
       const step = e.key === 'ArrowDown' ? 1 : options.length - 1;

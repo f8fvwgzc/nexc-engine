@@ -13,7 +13,11 @@ use crate::domain::audit::AuditAction;
 
 /// Lets this transaction delete spans and audit entries: the setting names
 /// the transaction's own id, so it opens nothing anywhere else, and ends with it.
+/// A purge path is one long cascade by nature, so the pool's statement limit
+/// is lifted for the transaction too: cut off, it would fail the same way on
+/// every retry.
 pub async fn allow_purge(conn: &mut PgConnection) -> Result<(), sqlx::Error> {
+    super::lift_limits(&mut *conn).await?;
     sqlx::query("SELECT set_config('nexc.evidence_purge', pg_current_xact_id()::text, true)")
         .execute(conn)
         .await?;
@@ -61,9 +65,11 @@ pub struct PurgedPayloads {
 /// first sweep of the day after its retention ends, so each workspace gets
 /// one entry a day, whichever replica sweeps first), and writes an
 /// `evidence_purged` entry to each workspace's audit log saying how many
-/// went, in one transaction. Returns how many went in all.
+/// went, in one transaction, which the pool's statement limit does not cut
+/// off (one DELETE of a day's expired payloads). Returns how many went in all.
 pub async fn purge_payloads(pool: &PgPool) -> Result<u64, sqlx::Error> {
     let mut tx = pool.begin().await?;
+    super::lift_limits(&mut tx).await?;
     let purged = delete_expired_payloads(&mut tx).await?;
     for p in &purged {
         let Some(workspace) = p.workspace_id else {

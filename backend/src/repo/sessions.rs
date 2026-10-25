@@ -97,13 +97,25 @@ pub async fn list(
     filter: &SessionFilter<'_>,
     limit: i64,
 ) -> Result<Vec<SessionSummary>, sqlx::Error> {
+    // The page is chosen first, then rolled up: the rollups read every span of a run, and are
+    // read for the runs of the page only.
     let rows = sqlx::query(concat!(
-        "SELECT r.id, r.graph_id, g.name AS graph_name, r.status, r.created_at, r.started_at,
+        "WITH page AS MATERIALIZED (
+             SELECT r.id, g.name AS graph_name FROM runs r JOIN graphs g ON g.id = r.graph_id
+             WHERE g.workspace_id = $2 AND ",
+        graph_access!("g", "$1"),
+        "      AND ($3::uuid IS NULL OR EXISTS (SELECT 1 FROM node_runs nr WHERE nr.run_id = r.id AND nr.agent_id = $3))
+               AND ($4::text IS NULL OR r.status = $4)
+               AND ($5::timestamptz IS NULL OR r.created_at >= $5)
+               AND ($6::timestamptz IS NULL OR r.created_at < $6)
+               AND ($7::uuid IS NULL OR r.id < $7)
+             ORDER BY r.id DESC LIMIT $8)
+         SELECT r.id, r.graph_id, page.graph_name, r.status, r.created_at, r.started_at,
                 r.finished_at, r.tokens_in, r.tokens_out, r.cost_usd,
                 (SELECT count(*) FROM node_runs nr WHERE nr.run_id = r.id) AS nodes,
                 s.spans, s.llm_calls, s.tool_calls, s.denials, s.span_tokens_in, s.span_tokens_out,
                 s.tokens_cached, a.agents
-         FROM runs r JOIN graphs g ON g.id = r.graph_id
+         FROM page JOIN runs r ON r.id = page.id
          LEFT JOIN LATERAL (
             SELECT count(*) AS spans,
                    count(*) FILTER (WHERE s.kind = 'llm_call') AS llm_calls,
@@ -119,14 +131,7 @@ pub async fn list(
          LEFT JOIN LATERAL (
             SELECT COALESCE(jsonb_agg(DISTINCT jsonb_build_object('id', ag.id, 'name', ag.name)), '[]'::jsonb) AS agents
             FROM node_runs nr JOIN agents ag ON ag.id = nr.agent_id WHERE nr.run_id = r.id) a ON true
-         WHERE g.workspace_id = $2 AND ",
-        graph_access!("g", "$1"),
-        "  AND ($3::uuid IS NULL OR EXISTS (SELECT 1 FROM node_runs nr WHERE nr.run_id = r.id AND nr.agent_id = $3))
-           AND ($4::text IS NULL OR r.status = $4)
-           AND ($5::timestamptz IS NULL OR r.created_at >= $5)
-           AND ($6::timestamptz IS NULL OR r.created_at < $6)
-           AND ($7::uuid IS NULL OR r.id < $7)
-         ORDER BY r.id DESC LIMIT $8"
+         ORDER BY r.id DESC"
     ))
     .bind(user)
     .bind(workspace_id)

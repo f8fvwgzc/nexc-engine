@@ -1,23 +1,33 @@
 import { type QueryKey, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  BotIcon,
   CheckCircle2Icon,
   CircleDotIcon,
   CircleIcon,
   CircleXIcon,
+  CopyIcon,
   FileIcon,
   HandIcon,
+  LinkIcon,
   MinusCircleIcon,
   PlayIcon,
   RouteIcon,
   SparklesIcon,
   SquareIcon,
 } from 'lucide-react';
-import { lazy, Suspense, useEffect, useEffectEvent, useMemo, useState } from 'react';
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react';
 import { Link } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
 import { CodeBlock, CodeBlockContent } from '@/components/ui/code-block';
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import {
   Trace,
   TraceCollapsible,
@@ -33,15 +43,25 @@ import { applyPlan, requestPlan, startRun } from '@/features/graph/api';
 import { graphQuery } from '@/features/graphs/api';
 import { artifactsQuery, cancelRun, downloadArtifact, graphRunsQuery } from '@/features/runs/api';
 import { errorMessage } from '@/lib/api/errors';
+import { copyText } from '@/lib/clipboard';
 import { formatRelative } from '@/lib/format';
 import { qk } from '@/lib/query-keys';
 import { GraphEventStream } from '@/lib/realtime/sse';
+import { cn } from '@/lib/utils';
 import type { NodeStatus } from '@/schemas/graph';
 import type { Issue, IssueEvent } from '@/schemas/issue';
 import type { Plan } from '@/schemas/plan';
 import type { SseEvent } from '@/schemas/realtime';
 import { type Artifact, isRunActive, type Run, type RunStatus } from '@/schemas/run';
 
+import {
+  ActivityEntry,
+  AgentsAvatar,
+  EntryHeader,
+  EntryMenu,
+  EntryRow,
+  KindIcon,
+} from './activity-entry';
 import { createIssueGraph } from './api';
 
 /** A run's report renders as Markdown, loaded with the first report rather than with the page. */
@@ -177,7 +197,7 @@ function Step({
 }
 
 /** Files a run made, each a download (a file the DLP classifier kept in says so). */
-function FileList({ files }: { files: Artifact[] }) {
+function FileList({ files, onCard = false }: { files: Artifact[]; onCard?: boolean }) {
   return (
     <ul className="flex flex-wrap gap-1.5">
       {files.map((file) => (
@@ -185,7 +205,12 @@ function FileList({ files }: { files: Artifact[] }) {
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 gap-1.5 bg-muted/60 px-2 text-xs font-normal hover:bg-muted"
+            className={cn(
+              'h-7 gap-1.5 px-2 text-xs font-normal',
+              onCard
+                ? 'rounded-full bg-background/80 hover:bg-background dark:bg-background/40'
+                : 'bg-muted/60 hover:bg-muted',
+            )}
             disabled={file.quarantined_at !== null}
             title={file.quarantined_at ? `Held back: ${file.quarantine_reason}` : file.path}
             onClick={() => void downloadArtifact(file)}
@@ -275,7 +300,9 @@ function LiveRun({
 }) {
   const queryClient = useQueryClient();
   const { data: graph } = useQuery(graphQuery(graphId));
-  const { data: runs } = useQuery(graphRunsQuery(graphId));
+  // Only the latest run is shown, so only it is read.
+  const latest = graphRunsQuery(graphId, 1);
+  const { data: runs } = useQuery(latest);
   const run: Run | undefined = runs?.[0];
   const active = run ? isRunActive(run.status) : false;
   const { data: files = [] } = useQuery({
@@ -294,10 +321,8 @@ function LiveRun({
     switch (event.type) {
       case 'run.started':
         setLive({ runId: event.data.run.id, steps: {} });
-        queryClient.setQueryData<Run[]>(qk.graphs.runs(graphId), (prev) => [
-          event.data.run,
-          ...(prev ?? []).filter((r) => r.id !== event.data.run.id),
-        ]);
+        queryClient.setQueryData<Run[]>(latest.queryKey, [event.data.run]);
+        void queryClient.invalidateQueries({ queryKey: qk.runs.workspaces() });
         break;
       case 'node.status':
         step(event.data.run_id, event.data.node_id, (s) => ({
@@ -326,9 +351,10 @@ function LiveRun({
         void queryClient.invalidateQueries({ queryKey: qk.artifacts.runs(issue.id) });
         break;
       case 'run.finished':
-        queryClient.setQueryData<Run[]>(qk.graphs.runs(graphId), (prev) =>
+        queryClient.setQueryData<Run[]>(latest.queryKey, (prev) =>
           (prev ?? []).map((r) => (r.id === event.data.run.id ? event.data.run : r)),
         );
+        void queryClient.invalidateQueries({ queryKey: qk.runs.workspaces() });
         // The run reported back on this issue: a timeline entry, maybe a new state (in the
         // workspace's lists and projects too), an inbox entry, and the run's status on each file
         // it made. Nothing else of the workspace changed.
@@ -371,6 +397,7 @@ function LiveRun({
       onReconnect: () => {
         void queryClient.invalidateQueries({ queryKey: qk.graphs.runs(graphId) });
         void queryClient.invalidateQueries({ queryKey: qk.graphs.detail(graphId) });
+        void queryClient.invalidateQueries({ queryKey: qk.runs.workspaces() });
       },
     });
     stream.start();
@@ -392,14 +419,18 @@ function LiveRun({
     },
     onSuccess: (started) => {
       setLive({ runId: started.id, steps: {} });
-      queryClient.setQueryData<Run[]>(qk.graphs.runs(graphId), (prev) => [
-        started,
-        ...(prev ?? []).filter((r) => r.id !== started.id),
-      ]);
+      queryClient.setQueryData<Run[]>(latest.queryKey, [started]);
+      void queryClient.invalidateQueries({ queryKey: qk.runs.workspaces() });
     },
   });
   const stop = useMutation({
     mutationFn: () => (run ? cancelRun(run.id) : Promise.reject(new Error('nothing runs'))),
+    onSuccess: (cancelled) => {
+      queryClient.setQueryData<Run[]>(latest.queryKey, (prev) =>
+        (prev ?? []).map((r) => (r.id === cancelled.id ? cancelled : r)),
+      );
+      void queryClient.invalidateQueries({ queryKey: qk.runs.workspaces() });
+    },
   });
 
   const titles = useMemo(
@@ -607,11 +638,20 @@ function useReportFiles(issueId: string, runId: string | null) {
 }
 
 /**
- * A finished run's report on the issue's timeline, written by the agents the way a comment is
- * by a member (an avatar beside it, no card): whether it worked, the deliverable it produced,
- * the files it made, and a link to the whole run.
+ * A finished run's report on the issue's timeline, written by the agents the way a comment is by
+ * a member, on a card: whether it worked, the deliverable it produced, the files it made, and the
+ * way to the whole run. The timeline adds `actions` beside its menu and `footer` under it (its
+ * reactions).
  */
-export function RunReport({ event }: { event: IssueEvent }) {
+export function RunReport({
+  event,
+  actions,
+  footer,
+}: {
+  event: IssueEvent;
+  actions?: ReactNode;
+  footer?: ReactNode;
+}) {
   const runId = event.run_id;
   const { files, ask, more, none } = useReportFiles(event.issue_id, runId);
   const status = event.to ?? 'finished';
@@ -622,33 +662,17 @@ export function RunReport({ event }: { event: IssueEvent }) {
         ? 'could not finish the work'
         : 'were stopped';
   return (
-    <li className="flex gap-2.5">
-      <span
-        aria-hidden
-        className="mt-px flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
-      >
-        <BotIcon className="size-3.5" />
-      </span>
-      <div className="min-w-0 flex-1 space-y-1.5">
-        <div className="flex min-h-5 items-center gap-2 text-[13px]">
-          <span className="font-medium">Agents</span>
-          <span className={status === 'failed' ? 'text-destructive' : 'text-muted-foreground'}>
-            {verb}
-          </span>
-          <span className="text-muted-foreground">{formatRelative(event.created_at)}</span>
-          {runId && (
-            <Link
-              to={`/app/runs/${runId}`}
-              className="ml-auto text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-            >
-              Open run
-            </Link>
-          )}
-        </div>
+    <ActivityEntry highlighted>
+      <EntryRow icon={<KindIcon kind="run" />} avatar={<AgentsAvatar />}>
+        <EntryHeader
+          name="Agents"
+          action={<span className={cn(status === 'failed' && 'text-destructive')}>{verb}</span>}
+          at={event.created_at}
+        />
         {event.body && (
-          // A deliverable can run long: it scrolls inside the entry, its headings sized for a
+          // A deliverable can run long: it scrolls inside the card, its headings sized for a
           // timeline. Until the renderer has loaded, it reads as plain text.
-          <div className="max-h-80 overflow-y-auto pr-1">
+          <div className="mt-2 max-h-80 overflow-y-auto rounded-xl bg-background/80 px-3 py-2.5 dark:bg-background/40">
             <Suspense
               fallback={<p className="text-sm break-words whitespace-pre-wrap">{event.body}</p>}
             >
@@ -658,21 +682,59 @@ export function RunReport({ event }: { event: IssueEvent }) {
             </Suspense>
           </div>
         )}
-        {files.length > 0 && <FileList files={files} />}
-        {ask && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="-ml-2 h-6 gap-1.5 px-2 text-xs text-muted-foreground"
-            onClick={ask}
-          >
-            <FileIcon className="size-3.5" />
-            {more ? 'Show all the run’s files' : 'Show the run’s files'}
-          </Button>
+        {files.length > 0 && (
+          <div className="mt-2">
+            <FileList files={files} onCard />
+          </div>
         )}
-        {none && <p className="text-xs text-muted-foreground">The run made no files.</p>}
-      </div>
-    </li>
+        {none && <p className="mt-2 text-xs text-muted-foreground">The run made no files.</p>}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {runId && (
+            <Button size="sm" className="rounded-full px-3.5" asChild>
+              <Link to={`/app/runs/${runId}`}>Open run</Link>
+            </Button>
+          )}
+          {ask && (
+            <Button
+              variant="secondary"
+              size="sm"
+              className="rounded-full bg-background/80 px-3.5 hover:bg-background dark:bg-background/40"
+              onClick={ask}
+            >
+              <FileIcon />
+              {more ? 'Show all the run’s files' : 'Show the run’s files'}
+            </Button>
+          )}
+          <span className="ml-auto flex items-center gap-1">
+            {actions}
+            {(event.body || runId) && (
+              <EntryMenu label="More for the run’s report" className="rounded-full">
+                {event.body && (
+                  <DropdownMenuItem onSelect={() => void copyText(event.body, 'Copied the result')}>
+                    <CopyIcon />
+                    Copy result
+                  </DropdownMenuItem>
+                )}
+                {runId && (
+                  <DropdownMenuItem
+                    onSelect={() =>
+                      void copyText(
+                        `${window.location.origin}/app/runs/${runId}`,
+                        'Copied the link to the run',
+                      )
+                    }
+                  >
+                    <LinkIcon />
+                    Copy link to the run
+                  </DropdownMenuItem>
+                )}
+              </EntryMenu>
+            )}
+          </span>
+        </div>
+        {footer}
+      </EntryRow>
+    </ActivityEntry>
   );
 }
 

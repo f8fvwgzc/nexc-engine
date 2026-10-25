@@ -37,11 +37,18 @@ pub async fn visible_team(
     wid: Uuid,
     tid: Uuid,
 ) -> Result<(Team, TeamAccess), AppError> {
-    let workspace = member_of(state, auth, wid).await?;
-    let team = repo::teams::find(&state.db, auth.id, wid, tid)
-        .await
-        .or_not_found("team")?;
-    let access = access(&workspace, &team);
+    let Some((team, workspace_role)) =
+        repo::teams::find_with_workspace_role(&state.db, auth.id, wid, tid).await?
+    else {
+        // Not a member of the workspace reads as the workspace missing, as everywhere else.
+        member_of(state, auth, wid).await?;
+        return Err(AppError::NotFound("team"));
+    };
+    let access = TeamAccess {
+        workspace_role,
+        team_role: team.role,
+        private: team.private,
+    };
     if access.can_view() {
         Ok((team, access))
     } else {

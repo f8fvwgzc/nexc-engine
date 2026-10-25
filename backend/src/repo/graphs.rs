@@ -116,11 +116,13 @@ pub async fn lock(
 }
 
 /// The graphs `user_id` may work on, optionally only those of one
-/// workspace, most recently updated first.
+/// workspace, most recently updated first; the first `limit` of them when it
+/// is given. The node and edge counts are read for those rows only.
 pub async fn list(
     db: impl PgExecutor<'_>,
     user_id: Uuid,
     workspace_id: Option<Uuid>,
+    limit: Option<i64>,
 ) -> Result<Vec<GraphSummary>, sqlx::Error> {
     sqlx::query_as(concat!(
         "SELECT g.id, g.workspace_id, g.team_id, g.name, g.description, g.updated_at,
@@ -128,10 +130,11 @@ pub async fn list(
                 (SELECT count(*) FROM edges e WHERE e.graph_id = g.id) AS edge_count
          FROM graphs g WHERE ($2::uuid IS NULL OR g.workspace_id = $2) AND ",
         graph_access!("g", "$1"),
-        " ORDER BY g.updated_at DESC"
+        " ORDER BY g.updated_at DESC, g.id LIMIT $3"
     ))
     .bind(user_id)
     .bind(workspace_id)
+    .bind(limit)
     .fetch_all(db)
     .await
 }
