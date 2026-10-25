@@ -4,8 +4,11 @@ nexc-engine is rolling out in namespace {{ .Release.Namespace }}.
   kubectl -n {{ .Release.Namespace }} get pods
 {{- if .Values.ingress.enabled }}
 
-Open http{{ if .Values.ingress.tls }}s{{ end }}://{{ .Values.ingress.host }} once the ingress answers
+Open {{ include "nexc.publicUrl" . }} once the ingress answers
 (map the host in /etc/hosts on minikube: `minikube ip`).
+{{- if and (not .Values.ingress.tls) .Values.ingress.tlsSecretName }}
+The ingress serves it with the TLS Secret {{ .Values.ingress.tlsSecretName }} (create it, or let cert-manager issue it).
+{{- end }}
 {{- end }}
 {{- if dig "http3" "enabled" false .Values.frontend }}
 
@@ -18,11 +21,10 @@ with the certificate of Secret {{ .Values.frontend.http3.secretName }}. Point th
 The namespace should carry the restricted Pod Security Standard, as deploy/k8s does:
   kubectl label namespace {{ .Release.Namespace }} pod-security.kubernetes.io/enforce=restricted --overwrite
 
-{{ if and (ne .Values.backend.dataAccessMode "ReadWriteMany") (not .Values.backend.dataExistingClaim) (or .Values.autoscaling.backend.enabled (gt (int .Values.replicas.backend) 1)) -}}
-High availability: every backend replica ({{ if .Values.autoscaling.backend.enabled }}autoscaled{{ else }}{{ .Values.replicas.backend }} of them{{ end }}) mounts the volume
-backend-data, which is {{ .Values.backend.dataAccessMode }}: on more than one node, set
-backend.dataAccessMode=ReadWriteMany with a storage class that offers it (backend.dataStorageClass),
-or a replica cannot attach it and peers cannot see the artifacts of runs they take over (docs/HA.md).
+{{ if eq (toString .Values.config.NEXC_ALLOW_SIGNUP) "false" -}}
+Sign-up is off (config.NEXC_ALLOW_SIGNUP): create accounts with
+  kubectl -n {{ .Release.Namespace }} exec -it deploy/backend -- nexc user create --email <address> --name <name>
+or turn on single sign-on (oidc.enabled).
 
 {{ end -}}
 Runtime wire: {{ .Values.backend.runtimeProtocol }} (gRPC stream on {{ .Values.runtime.grpcPort }}).

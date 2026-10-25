@@ -8,7 +8,19 @@ metadata:
     {{- include "nexc.labels" . | nindent 4 }}
 data:
   {{- range $key, $value := .Values.config }}
+  {{- if not (and (has $key (list "NEXC_CORS_ORIGINS" "NEXC_PUBLIC_URL")) (not $value)) }}
   {{ $key }}: {{ $value | quote }}
+  {{- end }}
+  {{- end }}
+  {{- $public := include "nexc.publicUrl" . }}
+  {{- if and (not .Values.config.NEXC_PUBLIC_URL) $public }}
+  NEXC_PUBLIC_URL: {{ $public | quote }}
+  {{- end }}
+  {{- if and (not .Values.config.NEXC_CORS_ORIGINS) $public }}
+  NEXC_CORS_ORIGINS: {{ $public | quote }}
+  {{- end }}
+  {{- if and (eq (toString .Values.config.NEXC_ENV) "production") .Values.ingress.enabled (not (include "nexc.tlsHost" (dict "host" .Values.ingress.host "root" .))) }}
+  {{- fail "NEXC_ENV=production serves the console over TLS only (its cookies are Secure): set ingress.tlsSecretName (or ingress.tls), or ingress.tlsUpstream=true when TLS ends in front of the ingress; a plain-http trial sets config.NEXC_ENV=development and config.NEXC_COOKIE_SECURE=false" }}
   {{- end }}
   NEXC_HOST: "0.0.0.0"
   NEXC_PORT: "8080"
