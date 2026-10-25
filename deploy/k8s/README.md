@@ -115,9 +115,12 @@ CI lints the chart and renders it with the firewall, the collector and onto-inte
   point `NEXC_DATABASE_URL` at it (`sslmode=require`) and drop `postgres.yaml` from the resources.
 * **Artifact storage** – `backend-data` is `ReadWriteOnce`, so `backend.yaml` keeps every backend
   pod on one node (a required pod affinity): the replicas cover a crash and a rollout, not the
-  loss of that node, and draining it waits until the last backend pod is deleted. To spread them
-  across nodes, use a `ReadWriteMany` storage class and the topology spread in `backend.yaml`'s
-  comment instead of the affinity.
+  loss of that node, and draining it waits until the last backend pod is deleted. If that node
+  fails, its pods stay `Terminating` and their replacements `Pending`; once the node is really off,
+  taint it `node.kubernetes.io/out-of-service=nodeshutdown:NoExecute` or force-delete those pods
+  (`kubectl delete pod --force --grace-period=0`) and they start elsewhere, the volume with them
+  ([docs/HA.md](../../docs/HA.md)). To spread them across nodes, use a `ReadWriteMany` storage
+  class and the topology spread in `backend.yaml`'s comment instead of the affinity.
 * **Scaling** – run two or more backend replicas: the backend scales horizontally (realtime
   fan-out over PostgreSQL `LISTEN/NOTIFY`), any replica's dispatcher claims a queued run and holds
   it under a lease (`NEXC_RUN_LEASE_SECS`, the same on every replica), and when that replica dies

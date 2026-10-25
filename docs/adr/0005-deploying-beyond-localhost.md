@@ -37,9 +37,11 @@ machine. Each of the following worked locally and failed only once deployed:
   take 60, the autoscaler at 6 takes 140, onto-intelli adds 48. Past 100 PostgreSQL refuses
   connections and requests fail.
 - **Missed invalidations.** `PgListener::recv()` reconnects by itself when its connection drops
-  (a failover, a NAT's idle timeout). The fan-out never knew, and the invalidations peers sent in
+  (a failover, a reset on the way). The fan-out never knew, and the invalidations peers sent in
   the gap were lost: policies, guardrails and the rest stayed stale for up to
-  `NEXC_CACHE_TTL_SECS` on that replica.
+  `NEXC_CACHE_TTL_SECS` on that replica. A connection a NAT or load balancer forgot without a
+  reset (an idle timeout) was worse: a connection that only reads never hears of it, and the
+  replica heard nothing from its peers again.
 - **CI.** `main` had been red since 2026-10-20 on `cargo fmt` and on shellcheck's SC2317, so
   clippy, the tests, the Compose smoke run and the image builds had not run on anything since.
 
@@ -70,16 +72,19 @@ machine. Each of the following worked locally and failed only once deployed:
    was not chosen: kustomize has no hooks, and a pre-install hook would run before the chart's
    ConfigMap and Secret exist.
 5. **A connection budget the chart computes.** `postgres.maxConnections` (100) less
-   `postgres.reservedConnections` (10) and onto-intelli's pools is shared by the most backend pods
+   `postgres.reservedConnections` (10) and onto-intelli's pools (its rollouts stop a pod before
+   starting the next, `maxSurge: 0`, so they add none) is shared by the most backend pods
    that run at once (the autoscaler's maximum or the replicas, plus one for a rollout). Each pod's
    pool is that share, at most 20, unless `config.NEXC_DB_MAX_CONNECTIONS` is set; a share under 4,
    or a pool set that overflows the chart's own PostgreSQL, refuses to render. A value other than
    100 is passed to the chart's PostgreSQL as `-c max_connections`; 100 passes nothing, so an
    upgrade does not restart it.
-6. **A reconnected listener drops every cached entry.** The listener reads with `try_recv()`,
-   whose `None` is a dropped connection already re-established, and after it, or after a failed
-   connect, calls `Caches::drop_all_local()` once `LISTEN` is open again. Vocabularies are made
-   stale rather than dropped, so they stay the fallback while onto-intelli is away.
+6. **A reconnected listener drops every cached entry.** The listener reads with `try_recv()`
+   (no reconnect inside it), so a dropped connection ends the `LISTEN`, and after 30 s with no
+   notification it sends a `SELECT 1` that must answer within 10 s, so a connection dropped
+   without a reset ends it too. The fan-out then connects again and calls
+   `Caches::drop_all_local()` once `LISTEN` is open. Vocabularies are made stale rather than
+   dropped, so they stay the fallback while onto-intelli is away.
 7. **CI green again.** `cargo fmt`; `disable=SC2317,SC2329` on the trap-only function (the
    runner's shellcheck and 0.11 name the same finding differently); the frontend's build and
    compression in one `RUN` (hadolint DL3059, which would have failed next).
@@ -91,10 +96,16 @@ down in `docs/INFRASTRUCTURE.md` (Serving it on a host of its own).
 
 ## Consequences
 
-- A `ReadWriteOnce` installation keeps its backend on one node: a node failure stops the backend
-  until Kubernetes moves the pods and the volume, and draining that node waits on the
-  PodDisruptionBudget until the last backend pod is deleted by hand. Before, the same cluster
-  could not run two replicas at all.
+- A `ReadWriteOnce` installation keeps its backend on one node, and draining that node waits on
+  the PodDisruptionBudget until the last backend pod is deleted by hand. A failure of that node
+  stops the backend until someone acts: its pods stay `Terminating` in the API while the node is
+  `NotReady`, the scheduler still counts them for the affinity, so their replacements wait for the
+  dead node and stay `Pending`, and the volume stays attached to it. Once the node is really off
+  (powered down, its VM stopped: not merely cut off, or two nodes would write to one volume), taint
+  it `node.kubernetes.io/out-of-service=nodeshutdown:NoExecute` (Kubernetes 1.28+), or delete its
+  backend pods with `kubectl delete pod --force --grace-period=0`; the replacements then start on
+  another node and the volume follows them (docs/HA.md). Before, the same cluster could not run
+  two replicas at all.
 - With the autoscaler at 6 the chart's pool shrinks from 20 to 12 per pod, and beside onto-intelli
   to 14: fewer queries in parallel per pod, none refused by PostgreSQL. Releases that set
   `config.NEXC_DB_MAX_CONNECTIONS` to a pool that does not fit no longer render; they did not fit
@@ -130,6 +141,9 @@ down in `docs/INFRASTRUCTURE.md` (Serving it on a host of its own).
 - `cargo test --test caches`: `a_lost_listen_connection_drops_every_entry` ends both replicas'
   `LISTEN` connections with `pg_terminate_backend` and checks that the entries go and that the next
   write still reaches the other replica. It fails without the change.
+  `a_listen_connection_gone_silent_counts_as_lost` puts a proxy in front of the database that
+  stops passing bytes with both sockets open: the listener gives up after its quiet spell and the
+  unanswered `SELECT 1`, and a connection that still answers keeps receiving.
 - Not run: a multi-node cluster, a real ingress-nginx serving the three Ingress objects, the
   frontend image built from scratch (its base image, configuration and scripts were), and
   shellcheck 0.9 itself (CI's).

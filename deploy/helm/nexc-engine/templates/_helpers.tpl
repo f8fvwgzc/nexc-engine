@@ -94,7 +94,8 @@ one a rollout adds (maxSurge 1).
 
 {{/*
 The connections postgres.maxConnections leaves the backend: less postgres.reservedConnections and
-onto-intelli's pools (guarded for --reuse-values from a release without them).
+onto-intelli's pools, replicas x maxConnections (its rollouts add no pod: maxSurge 0), guarded for
+--reuse-values from a release without them.
 */}}
 {{- define "nexc.dbBudget" -}}
 {{- $pg := .Values.postgres -}}

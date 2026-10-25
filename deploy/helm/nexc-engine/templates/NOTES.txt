@@ -21,7 +21,10 @@ The namespace should carry the restricted Pod Security Standard, as deploy/k8s d
 {{ if and (eq .Values.backend.dataAccessMode "ReadWriteOnce") (or .Values.autoscaling.backend.enabled (gt (int .Values.replicas.backend) 1)) -}}
 High availability: every backend replica ({{ if .Values.autoscaling.backend.enabled }}autoscaled{{ else }}{{ .Values.replicas.backend }} of them{{ end }}) mounts the data volume, which is
 ReadWriteOnce, so they all run on one node: they cover a crash and a rolling update, not the loss
-of that node, and a drain of it waits until the last backend pod is deleted. To spread them across
+of that node, and a drain of it waits until the last backend pod is deleted. If that node fails,
+its pods stay Terminating and their replacements Pending until, with the node really off, you run
+  kubectl taint node <node> node.kubernetes.io/out-of-service=nodeshutdown:NoExecute
+or force-delete them (kubectl delete pod <pod> --force --grace-period=0). To spread them across
 nodes, set backend.dataAccessMode=ReadWriteMany with a storage class that offers it
 (backend.dataStorageClass) or a claim of that mode (backend.dataExistingClaim) (docs/HA.md).
 

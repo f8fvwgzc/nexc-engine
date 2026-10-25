@@ -222,7 +222,8 @@ postgres:
   storage: 5Gi
   # The connection budget. Every backend pod that can run at once (autoscaling.backend.maxReplicas,
   # or replicas.backend, plus the one a rollout adds) fills a pool of NEXC_DB_MAX_CONNECTIONS, the
-  # realtime LISTEN connection included; onto-intelli adds replicas x maxConnections. Together
+  # realtime LISTEN connection included; onto-intelli adds replicas x maxConnections (its rollout
+  # stops a pod before it starts the next, so it adds no pool). Together
   # they stay under maxConnections less reservedConnections (psql, backups, the superuser's own
   # three): unless config.NEXC_DB_MAX_CONNECTIONS is set, each pod's pool is that share, at most
   # 20, and with the chart's PostgreSQL a pool that does not fit refuses to render. maxConnections
