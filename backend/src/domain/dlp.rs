@@ -486,7 +486,9 @@ fn office_text(bytes: &[u8]) -> Option<String> {
         let Ok(file) = archive.by_index(i) else {
             continue;
         };
-        let name = file.name().to_owned();
+        let Ok(name) = file.name().map(|name| name.into_owned()) else {
+            continue;
+        };
         let wanted = name.starts_with("word/")
             || name.starts_with("xl/sharedStrings")
             || name.starts_with("xl/worksheets/")
