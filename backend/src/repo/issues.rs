@@ -1325,8 +1325,8 @@ pub async fn notify_members(
 /// Tells the author of the comment `event_id` that the actor reacted to it
 /// with `emoji`, as [`notify_members`] would: never an author reacting to
 /// their own comment, nor one who can no longer see the issue. One entry per
-/// actor, emoji and issue a day: an emoji taken back and given again, or the
-/// same one given to the author's next comment there, tells nobody twice.
+/// actor, emoji and comment a day: an emoji taken back and given again tells
+/// nobody twice, the same one given to the author's next comment does.
 pub async fn notify_reaction(
     db: impl PgExecutor<'_>,
     event_id: Uuid,
@@ -1334,8 +1334,9 @@ pub async fn notify_reaction(
     emoji: &str,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(concat!(
-        "INSERT INTO notifications (id, user_id, workspace_id, issue_id, actor_id, kind, emoji)
-         SELECT $1, e.actor_id, i.workspace_id, i.id, $3, 'reaction', $4
+        "INSERT INTO notifications (id, user_id, workspace_id, issue_id, actor_id, kind, emoji,
+                                    event_id)
+         SELECT $1, e.actor_id, i.workspace_id, i.id, $3, 'reaction', $4, e.id
          FROM issue_events e
          JOIN issues i ON i.id = e.issue_id
          JOIN teams t ON t.id = i.team_id
@@ -1344,9 +1345,9 @@ pub async fn notify_reaction(
         team_visible!("t", "wm", "e.actor_id"),
         " AND NOT EXISTS (
                SELECT 1 FROM notifications n
-               WHERE n.user_id = e.actor_id AND n.workspace_id = i.workspace_id
-                 AND n.created_at > now() - interval '1 day' AND n.kind = 'reaction'
-                 AND n.issue_id = i.id AND n.actor_id = $3 AND n.emoji = $4)"
+               WHERE n.event_id = e.id AND n.user_id = e.actor_id AND n.actor_id = $3
+                 AND n.kind = 'reaction' AND n.emoji = $4
+                 AND n.created_at > now() - interval '1 day')"
     ))
     .bind(Uuid::now_v7())
     .bind(event_id)

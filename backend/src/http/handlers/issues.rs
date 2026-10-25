@@ -1096,7 +1096,7 @@ async fn reactions_of(
 ///
 /// The comment's author hears of it in their inbox (`reaction`, with the
 /// emoji): never of their own, and once a day for the same emoji from the
-/// same person on the issue, however often it is taken back and given again.
+/// same person on the comment, however often it is taken back and given again.
 #[utoipa::path(post, path = "/issues/{iid}/events/{eid}/reactions", tag = "issues", security(("bearer" = [])),
     params(("iid" = Uuid, Path, description = "Issue id"), ("eid" = Uuid, Path, description = "Timeline entry id")),
     request_body = ReactionBody,

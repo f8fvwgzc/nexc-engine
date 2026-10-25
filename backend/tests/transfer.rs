@@ -225,18 +225,25 @@ async fn a_workspace_moves_to_its_owners_database(pool: PgPool) {
     .await
     .unwrap();
     assert_eq!((parents, sub_issues), (1, 1));
-    let (replies, reacted): (i64, i64) = sqlx::query_as(
+    let (replies, reacted, told): (i64, i64, i64) = sqlx::query_as(
         "SELECT (SELECT count(*) FROM issue_events e JOIN issue_events p ON p.id = e.parent_id
                  JOIN issues i ON i.id = e.issue_id WHERE i.workspace_id = $1),
                 (SELECT count(*) FROM issue_event_reactions r
                  JOIN issue_events e ON e.id = r.event_id AND e.parent_id IS NULL
-                 JOIN issues i ON i.id = e.issue_id WHERE i.workspace_id = $1 AND r.emoji = '🎉')",
+                 JOIN issues i ON i.id = e.issue_id WHERE i.workspace_id = $1 AND r.emoji = '🎉'),
+                (SELECT count(*) FROM notifications n
+                 JOIN issue_events e ON e.id = n.event_id AND e.parent_id IS NULL
+                 WHERE n.workspace_id = $1 AND n.kind = 'reaction')",
     )
     .bind(workspace)
     .fetch_one(&target)
     .await
     .unwrap();
-    assert_eq!((replies, reacted), (1, 1), "the thread travels whole");
+    assert_eq!(
+        (replies, reacted, told),
+        (1, 1, 1),
+        "the thread travels whole"
+    );
     let (github, owned): (Option<String>, bool) = sqlx::query_as(
         "SELECT (SELECT github_url FROM issues WHERE workspace_id = $1 AND parent_id IS NULL),
                 (SELECT team_id IS NOT NULL FROM projects WHERE workspace_id = $1)",

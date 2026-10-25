@@ -421,6 +421,17 @@ async fn the_author_of_a_comment_hears_of_a_reaction_once_a_day(pool: PgPool) {
         reactions_in_inbox(&app, &w, &w.member).await,
         [reacted("🚀"), reacted("🎉")]
     );
+    // So is the same emoji on the member's next comment, and its entry stays when that comment
+    // is deleted.
+    let next = comment(&app, &w.member, &iid, "Also on production.").await;
+    react(&app, &w.owner, &iid, &next, "🎉").await;
+    let path = format!("/issues/{iid}/comments/{next}");
+    let (status, _) = call(&app, Method::DELETE, &path, &w.member, None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        reactions_in_inbox(&app, &w, &w.member).await,
+        [reacted("🎉"), reacted("🚀"), reacted("🎉")]
+    );
     // A day later the same emoji given again is news again.
     sqlx::query(
         "UPDATE notifications SET created_at = now() - interval '25 hours' WHERE kind = 'reaction'",
@@ -430,11 +441,11 @@ async fn the_author_of_a_comment_hears_of_a_reaction_once_a_day(pool: PgPool) {
     .unwrap();
     unreact(&app, &w.owner, &iid, &cid, "🎉").await;
     react(&app, &w.owner, &iid, &cid, "🎉").await;
-    assert_eq!(reactions_in_inbox(&app, &w, &w.member).await.len(), 3);
+    assert_eq!(reactions_in_inbox(&app, &w, &w.member).await.len(), 4);
 
     // Reacting to one's own comment tells nobody.
     react(&app, &w.member, &iid, &cid, "👀").await;
-    assert_eq!(reactions_in_inbox(&app, &w, &w.member).await.len(), 3);
+    assert_eq!(reactions_in_inbox(&app, &w, &w.member).await.len(), 4);
 
     // An author who can no longer see the issue is not told.
     join(&app, &w, &w.secret, &w.member_id).await;

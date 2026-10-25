@@ -806,6 +806,7 @@ mod tests {
             ("memories", "graphs"),
             ("llm_usage", "runs"),
             ("notifications", "issues"),
+            ("notifications", "issue_events"),
             ("issue_event_reactions", "issue_events"),
             ("projects", "teams"),
             ("artifact_files", "artifact_folders"),

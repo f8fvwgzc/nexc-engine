@@ -194,7 +194,7 @@ async fn a_person_gets_a_copy_of_their_data_and_deletes_their_account(pool: PgPo
     let (_, assigned) = call(&app, Method::POST, &issues, &owner, Some(assigned)).await;
     let assigned_id = assigned["id"].as_str().unwrap().to_owned();
     let comment = json!({"body": "A thought of mine"});
-    call(
+    let (_, comment) = call(
         &app,
         Method::POST,
         &format!("/issues/{written_id}/comments"),
@@ -202,6 +202,16 @@ async fn a_person_gets_a_copy_of_their_data_and_deletes_their_account(pool: PgPo
         Some(comment),
     )
     .await;
+    let comment_id = comment["id"].as_str().unwrap().to_owned();
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &format!("/issues/{written_id}/events/{comment_id}/reactions"),
+        &leaver,
+        Some(json!({"emoji": "🎉"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
     let graph = json!({"name": "Shared plan", "goal": "g", "workspace_id": wid});
     let (status, graph) = call(&app, Method::POST, "/graphs", &leaver, Some(graph)).await;
     assert_eq!(status, StatusCode::CREATED);
@@ -229,6 +239,16 @@ async fn a_person_gets_a_copy_of_their_data_and_deletes_their_account(pool: PgPo
     );
     assert_eq!(sections["issues_assigned"][0]["identifier"], "ENG-2");
     assert_eq!(sections["comments"][0]["body"], "A thought of mine");
+    let reaction = &sections["reactions"][0];
+    assert_eq!(
+        (
+            &reaction["event_id"],
+            &reaction["issue"],
+            &reaction["emoji"]
+        ),
+        (&json!(comment_id), &json!("ENG-1"), &json!("🎉"))
+    );
+    assert!(reaction["created_at"].is_string(), "{reaction}");
     assert_eq!(sections["graphs"][0]["name"], "Shared plan");
     assert_eq!(copy["truncated"], json!([]));
     let text = copy.to_string();

@@ -3579,7 +3579,7 @@
         "tags": [
           "auth"
         ],
-        "summary": "A copy of what the installation holds about the caller, as a JSON file:\nthe account, its workspaces and teams, the issues and comments it wrote,\nits graphs, documents and personal memories, and what it spent. No\ncredential is in it.",
+        "summary": "A copy of what the installation holds about the caller, as a JSON file:\nthe account, its workspaces and teams, the issues and comments it wrote\nand the reactions it gave, its graphs, documents and personal memories,\nand what it spent. No credential is in it.",
         "operationId": "export",
         "responses": {
           "200": {
@@ -5994,7 +5994,7 @@
           "issues"
         ],
         "summary": "Reacts to a comment or a run report with an emoji; giving the same emoji\nagain changes nothing. Whoever may comment on the issue may react.",
-        "description": "The comment's author hears of it in their inbox (`reaction`, with the\nemoji): never of their own, and once a day for the same emoji from the\nsame person on the issue, however often it is taken back and given again.",
+        "description": "The comment's author hears of it in their inbox (`reaction`, with the\nemoji): never of their own, and once a day for the same emoji from the\nsame person on the comment, however often it is taken back and given again.",
         "operationId": "add_reaction",
         "parameters": [
           {
@@ -16119,7 +16119,7 @@
           },
           "sections": {
             "type": "object",
-            "description": "`workspaces`, `teams`, `issues_created`, `issues_assigned`,\n`comments`, `graphs`, `documents`, `memories`, `ai_account`, `usage`,\n`security_activity`, `notifications`, `assistant_conversations`,\n`sign_in_identities`: each a list of plain objects."
+            "description": "`workspaces`, `teams`, `issues_created`, `issues_assigned`,\n`comments`, `reactions`, `graphs`, `documents`, `memories`,\n`ai_account`, `usage`, `security_activity`, `notifications`,\n`assistant_conversations`, `sign_in_identities`: each a list of plain\nobjects."
           },
           "truncated": {
             "type": "array",
