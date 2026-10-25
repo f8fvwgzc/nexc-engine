@@ -107,7 +107,11 @@ the other kinds and go in a payload of their own: a replica still on a build wit
 a rolling update cannot read them and ignores that payload only (it keeps no onto-intelli reads
 anyway), and still drops the policies, guardrails, agents and vocabularies sent beside it. From
 this build on, a replica skips a kind of key it does not know and drops the rest of the payload's
-keys.
+keys. A `NOTIFY` sent while a replica's `LISTEN` connection is down never reaches it, so when that
+connection comes back (the listener reconnects by itself after a failover or an idle timeout) the
+replica drops every entry of its hot-read and onto-intelli caches and marks its vocabularies
+stale: the next reads go to the database and to onto-intelli, and nothing a peer changed in the
+gap is served for the rest of its TTL.
 
 ### Cross-service calls
 
