@@ -18,11 +18,12 @@ import {
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { errorMessage } from '@/lib/api/errors';
+import { FRESH } from '@/lib/freshness';
 import { MotionPresence, unfold } from '@/lib/motion';
 import { qk } from '@/lib/query-keys';
 import { cn } from '@/lib/utils';
 import type { Issue, IssueState } from '@/schemas/issue';
-import { runStatusSchema, type RunStatus } from '@/schemas/run';
+import { isRunActive, runStatusSchema, type RunStatus } from '@/schemas/run';
 import type { Workspace } from '@/schemas/workspace';
 
 import {
@@ -56,6 +57,12 @@ const isClosed = (state: Pick<IssueState, 'category'>) =>
 function runStatusOf(part: object): RunStatus | null {
   const status = 'run_status' in part ? runStatusSchema.safeParse(part.run_status) : null;
   return status?.success ? status.data : null;
+}
+
+/** Whether a sub-issue's latest run is queued or running, so its line still moves. */
+function runsNow(part: object): boolean {
+  const status = runStatusOf(part);
+  return status !== null && isRunActive(status);
 }
 
 /** A sub-issue's status glyph, which opens a menu to move it to another state of its team. */
@@ -107,10 +114,10 @@ function PartStatus({
 
 /**
  * The parts an issue is split into, with how far along they are, where the agents' latest run of
- * each stands, and a quiet last row that turns into a field to add one (Enter files it and keeps
- * the field for the next, Escape closes it). A part is moved to another state from its glyph,
- * and shows at once, before the server answers; rows slide in and out. A new part is filed with
- * the same team as the issue.
+ * each stands (read again every few seconds while one runs), and a quiet last row that turns into
+ * a field to add one (Enter files it and keeps the field for the next, Escape closes it). A part
+ * is moved to another state from its glyph, and shows at once, before the server answers; rows
+ * slide in and out. A new part is filed with the same team as the issue.
  */
 export function SubIssues({ workspace, issue }: { workspace: Workspace; issue: Issue }) {
   const queryClient = useQueryClient();
@@ -119,13 +126,27 @@ export function SubIssues({ workspace, issue }: { workspace: Workspace; issue: I
   const [folded, setFolded] = useState(false);
   // The row of a part filed here keeps the draft's key, so it does not slide in a second time.
   const [keys, setKeys] = useState<Record<string, string>>({});
+  const { total, closed } = issue.sub_issues;
   const list = issuesQuery(workspace.id, { parent_id: issue.id });
-  const parts = useQuery({ ...list, enabled: issue.sub_issues.total > 0 });
+  const filing = ['issues', 'sub-issue', issue.id];
+  const moving = ['issues', 'sub-issue-state', issue.id];
+  const parts = useQuery({
+    ...list,
+    enabled: total > 0,
+    // While a part's run is queued or running, its line follows it on its own; never while a part
+    // is being filed or moved, when a read could answer without the change shown.
+    refetchInterval: (query) => {
+      const busy =
+        queryClient.isMutating({ mutationKey: filing }) +
+          queryClient.isMutating({ mutationKey: moving }) >
+        0;
+      return !busy && query.state.data?.some(runsNow) ? FRESH.live : false;
+    },
+  });
   // In the order they were added, not by last change.
   const rows: Part[] = [...(parts.data ?? [])].sort((a, b) =>
     a.created_at.localeCompare(b.created_at),
   );
-  const { total, closed } = issue.sub_issues;
 
   /** Moves the issue's count of parts (and of closed ones) as a part is added or moved. */
   const count = (more: number, moreClosed: number) =>
@@ -153,7 +174,6 @@ export function SubIssues({ workspace, issue }: { workspace: Workspace; issue: I
     }
   };
 
-  const filing = ['issues', 'sub-issue', issue.id];
   const add = useMutation({
     mutationKey: filing,
     mutationFn: (draft: { key: string; title: string }) =>
@@ -201,8 +221,11 @@ export function SubIssues({ workspace, issue }: { workspace: Workspace; issue: I
   });
 
   const move = useMutation({
+    mutationKey: moving,
     mutationFn: ({ part, state }: { part: Part; state: IssueState }) =>
       updateIssue(part.id, { state_id: state.id }),
+    // The section says what went wrong, under its rows.
+    meta: { errorToast: false },
     onMutate: async ({ part, state }) => {
       await queryClient.cancelQueries({ queryKey: list.queryKey });
       queryClient.setQueryData(list.queryKey, (prev) =>
@@ -236,7 +259,7 @@ export function SubIssues({ workspace, issue }: { workspace: Workspace; issue: I
   let body;
   if (total > 0 && parts.isPending) {
     body = (
-      <div role="status" aria-label="Loading the sub-issues" className="space-y-1">
+      <div role="status" aria-label="Loading the sub-issues" className="space-y-1 px-2">
         {Array.from({ length: Math.min(total, 3) }, (_, i) => (
           <Skeleton key={i} className="h-8 w-full" />
         ))}
@@ -244,7 +267,7 @@ export function SubIssues({ workspace, issue }: { workspace: Workspace; issue: I
     );
   } else if (total > 0 && parts.data === undefined) {
     body = (
-      <div role="alert" className="flex items-center gap-2 text-sm text-muted-foreground">
+      <div role="alert" className="flex items-center gap-2 px-2 text-sm text-muted-foreground">
         <span className="flex-1">Couldn’t load the sub-issues.</span>
         <Button variant="ghost" size="sm" onClick={() => void parts.refetch()}>
           <RotateCcwIcon />
@@ -254,13 +277,13 @@ export function SubIssues({ workspace, issue }: { workspace: Workspace; issue: I
     );
   } else {
     body = (
-      <ul className="-mx-2">
+      <ul>
         <MotionPresence>
           {rows.map((part) => {
             const pending = part.id.startsWith(DRAFT);
             const done = isClosed(part.state);
             return (
-              <m.li key={keys[part.id] ?? part.id} {...unfold} className="overflow-hidden">
+              <m.li key={keys[part.id] ?? part.id} {...unfold}>
                 {pending ? (
                   <div className="flex h-8 items-center gap-2 px-2 text-[13px] text-muted-foreground opacity-60">
                     <CircleDashedIcon aria-hidden className="size-3.5 shrink-0" />
@@ -317,6 +340,9 @@ export function SubIssues({ workspace, issue }: { workspace: Workspace; issue: I
                   if (!title.trim()) setAdding(false);
                 }}
                 onKeyDown={(e) => {
+                  // The Enter that ends an IME composition (Japanese, Chinese, Korean) only
+                  // confirms the text: it files nothing.
+                  if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                   if (e.key === 'Enter') {
                     e.preventDefault();
                     file();
@@ -385,7 +411,9 @@ export function SubIssues({ workspace, issue }: { workspace: Workspace; issue: I
       </div>
       <MotionPresence>
         {!folded && (
-          <m.div key="parts" {...unfold} className="overflow-hidden">
+          // The rows' hover backgrounds reach a little past the section's edges, so their text
+          // lines up with the heading's.
+          <m.div key="parts" {...unfold} className="-mx-2">
             {body}
           </m.div>
         )}

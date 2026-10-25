@@ -17,11 +17,20 @@ export const rise = {
   transition: spring,
 } as const;
 
-/** A row opening to its height and closing back to nothing, so the rows below it slide. */
+/**
+ * A row opening to its height and closing back to nothing, so the rows below it slide. It clips
+ * what it holds only while it moves: at rest, a hover background or a focus ring that reaches past
+ * its edges shows whole.
+ */
 export const unfold = {
-  initial: { opacity: 0, height: 0 },
-  animate: { opacity: 1, height: 'auto' },
-  exit: { opacity: 0, height: 0, transition: { duration: 0.14 } },
+  initial: { opacity: 0, height: 0, overflow: 'hidden' },
+  animate: {
+    opacity: 1,
+    height: 'auto',
+    overflow: 'hidden',
+    transitionEnd: { overflow: 'visible' },
+  },
+  exit: { opacity: 0, height: 0, overflow: 'hidden', transition: { duration: 0.14 } },
   transition: { ...spring, stiffness: 520, damping: 42 },
 } as const;
 

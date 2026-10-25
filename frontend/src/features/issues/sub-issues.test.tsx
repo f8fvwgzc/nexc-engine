@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type * as Freshness from '@/lib/freshness';
 import { qk } from '@/lib/query-keys';
 import type { Issue, IssueState } from '@/schemas/issue';
 import type { Workspace } from '@/schemas/workspace';
@@ -17,6 +18,12 @@ const { api } = vi.hoisted(() => ({
     states: [] as unknown[],
   },
 }));
+
+// A live run is read again every few milliseconds here, not every few seconds.
+vi.mock('@/lib/freshness', async (importOriginal) => {
+  const real = await importOriginal<typeof Freshness>();
+  return { ...real, FRESH: { ...real.FRESH, live: 40 } };
+});
 
 vi.mock('./api', () => ({
   issueQuery: (issueId: string) => ({
@@ -127,15 +134,35 @@ beforeEach(() => {
 
 describe('SubIssues', () => {
   it('lists the parts in the order they were added, each with its latest run from the list', async () => {
-    api.list.mockResolvedValue([part(2, { graph_id: issue.id, run_status: 'running' }), part(1)]);
+    api.list.mockResolvedValue([part(2, { graph_id: issue.id, run_status: 'failed' }), part(1)]);
     renderParts();
     const links = await screen.findAllByRole('link');
     expect(links.map((l) => l.textContent)).toEqual(['ENG-8Part 1', 'ENG-9Part 2']);
-    expect(screen.getByText('running')).toBeInTheDocument();
+    expect(screen.getByText('failed')).toBeInTheDocument();
     expect(
       screen.getByRole('progressbar', { name: '0 of 2 sub-issues closed' }),
     ).toBeInTheDocument();
     // One read for the whole list: no request per row.
+    expect(api.list).toHaveBeenCalledTimes(1);
+  });
+
+  it('follows a running part’s run until it ends, then stops reading', async () => {
+    api.list
+      .mockResolvedValueOnce([part(1, { graph_id: issue.id, run_status: 'running' })])
+      .mockResolvedValue([part(1, { graph_id: issue.id, run_status: 'succeeded' })]);
+    renderParts();
+    expect(await screen.findByText('running')).toBeInTheDocument();
+    expect(await screen.findByText('done')).toBeInTheDocument();
+    const reads = api.list.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(api.list).toHaveBeenCalledTimes(reads);
+  });
+
+  it('does not read the list again while nothing runs', async () => {
+    api.list.mockResolvedValue([part(1, { graph_id: issue.id, run_status: 'failed' })]);
+    renderParts();
+    await screen.findByText('failed');
+    await new Promise((resolve) => setTimeout(resolve, 150));
     expect(api.list).toHaveBeenCalledTimes(1);
   });
 
@@ -188,6 +215,18 @@ describe('SubIssues', () => {
       key: 'Escape',
     });
     expect(screen.queryByRole('textbox', { name: 'Sub-issue title' })).not.toBeInTheDocument();
+  });
+
+  it('files nothing on the Enter that confirms an IME composition', () => {
+    api.list.mockResolvedValue([]);
+    renderParts({ ...issue, sub_issues: { total: 0, closed: 0 } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add sub-issue' }));
+    const field = screen.getByRole('textbox', { name: 'Sub-issue title' });
+    fireEvent.change(field, { target: { value: 'ウェブ' } });
+    fireEvent.keyDown(field, { key: 'Enter', isComposing: true });
+    fireEvent.keyDown(field, { key: 'Enter', keyCode: 229 });
+    expect(api.createIssue).not.toHaveBeenCalled();
+    expect(field).toHaveValue('ウェブ');
   });
 
   it('moves a part to another state from its glyph, and counts it closed at once', async () => {
