@@ -115,6 +115,29 @@ describe('conditional reads', () => {
     stopSecond();
   });
 
+  it('keeps only the issue lists read last, and no list too long, as query-persist does', () => {
+    vi.useFakeTimers();
+    const stop = startEtagPersistence();
+    remember('/api/v1/workspaces', '"w"', [{ id: 'w' }]);
+    for (let n = 1; n <= 10; n++) {
+      remember(`/api/v1/workspaces/w/issues?team_id=t${n}`, `"t${n}"`, [{ id: `i${n}` }]);
+    }
+    remember(
+      '/api/v1/graphs?workspace_id=w',
+      '"long"',
+      Array.from({ length: 501 }, (_, i) => ({ id: `g${i}` })),
+    );
+    vi.advanceTimersByTime(1_500);
+    stop();
+
+    const saved = JSON.parse(localStorage.getItem(KEY) ?? '{}') as { entries: [string][] };
+    const urls = saved.entries.map(([url]) => url);
+    expect(urls).toEqual([
+      '/api/v1/workspaces',
+      ...[3, 4, 5, 6, 7, 8, 9, 10].map((n) => `/api/v1/workspaces/w/issues?team_id=t${n}`),
+    ]);
+  });
+
   it('ignores a copy written under another cache schema', () => {
     localStorage.setItem(
       KEY,

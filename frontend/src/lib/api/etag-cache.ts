@@ -1,5 +1,5 @@
 import { env } from '@/lib/env';
-import { CACHE_SCHEMA } from '@/lib/query-persist';
+import { CACHE_SCHEMA, MAX_ISSUE_LISTS, MAX_LIST_LENGTH } from '@/lib/query-persist';
 import { useAuthStore } from '@/stores/auth-store';
 
 /**
@@ -13,7 +13,8 @@ import { useAuthStore } from '@/stores/auth-store';
  * Entries live for the page. The lists query-persist keeps between visits (the same data, in the
  * same browser storage) are kept here too with their tags, per account and `CACHE_SCHEMA` (so
  * across deploys that change no shape), and the first refetch of a visit is a 304 as well;
- * nothing else reaches storage.
+ * nothing else reaches storage. The same limits apply: the issue lists read last, and no list
+ * too long, or this copy would fill the storage query-persist needs.
  */
 
 interface Entry {
@@ -39,6 +40,8 @@ const PERSISTED_PATHS =
   /^\/(workspaces|graphs|agents|templates|agent-templates)(\?|$)|^\/workspaces\/[^/]+\/(teams|issues|labels|projects)(\?|$)/;
 /** Searches and sub-issue lists, which query-persist leaves out too: one per string, per issue. */
 const UNKEPT_PARAMS = /[?&](q|parent_id)=/;
+/** A workspace's issue list, whatever it is filtered by. */
+const ISSUE_LIST = /^\/workspaces\/[^/]+\/issues(\?|$)/;
 
 const entries = new Map<string, Entry>();
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -99,10 +102,27 @@ function scheduleSave(): void {
   }, SAVE_DELAY_MS);
 }
 
+/**
+ * What goes to storage, oldest first: the persisted lists but those too long to keep, and of the
+ * issue lists only the ones remembered last (the map is in the order they were).
+ */
+function persistedEntries(): [string, Entry][] {
+  let issueLists = 0;
+  return [...entries.entries()]
+    .filter(([url, { body }]) => {
+      if (!persistable(url)) return false;
+      return !(Array.isArray(body) && body.length > MAX_LIST_LENGTH);
+    })
+    .reverse()
+    .filter(([url]) => !ISSUE_LIST.test(pathOf(url)) || ++issueLists <= MAX_ISSUE_LISTS)
+    .slice(0, MAX_PERSISTED)
+    .reverse();
+}
+
 function save(): void {
   const userId = useAuthStore.getState().user?.id;
   if (!userId) return;
-  const kept = [...entries.entries()].filter(([url]) => persistable(url)).slice(-MAX_PERSISTED);
+  const kept = persistedEntries();
   try {
     const snapshot: Snapshot = {
       schema: CACHE_SCHEMA,

@@ -10,13 +10,14 @@ import {
   UsersRoundIcon,
   WorkflowIcon,
 } from 'lucide-react';
-import { Suspense, useState } from 'react';
+import { Suspense, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 
 import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
 import { EmptyState } from '@/components/custom-ui/empty-state';
 import { IconButton } from '@/components/custom-ui/icon-button';
 import { ProjectStatusGlyph } from '@/components/custom-ui/issue-glyphs';
+import { staggerStyle } from '@/components/custom-ui/motion-presets';
 import { OptionSelect } from '@/components/custom-ui/option-select';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
@@ -369,6 +370,7 @@ function TeamCard({
   projectsState,
   onRetryProjects,
   onCreateProject,
+  style,
 }: {
   workspace: Workspace;
   team: Team;
@@ -379,6 +381,8 @@ function TeamCard({
   projectsState: ProjectsState;
   onRetryProjects: () => void;
   onCreateProject: () => void;
+  /** Its place in the cards' entrance, one after another. */
+  style?: CSSProperties;
 }) {
   const queryClient = useQueryClient();
   const me = useAuthStore((s) => s.user?.id);
@@ -421,7 +425,10 @@ function TeamCard({
         : ` Its ${projects.length} projects stay, without a team.`;
 
   return (
-    <li className="min-w-0 space-y-3 rounded-xl border p-4">
+    <li
+      className="min-w-0 space-y-3 rounded-xl border p-4 motion-safe:animate-fade-up"
+      style={style}
+    >
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant="outline" className="font-mono">
           {team.key}
@@ -548,10 +555,11 @@ function TeamList({ workspace, onCreate }: { workspace: Workspace; onCreate?: ()
   }
   return (
     <>
-      <ul className="grid gap-3 motion-safe:animate-fade-in md:grid-cols-2">
-        {teams.map((team) => (
+      <ul className="grid gap-3 md:grid-cols-2">
+        {teams.map((team, i) => (
           <TeamCard
             key={team.id}
+            style={staggerStyle(i)}
             workspace={workspace}
             team={team}
             projects={projects.filter((p) => p.team_id === team.id)}
@@ -605,10 +613,9 @@ function Teams() {
           )
         }
       />
-      <QueryErrorBoundary title="Couldn’t load the teams">
+      <QueryErrorBoundary key={current.id} title="Couldn’t load the teams">
         <Suspense fallback={<TeamsSkeleton />}>
           <TeamList
-            key={current.id}
             workspace={current}
             onCreate={canCreate ? () => setCreating(true) : undefined}
           />

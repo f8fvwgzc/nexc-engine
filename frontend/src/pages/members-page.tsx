@@ -294,9 +294,9 @@ function Members() {
       ) : (
         <>
           {admin && <InviteForm workspace={current} />}
-          <QueryErrorBoundary title="Couldn’t load the members">
+          <QueryErrorBoundary key={current.id} title="Couldn’t load the members">
             <Suspense fallback={<TableSkeleton rows={4} />}>
-              <MembersTable key={current.id} workspace={current} />
+              <MembersTable workspace={current} />
             </Suspense>
           </QueryErrorBoundary>
           {admin && <PendingInvites workspace={current} />}

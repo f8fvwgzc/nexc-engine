@@ -70,6 +70,10 @@ class Boundary extends Component<BoundaryProps, BoundaryState> {
  * to ask again, so the page's header and the rest of the page stay on screen (the route's error
  * page would replace all of it). Put it around the `Suspense`. A 404 still goes to the route,
  * which says the thing is gone.
+ *
+ * Key it by what it shows (the workspace, the id in the address): the router keeps a page
+ * mounted when only those change, and an error caught for one run or workspace must not stay
+ * on screen for the next.
  */
 export function QueryErrorBoundary(props: QueryErrorBoundaryProps) {
   return (

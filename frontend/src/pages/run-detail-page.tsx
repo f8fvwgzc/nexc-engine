@@ -223,7 +223,7 @@ export default function RunDetailPage() {
   return (
     <>
       <Seo title={`Run ${runId.slice(0, 8)}`} noIndex />
-      <QueryErrorBoundary page="default" title="Couldn’t load the run">
+      <QueryErrorBoundary key={runId} page="default" title="Couldn’t load the run">
         <Suspense fallback={<DetailSkeleton stats={4} />}>
           <RunDetail runId={runId} />
         </Suspense>

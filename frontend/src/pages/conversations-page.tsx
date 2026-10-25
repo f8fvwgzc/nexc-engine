@@ -145,6 +145,7 @@ function ConversationsList() {
 }
 
 export default function ConversationsPage() {
+  const workspaceId = useWorkspaceId();
   return (
     <>
       <Seo title="Conversations" noIndex />
@@ -153,7 +154,7 @@ export default function ConversationsPage() {
           title="Conversations"
           description="Everything you have talked over with the assistant in this workspace, latest first. Open one to read it back and keep going."
         />
-        <QueryErrorBoundary title="Couldn’t load the conversations">
+        <QueryErrorBoundary key={workspaceId} title="Couldn’t load the conversations">
           <Suspense fallback={loading}>
             <ConversationsList />
           </Suspense>

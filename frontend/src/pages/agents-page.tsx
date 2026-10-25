@@ -17,7 +17,7 @@ import { AgentFormDialog } from '@/features/agents/components/agent-form-dialog'
 import { AgentOrgChart } from '@/features/agents/components/agent-org-chart';
 import { AgentsTable } from '@/features/agents/components/agents-table';
 import { useDeleteAgent } from '@/features/agents/hooks/use-agent-mutations';
-import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
+import { useCurrentWorkspace, useWorkspaceId } from '@/features/workspaces/use-current-workspace';
 import type { Agent } from '@/schemas/agent';
 import { isWorkspaceAdmin } from '@/schemas/workspace';
 
@@ -111,10 +111,12 @@ function Agents({ open }: { open: string | null }) {
 export default function AgentsPage() {
   const [params] = useSearchParams();
   const open = params.get('agent');
+  const workspaceId = useWorkspaceId();
   return (
     <>
       <Seo title="Agents" noIndex />
       <QueryErrorBoundary
+        key={workspaceId}
         page="default"
         header={<PageHeader title="Agents" description={DESCRIPTION} />}
         title="Couldn’t load the agents"

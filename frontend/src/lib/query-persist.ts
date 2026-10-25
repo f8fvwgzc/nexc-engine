@@ -21,10 +21,13 @@ export const CACHE_SCHEMA = 2;
 const STORAGE_KEY = 'nexc.query-cache.v1';
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const SAVE_DELAY_MS = 1_000;
-/** The issue lists kept: the ones read last. A filter tried once does not stay for a day. */
-const MAX_ISSUE_LISTS = 8;
+/**
+ * The issue lists kept: the ones read last. A filter tried once does not stay for a day.
+ * etag-cache keeps the same ones (both copies share the origin's storage).
+ */
+export const MAX_ISSUE_LISTS = 8;
 /** A list longer than this is not kept: it would crowd out the rest of the copy. */
-const MAX_LIST_LENGTH = 500;
+export const MAX_LIST_LENGTH = 500;
 
 /**
  * Lists worth painting instantly on the next visit. Settings (credential hints), memories, run

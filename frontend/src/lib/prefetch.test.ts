@@ -1,10 +1,16 @@
 import { QueryClient } from '@tanstack/react-query';
+import type { LoaderFunctionArgs } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { routeModules } from '@/app/route-modules';
+import { queryClient } from '@/lib/query-client';
 import { qk } from '@/lib/query-keys';
+import type { Workspace } from '@/schemas/workspace';
+import { useAuthStore } from '@/stores/auth-store';
+import { useWorkspaceStore } from '@/stores/workspace-store';
+import * as f from '@/test/fixtures';
 
-import { onIntent, prefetchIssue, routeChunk } from './prefetch';
+import { onIntent, pageLoaders, prefetchIssue, routeChunk } from './prefetch';
 
 // The pages themselves are not loaded: each loader is a stub that says it was asked.
 vi.mock('@/app/route-modules', () => {
@@ -18,7 +24,10 @@ vi.mock('@/app/route-modules', () => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
   vi.clearAllMocks();
+  queryClient.clear();
+  useAuthStore.getState().clearSession();
 });
 
 describe('the page a link opens', () => {
@@ -76,5 +85,44 @@ describe('an issue about to be opened', () => {
       qk.issues.events('i'),
       qk.issues.states('w', 't'),
     ]);
+  });
+});
+
+describe('the members page loading ahead', () => {
+  const workspace = (role: Workspace['role']): Workspace => ({
+    id: '0199eeee-0000-7000-8000-000000000001',
+    name: 'Acme',
+    slug: 'acme',
+    role,
+    member_count: 2,
+    created_at: '2026-10-20T09:00:00Z',
+  });
+
+  /** Opens the members page in `open` and says which reads its loader started. */
+  async function readsFor(open: Workspace) {
+    useAuthStore.getState().setSession(f.authResponse);
+    useWorkspaceStore.setState({ currentId: open.id });
+    queryClient.setQueryData(qk.workspaces.all, [open]);
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('offline'));
+    const ensure = vi.spyOn(queryClient, 'ensureQueryData');
+    const args = {
+      request: new Request('http://localhost/app/settings/members'),
+      params: {},
+      context: undefined,
+    } as unknown as LoaderFunctionArgs;
+    await pageLoaders.members(args);
+    // The loader returns at once; the reads start once the workspace is known.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return ensure.mock.calls.map(([options]) => options.queryKey);
+  }
+
+  it('reads the members for a member', async () => {
+    const open = workspace('member');
+    expect(await readsFor(open)).toContainEqual(qk.workspaces.members(open.id));
+  });
+
+  it('does not ask for them for a guest, whom the server refuses them', async () => {
+    const open = workspace('guest');
+    expect(await readsFor(open)).not.toContainEqual(qk.workspaces.members(open.id));
   });
 });

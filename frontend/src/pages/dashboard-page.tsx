@@ -55,10 +55,11 @@ function Dashboard() {
 }
 
 export default function DashboardPage() {
+  const workspaceId = useWorkspaceId();
   return (
     <>
       <Seo title="Graphs" noIndex />
-      <QueryErrorBoundary page="default" title="Couldn’t load the graphs">
+      <QueryErrorBoundary key={workspaceId} page="default" title="Couldn’t load the graphs">
         <Suspense fallback={<PageSkeleton />}>
           <Dashboard />
         </Suspense>

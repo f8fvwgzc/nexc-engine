@@ -159,7 +159,10 @@ export const pageLoaders = {
     warm(client, projectsQuery(workspace.id));
     if (params.projectId) warmProjectIssues(client, workspace.id, params.projectId);
   }),
-  members: inWorkspace((client, workspace) => warm(client, membersQuery(workspace.id))),
+  // A guest is refused the members (the page tells them so instead of reading them).
+  members: inWorkspace((client, workspace) => {
+    if (workspace.role !== 'guest') warm(client, membersQuery(workspace.id));
+  }),
   teams: inWorkspace((client, workspace) => warm(client, teamsQuery(workspace.id))),
   // The page opens on the last 30 days.
   usage: inWorkspace((client, workspace) => warm(client, usageQuery(workspace.id, 30))),

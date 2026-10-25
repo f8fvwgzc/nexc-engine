@@ -13,7 +13,12 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { IconButton } from '@/components/custom-ui/icon-button';
-import { loadAnimation, rise, spring } from '@/components/custom-ui/motion-presets';
+import {
+  loadAnimation,
+  rise,
+  spring,
+  useMotionFeatures,
+} from '@/components/custom-ui/motion-presets';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { issuePath } from '@/features/issues/links';
@@ -21,6 +26,8 @@ import { askAssistant, conversationQuery } from '@/features/workspaces/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { errorMessage } from '@/lib/api/errors';
 import { qk } from '@/lib/query-keys';
+import { retryImport } from '@/lib/retry-import';
+import { cn } from '@/lib/utils';
 import type { ConversationMessage, TurnOutcome } from '@/schemas/assistant';
 import type { Workspace } from '@/schemas/workspace';
 import { useAssistantStore } from '@/stores/assistant-store';
@@ -40,12 +47,25 @@ const SUGGESTIONS = [
 /** Width of the docked panel; the page keeps the rest. On a phone it takes the whole width. */
 const PANEL_WIDTH = 448;
 
+/** A reply as plain text: while the Markdown renderer loads, and for good if it cannot. */
+function PlainReply({ children, className }: { children: string; className?: string }) {
+  return <p className={cn('whitespace-pre-wrap', className)}>{children}</p>;
+}
+
+const loadMarkdown = retryImport(() => import('@/components/custom-ui/markdown'));
+
 /**
  * Replies are Markdown, whose renderer is large: it loads with the first reply, not with every
- * page of the app. Until it has, the reply shows as plain text.
+ * page of the app. Until it has, the reply shows as plain text, and it stays plain text if the
+ * renderer cannot load (offline, or a tab left open across a deploy): a failed import must not
+ * throw, or it would take the shell down with it, and again after every "Try again", since the
+ * panel stays open with the conversation in it.
  */
 const Markdown = lazy(() =>
-  import('@/components/custom-ui/markdown').then((module) => ({ default: module.Markdown })),
+  loadMarkdown().then(
+    (module) => ({ default: module.Markdown }),
+    () => ({ default: PlainReply }),
+  ),
 );
 
 function fromMessages(messages: ConversationMessage[]): Turn[] {
@@ -98,6 +118,9 @@ function AssistantPanel({ current }: { current: Workspace }) {
   const [text, setText] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const { features, still } = useMotionFeatures(loadAnimation);
+  // Without motion's code, every part shows where its animation would end.
+  const enter = still ? { ...rise, initial: false as const } : rise;
 
   const { data: saved, isPending: loadingSaved } = useQuery({
     ...conversationQuery(workspaceId, conversationId ?? ''),
@@ -166,9 +189,9 @@ function AssistantPanel({ current }: { current: Workspace }) {
   };
 
   return (
-    // The animation code loads the first time something moves, not with the shell.
-    <LazyMotion features={loadAnimation}>
-      <MotionConfig reducedMotion="user">
+    // The animation code loads in a chunk of its own once the shell has drawn, not with it.
+    <LazyMotion features={features}>
+      <MotionConfig key={still ? 'still' : 'moving'} reducedMotion="user">
         {/* The notch sits on the right edge, halfway down, and slides away while the panel is open.
           It is narrower than the page's gutter, so it never covers the page; on a phone, where
           the gutter is narrower still, the header's button opens the assistant instead. */}
@@ -181,7 +204,7 @@ function AssistantPanel({ current }: { current: Workspace }) {
               <m.button
                 key="notch"
                 type="button"
-                initial={{ x: 40, opacity: 0 }}
+                initial={still ? false : { x: 40, opacity: 0 }}
                 animate={{ x: 0, opacity: 1 }}
                 exit={{ x: 40, opacity: 0 }}
                 whileHover={{ width: 28 }}
@@ -206,7 +229,7 @@ function AssistantPanel({ current }: { current: Workspace }) {
             <m.aside
               key="panel"
               aria-label="Assistant"
-              initial={{ width: 0, opacity: 0 }}
+              initial={still ? false : { width: 0, opacity: 0 }}
               animate={{ width: PANEL_WIDTH, opacity: 1 }}
               exit={{ width: 0, opacity: 0 }}
               transition={spring}
@@ -263,7 +286,7 @@ function AssistantPanel({ current }: { current: Workspace }) {
                       </div>
                     )}
                     {!loading && turns.length === 0 && (
-                      <m.div {...rise} className="flex flex-col gap-3 py-6">
+                      <m.div {...enter} className="flex flex-col gap-3 py-6">
                         <div className="flex size-10 items-center justify-center rounded-full bg-primary/10 text-primary">
                           <SparklesIcon className="size-5" aria-hidden />
                         </div>
@@ -293,13 +316,13 @@ function AssistantPanel({ current }: { current: Workspace }) {
                         turn.role === 'user' ? (
                           <m.p
                             key={i}
-                            {...rise}
+                            {...enter}
                             className="ml-10 self-end rounded-2xl rounded-br-md bg-primary px-3.5 py-2 whitespace-pre-wrap text-primary-foreground"
                           >
                             {turn.content}
                           </m.p>
                         ) : (
-                          <m.div key={i} {...rise} className="mr-6 flex gap-2.5">
+                          <m.div key={i} {...enter} className="mr-6 flex gap-2.5">
                             <span
                               className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
                               aria-hidden
@@ -309,7 +332,7 @@ function AssistantPanel({ current }: { current: Workspace }) {
                             <div className="min-w-0 space-y-2">
                               <Suspense
                                 fallback={
-                                  <p className="text-sm whitespace-pre-wrap">{turn.content}</p>
+                                  <PlainReply className="text-sm">{turn.content}</PlainReply>
                                 }
                               >
                                 <Markdown className="text-sm">{turn.content}</Markdown>
@@ -359,7 +382,7 @@ function AssistantPanel({ current }: { current: Workspace }) {
                       {ask.isPending && (
                         <m.div
                           key="thinking"
-                          {...rise}
+                          {...enter}
                           className="mr-6 flex items-center gap-2.5"
                           role="status"
                           aria-label="Thinking"

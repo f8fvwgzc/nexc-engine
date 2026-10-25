@@ -21,18 +21,39 @@ import { Panel } from '@/features/secops/components/console-panel';
 import { LiveFeedPanel } from '@/features/secops/components/live-feed-panel';
 import { PoliciesPanel } from '@/features/secops/components/policies-panel';
 import { RegistryPanel } from '@/features/secops/components/registry-panel';
+import type { RiskPanel as RiskPanelComponent } from '@/features/secops/components/risk-panel';
 import { SecopsStats } from '@/features/secops/components/secops-stats';
 import { TraceExplorer } from '@/features/secops/components/trace-explorer';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { formatRelative } from '@/lib/format';
+import { retryImport } from '@/lib/retry-import';
 import { isWorkspaceAdmin, type Workspace } from '@/schemas/workspace';
 import { ScrollTextIcon } from 'lucide-react';
 
-/** The risk chart draws with recharts, which loads with the panel and not with the page. */
+/** The risk panel when its chart's code could not be downloaded; the rest of the console works. */
+const RiskPanelUnavailable: typeof RiskPanelComponent = () => (
+  <Panel id="secops-risk" title="Risk" icon={ChartLineIcon}>
+    <ErrorState
+      compact
+      title="Couldn’t load the risk chart"
+      error={null}
+      description="Its code did not download. Reloading the page tries again."
+      onRetry={() => window.location.reload()}
+    />
+  </Panel>
+);
+
+const loadRiskPanel = retryImport(() => import('@/features/secops/components/risk-panel'));
+
+/**
+ * The risk chart draws with recharts, which loads with the panel and not with the page. A failed
+ * download shows in the panel instead of throwing, which would replace the whole console.
+ */
 const RiskPanel = lazy(() =>
-  import('@/features/secops/components/risk-panel').then((module) => ({
-    default: module.RiskPanel,
-  })),
+  loadRiskPanel().then(
+    (module) => ({ default: module.RiskPanel }),
+    () => ({ default: RiskPanelUnavailable }),
+  ),
 );
 
 /** The risk panel while its chart's code loads: its frame, and the chart's place. */
