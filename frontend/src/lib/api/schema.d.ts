@@ -1074,9 +1074,9 @@ export interface paths {
         };
         /**
          * A copy of what the installation holds about the caller, as a JSON file:
-         *     the account, its workspaces and teams, the issues and comments it wrote,
-         *     its graphs, documents and personal memories, and what it spent. No
-         *     credential is in it.
+         *     the account, its workspaces and teams, the issues and comments it wrote
+         *     and the reactions it gave, its graphs, documents and personal memories,
+         *     and what it spent. No credential is in it.
          */
         get: operations["export"];
         put?: never;
@@ -1712,7 +1712,7 @@ export interface paths {
          *     again changes nothing. Whoever may comment on the issue may react.
          * @description The comment's author hears of it in their inbox (`reaction`, with the
          *     emoji): never of their own, and once a day for the same emoji from the
-         *     same person on the issue, however often it is taken back and given again.
+         *     same person on the comment, however often it is taken back and given again.
          */
         post: operations["add_reaction"];
         /**
@@ -3915,9 +3915,10 @@ export interface components {
             exported_at: string;
             /**
              * @description `workspaces`, `teams`, `issues_created`, `issues_assigned`,
-             *     `comments`, `graphs`, `documents`, `memories`, `ai_account`, `usage`,
-             *     `security_activity`, `notifications`, `assistant_conversations`,
-             *     `sign_in_identities`: each a list of plain objects.
+             *     `comments`, `reactions`, `graphs`, `documents`, `memories`,
+             *     `ai_account`, `usage`, `security_activity`, `notifications`,
+             *     `assistant_conversations`, `sign_in_identities`: each a list of plain
+             *     objects.
              */
             sections: Record<string, never>;
             /** @description Sections that hold more than [`EXPORT_SECTION_MAX`] rows and were cut there. */

@@ -1,7 +1,8 @@
 import { useMutation } from '@tanstack/react-query';
 import { PencilIcon, ReplyIcon, Trash2Icon } from 'lucide-react';
-import { useRef, useState, type ComponentProps } from 'react';
+import { useRef, useState, type ComponentProps, type Ref } from 'react';
 
+import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
 import { IconButton } from '@/components/custom-ui/icon-button';
 import { Button } from '@/components/ui/button';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
@@ -70,12 +71,15 @@ const EDITOR =
 /**
  * A comment, or a reply in a comment's thread: the author's avatar, "**Name** commented" and the
  * time, the text, and its reactions. On hover (always on a touch screen) it offers a reaction, a
- * reply, and in its menu Edit for its author and Delete for its author and moderators.
+ * reply, and in its menu Edit for its author and Delete for its author and moderators. Deleting a
+ * comment deletes its thread too, everyone's replies in it, so that is asked first.
  */
 function CommentRow({
   event,
   comments,
   reply,
+  replies = 0,
+  replyRef,
   threaded,
   onReply,
   ...motion
@@ -84,6 +88,9 @@ function CommentRow({
   comments: CommentContext;
   /** A reply: a smaller avatar, no mark, no "commented". */
   reply: boolean;
+  /** How many replies the comment has. */
+  replies?: number;
+  replyRef?: Ref<HTMLButtonElement>;
   onReply: () => void;
 }) {
   const draft = comments.editDraft(event.id);
@@ -92,6 +99,7 @@ function CommentRow({
   const [focusEdit, setFocusEdit] = useState(false);
   // Edit was picked: the menu, closing, leaves the focus to the field.
   const editPicked = useRef(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const edit = useMutation({
     mutationFn: (body: string) => updateComment(comments.issueId, event.id, body),
     onSuccess: (_, body) => {
@@ -126,6 +134,7 @@ function CommentRow({
     >
       <AddReaction reactions={event.reactions} onToggle={toggle} align="end" />
       <IconButton
+        ref={replyRef}
         label={reply ? `Reply to ${name}` : 'Reply'}
         size="icon-xs"
         className="rounded-full text-muted-foreground hover:text-foreground"
@@ -161,7 +170,7 @@ function CommentRow({
           <DropdownMenuItem
             variant="destructive"
             disabled={remove.isPending}
-            onSelect={() => remove.mutate()}
+            onSelect={() => (replies > 0 ? setConfirmDelete(true) : remove.mutate())}
           >
             <Trash2Icon />
             Delete
@@ -238,6 +247,18 @@ function CommentRow({
           {errorMessage(edit.error ?? remove.error)}
         </p>
       )}
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        title={`Delete this comment and its ${replies === 1 ? 'reply' : `${replies} replies`}?`}
+        description="Every reply in its thread goes with it, whoever wrote it, and the reactions to them. This cannot be undone."
+        confirmLabel="Delete"
+        destructive
+        onConfirm={() => {
+          setConfirmDelete(false);
+          remove.mutate();
+        }}
+      />
     </EntryRow>
   );
 }
@@ -267,6 +288,8 @@ export function CommentEntry({
   const open = replies.length > 0 || draft !== null;
   // Clicking Reply puts the focus in the box: a new key mounts its field with the focus.
   const [focusReply, setFocusReply] = useState(0);
+  // Where the focus goes back to when Escape closes the box.
+  const replyButton = useRef<HTMLButtonElement>(null);
   const add = useMutation({
     mutationFn: (body: string) => createComment(comments.issueId, body, event.id),
     meta: { errorToast: false },
@@ -293,6 +316,8 @@ export function CommentEntry({
         event={event}
         comments={comments}
         reply={false}
+        replies={replies.length}
+        replyRef={replyButton}
         threaded={open}
         onReply={() => replyTo()}
       />
@@ -331,9 +356,10 @@ export function CommentEntry({
             agentNote={comments.agentNote}
             onFocus={comments.startWriting}
             onKeyDown={(e) => {
-              // An empty box nobody replied in yet goes away again.
+              // An empty box nobody replied in yet goes away again, the focus back on Reply.
               if (e.key === 'Escape' && replies.length === 0 && !draft?.text) {
                 e.preventDefault();
+                replyButton.current?.focus();
                 comments.setReplyDraft(event.id, null);
               }
             }}

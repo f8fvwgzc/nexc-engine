@@ -422,9 +422,9 @@ pub async fn end_all_sessions(
 }
 
 /// A copy of what the installation holds about the caller, as a JSON file:
-/// the account, its workspaces and teams, the issues and comments it wrote,
-/// its graphs, documents and personal memories, and what it spent. No
-/// credential is in it.
+/// the account, its workspaces and teams, the issues and comments it wrote
+/// and the reactions it gave, its graphs, documents and personal memories,
+/// and what it spent. No credential is in it.
 #[utoipa::path(get, path = "/auth/me/export", tag = "auth", security(("bearer" = [])),
     responses((status = 200, body = AccountExport), (status = 401, body = Problem)))]
 pub async fn export(State(state): State<AppState>, auth: Caller) -> Result<Response, AppError> {

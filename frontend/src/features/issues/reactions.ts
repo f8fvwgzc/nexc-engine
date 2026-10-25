@@ -73,22 +73,20 @@ export function reactorsLabel(reaction: Reaction, me: string | undefined): strin
 /**
  * Who reacted to an entry, for its summary line: each person once (the caller last), how many
  * reacted in all, and the line itself ("Dana and 3 others reacted"). The server names at most ten
- * people per emoji; those past that are counted as others.
+ * people per emoji, and someone unnamed under one emoji may be named under another: the total is
+ * the most that are known to be different people, the named ones or the reactors of one emoji.
  */
 export function reactionSummary(
   reactions: Reaction[],
   me: string | undefined,
 ): { people: Reactor[]; total: number; text: string } {
   const seen = new Map<string, Reactor>();
-  let unnamed = 0;
-  for (const r of reactions) {
+  for (const r of reactions)
     for (const u of r.users) if (!seen.has(u.user_id)) seen.set(u.user_id, u);
-    unnamed += Math.max(0, r.count - r.users.length);
-  }
   const people = [...seen.values()].sort(
     (a, b) => Number(a.user_id === me) - Number(b.user_id === me),
   );
-  const total = people.length + unnamed;
+  const total = Math.max(people.length, ...reactions.map((r) => r.count));
   if (total === 0) return { people, total, text: '' };
   // One name, then everyone else as a number: "Dana and you" only when that is all of them.
   const first = people[0];

@@ -153,11 +153,12 @@ export function ReactionSummary({
   return (
     <p className="flex min-h-6 min-w-0 items-center gap-2 text-[13px] text-muted-foreground">
       <span aria-hidden className="flex shrink-0 -space-x-1">
+        {/* Overlapping no more than leaves both initials of the one underneath clear. */}
         {people.slice(0, 5).map((p) => (
           <PersonGlyph
             key={p.user_id}
             name={p.name}
-            className="size-5 bg-muted text-[8px] ring-2 ring-background"
+            className="size-6 bg-muted text-[9px] ring-1 ring-background"
           />
         ))}
       </span>

@@ -219,9 +219,9 @@ test.describe('an issue’s activity', () => {
     // The reader's 👍 comes off at once, and stays off as the server answers.
     const thumbs = thread.getByRole('button', { name: '👍 2' });
     await expect(thumbs).toHaveAttribute('aria-pressed', 'true');
-    const removed = page.waitForRequest(
+    const removed = page.waitForResponse(
       (r) =>
-        r.method() === 'DELETE' &&
+        r.request().method() === 'DELETE' &&
         r.url().endsWith(`/events/${comment.id}/reactions?emoji=%F0%9F%91%8D`),
     );
     await thumbs.click();
@@ -230,6 +230,10 @@ test.describe('an issue’s activity', () => {
       'aria-pressed',
       'false',
     );
+    // It keeps its place, before 🎉.
+    await expect(
+      thread.locator('[data-slot="bubble-reactions"]').first().getByRole('button').first(),
+    ).toHaveAccessibleName('👍 1');
 
     // Another from the picker.
     await thread

@@ -439,6 +439,46 @@ describe('reactions', () => {
     );
     expect(addReaction).toHaveBeenCalledWith(issue.id, mine.id, '🚀');
   });
+
+  /** Clicks 👍 on, then off again before the server answered. */
+  async function toggleTwice() {
+    listEvents.mockResolvedValue([liked]);
+    renderTimeline();
+    fireEvent.click(await screen.findByRole('button', { name: '👍 1' }));
+    fireEvent.click(await screen.findByRole('button', { name: '👍 2' }));
+    await screen.findByRole('button', { name: '👍 1' });
+    return listEvents.mock.calls.length;
+  }
+
+  it('are read again when two toggles of one emoji both fail, not undone one by one', async () => {
+    let refuseOn: (error: Error) => void = () => {};
+    let refuseOff: (error: Error) => void = () => {};
+    addReaction.mockReturnValue(new Promise((_, reject) => (refuseOn = reject)));
+    removeReaction.mockReturnValue(new Promise((_, reject) => (refuseOff = reject)));
+    const reads = await toggleTwice();
+
+    refuseOn(new Error('Offline'));
+    refuseOff(new Error('Offline'));
+    // Undoing each in turn would leave the 👍 on, which the server never had.
+    await waitFor(() => expect(listEvents.mock.calls.length).toBeGreaterThan(reads));
+    expect(screen.getByRole('button', { name: '👍 1' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.queryByRole('button', { name: '👍 2' })).not.toBeInTheDocument();
+  });
+
+  it('are read again when two toggles of one emoji answer out of order', async () => {
+    let answerOn: (reactions: IssueEvent['reactions']) => void = () => {};
+    let answerOff: (reactions: IssueEvent['reactions']) => void = () => {};
+    addReaction.mockReturnValue(new Promise((resolve) => (answerOn = resolve)));
+    removeReaction.mockReturnValue(new Promise((resolve) => (answerOff = resolve)));
+    const reads = await toggleTwice();
+
+    // The server took the 👍 and then took it back, but the answer to taking it back lands first.
+    answerOff(liked.reactions);
+    answerOn([{ emoji: '👍', count: 2, reacted: true, users: [me, grace] }]);
+    await waitFor(() => expect(listEvents.mock.calls.length).toBeGreaterThan(reads));
+    expect(screen.getByRole('button', { name: '👍 1' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.queryByRole('button', { name: '👍 2' })).not.toBeInTheDocument();
+  });
 });
 
 describe('replies', () => {
@@ -486,6 +526,27 @@ describe('replies', () => {
     await waitFor(() =>
       expect(screen.queryByRole('textbox', { name: /^Reply to/ })).not.toBeInTheDocument(),
     );
+    // The focus is back where the reader opened the box.
+    expect(screen.getByRole('button', { name: 'Reply' })).toHaveFocus();
+  });
+
+  it('go with their comment, which is asked first', async () => {
+    deleteComment.mockReset();
+    deleteComment.mockResolvedValue(undefined);
+    listEvents.mockResolvedValue([moved, mine, answer]);
+    renderTimeline();
+    const menu = await screen.findByRole('button', {
+      name: `Actions for the comment by ${me.name}`,
+    });
+    fireEvent.keyDown(menu, { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
+    const ask = await screen.findByRole('alertdialog', {
+      name: 'Delete this comment and its reply?',
+    });
+    expect(deleteComment).not.toHaveBeenCalled();
+
+    fireEvent.click(within(ask).getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(deleteComment).toHaveBeenCalledWith(issue.id, mine.id));
   });
 
   it('to a reply start by mentioning its author', async () => {
