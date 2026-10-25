@@ -58,7 +58,7 @@
         "tags": [
           "runs"
         ],
-        "summary": "The public keys everything nexc signs verifies with, as a JWK set: the\ncurrent key and the keys it replaced, each under its `kid` (the RFC 7638\nthumbprint of the key). Public. Run seals, firewall decisions and\nevidence bundles name the key they are signed with.",
+        "summary": "The public keys everything nexc signs verifies with, as a JWK set: the\ncurrent key and the keys it replaced, each under its `kid` (the RFC 7638\nthumbprint of the key). Public, and kept by any cache for five minutes\n(`PUBLIC_CACHE_CONTROL`). Run seals, firewall decisions and evidence\nbundles name the key they are signed with.",
         "operationId": "jwks",
         "responses": {
           "200": {
@@ -1197,7 +1197,7 @@
         "tags": [
           "agents"
         ],
-        "summary": "The keys agent tokens verify with: the one the backend signs with first,\nthen the others it still accepts (`NEXC_AGENT_TOKEN_VERIFY_KEYS`: the\nprevious key after a rotation, the next one before it). Public: they are\npublic keys, and the runtime fetches them without credentials.",
+        "summary": "The keys agent tokens verify with: the one the backend signs with first,\nthen the others it still accepts (`NEXC_AGENT_TOKEN_VERIFY_KEYS`: the\nprevious key after a rotation, the next one before it). Public: they are\npublic keys, and the runtime fetches them without credentials; any cache\nmay keep them for five minutes (`PUBLIC_CACHE_CONTROL`).",
         "operationId": "jwks",
         "responses": {
           "200": {
@@ -5727,6 +5727,7 @@
           "issues"
         ],
         "summary": "Comments on an issue. Whoever may edit the issue may comment on it.",
+        "description": "Each member the comment mentions who can see the issue hears of it in\ntheir inbox (`mention`), in place of the `comment` entry the assignee and\nthe creator get. The first active agent it mentions is delegated an issue\nthat has none; then, when the author is a member of the issue's team and\nthe issue's graph is idle, one mentioned agent is asked for a plan (the\nissue gets its graph if it has none). The plan waits to be applied like\nany other: nothing runs by itself. Both show in the timeline as `agent`\nentries.",
         "operationId": "create_comment",
         "parameters": [
           {
@@ -5858,6 +5859,7 @@
           "issues"
         ],
         "summary": "Edits a comment. Only its author can.",
+        "description": "Only the mentions the edit adds act: the members it newly mentions are\ntold, and agents it newly mentions are handed the issue as on a new\ncomment. Nobody hears of the same mention twice.",
         "operationId": "update_comment",
         "parameters": [
           {
@@ -18454,7 +18456,7 @@
         "properties": {
           "body": {
             "type": "string",
-            "description": "Markdown, 1 byte to 16 KiB."
+            "description": "Markdown, 1 byte to 16 KiB. `@[Name](user:<uuid>)` mentions a member and\n`@[Name](agent:<uuid>)` an agent of the workspace, at most 20 of them."
           }
         },
         "additionalProperties": false
@@ -21214,7 +21216,8 @@
           "due",
           "run",
           "github",
-          "artifact"
+          "artifact",
+          "agent"
         ]
       },
       "IssuePerson": {
@@ -22693,7 +22696,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/NotificationIssue",
-                "description": "The issue (`assigned`, `comment`, `state`, `due`); `null` for the other kinds."
+                "description": "The issue (`assigned`, `comment`, `state`, `due`, `run`, `mention`); `null` for the other\nkinds."
               },
               {
                 "type": "null"
@@ -22842,7 +22845,8 @@
           "due",
           "approval",
           "alert",
-          "run"
+          "run",
+          "mention"
         ]
       },
       "OntoMode": {

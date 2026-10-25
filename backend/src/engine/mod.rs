@@ -15,6 +15,7 @@ pub mod editor;
 pub mod evidence;
 pub mod executor;
 pub mod guardrails;
+pub mod issue_agents;
 pub mod issue_report;
 pub mod json_stream;
 pub mod knowledge;
