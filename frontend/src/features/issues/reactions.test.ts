@@ -69,6 +69,18 @@ describe('who reacted', () => {
     );
   });
 
+  it('does not count twice someone left unnamed under two emoji', () => {
+    const ten = Array.from({ length: 10 }, (_, i) => ({
+      user_id: `0199bbbb-0000-7000-8000-0000000b00${String(i).padStart(2, '0')}`,
+      name: `P${i}`,
+    }));
+    const party: Reaction = { emoji: '🎉', count: 13, reacted: false, users: ten };
+    const summary = reactionSummary([thumbs(ten, 14), party], me.user_id);
+    // At least 14 people reacted; maybe the 4 and the 3 past the ten are the same.
+    expect(summary.total).toBe(14);
+    expect(summary.text).toBe('P0 and 13 others reacted');
+  });
+
   it('names everyone who reacted with an emoji on its chip', () => {
     expect(reactorsLabel(thumbs([me, grace]), me.user_id)).toBe(
       'Grace Hopper and you reacted with 👍',

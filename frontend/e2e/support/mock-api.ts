@@ -279,12 +279,13 @@ function reactionsAfter(
   const others = (users: { user_id: string; name: string }[]) =>
     users.filter((u) => u.user_id !== me.user_id);
   const found = event.reactions.find((r) => r.emoji === emoji);
-  const rest = event.reactions.filter((r) => r.emoji !== emoji);
   const named = found ? others(found.users) : [];
   const count = (found?.count ?? 0) - (found?.reacted ? 1 : 0) + (on ? 1 : 0);
-  if (count === 0) return rest;
-  const users = on ? [me, ...named] : named;
-  return [...rest, { emoji, count, reacted: on, users }];
+  const after = { emoji, count, reacted: on, users: (on ? [me, ...named] : named).slice(0, 10) };
+  // As the server does: each emoji keeps its place, a new one goes last.
+  if (!found) return count === 0 ? event.reactions : [...event.reactions, after];
+  if (count === 0) return event.reactions.filter((r) => r !== found);
+  return event.reactions.map((r) => (r === found ? after : r));
 }
 
 function filterIssues(url: URL) {
