@@ -69,13 +69,16 @@ function FromRuns({ workspace, issue }: { workspace: Workspace; issue: Issue }) 
   if (produced.length === 0) return null;
   const canWrite = workspace.role !== 'guest';
   return (
-    <div className="space-y-1.5">
-      <h4 className="text-xs font-medium text-muted-foreground">From runs</h4>
-      <ul className="divide-y rounded-md border">
+    <div className="space-y-1 pt-2">
+      <h3 className="text-xs font-medium text-muted-foreground">From runs</h3>
+      <ul className="-mx-2">
         {produced.map((artifact) => {
           const held = !isDownloadable(artifact);
           return (
-            <li key={artifact.id} className="flex h-8 items-center gap-2.5 px-3 text-[13px]">
+            <li
+              key={artifact.id}
+              className="flex h-8 items-center gap-2.5 rounded-md px-2 text-[13px] transition-colors hover:bg-muted/50"
+            >
               {held ? (
                 <LockIcon className="size-3.5 shrink-0 text-destructive" aria-label="Held back" />
               ) : (
@@ -129,7 +132,8 @@ function FromRuns({ workspace, issue }: { workspace: Workspace; issue: Issue }) 
 }
 
 /**
- * The issue's artifacts: the text files attached to it (each opens on its own page) with
+ * The issue's artifacts, as borderless rows set apart by space: the text files attached to it
+ * (each opens on its own page) with
  * Upload, New file, duplicate and delete, and the files its runs produced, which can be kept as
  * artifacts. The heading, Upload and New file are there while the files load and when they could
  * not be read. A name the issue already has is refused: the server's word shows in the New file
@@ -171,11 +175,11 @@ export function IssueArtifacts({ workspace, issue }: { workspace: Workspace; iss
     );
   } else if (files.data.length > 0) {
     list = (
-      <ul className="divide-y rounded-md border">
+      <ul className="-mx-2">
         {files.data.map((file) => (
           <li
             key={file.id}
-            className="relative flex h-8 items-center gap-2.5 px-3 text-[13px] hover:bg-muted/60"
+            className="relative flex h-8 items-center gap-2.5 rounded-md px-2 text-[13px] transition-colors hover:bg-muted/50"
           >
             <ArtifactGlyph kind={file.kind} />
             <Link
@@ -237,9 +241,9 @@ export function IssueArtifacts({ workspace, issue }: { workspace: Workspace; iss
   }
 
   return (
-    <section aria-label="Artifacts" className="space-y-2 border-t pt-4">
+    <section aria-label="Artifacts" className="space-y-2">
       <div className="flex items-center gap-2">
-        <h3 className="text-[13px] font-medium text-muted-foreground">Artifacts</h3>
+        <h2 className="text-[13px] font-medium text-muted-foreground">Artifacts</h2>
         {files.data && files.data.length > 0 && (
           <span className="text-xs text-muted-foreground tabular-nums">{files.data.length}</span>
         )}
