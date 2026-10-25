@@ -47,7 +47,7 @@ fi
 work="$(mktemp -d)"
 onto_pid=""
 started_db=""
-# shellcheck disable=SC2329 # run by the EXIT trap
+# shellcheck disable=SC2317,SC2329 # run by the EXIT trap (SC2317 before shellcheck 0.11)
 cleanup() {
   if [[ -n "$onto_pid" ]]; then
     kill "$onto_pid" 2>/dev/null || true

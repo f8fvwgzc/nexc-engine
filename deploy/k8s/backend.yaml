@@ -6,9 +6,10 @@ metadata:
   name: backend-data
   labels: { app.kubernetes.io/name: backend }
 spec:
-  # ReadWriteOnce works on single-node clusters (minikube). With several nodes and >1 replica,
-  # use a ReadWriteMany storage class (NFS, EFS, Filestore, CephFS) so every replica sees every
-  # artifact.
+  # ReadWriteOnce attaches the volume to one node, so the Deployment below keeps every backend
+  # pod on one node. For replicas on several nodes (surviving the loss of one), use a
+  # ReadWriteMany storage class (NFS, EFS, Filestore, CephFS) and swap the pod affinity below for
+  # the topology spread it describes.
   accessModes: [ReadWriteOnce]
   resources:
     requests:
@@ -56,12 +57,44 @@ spec:
         fsGroup: 10001
         fsGroupChangePolicy: OnRootMismatch
         seccompProfile: { type: RuntimeDefault }
-      topologySpreadConstraints:
-        - maxSkew: 1
-          topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
-          labelSelector:
-            matchLabels: { app.kubernetes.io/name: backend }
+      # Every backend pod on the node the others run on: the ReadWriteOnce data volume attaches to
+      # one node, and a pod placed on another (the second replica, a rollout's new pod) would wait
+      # on a Multi-Attach error and stall the rollout. The replicas still cover a crash and a
+      # rolling update, not the loss of the node; a drain of it waits on the PodDisruptionBudget
+      # until the last pod is deleted (docs/HA.md). With a ReadWriteMany volume, spread them
+      # instead:
+      #   topologySpreadConstraints:
+      #     - maxSkew: 1
+      #       topologyKey: kubernetes.io/hostname
+      #       whenUnsatisfiable: ScheduleAnyway
+      #       labelSelector:
+      #         matchLabels: { app.kubernetes.io/name: backend }
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels: { app.kubernetes.io/name: backend }
+      # Migrations first, with no probe to stop them: an index built CONCURRENTLY on a large
+      # table can outlast the startup probe, and a build killed half way leaves an invalid index
+      # that keeps every later start out (docs/DATABASE.md). `serve` then finds nothing to do.
+      initContainers:
+        - name: migrate
+          image: ghcr.io/f8fvwgzc/nexc-engine-backend
+          imagePullPolicy: IfNotPresent
+          args: ["migrate"]
+          envFrom:
+            - configMapRef: { name: nexc-config }
+            - secretRef: { name: nexc-secrets }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: "1", memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
       containers:
         - name: backend
           image: ghcr.io/f8fvwgzc/nexc-engine-backend
@@ -78,7 +111,7 @@ spec:
           startupProbe:
             httpGet: { path: /api/v1/healthz, port: http }
             periodSeconds: 5
-            failureThreshold: 30 # migrations run before the server listens
+            failureThreshold: 30 # the init container ran the migrations already
           livenessProbe:
             httpGet: { path: /api/v1/healthz, port: http }
             periodSeconds: 15

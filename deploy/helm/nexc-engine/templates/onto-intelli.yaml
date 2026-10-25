@@ -116,6 +116,12 @@ spec:
   revisionHistoryLimit: 5
   selector:
     matchLabels: { app.kubernetes.io/name: onto-intelli }
+  # A pod goes before its replacement starts, so onto-intelli's pools never overlap and the
+  # connection budget (nexc.dbBudget) holds through a rollout. With one replica it is away for
+  # that moment; the backend serves the vocabularies it holds meanwhile.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 0, maxUnavailable: 1 }
   template:
     metadata:
       labels: { app.kubernetes.io/name: onto-intelli, app.kubernetes.io/component: ontology }

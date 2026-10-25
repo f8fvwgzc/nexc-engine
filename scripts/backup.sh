@@ -9,6 +9,7 @@
 # service and the files are in the nexc-data volume.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# shellcheck source=/dev/null # the local .env, absent from a fresh checkout
 [ -f .env ] && { set -a; . ./.env; set +a; }
 TARGET="${1:-backups/$(date -u +%Y%m%d-%H%M%S)}"
 USER_="${POSTGRES_USER:-nexc}"; DB="${POSTGRES_DB:-nexc}"

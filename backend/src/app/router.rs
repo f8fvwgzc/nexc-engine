@@ -76,7 +76,10 @@ pub fn build(state: AppState) -> Router {
                 // The same for everyone and changed only by a release: any cache may keep it.
                 let headers = [
                     (header::CONTENT_TYPE, "application/json"),
-                    (header::CACHE_CONTROL, middleware::etag::PUBLIC_CACHE_CONTROL),
+                    (
+                        header::CACHE_CONTROL,
+                        middleware::etag::PUBLIC_CACHE_CONTROL,
+                    ),
                 ];
                 async move { (headers, body) }
             }),

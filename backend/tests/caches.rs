@@ -6,13 +6,21 @@
 
 mod common;
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::http::{Method, StatusCode};
 use common::TestApp;
 use nexc::app::caches::Key;
+use nexc::realtime::fanout;
+use nexc::repo::outbox;
 use serde_json::{Value, json};
 use sqlx::PgPool;
+use sqlx::postgres::{PgListener, PgPoolOptions};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::net::{TcpListener, TcpStream};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -159,6 +167,207 @@ async fn a_write_drops_the_entry_on_every_replica(pool: PgPool) {
     let (_, card) = call(&here, Method::GET, &card, &owner, None).await;
     assert_eq!(card["agent"]["title"], "Senior clerk");
     shutdown.cancel();
+}
+
+/// A replica whose LISTEN connection dropped may have missed what the others
+/// invalidated meanwhile: it drops everything it kept once it listens again,
+/// and hears the next write as before.
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_lost_listen_connection_drops_every_entry(pool: PgPool) {
+    let (here, there, shutdown) = replicas(&pool).await;
+    let (owner, _) = here.register("owner@example.com").await;
+    let (_, list) = call(&here, Method::GET, "/workspaces", &owner, None).await;
+    let wid = list[0]["id"].as_str().unwrap().to_owned();
+    let workspace: Uuid = wid.parse().unwrap();
+    let guardrails = format!("/workspaces/{wid}/guardrails");
+    for app in [&here, &there] {
+        let (status, _) = call(app, Method::GET, &guardrails, &owner, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(app.state.caches.has_guardrails(workspace));
+    }
+
+    // The database ends both LISTEN connections, as a failover would.
+    let ended: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM (SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
+         WHERE datname = current_database() AND query LIKE 'LISTEN %') ended",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(ended, 2, "one LISTEN connection per replica");
+    for app in [&here, &there] {
+        assert!(
+            eventually(|| !app.state.caches.has_guardrails(workspace)).await,
+            "the entry went once the replica listened again"
+        );
+    }
+
+    // Listening again: a write on one replica still drops the entry on the other.
+    let (_, current) = call(&there, Method::GET, &guardrails, &owner, None).await;
+    assert!(there.state.caches.has_guardrails(workspace));
+    let mut changed = current.clone();
+    changed["monthly_token_budget"] = json!(777);
+    let (status, body) = call(&here, Method::PUT, &guardrails, &owner, Some(changed)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        eventually(|| !there.state.caches.has_guardrails(workspace)).await,
+        "the other replica heard the write"
+    );
+    shutdown.cancel();
+}
+
+/// A TCP proxy in front of the test database that can stop passing bytes on
+/// while both sockets stay open, as a NAT or load balancer that forgot an
+/// idle connection does: no reset, no answer.
+struct Blackhole {
+    port: u16,
+    silent: Arc<AtomicBool>,
+    /// The proxy's own ports towards the database, to find its sessions.
+    upstream: Arc<Mutex<Vec<i32>>>,
+    stop: CancellationToken,
+}
+
+impl Blackhole {
+    async fn start(pool: &PgPool) -> Self {
+        let options = pool.connect_options();
+        let target = (options.get_host().to_owned(), options.get_port());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy = Self {
+            port: listener.local_addr().unwrap().port(),
+            silent: Arc::new(AtomicBool::new(false)),
+            upstream: Arc::new(Mutex::new(Vec::new())),
+            stop: CancellationToken::new(),
+        };
+        let (silent, upstream, stop) = (
+            proxy.silent.clone(),
+            proxy.upstream.clone(),
+            proxy.stop.clone(),
+        );
+        tokio::spawn(async move {
+            loop {
+                let client = tokio::select! {
+                    _ = stop.cancelled() => return,
+                    accepted = listener.accept() => accepted.unwrap().0,
+                };
+                let server = TcpStream::connect((target.0.as_str(), target.1))
+                    .await
+                    .unwrap();
+                let port = server.local_addr().unwrap().port();
+                upstream.lock().unwrap().push(i32::from(port));
+                let (client_read, client_write) = client.into_split();
+                let (server_read, server_write) = server.into_split();
+                tokio::spawn(pass(
+                    client_read,
+                    server_write,
+                    silent.clone(),
+                    stop.clone(),
+                ));
+                tokio::spawn(pass(
+                    server_read,
+                    client_write,
+                    silent.clone(),
+                    stop.clone(),
+                ));
+            }
+        });
+        proxy
+    }
+
+    /// Closes every proxied connection and waits until the database has
+    /// ended their sessions, so the test database can be dropped.
+    async fn close(self, pool: &PgPool) {
+        self.stop.cancel();
+        let ports = self.upstream.lock().unwrap().clone();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let left: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM pg_stat_activity WHERE client_port = ANY($1)",
+            )
+            .bind(&ports)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+            if left == 0 || Instant::now() > deadline {
+                assert_eq!(left, 0, "the proxied sessions ended");
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+}
+
+/// Copies one direction of a proxied connection, dropping the bytes while
+/// `silent` is set.
+async fn pass(
+    mut from: OwnedReadHalf,
+    mut to: OwnedWriteHalf,
+    silent: Arc<AtomicBool>,
+    stop: CancellationToken,
+) {
+    let mut buf = vec![0; 16 * 1024];
+    loop {
+        let n = tokio::select! {
+            _ = stop.cancelled() => return,
+            read = from.read(&mut buf) => match read {
+                Ok(0) | Err(_) => return,
+                Ok(n) => n,
+            },
+        };
+        if !silent.load(Ordering::SeqCst) && to.write_all(&buf[..n]).await.is_err() {
+            return;
+        }
+    }
+}
+
+/// A connection the network dropped without a reset never reports an error
+/// to a listener that only reads. After a quiet spell the listener asks the
+/// database, and a connection that gives no answer counts as lost, so the
+/// replica listens again and drops its caches instead of waiting forever.
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_listen_connection_gone_silent_counts_as_lost(pool: PgPool) {
+    let proxy = Blackhole::start(&pool).await;
+    let through = PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            (*pool.connect_options())
+                .clone()
+                .host("127.0.0.1")
+                .port(proxy.port),
+        )
+        .await
+        .unwrap();
+    let mut listener = PgListener::connect_with(&through).await.unwrap();
+    listener.eager_reconnect(false);
+    listener.listen(outbox::CHANNEL).await.unwrap();
+    let (quiet, answer) = (Duration::from_millis(200), Duration::from_millis(500));
+
+    // A connection that answers stays: quiet spells pass, and a later NOTIFY arrives.
+    let later = async {
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        outbox::notify(&pool, "after the quiet").await.unwrap();
+    };
+    let (received, ()) = tokio::join!(
+        fanout::next_notification(&mut listener, quiet, answer),
+        later
+    );
+    assert_eq!(received.unwrap().payload(), "after the quiet");
+
+    // Gone silent: given up after `quiet` and `answer`, not waited on forever.
+    proxy.silent.store(true, Ordering::SeqCst);
+    let started = Instant::now();
+    let given_up = tokio::time::timeout(
+        Duration::from_secs(5),
+        fanout::next_notification(&mut listener, quiet, answer),
+    )
+    .await
+    .expect("the listener gave up on the silent connection");
+    let err = given_up.expect_err("a silent connection is an error");
+    assert!(err.to_string().contains("no answer"), "{err}");
+    assert!(started.elapsed() >= quiet + answer);
+
+    drop(listener);
+    proxy.close(&pool).await;
+    through.close().await;
 }
 
 fn hits(rendered: &str, cache: &str) -> u64 {
