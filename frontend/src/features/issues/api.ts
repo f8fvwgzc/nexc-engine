@@ -143,8 +143,8 @@ export const inboxQuery = (workspaceId: string) =>
   });
 
 /**
- * How many of the caller's notifications in a workspace are unread (at most 1,000), for the
- * sidebar's badge: a count, not the inbox. Checked again every minute; marking read and issue
+ * How many of the notifications the caller's inbox shows in a workspace (the newest 100) are
+ * unread, for the sidebar's badge: a count, not the inbox. Checked again every minute; marking read and issue
  * edits refresh it with the inbox (it lives under the same `issues` root).
  */
 export const unreadCountQuery = (workspaceId: string) =>

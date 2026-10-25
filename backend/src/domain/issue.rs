@@ -247,8 +247,11 @@ impl IssueSummary {
     }
 }
 
-/// Most unread notifications counted for the sidebar's badge.
-pub const UNREAD_MAX: i64 = 1000;
+/// Most unread notifications counted for the sidebar's badge: the inbox
+/// shows the newest 100 (`GET /workspaces/{wid}/inbox`), and the badge counts
+/// the unread among those, so it never counts one the inbox cannot show or
+/// mark read.
+pub const UNREAD_MAX: i64 = 100;
 
 /// How many of a member's notifications are unread.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]

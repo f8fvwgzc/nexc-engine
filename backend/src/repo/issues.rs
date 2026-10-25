@@ -1213,29 +1213,30 @@ pub async fn mark_read_about_approval(
     Ok(())
 }
 
-/// How many of a member's notifications in a workspace are unread, of
-/// those their inbox would show (issues they can still see), counted up to
-/// `cap`. Reads `notifications_unread_idx`, the unread ones only.
+/// How many of the newest `window` notifications a member's inbox shows in
+/// a workspace ([`inbox`]: the same rows, on issues they can still see) are
+/// unread. Counting further back would count what the inbox can neither show
+/// nor mark read. Reads `notifications_user_idx`, newest first.
 pub async fn unread_count(
     db: impl PgExecutor<'_>,
     user_id: Uuid,
     workspace_id: Uuid,
-    cap: i64,
+    window: i64,
 ) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar(concat!(
-        "SELECT count(*) FROM (
-             SELECT 1 FROM notifications n
+        "SELECT count(*) FILTER (WHERE read_at IS NULL) FROM (
+             SELECT n.read_at FROM notifications n
              JOIN workspace_members wm ON wm.workspace_id = n.workspace_id AND wm.user_id = $1
              LEFT JOIN issues i ON i.id = n.issue_id
              LEFT JOIN teams t ON t.id = i.team_id
-             WHERE n.user_id = $1 AND n.workspace_id = $2 AND n.read_at IS NULL
+             WHERE n.user_id = $1 AND n.workspace_id = $2
                AND (n.issue_id IS NULL OR ",
         team_visible!("t", "wm", "$1"),
-        ") LIMIT $3) unread"
+        ") ORDER BY n.created_at DESC, n.id DESC LIMIT $3) shown"
     ))
     .bind(user_id)
     .bind(workspace_id)
-    .bind(cap)
+    .bind(window)
     .fetch_one(db)
     .await
 }

@@ -315,6 +315,37 @@ async fn the_unread_count_follows_the_inbox(pool: PgPool) {
     assert_eq!(count(w.member.clone()).await.1, json!({"count": 1}));
     assert_eq!(count(w.owner.clone()).await.1, json!({"count": 0}));
     assert_eq!(count(w.outsider.clone()).await.0, StatusCode::NOT_FOUND);
+
+    // A hundred newer notifications, all read, push the unread one out of the inbox's window:
+    // the badge no longer counts what the inbox can neither show nor mark read.
+    sqlx::query(
+        "INSERT INTO notifications (id, user_id, workspace_id, issue_id, kind, created_at, read_at)
+         SELECT gen_random_uuid(), n.user_id, n.workspace_id, n.issue_id, 'comment',
+                now() + make_interval(secs => g), now()
+         FROM (SELECT * FROM notifications WHERE user_id = $1::uuid LIMIT 1) n,
+              generate_series(1, 100) g",
+    )
+    .bind(&w.member_id)
+    .execute(&app.state.db)
+    .await
+    .unwrap();
+    let (_, inbox) = call(
+        &app,
+        Method::GET,
+        &format!("{}/inbox", w.ws),
+        &w.member,
+        None,
+    )
+    .await;
+    assert_eq!(inbox.as_array().unwrap().len(), 100);
+    assert!(
+        inbox
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|n| !n["read_at"].is_null())
+    );
+    assert_eq!(count(w.member.clone()).await.1, json!({"count": 0}));
 }
 
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]

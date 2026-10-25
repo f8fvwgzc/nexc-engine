@@ -570,8 +570,9 @@ pub async fn inbox(
     ))
 }
 
-/// How many of the caller's notifications in a workspace are unread (at
-/// most 1,000): what the sidebar shows, without reading the inbox itself.
+/// How many of the notifications the caller's inbox shows in a workspace
+/// (the newest 100) are unread: what the sidebar shows, without reading the
+/// inbox itself.
 #[utoipa::path(get, path = "/workspaces/{wid}/inbox/unread-count", tag = "issues", security(("bearer" = [])),
     params(("wid" = Uuid, Path, description = "Workspace id")),
     responses((status = 200, body = UnreadCount), (status = 404, body = Problem)))]
