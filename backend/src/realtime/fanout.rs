@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Deserializer, Serialize};
 use sqlx::PgPool;
-use sqlx::postgres::PgListener;
+use sqlx::postgres::{PgListener, PgNotification};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -159,6 +159,43 @@ fn listening_again(caches: &Caches) {
     tracing::info!("realtime LISTEN connection back; every cached entry dropped");
 }
 
+/// How long the listener waits for a notification before it asks whether
+/// its connection still answers. A NAT or load balancer that forgets an idle
+/// connection sends no reset, and a connection that only reads would wait
+/// for the next notification forever.
+pub const QUIET: Duration = Duration::from_secs(30);
+
+/// How long the database has to answer that question.
+pub const ANSWER: Duration = Duration::from_secs(10);
+
+/// The next notification, or an error once the connection is gone: it
+/// dropped, or it was quiet for `quiet` and then did not answer a `SELECT 1`
+/// within `answer`. The caller opens a new LISTEN and drops its caches.
+pub async fn next_notification(
+    listener: &mut PgListener,
+    quiet: Duration,
+    answer: Duration,
+) -> anyhow::Result<PgNotification> {
+    loop {
+        match tokio::time::timeout(quiet, listener.try_recv()).await {
+            Ok(received) => {
+                return received?.ok_or_else(|| anyhow::anyhow!("the LISTEN connection dropped"));
+            }
+            Err(_) => {
+                // Notifications that come during the query are kept for the
+                // next read.
+                let ping = sqlx::query("SELECT 1").execute(&mut *listener);
+                match tokio::time::timeout(answer, ping).await {
+                    Ok(answered) => {
+                        answered?;
+                    }
+                    Err(_) => anyhow::bail!("the LISTEN connection gave no answer in {answer:?}"),
+                }
+            }
+        }
+    }
+}
+
 async fn listen(
     hub: &Hub,
     caches: &Caches,
@@ -167,23 +204,18 @@ async fn listen(
     gap: bool,
 ) -> anyhow::Result<()> {
     let mut listener = PgListener::connect_with(db).await?;
+    // A dropped connection ends this call instead of being replaced inside
+    // `try_recv`, where a timeout could cut the reconnect short and lose the
+    // drop: the caller then reconnects and drops the caches, once.
+    listener.eager_reconnect(false);
     listener.listen(outbox::CHANNEL).await?;
     if gap {
         listening_again(caches);
     }
     loop {
-        // `try_recv`, not `recv`: the listener reconnects by itself when its
-        // connection drops, and `recv` would hide that. `None` is the drop,
-        // with LISTEN open again on a new connection.
         let notification = tokio::select! {
             _ = shutdown.cancelled() => return Ok(()),
-            n = listener.try_recv() => match n? {
-                Some(n) => n,
-                None => {
-                    listening_again(caches);
-                    continue;
-                }
-            },
+            n = next_notification(&mut listener, QUIET, ANSWER) => n?,
         };
         let envelope = match serde_json::from_str::<Notification>(notification.payload()) {
             Ok(Notification::Inline(e)) if e.origin != hub.instance() => e,

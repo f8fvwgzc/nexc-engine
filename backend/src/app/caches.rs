@@ -439,10 +439,11 @@ impl Caches {
 
     /// Drops every entry on this instance, for when invalidations the other
     /// replicas sent may have gone missing: the realtime fan-out lost its
-    /// LISTEN connection (a database failover, an idle timeout on the way)
-    /// and what was sent meanwhile never arrived. A vocabulary is only made
-    /// stale: asked for again on its next read, but still served while
-    /// onto-intelli cannot be reached, as one past its lifetime is.
+    /// LISTEN connection (a database failover, an idle timeout on the way,
+    /// found by a ping after a quiet spell) and what was sent meanwhile
+    /// never arrived. A vocabulary is only made stale: asked for again on its
+    /// next read, but still served while onto-intelli cannot be reached, as
+    /// one past its lifetime is.
     pub fn drop_all_local(&self) {
         self.cards.entries.clear();
         self.policies.entries.clear();

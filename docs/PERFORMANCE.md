@@ -108,7 +108,9 @@ a rolling update cannot read them and ignores that payload only (it keeps no ont
 anyway), and still drops the policies, guardrails, agents and vocabularies sent beside it. From
 this build on, a replica skips a kind of key it does not know and drops the rest of the payload's
 keys. A `NOTIFY` sent while a replica's `LISTEN` connection is down never reaches it, so when that
-connection comes back (the listener reconnects by itself after a failover or an idle timeout) the
+connection comes back (the listener reconnects after a failover or an idle timeout; after 30 s
+with no notification it sends a `SELECT 1`, and one not answered in 10 s counts as a lost
+connection, since a NAT or load balancer that forgets an idle connection sends no reset) the
 replica drops every entry of its hot-read and onto-intelli caches and marks its vocabularies
 stale: the next reads go to the database and to onto-intelli, and nothing a peer changed in the
 gap is served for the rest of its TTL.

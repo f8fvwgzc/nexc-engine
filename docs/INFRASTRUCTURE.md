@@ -115,8 +115,9 @@ No other service is needed.
   written: the write drops the entry locally and tells every other replica over PostgreSQL
   `NOTIFY`, the same channel the realtime events travel on; `NEXC_CACHE_TTL_SECS` (60 s) only
   bounds a missed notification, and `0` turns the caches off. A replica whose `LISTEN`
-  connection dropped (a failover, an idle timeout on the way) drops every entry once it listens
-  again, since what was sent meanwhile never reached it. The smaller ones (a workspace's
+  connection dropped (a failover, an idle timeout on the way, which a `SELECT 1` after 30 s with
+  no notification finds when no reset came) drops every entry once it listens again, since what
+  was sent meanwhile never reached it. The smaller ones (a workspace's
   memory set for 30 seconds, the list of common words for 10 minutes) expire on their own. Every
   JSON read also carries an `ETag`, so a console that asks again gets a `304` with no body: the
   caller's own `private` and varying by `Authorization`, the documents that are the same for
