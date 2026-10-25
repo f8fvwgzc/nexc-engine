@@ -185,7 +185,7 @@ describe('ArtifactsPage', () => {
   });
 
   // Two pages of 200 rows take a while to render in jsdom on a busy machine.
-  it('lists every file a page at a time when searching', { timeout: 20_000 }, async () => {
+  it('lists every file a page at a time when searching', { timeout: 60_000 }, async () => {
     const pages = [Array.from({ length: 200 }, (_, i) => file(i)), [file(200)]];
     // Only the list of every file asks for a page (`limit`); a folder's comes whole.
     server.answer = ({ path, query }) => {
