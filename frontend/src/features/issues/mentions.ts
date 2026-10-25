@@ -41,9 +41,6 @@ export function mentionName(name: string): string {
   return [...clean].slice(0, MENTION_NAME_MAX).join('').trim() || 'Someone';
 }
 
-/** What the composer shows for a mention: `@Name`. */
-export const mentionLabel = (m: Mentionable) => `@${mentionName(m.name)}`;
-
 /** The token a mention is sent as. */
 export const mentionToken = (m: Mentionable) => `@[${mentionName(m.name)}](${m.kind}:${m.id})`;
 
@@ -74,39 +71,65 @@ export function mentionsIn(body: string): Mentionable[] {
   return [...seen.values()];
 }
 
-/** `picked` with `m` added: the newest pick of a name wins, each mention is there once. */
-export function addPicked(picked: Mentionable[], m: Mentionable): Mentionable[] {
-  const label = mentionLabel(m);
-  return [...picked.filter((p) => mentionKey(p) !== mentionKey(m) && mentionLabel(p) !== label), m];
+/** A mention picked into the composer: whom it names, and the `@Name` the text shows for it. */
+export interface PickedMention extends Mentionable {
+  /** No other picked mention shows it: a second `Alex Kim` is `Alex Kim (2)`. */
+  label: string;
+}
+
+/** A comment as it is being written: the text shown, and the mentions picked into it. */
+export interface MentionDraft {
+  text: string;
+  picked: PickedMention[];
+}
+
+/**
+ * `picked` with `m` added, unless it is there already. Each mention gets a label no other picked
+ * one has, its name, then `Name (2)`, `Name (3)`…, so two people of one name stay two mentions.
+ * Given the text, the mentions it no longer shows are dropped first, freeing their labels.
+ */
+export function addPicked(picked: PickedMention[], m: Mentionable, text?: string): PickedMention[] {
+  const live = text === undefined ? picked : picked.filter((p) => text.includes(`@${p.label}`));
+  if (live.some((p) => mentionKey(p) === mentionKey(m))) return live;
+  const taken = new Set(live.map((p) => p.label));
+  const name = mentionName(m.name);
+  let label = name;
+  for (let n = 2; taken.has(label); n += 1) label = `${name} (${n})`;
+  return [...live, { kind: m.kind, id: m.id, name: m.name, label }];
+}
+
+/** The `@Name` the composer shows for `m` among `picked`. */
+export function pickedLabel(picked: PickedMention[], m: Mentionable): string {
+  const label = picked.find((p) => mentionKey(p) === mentionKey(m))?.label;
+  return `@${label ?? mentionName(m.name)}`;
 }
 
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
  * The composer's text as it is sent: each `@Name` of a picked mention becomes its token. Longer
- * names are tried first, so `@Ada Lovelace` is not taken for `@Ada`. A name that is part of a word
+ * labels are tried first, so `@Ada Lovelace` is not taken for `@Ada`. A name that is part of a word
  * or of an email address (`ada@Ada`) stays text, and so does one nobody picked.
  */
-export function toWire(text: string, picked: Mentionable[]): string {
-  const byName = new Map<string, Mentionable>();
-  for (const m of picked) byName.set(mentionName(m.name), m);
-  if (byName.size === 0) return text;
-  const names = [...byName.keys()].sort((a, b) => b.length - a.length).map(escapeRegExp);
-  const pattern = new RegExp(`(^|[^\\p{L}\\p{N}_])@(${names.join('|')})(?!${WORD})`, 'gu');
-  return text.replace(pattern, (_, lead: string, name: string) => {
-    const m = byName.get(name);
-    return m ? `${lead}${mentionToken(m)}` : `${lead}@${name}`;
+export function toWire(text: string, picked: PickedMention[]): string {
+  const byLabel = new Map(picked.map((m) => [m.label, m]));
+  if (byLabel.size === 0) return text;
+  const labels = [...byLabel.keys()].sort((a, b) => b.length - a.length).map(escapeRegExp);
+  const pattern = new RegExp(`(^|[^\\p{L}\\p{N}_])@(${labels.join('|')})(?!${WORD})`, 'gu');
+  return text.replace(pattern, (_, lead: string, label: string) => {
+    const m = byLabel.get(label);
+    return m ? `${lead}${mentionToken(m)}` : `${lead}@${label}`;
   });
 }
 
 /** A comment's text as the composer shows it, `@Name` for each token, with the mentions it holds. */
-export function fromWire(body: string): { text: string; picked: Mentionable[] } {
-  let picked: Mentionable[] = [];
+export function fromWire(body: string): MentionDraft {
+  let picked: PickedMention[] = [];
   const text = splitMentions(body)
     .map((segment) => {
       if (segment.kind === 'text') return segment.text;
       picked = addPicked(picked, segment.mention);
-      return mentionLabel(segment.mention);
+      return pickedLabel(picked, segment.mention);
     })
     .join('');
   return { text, picked };
@@ -149,16 +172,15 @@ export function matchMentionables<T extends Mentionable>(
 
 /**
  * The text with the mention being typed (from its `@` at `start` to the caret) replaced by the
- * picked one's `@Name` and a space, and where the caret goes after it.
+ * picked one's `@Name` (`label`) and a space, and where the caret goes after it.
  */
 export function insertMention(
   text: string,
   start: number,
   caret: number,
-  m: Mentionable,
+  label: string,
 ): { text: string; caret: number } {
   const after = text.slice(caret);
-  const label = mentionLabel(m);
   // One space after the name: the one already there, or a new one.
   const insert = /^\s/.test(after) ? label : `${label} `;
   return { text: `${text.slice(0, start)}${insert}${after}`, caret: start + label.length + 1 };

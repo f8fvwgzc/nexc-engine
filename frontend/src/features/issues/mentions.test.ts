@@ -8,9 +8,11 @@ import {
   mentionName,
   mentionQuery,
   mentionsIn,
+  pickedLabel,
   splitMentions,
   toWire,
   type Mentionable,
+  type PickedMention,
 } from './mentions';
 
 const ADA = 'd6b5915c-4605-7bcb-805f-46f6433df656';
@@ -22,6 +24,9 @@ const adaShort: Mentionable = {
   name: 'Ada',
 };
 const bot: Mentionable = { kind: 'agent', id: BOT, name: 'Researcher' };
+/** The mentions as the composer holds them, each picked in turn. */
+const pick = (...ms: Mentionable[]) =>
+  ms.reduce<PickedMention[]>((picked, m) => addPicked(picked, m), []);
 
 describe('the tokens a comment carries', () => {
   it('are cut out of the text in order', () => {
@@ -61,30 +66,56 @@ describe('the tokens a comment carries', () => {
 describe('the composer', () => {
   it('sends each picked @Name as its token, the longest name first', () => {
     const text = 'Hi @Ada Lovelace and @Ada, ask @Researcher. Not mail@Ada or @Adam.';
-    expect(toWire(text, [adaShort, ada, bot])).toBe(
+    expect(toWire(text, pick(adaShort, ada, bot))).toBe(
       `Hi @[Ada Lovelace](user:${ADA}) and @[Ada](user:${adaShort.id}), ask ` +
         `@[Researcher](agent:${BOT}). Not mail@Ada or @Adam.`,
     );
     // Nothing picked, nothing changes; a picked name that was deleted again is simply absent.
     expect(toWire('Plain @Ada', [])).toBe('Plain @Ada');
-    expect(toWire('Gone', [ada])).toBe('Gone');
+    expect(toWire('Gone', pick(ada))).toBe('Gone');
   });
 
   it('opens an edit with @Name shown and the mentions it holds', () => {
     const body = `@[Ada Lovelace](user:${ADA}) and @[Researcher](agent:${BOT})`;
     const draft = fromWire(body);
-    expect(draft).toEqual({ text: '@Ada Lovelace and @Researcher', picked: [ada, bot] });
+    expect(draft).toEqual({ text: '@Ada Lovelace and @Researcher', picked: pick(ada, bot) });
     expect(toWire(draft.text, draft.picked)).toBe(body);
+  });
+
+  it('keeps two mentions of one name apart, written and edited', () => {
+    const other: Mentionable = { kind: 'user', id: adaShort.id, name: 'Ada Lovelace' };
+    const agent: Mentionable = { kind: 'agent', id: BOT, name: 'Ada Lovelace' };
+    // Written: the second Ada Lovelace shows a name of its own, and each @Name sends its token.
+    let picked = pick(ada);
+    let text = insertMention('@Ad and @Ad', 0, 3, pickedLabel(picked, ada)).text;
+    picked = addPicked(picked, other, text);
+    text = insertMention(text, 18, 21, pickedLabel(picked, other)).text;
+    expect(text).toBe('@Ada Lovelace and @Ada Lovelace (2) ');
+    const body = `@[Ada Lovelace](user:${ADA}) and @[Ada Lovelace](user:${other.id}) `;
+    expect(toWire(text, picked)).toBe(body);
+    // Edited: both come back apart, and saving the text unchanged sends it as it was.
+    const twice = `${body}and @[Ada Lovelace](agent:${BOT}) @[Ada Lovelace](user:${ADA})`;
+    const draft = fromWire(twice);
+    expect(draft.text).toBe(
+      '@Ada Lovelace and @Ada Lovelace (2) and @Ada Lovelace (3) @Ada Lovelace',
+    );
+    expect(draft.picked.map((p) => p.id)).toEqual([ADA, other.id, agent.id]);
+    expect(toWire(draft.text, draft.picked)).toBe(twice);
+  });
+
+  it('frees the name of a mention taken out of the text', () => {
+    const other: Mentionable = { kind: 'user', id: adaShort.id, name: 'Ada Lovelace' };
+    const picked = addPicked(pick(ada), other, 'Nobody yet');
+    expect(picked).toEqual([{ ...other, label: 'Ada Lovelace' }]);
+    // Picked again, a mention keeps the name it shows.
+    expect(addPicked(pick(ada, other), ada)).toEqual(pick(ada, other));
+    expect(pickedLabel(pick(ada, other), other)).toBe('@Ada Lovelace (2)');
   });
 
   it('keeps names fit for a token', () => {
     expect(mentionName(' [Ada]\nLovelace ')).toBe('Ada Lovelace');
     expect([...mentionName('x'.repeat(150))]).toHaveLength(100);
     expect(mentionName('[]')).toBe('Someone');
-    // The newest pick of a name wins.
-    expect(addPicked([ada], { ...bot, name: 'Ada Lovelace' })).toEqual([
-      { ...bot, name: 'Ada Lovelace' },
-    ]);
   });
 
   it('knows when a mention is being typed', () => {
@@ -99,11 +130,14 @@ describe('the composer', () => {
   });
 
   it('puts the picked mention where it was typed', () => {
-    expect(insertMention('Ask @Ad please', 4, 7, ada)).toEqual({
+    expect(insertMention('Ask @Ad please', 4, 7, '@Ada Lovelace')).toEqual({
       text: 'Ask @Ada Lovelace please',
       caret: 18,
     });
-    expect(insertMention('Ask @Re', 4, 7, bot)).toEqual({ text: 'Ask @Researcher ', caret: 16 });
+    expect(insertMention('Ask @Re', 4, 7, '@Researcher')).toEqual({
+      text: 'Ask @Researcher ',
+      caret: 16,
+    });
   });
 
   it('lists the candidates that start with what was typed first', () => {

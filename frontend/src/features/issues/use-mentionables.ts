@@ -27,6 +27,10 @@ export interface Mentionables {
   people: Map<string, { name: string; email: string }>;
   /** The workspace's agents' names, by id. */
   agents: Map<string, string>;
+  /** Whether `people` has loaded: a mention of someone not in it is then shown as text. */
+  peopleLoaded: boolean;
+  /** Whether `agents` has loaded. */
+  agentsLoaded: boolean;
   /**
    * Whether a mentioned agent is also asked for a plan: only members of the issue's team plan
    * its work (null until the teams are known).
@@ -34,19 +38,30 @@ export interface Mentionables {
   canPlan: boolean | null;
 }
 
+/** Why an agent would not take an issue a mention hands it: the server only hands active ones. */
 const NOT_WORKING: Record<string, string> = {
-  paused: 'paused',
-  over_budget: 'over budget',
+  paused: "paused, won't take work",
+  over_budget: "over budget, won't take work",
 };
+
+/** What to read: everything for writing, or only what the comments shown mention. */
+export interface MentionablesNeed {
+  /** The composer, or an edit, is in use: whom it can mention. */
+  write: boolean;
+  /** A comment shown mentions a member. */
+  users: boolean;
+  /** A comment shown mentions an agent. */
+  agents: boolean;
+}
 
 /**
  * Whom a comment on the issue can mention: the members who can see the issue, as the server
  * decides it (admins, everyone but guests on an open team, and the team's members; a guest, who
  * cannot list the workspace's members, gets the team's), and the workspace's agents that are not
- * quarantined. The team's members and the agents are read only once `load` is set (the composer
- * was used), so opening an issue costs no extra request.
+ * quarantined. The team's members and the agents are read only when `need` asks for them, so
+ * opening an issue whose comments mention nobody costs no extra request.
  */
-export function useMentionables(issue: Issue, load: boolean): Mentionables {
+export function useMentionables(issue: Issue, need: MentionablesNeed): Mentionables {
   const me = useAuthStore((s) => s.user?.id);
   const wid = issue.workspace_id;
   const { data: workspace } = useQuery({
@@ -62,9 +77,13 @@ export function useMentionables(issue: Issue, load: boolean): Mentionables {
   });
   const { data: teamMembers } = useQuery({
     ...teamMembersQuery(wid, issue.team_id),
-    enabled: load,
+    // A guest knows the people of the team only.
+    enabled: need.write || (need.users && role === 'guest'),
   });
-  const { data: agentList } = useQuery({ ...agentsQuery(wid), enabled: load });
+  const { data: agentList } = useQuery({
+    ...agentsQuery(wid),
+    enabled: need.write || need.agents,
+  });
 
   return useMemo(() => {
     const people = new Map<string, { name: string; email: string }>();
@@ -94,6 +113,15 @@ export function useMentionables(issue: Issue, load: boolean): Mentionables {
         detail: why ? `${a.role} · ${why}` : a.role,
       });
     }
-    return { candidates, people, agents, canPlan: team ? team.role !== null : null };
-  }, [members, teamMembers, agentList, team, me]);
+    const peopleLoaded =
+      role === undefined ? false : (role === 'guest' ? teamMembers : members) !== undefined;
+    return {
+      candidates,
+      people,
+      agents,
+      peopleLoaded,
+      agentsLoaded: agentList !== undefined,
+      canPlan: team ? team.role !== null : null,
+    };
+  }, [members, teamMembers, agentList, team, me, role]);
 }

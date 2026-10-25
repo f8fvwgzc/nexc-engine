@@ -75,6 +75,13 @@ const quarantined: Agent = {
   name: 'Rogue',
   status: 'quarantined',
 };
+const paused: Agent = {
+  ...f.agent,
+  id: '0199bbbb-0000-7000-8000-00000000b003',
+  name: 'Scribe',
+  role: 'writer',
+  status: 'paused',
+};
 
 vi.mock('@/features/workspaces/api', () => ({
   workspacesQuery: () => ({ queryKey: ['workspaces'], queryFn: () => [workspace] }),
@@ -91,7 +98,7 @@ vi.mock('@/features/workspaces/api', () => ({
 vi.mock('@/features/agents/api', () => ({
   agentsQuery: (wid: string) => ({
     queryKey: ['agents', wid],
-    queryFn: () => [researcher, quarantined],
+    queryFn: () => [researcher, quarantined, paused],
   }),
 }));
 
@@ -252,8 +259,11 @@ describe('mentions', () => {
 
     fireEvent.change(field, { target: { value: 'Ask @Grace Hopper and @' } });
     expect(await screen.findByRole('option', { name: /Researcher/ })).toBeInTheDocument();
-    // Quarantined agents take no work and are not offered.
+    // Quarantined agents take no work and are not offered; a paused one says it takes none.
     expect(screen.queryByRole('option', { name: /Rogue/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /Scribe/ })).toHaveTextContent(
+      "writer · paused, won't take work",
+    );
     fireEvent.keyDown(field, { key: 'ArrowDown' });
     expect(screen.getByRole('option', { name: /Researcher/ })).toHaveAttribute(
       'aria-selected',
@@ -293,6 +303,30 @@ describe('mentions', () => {
     );
     expect(screen.getByText(/Use CAN FD\./)).toBeInTheDocument();
     expect(screen.queryByText(/user:/)).not.toBeInTheDocument();
+  });
+
+  it('of nobody the reader knows show as plain text', async () => {
+    const stranger = '0199bbbb-0000-7000-8000-00000000dead';
+    const body = `@[Platform Admin](user:${stranger}) and @[Ghost](agent:${stranger}) look`;
+    listEvents.mockResolvedValue([event('4', { body })]);
+    renderTimeline();
+    // Once the members and agents are known, neither is a chip: no card, no link.
+    await waitFor(() =>
+      expect(screen.getByText(/look$/)).toHaveTextContent('@Platform Admin and @Ghost look'),
+    );
+    expect(screen.queryByRole('link', { name: 'Ghost' })).not.toBeInTheDocument();
+  });
+
+  it('are sent once when Cmd+Enter is pressed again while an edit is saved', async () => {
+    updateComment.mockReset();
+    updateComment.mockReturnValue(new Promise(() => {}));
+    renderTimeline();
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    fireEvent.change(editField()!, { target: { value: 'Use EtherCAT.' } });
+    fireEvent.keyDown(editField()!, { key: 'Enter', metaKey: true });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled());
+    fireEvent.keyDown(editField()!, { key: 'Enter', metaKey: true });
+    expect(updateComment).toHaveBeenCalledTimes(1);
   });
 
   it('are kept through an edit', async () => {

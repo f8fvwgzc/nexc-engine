@@ -20,21 +20,23 @@ import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth-store';
 
 import {
+  addPicked,
   insertMention,
   matchMentionables,
   mentionKey,
   mentionQuery,
+  pickedLabel,
   splitMentions,
+  type MentionDraft,
   type Mentionable,
 } from './mentions';
 import type { MentionCandidate, Mentionables } from './use-mentionables';
 
 type MentionTextareaProps = Omit<ComponentProps<'textarea'>, 'value' | 'onChange'> & {
-  value: string;
-  onValueChange: (value: string) => void;
+  /** The text, and the mentions picked into it. */
+  draft: MentionDraft;
+  onDraftChange: (draft: MentionDraft) => void;
   candidates: MentionCandidate[];
-  /** Called with each member or agent picked from the list. */
-  onPick: (picked: Mentionable) => void;
   /** Cmd/Ctrl+Enter. */
   onSubmit?: () => void;
   /** A line under the list's agents. */
@@ -44,14 +46,13 @@ type MentionTextareaProps = Omit<ComponentProps<'textarea'>, 'value' | 'onChange
 /**
  * A comment field where `@` opens a list of the members and agents the comment can mention,
  * narrowed as one types. Arrow keys move through it, Enter or Tab picks, Escape closes it; the
- * focus stays in the field. A pick writes `@Name` into the text and tells `onPick`, so the comment
- * can be sent with its tokens (`toWire`). Cmd/Ctrl+Enter sends.
+ * focus stays in the field. A pick writes `@Name` into the text and adds the mention to the draft,
+ * so the comment can be sent with its tokens (`toWire`). Cmd/Ctrl+Enter sends.
  */
 export function MentionTextarea({
-  value,
-  onValueChange,
+  draft,
+  onDraftChange,
   candidates,
-  onPick,
   onSubmit,
   agentNote,
   onKeyDown,
@@ -66,6 +67,7 @@ export function MentionTextarea({
   const [dismissed, setDismissed] = useState<number | null>(null);
   const [active, setActive] = useState<string | null>(null);
   const moveCaretTo = useRef<number | null>(null);
+  const value = draft.text;
 
   const query = caret === null ? null : mentionQuery(value, caret);
   const people = query
@@ -95,10 +97,10 @@ export function MentionTextarea({
 
   const pick = (m: MentionCandidate) => {
     if (!query || caret === null) return;
-    const next = insertMention(value, query.start, caret, m);
+    const picked = addPicked(draft.picked, m, value);
+    const next = insertMention(value, query.start, caret, pickedLabel(picked, m));
     moveCaretTo.current = next.caret;
-    onPick({ kind: m.kind, id: m.id, name: m.name });
-    onValueChange(next.text);
+    onDraftChange({ text: next.text, picked });
     setCaret(next.caret);
     setActive(null);
     // The name just written would match itself: the list stays shut until another `@`.
@@ -196,7 +198,7 @@ export function MentionTextarea({
           aria-controls={open ? listId : undefined}
           aria-activedescendant={currentId}
           onChange={(e) => {
-            onValueChange(e.target.value);
+            onDraftChange({ ...draft, text: e.target.value });
             track(e.target);
           }}
           onSelect={(e) => track(e.currentTarget)}
@@ -255,17 +257,27 @@ export function MentionTextarea({
 const CHIP =
   'inline-flex max-w-full items-center gap-1 rounded bg-muted px-1 align-baseline text-[13px] leading-5 font-medium';
 
-/** A mention in a comment: a member's name with a card on hover, or a link to the agent. */
+/** What showing a comment's mentions needs: the live names, and whether they have loaded. */
+type KnownMentionables = Pick<Mentionables, 'people' | 'agents' | 'peopleLoaded' | 'agentsLoaded'>;
+
+/**
+ * A mention in a comment: a member's name with a card on hover, or a link to the agent. One that
+ * names nobody the reader knows of (once they have loaded) is plain `@Name`, as the server treats it.
+ */
 function MentionChip({
   mention,
   mentionables,
   me,
 }: {
   mention: Mentionable;
-  mentionables: Pick<Mentionables, 'people' | 'agents'>;
+  mentionables: KnownMentionables;
   me: string | undefined;
 }) {
-  if (mention.kind === 'agent') {
+  const agent = mention.kind === 'agent';
+  const known = agent ? mentionables.agents.has(mention.id) : mentionables.people.has(mention.id);
+  if (!known && (agent ? mentionables.agentsLoaded : mentionables.peopleLoaded))
+    return <>@{mention.name}</>;
+  if (agent) {
     const name = mentionables.agents.get(mention.id) ?? mention.name;
     return (
       <Link
@@ -311,7 +323,7 @@ export function MentionText({
   className,
 }: {
   body: string;
-  mentionables: Pick<Mentionables, 'people' | 'agents'>;
+  mentionables: KnownMentionables;
   className?: string;
 }) {
   const me = useAuthStore((s) => s.user?.id);

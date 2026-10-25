@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowDownUpIcon, ChevronRightIcon, ListFilterIcon } from 'lucide-react';
-import { useId, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 
 import { PersonGlyph } from '@/components/custom-ui/issue-glyphs';
 import { Button } from '@/components/ui/button';
@@ -25,23 +25,20 @@ import { ACTIVITY_SHOW_OPTIONS, changeText, showsEvent, useActivityPrefs } from 
 import { createComment, deleteComment, issueEventsQuery, updateComment } from './api';
 import { RunReport } from './issue-run';
 import { MentionText, MentionTextarea } from './mention-textarea';
-import { addPicked, fromWire, mentionsIn, toWire, type Mentionable } from './mentions';
+import { fromWire, mentionsIn, toWire, type MentionDraft, type MentionKind } from './mentions';
 import { useMentionables, type Mentionables } from './use-mentionables';
 
 /** A comment as it is being written: the text shown, and the mentions picked into it. */
-interface Draft {
-  text: string;
-  picked: Mentionable[];
-}
+type Draft = MentionDraft;
 
 const EMPTY_DRAFT: Draft = { text: '', picked: [] };
 
 /** A new draft, or a change to the one there is. */
 type DraftUpdate = Draft | null | ((current: Draft | null) => Draft | null);
 
-/** The comment field: one soft surface, outlined only while it is being typed in. */
+/** The comment field: one soft surface, outlined with the focus ring only while it is typed in. */
 const COMPOSER =
-  'rounded-lg border border-transparent bg-muted/40 transition-colors focus-within:border-input focus-within:bg-background dark:focus-within:bg-input/30';
+  'rounded-lg border border-transparent bg-muted/40 transition-[color,background-color,border-color,box-shadow] focus-within:border-ring focus-within:bg-background focus-within:ring-3 focus-within:ring-ring/50 dark:focus-within:bg-input/30';
 const COMPOSER_FIELD =
   'min-h-10 resize-none border-0 bg-transparent px-3 py-2.5 shadow-none focus-visible:ring-0 dark:bg-transparent';
 
@@ -49,8 +46,8 @@ const COMPOSER_FIELD =
 function agentNote(canPlan: boolean | null): string | undefined {
   if (canPlan === null) return undefined;
   return canPlan
-    ? 'A mentioned agent is delegated the issue and asked for a plan.'
-    : 'A mentioned agent is delegated the issue. Join the team to have it plan.';
+    ? 'An active agent you mention takes the issue if it has no agent yet, and is asked for a plan.'
+    : 'An active agent you mention takes the issue if it has no agent yet. Join the team to have it plan.';
 }
 
 /** Whether the text a comment was sent with mentions an agent: the issue may have changed. */
@@ -100,7 +97,7 @@ function Comment({
     },
   });
   const save = () => {
-    if (draft?.text.trim()) edit.mutate(toWire(draft.text.trim(), draft.picked));
+    if (draft?.text.trim() && !edit.isPending) edit.mutate(toWire(draft.text.trim(), draft.picked));
   };
   const name = event.actor?.name ?? 'Someone who left';
   return (
@@ -158,7 +155,7 @@ function Comment({
               <MentionTextarea
                 autoFocus={focusEdit}
                 rows={3}
-                value={draft.text}
+                draft={draft}
                 aria-label="Edit comment"
                 className={COMPOSER_FIELD}
                 candidates={mentionables.candidates}
@@ -166,8 +163,8 @@ function Comment({
                 onFocus={(e) =>
                   e.target.setSelectionRange(e.target.value.length, e.target.value.length)
                 }
-                onValueChange={(text) => setDraft((d) => d && { ...d, text })}
-                onPick={(m) => setDraft((d) => d && { ...d, picked: addPicked(d.picked, m) })}
+                // Not after the edit was saved or given up.
+                onDraftChange={(next) => setDraft((d) => d && next)}
                 onSubmit={save}
               />
               <div className="flex justify-end gap-2 px-2 pb-2">
@@ -209,11 +206,22 @@ export function IssueTimeline({ issue, canModerate }: { issue: Issue; canModerat
       ...all,
       [eventId]: typeof next === 'function' ? next(all[eventId] ?? null) : next,
     }));
-  // The people and agents to mention are read once someone starts to write.
-  const [writing, setWriting] = useState(false);
-  const mentionables = useMentionables(issue, writing);
   const [prefs, setPrefs] = useActivityPrefs();
   const { data: events, isPending, error } = useQuery(issueEventsQuery(issue.id));
+  // Whom to mention is read once someone starts to write; before that, only what the comments'
+  // mentions need to show.
+  const [writing, setWriting] = useState(false);
+  const mentioned = useMemo(() => {
+    const kinds = new Set<MentionKind>();
+    for (const e of events ?? [])
+      if (e.kind === 'comment') for (const m of mentionsIn(e.body)) kinds.add(m.kind);
+    return kinds;
+  }, [events]);
+  const mentionables = useMentionables(issue, {
+    write: writing,
+    users: mentioned.has('user'),
+    agents: mentioned.has('agent'),
+  });
   const reload = (body = '') => {
     void queryClient.invalidateQueries({ queryKey: qk.issues.events(issue.id) });
     // A mentioned agent may have been delegated the issue and given it a graph to plan in.
@@ -252,15 +260,14 @@ export function IssueTimeline({ issue, canModerate }: { issue: Issue; canModerat
       <div className={COMPOSER}>
         <MentionTextarea
           rows={2}
-          value={draft.text}
+          draft={draft}
           placeholder="Leave a comment… Type @ to mention a teammate or an agent"
           aria-label="New comment"
           className={COMPOSER_FIELD}
           candidates={mentionables.candidates}
           agentNote={agentNote(mentionables.canPlan)}
           onFocus={() => setWriting(true)}
-          onValueChange={(text) => setDraftState((d) => ({ ...d, text }))}
-          onPick={(m) => setDraftState((d) => ({ ...d, picked: addPicked(d.picked, m) }))}
+          onDraftChange={setDraftState}
           onSubmit={send}
         />
         <div className="flex justify-end px-2 pb-2">
