@@ -275,10 +275,11 @@ pub fn location(url: &str) -> String {
 /// A workspace owner must not be able to make the server connect to its
 /// own network: the target's host must resolve only to addresses the SSRF
 /// guard lets users reach (`NEXC_EGRESS_ALLOW_PRIVATE` opens private
-/// ranges). Returns the URL to connect with, pinned to the address checked
-/// so that the name cannot answer differently when the driver resolves it
-/// again; with `sslmode=verify-full` the name stays, since a server that
-/// is not the name's fails the certificate check anyway.
+/// ranges). Returns the URL to connect with, pinned (by the driver's `host`
+/// parameter) to the address checked so that the name cannot answer
+/// differently when the driver resolves it again; with `sslmode=verify-full`
+/// the name stays, since a server that is not the name's fails the
+/// certificate check anyway.
 pub async fn check_target(url: &str, guard: &EgressGuard) -> Result<String, String> {
     if !(url.starts_with("postgres://") || url.starts_with("postgresql://")) {
         return Err("the target must be a postgres:// URL".into());
@@ -305,9 +306,17 @@ pub async fn check_target(url: &str, guard: &EgressGuard) -> Result<String, Stri
     if matches!(options.get_ssl_mode(), PgSslMode::VerifyFull) {
         return Ok(url.to_owned());
     }
+    // One address, as the driver takes one: IPv4 when the name has one (a server that listens on
+    // IPv4 alone is common, and the driver would have fallen back to it). Given as the driver's
+    // own `host` parameter, which wins over the URL's host: an IPv6 address in the URL's
+    // authority would keep its brackets and resolve as a name.
+    let chosen = addresses
+        .iter()
+        .find(|address| address.is_ipv4())
+        .unwrap_or(&addresses[0]);
     parsed
-        .set_ip_host(addresses[0].ip())
-        .map_err(|()| "the target's host cannot be pinned".to_owned())?;
+        .query_pairs_mut()
+        .append_pair("host", &chosen.ip().to_string());
     Ok(parsed.to_string())
 }
 
@@ -746,20 +755,35 @@ mod tests {
         ] {
             assert!(check_target(url, &guard).await.is_err(), "{url}");
         }
-        // A range the operator opened is reached, at the address that was checked.
-        let open = EgressGuard::new(crate::security::egress::parse_allowed("127.0.0.0/8").unwrap());
-        assert_eq!(
-            check_target("postgres://u:p@127.0.0.1:5432/db", &open)
+        // A range the operator opened is reached, at the address that was checked, IPv4 or IPv6.
+        let open =
+            EgressGuard::new(crate::security::egress::parse_allowed("127.0.0.0/8,::1").unwrap());
+        let pinned = |url: String| url.parse::<PgConnectOptions>().unwrap();
+        let v4 = check_target("postgres://u:p@127.0.0.1:5432/db", &open)
+            .await
+            .unwrap();
+        assert_eq!(v4, "postgres://u:p@127.0.0.1:5432/db?host=127.0.0.1");
+        assert_eq!(pinned(v4).get_host(), "127.0.0.1");
+        let v6 = check_target("postgres://u:p@[::1]:5432/db", &open)
+            .await
+            .unwrap();
+        let v6 = pinned(v6);
+        assert_eq!((v6.get_host(), v6.get_port()), ("::1", 5432));
+        // A name is connected to at the address it resolved to when checked, IPv4 first.
+        let named = pinned(
+            check_target("postgres://u:p@localhost/db", &open)
                 .await
                 .unwrap(),
-            "postgres://u:p@127.0.0.1:5432/db"
         );
+        assert_eq!(named.get_host(), "127.0.0.1");
         assert_eq!(
             check_target("postgres://u:p%40ss@8.8.8.8/db?sslmode=require", &guard)
                 .await
                 .unwrap(),
-            "postgres://u:p%40ss@8.8.8.8/db?sslmode=require"
+            "postgres://u:p%40ss@8.8.8.8/db?sslmode=require&host=8.8.8.8"
         );
+        let full = "postgres://u:p@8.8.8.8/db?sslmode=verify-full";
+        assert_eq!(check_target(full, &guard).await.unwrap(), full);
     }
 
     #[test]
