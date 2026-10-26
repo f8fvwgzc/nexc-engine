@@ -1,10 +1,10 @@
 //! The tools gateway (AgentSecOps phase 4): a workspace registers MCP
 //! servers, their tools are offered to agents as `mcp:<server>/<tool>`, a
-//! call is performed by the backend (over stdio in a child process, or over
-//! streamable HTTP) under the policy, the labels, the DLP rules and the
-//! agent's pace, with a `tool_call` and an `egress` span on the record; and
-//! every refusal is a policy span the model hears about. `make
-//! prove-gateway` measures the gateway's own overhead per call.
+//! call is performed by the backend (over streamable HTTP, behind the SSRF
+//! guard; a stdio server is never started) under the policy, the labels,
+//! the DLP rules and the agent's pace, with a `tool_call` and an `egress`
+//! span on the record; and every refusal is a policy span the model hears
+//! about. `make prove-gateway` measures the gateway's own overhead per call.
 #![forbid(unsafe_code)]
 
 mod common;
@@ -22,67 +22,6 @@ use common::{TestApp, collect_until};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 
-/// An MCP server over stdio, in Python: `echo` says its text back, `big`
-/// answers with as many bytes as asked, `whoami` tells what it can see of
-/// the process it runs in.
-const STDIO_SERVER: &str = r#"
-import json, os, sys
-def reply(id, result=None, error=None):
-    msg = {"jsonrpc": "2.0", "id": id}
-    if error is not None:
-        msg["error"] = error
-    else:
-        msg["result"] = result
-    sys.stdout.write(json.dumps(msg) + "\n")
-    sys.stdout.flush()
-TOOLS = [
-    {"name": "echo", "description": "Says the text back.",
-     "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
-    {"name": "big", "description": "Answers with n bytes.",
-     "inputSchema": {"type": "object", "properties": {"n": {"type": "integer"}}, "required": ["n"]}},
-    {"name": "whoami", "description": "What the server can see.", "inputSchema": {"type": "object", "properties": {}}},
-]
-for line in sys.stdin:
-    line = line.strip()
-    if not line:
-        continue
-    msg = json.loads(line)
-    method = msg.get("method")
-    if method == "initialize":
-        reply(msg["id"], {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}},
-                          "serverInfo": {"name": "stdio-test", "version": "1.0"}})
-    elif method == "notifications/initialized":
-        pass
-    elif method == "tools/list":
-        reply(msg["id"], {"tools": TOOLS})
-    elif method == "tools/call":
-        name = msg["params"]["name"]
-        args = msg["params"].get("arguments") or {}
-        if name == "echo":
-            reply(msg["id"], {"content": [{"type": "text", "text": "echo: " + str(args.get("text", ""))}]})
-        elif name == "big":
-            reply(msg["id"], {"content": [{"type": "text", "text": "x" * int(args.get("n", 0))}]})
-        elif name == "whoami":
-            info = {"cwd": os.getcwd(), "env": sorted(os.environ.keys()), "home": os.environ.get("HOME")}
-            reply(msg["id"], {"content": [{"type": "text", "text": json.dumps(info)}]})
-        else:
-            reply(msg["id"], {"content": [{"type": "text", "text": "unknown tool"}], "isError": True})
-    elif "id" in msg:
-        reply(msg["id"], error={"code": -32601, "message": "method not found"})
-"#;
-
-/// Writes the stdio server to a file of its own; returns `(command, args)`.
-fn stdio_server() -> (String, Vec<String>) {
-    let dir = std::env::temp_dir().join(format!("nexc-mcp-{}", uuid::Uuid::now_v7()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("server.py");
-    std::fs::write(&path, STDIO_SERVER).unwrap();
-    (
-        "python3".into(),
-        vec!["-I".into(), path.to_string_lossy().into_owned()],
-    )
-}
-
 /// What the HTTP server saw: every JSON-RPC method, and the auth headers.
 #[derive(Default)]
 struct HttpSeen {
@@ -97,8 +36,9 @@ struct HttpState {
     sse: bool,
 }
 
-/// An MCP server over streamable HTTP with the same tools, plus `secret`,
-/// which needs the right `Authorization` header to answer.
+/// An MCP server over streamable HTTP: `echo` says its text back, `big`
+/// answers with as many bytes as asked, and `secret` needs the right
+/// `Authorization` header to answer.
 async fn http_rpc(
     State(state): State<HttpState>,
     headers: HeaderMap,
@@ -130,7 +70,7 @@ async fn http_rpc(
             "serverInfo": {"name": "http-test", "version": "2.0"}}),
         "tools/list" => json!({"tools": [
             {"name": "echo", "description": "Says the text back.",
-             "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}}},
+             "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
             {"name": "big", "description": "Answers with n bytes.",
              "inputSchema": {"type": "object", "properties": {"n": {"type": "integer"}}}},
             {"name": "secret", "description": "Needs the header.", "inputSchema": {"type": "object", "properties": {}}},
@@ -238,9 +178,8 @@ async fn register(app: &TestApp, token: &str, wid: &str, body: Value) -> (Status
     .await
 }
 
-fn stdio_body(name: &str) -> Value {
-    let (command, args) = stdio_server();
-    json!({"name": name, "transport": "stdio", "command": command, "args": args})
+fn http_body(name: &str, url: &str) -> Value {
+    json!({"name": name, "transport": "http", "url": url})
 }
 
 /// Runs a graph of one `TOOL <tool>` node with `arguments`; returns the run
@@ -317,11 +256,12 @@ async fn admins_register_servers_and_the_gateway_lists_their_tools(pool: PgPool)
     .await;
     assert!(status.is_success(), "{body}");
     let (outsider, _) = app.register("outsider@example.com").await;
+    let (server_url, _) = http_server(false).await;
 
     // Registering connects at once: the tools are listed and kept.
-    let (status, server) = register(&app, &owner, &wid, stdio_body("files")).await;
+    let (status, server) = register(&app, &owner, &wid, http_body("files", &server_url)).await;
     assert_eq!(status, StatusCode::CREATED, "{server}");
-    assert_eq!(server["transport"], "stdio");
+    assert_eq!(server["transport"], "http");
     assert_eq!(server["last_check_ok"], true, "{server}");
     assert!(
         server["last_check_detail"]
@@ -336,7 +276,7 @@ async fn admins_register_servers_and_the_gateway_lists_their_tools(pool: PgPool)
         .iter()
         .map(|t| t["name"].as_str().unwrap())
         .collect();
-    assert_eq!(tools, ["echo", "big", "whoami"]);
+    assert_eq!(tools, ["echo", "big", "secret"]);
     assert_eq!(server["tools"][0]["input_schema"]["required"][0], "text");
     assert_eq!(server["max_label"], "internal");
     assert_eq!(server["has_auth_header"], false);
@@ -353,7 +293,7 @@ async fn admins_register_servers_and_the_gateway_lists_their_tools(pool: PgPool)
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(list.as_array().unwrap().len(), 1);
-    let (status, _) = register(&app, &member, &wid, stdio_body("theirs")).await;
+    let (status, _) = register(&app, &member, &wid, http_body("theirs", &server_url)).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     let (status, _) = call(
         &app,
@@ -375,27 +315,32 @@ async fn admins_register_servers_and_the_gateway_lists_their_tools(pool: PgPool)
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     // A second server of the same name, and inputs that do not fit.
-    let (status, _) = register(&app, &owner, &wid, stdio_body("files")).await;
+    let (status, _) = register(&app, &owner, &wid, http_body("files", &server_url)).await;
     assert_eq!(status, StatusCode::CONFLICT);
     for bad in [
-        json!({"name": "Bad Name", "transport": "stdio", "command": "python3"}),
+        json!({"name": "Bad Name", "transport": "http", "url": server_url}),
         json!({"name": "nourl", "transport": "http"}),
         json!({"name": "ftp", "transport": "http", "url": "ftp://x"}),
-        json!({"name": "mixed", "transport": "stdio", "command": "x", "url": "http://x"}),
-        json!({"name": "header", "transport": "stdio", "command": "x", "auth_header": "a\nb"}),
-        json!({"name": "label", "transport": "stdio", "command": "x", "max_label": "secret"}),
-        json!({"name": "x", "transport": "stdio", "command": "x", "unknown": 1}),
+        json!({"name": "mixed", "transport": "http", "url": "http://x", "command": "x"}),
+        json!({"name": "header", "transport": "http", "url": server_url, "auth_header": "a\nb"}),
+        json!({"name": "label", "transport": "http", "url": server_url, "max_label": "secret"}),
+        json!({"name": "x", "transport": "http", "url": server_url, "unknown": 1}),
+        // The backend never starts a command, whoever asks.
+        json!({"name": "shell", "transport": "stdio", "command": "sh", "args": ["-c", "id"]}),
+        // Nor connects to the cloud's metadata service.
+        json!({"name": "meta", "transport": "http", "url": "http://169.254.169.254/latest/meta-data/"}),
     ] {
         let (status, body) = register(&app, &owner, &wid, bad.clone()).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{bad}: {body}");
     }
 
-    // A server that cannot be started is registered, with the failure on it.
+    // A server that does not answer is registered, with the failure on it.
     let (status, broken) = register(
         &app,
         &owner,
         &wid,
-        json!({"name": "broken", "transport": "stdio", "command": "/nonexistent/mcp-server"}),
+        // Nothing listens on port 9 (discard).
+        json!({"name": "broken", "transport": "http", "url": "http://127.0.0.1:9/mcp"}),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{broken}");
@@ -404,7 +349,7 @@ async fn admins_register_servers_and_the_gateway_lists_their_tools(pool: PgPool)
         broken["last_check_detail"]
             .as_str()
             .unwrap()
-            .contains("could not be started"),
+            .contains("not reachable"),
         "{broken}"
     );
     assert_eq!(broken["tools"].as_array().unwrap().len(), 0);
@@ -485,14 +430,100 @@ async fn admins_register_servers_and_the_gateway_lists_their_tools(pool: PgPool)
     );
 }
 
+/// The remote code execution a stdio server was: whoever may register a
+/// server (any workspace admin, and with sign-ups on anyone owns a
+/// workspace) chose a command the backend started. Registering one is
+/// refused, and one registered before is listed but never started: its
+/// check fails, its tools are not offered, and a call to one is refused.
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
-async fn an_agent_calls_an_mcp_tool_over_stdio_through_the_gateway(pool: PgPool) {
+async fn a_stdio_server_is_never_started_by_the_backend(pool: PgPool) {
     let (url, seen) = fake_grpc_runtime().await;
-    let app = grpc_app(pool, &url, &[]).await;
+    let app = grpc_app(pool.clone(), &url, &[]).await;
     let (owner, _) = app.register("owner@example.com").await;
     let wid = workspace(&app, &owner).await;
-    let (status, server) = register(&app, &owner, &wid, stdio_body("files")).await;
-    assert_eq!(status, StatusCode::CREATED, "{server}");
+    // What the command would leave behind, if it ever ran.
+    let marker = std::env::temp_dir().join(format!("nexc-stdio-{}", uuid::Uuid::now_v7()));
+    let command = format!("touch {}", marker.display());
+    let args = vec!["-c".to_owned(), command.clone()];
+
+    let (status, body) = register(
+        &app,
+        &owner,
+        &wid,
+        json!({"name": "files", "transport": "stdio", "command": "sh", "args": args}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert!(
+        body["errors"]["transport"][0]
+            .as_str()
+            .unwrap()
+            .contains("not started by the backend"),
+        "{body}"
+    );
+
+    // A server registered before, with the tools it listed then.
+    let owner_id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM users WHERE email = $1")
+        .bind("owner@example.com")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let sid = uuid::Uuid::now_v7();
+    nexc::repo::mcp_servers::insert(
+        &pool,
+        sid,
+        &nexc::repo::mcp_servers::NewMcpServer {
+            workspace_id: wid.parse().unwrap(),
+            name: "files",
+            transport: nexc::domain::mcp::McpTransport::Stdio,
+            command: Some("sh"),
+            args: &args,
+            url: None,
+            auth_header: None,
+            allowed_tools: &[],
+            max_label: nexc::domain::capabilities::DataLabel::Internal,
+            created_by: owner_id,
+        },
+    )
+    .await
+    .unwrap();
+    let echo = nexc::domain::mcp::McpTool {
+        name: "echo".into(),
+        description: "Says the text back.".into(),
+        input_schema: json!({"type": "object", "properties": {}}),
+    };
+    nexc::repo::mcp_servers::set_check(&pool, sid, true, "listed before", &[echo])
+        .await
+        .unwrap();
+    let (status, list) = call(
+        &app,
+        Method::GET,
+        &format!("/workspaces/{wid}/mcp-servers"),
+        &owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list[0]["transport"], "stdio", "still listed, to be removed");
+
+    let (status, check) = call(
+        &app,
+        Method::POST,
+        &format!("/workspaces/{wid}/mcp-servers/{sid}/check"),
+        &owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{check}");
+    assert_eq!(check["ok"], false);
+    assert!(
+        check["detail"]
+            .as_str()
+            .unwrap()
+            .contains("not started by the backend"),
+        "{check}"
+    );
+
     agent(
         &app,
         &owner,
@@ -501,91 +532,60 @@ async fn an_agent_calls_an_mcp_tool_over_stdio_through_the_gateway(pool: PgPool)
         json!({"tools": ["mcp:files/*", "finish"]}),
     )
     .await;
-    let (rid, finished, spans) = tool_run(
+    let (_, finished, spans) = tool_run(
         &app,
         &owner,
         "clerk",
         "mcp:files/echo",
-        json!({"text": "hello from the gateway"}),
+        json!({"text": "hello"}),
     )
     .await;
     assert_eq!(finished["status"], "succeeded", "{finished}");
-    assert_eq!(finished["policy_mismatches"], 0);
     let (answer, is_error) = last_answer(&seen);
-    assert!(!is_error, "{answer}");
-    assert_eq!(answer, "echo: hello from the gateway");
-    // The request offered every tool of the server, under the server's name.
+    assert!(is_error && answer.contains("mcp.transport"), "{answer}");
     let request = seen.requests.lock().unwrap()[0].clone();
-    let offered: Vec<&str> = request["gateway_tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|t| t["name"].as_str().unwrap())
-        .collect();
-    assert_eq!(
-        offered,
-        ["mcp:files/echo", "mcp:files/big", "mcp:files/whoami"]
-    );
-    assert_eq!(
-        request["gateway_tools"][0]["input_schema"]["required"][0],
-        "text"
-    );
-    // On the record: the tool call and the egress naming the local server.
-    let tool = spans
-        .iter()
-        .find(|s| s["kind"] == "tool_call" && s["name"] == "mcp:files/echo")
-        .expect("tool_call span");
-    assert_eq!(tool["attributes"]["gateway"], true);
-    assert_eq!(tool["attributes"]["server"], "files");
-    assert_eq!(tool["attributes"]["is_error"], false);
-    assert_eq!(
-        tool["attributes"]["args_sha256"].as_str().unwrap().len(),
-        64
-    );
-    assert_eq!(tool["principal"], format!("agent://{wid}/Clerk"));
-    let egress = spans
-        .iter()
-        .find(|s| s["kind"] == "egress")
-        .expect("egress span");
-    assert_eq!(egress["name"], "local:files");
-    assert_eq!(egress["attributes"]["transport"], "stdio");
-    assert_eq!(egress["parent_id"], tool["id"]);
-    assert!(egress["attributes"]["bytes_in"].as_u64().unwrap() > 0);
-    let (status, verified) = call(
-        &app,
-        Method::GET,
-        &format!("/runs/{rid}/trace/verify"),
-        &owner,
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(verified["ok"], true);
-
-    // The child sees a scrubbed process: no secrets of ours, a scratch home, its own directory.
-    let (_, finished, _) = tool_run(&app, &owner, "clerk", "mcp:files/whoami", json!({})).await;
-    assert_eq!(finished["status"], "succeeded");
-    let (answer, _) = last_answer(&seen);
-    let info: Value = serde_json::from_str(&answer).unwrap();
-    let env: Vec<&str> = info["env"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|v| v.as_str().unwrap())
-        .collect();
-    assert!(env.contains(&"PATH") && env.contains(&"HOME"), "{env:?}");
     assert!(
-        !env.iter()
-            .any(|k| k.starts_with("NEXC_") || *k == "DATABASE_URL" || *k == "USER"),
-        "the child sees none of the backend's environment: {env:?}"
+        !request["gateway_tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["name"].as_str().unwrap().starts_with("mcp:files/")),
+        "not offered: {request}"
     );
-    assert!(info["cwd"].as_str().unwrap().contains("gateway"));
-    // macOS reports the resolved path (`/private/var/...`) for the working directory.
-    let strip = |p: &str| p.trim_start_matches("/private").to_owned();
-    assert_eq!(
-        strip(info["home"].as_str().unwrap()),
-        strip(info["cwd"].as_str().unwrap())
+    assert!(
+        spans
+            .iter()
+            .any(|s| s["kind"] == "policy" && s["attributes"]["rule"] == "mcp.transport")
     );
+    assert!(!spans.iter().any(|s| s["kind"] == "egress"));
+    assert!(!marker.exists(), "the command never ran");
+}
+
+/// The SSRF guard on MCP servers: an address on this machine or a private
+/// network is refused at registration unless the operator opened its range
+/// (`NEXC_EGRESS_ALLOW_PRIVATE`), and nothing connects to it.
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn an_mcp_server_on_a_private_address_is_refused(pool: PgPool) {
+    let app = TestApp::new(pool, &[("NEXC_EGRESS_ALLOW_PRIVATE", "")]).await;
+    let (owner, _) = app.register("owner@example.com").await;
+    let wid = workspace(&app, &owner).await;
+    let (server_url, seen) = http_server(false).await;
+    let by_name = server_url.replace("127.0.0.1", "localhost");
+    for (name, url) in [
+        ("loopback", server_url.as_str()),
+        ("named", by_name.as_str()),
+    ] {
+        let (status, body) = register(&app, &owner, &wid, http_body(name, url)).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{url}: {body}");
+        assert!(
+            body["errors"]["url"][0]
+                .as_str()
+                .unwrap()
+                .contains("NEXC_EGRESS_ALLOW_PRIVATE"),
+            "{body}"
+        );
+    }
+    assert!(seen.lock().unwrap().methods.is_empty(), "nothing connected");
 }
 
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
@@ -696,8 +696,6 @@ async fn the_gateway_refuses_outside_the_allow_lists_and_limits(pool: PgPool) {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
-    let (status, _) = register(&app, &owner, &wid, stdio_body("files")).await;
-    assert_eq!(status, StatusCode::CREATED);
     agent(
         &app,
         &owner,
@@ -729,7 +727,7 @@ async fn the_gateway_refuses_outside_the_allow_lists_and_limits(pool: PgPool) {
     );
     let tool = spans.iter().find(|s| s["kind"] == "tool_call").unwrap();
     assert_eq!(tool["attributes"]["is_error"], true);
-    let (_, _, _) = tool_run(&app, &owner, "clerk", "mcp:files/big", json!({"n": 10_000})).await;
+    let (_, _, _) = tool_run(&app, &owner, "clerk", "mcp:web/big", json!({"n": 5_000})).await;
     let (answer, is_error) = last_answer(&seen);
     assert!(
         is_error && answer.contains("larger than 4096 bytes"),
@@ -764,7 +762,14 @@ async fn labels_deny_lists_and_personal_data_keep_arguments_in(pool: PgPool) {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
-    let (status, _) = register(&app, &owner, &wid, stdio_body("files")).await;
+    // The same server by another name of the host, which the deny-list below does not name.
+    let (status, _) = register(
+        &app,
+        &owner,
+        &wid,
+        http_body("files", &server_url.replace("127.0.0.1", "localhost")),
+    )
+    .await;
     assert_eq!(status, StatusCode::CREATED);
 
     // A node that read restricted data: the server is cleared for internal at most, and even a
@@ -916,7 +921,7 @@ async fn labels_deny_lists_and_personal_data_keep_arguments_in(pool: PgPool) {
         &owner,
         "Clerk",
         "clerk",
-        json!({"egress_hosts": ["127.0.0.1"]}),
+        json!({"egress_hosts": ["127.0.0.1", "localhost"]}),
     )
     .await;
     let (_, _, spans) =
@@ -947,7 +952,7 @@ async fn labels_deny_lists_and_personal_data_keep_arguments_in(pool: PgPool) {
         !spans.iter().any(|s| s["kind"] == "egress"),
         "the arguments never left"
     );
-    // Plain arguments still go through to the local server under the same policy.
+    // Plain arguments still go through to the server under the same policy.
     let (_, _, _) = tool_run(
         &app,
         &owner,

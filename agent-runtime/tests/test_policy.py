@@ -28,6 +28,7 @@ from nexc_runtime.policy import (
     Capabilities,
     Rules,
     TokenError,
+    decide_egress,
     decide_model,
     decide_model_with,
     decide_spawn,
@@ -211,6 +212,12 @@ def test_decisions_name_their_rule() -> None:
     everything = Capabilities.from_dict({})
     assert decide_tool(everything, "anything").allowed
     assert decide_model(everything, "anything").allowed
+    # Egress is denied unless a host is named, as the backend decides it.
+    unnamed = decide_egress(everything, "api.example.com")
+    assert (unnamed.allowed, unnamed.rule) == (False, "egress.hosts")
+    named = Capabilities.from_dict({"egress_hosts": ["*.example.com"]})
+    assert decide_egress(named, "api.example.com").allowed
+    assert not decide_egress(named, "example.org").allowed
 
 
 def test_narrowing_only_removes() -> None:

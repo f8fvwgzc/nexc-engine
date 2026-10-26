@@ -25,21 +25,26 @@ images:
   pullPolicy: IfNotPresent
 
 replicas:
-  backend: 2
+  # One backend: its data volume is ReadWriteOnce (backend.dataAccessMode), which attaches to one
+  # node. More than one needs a ReadWriteMany class; the chart refuses to render otherwise.
+  backend: 1
   runtime: 2
   frontend: 2
 
 # Non-secret settings of every service (ConfigMap nexc-config); CONTRACT §2 lists them.
-# `development` because an ingress without TLS serves plain http and production mode forces
-# Secure cookies: with TLS, set NEXC_ENV=production, NEXC_COOKIE_SECURE=true and
-# NEXC_CORS_ORIGINS=https://<your host>.
+# Production by default: Secure cookies, served over TLS (ingress.tlsSecretName), and no
+# sign-up (an account opened by sign-up owns a workspace of its own: create accounts with
+# `nexc user create`, or sign in with single sign-on). NEXC_CORS_ORIGINS and NEXC_PUBLIC_URL
+# are derived from ingress.host when left empty. A plain-http trial on minikube sets
+# NEXC_ENV=development, NEXC_COOKIE_SECURE=false and ingress.tlsSecretName="".
 config:
-  NEXC_ENV: development
+  NEXC_ENV: production
   NEXC_LOG: info
   NEXC_DB_MAX_CONNECTIONS: "20"
-  NEXC_CORS_ORIGINS: http://nexc.local
-  NEXC_COOKIE_SECURE: "false"
-  NEXC_ALLOW_SIGNUP: "true"
+  NEXC_CORS_ORIGINS: ""
+  NEXC_PUBLIC_URL: ""
+  NEXC_COOKIE_SECURE: "true"
+  NEXC_ALLOW_SIGNUP: "false"
   NEXC_TRUST_PROXY: "true"
   NEXC_ACCESS_TTL_SECS: "900"
   NEXC_REFRESH_TTL_SECS: "1209600"
@@ -115,11 +120,13 @@ backend:
   runLeaseSecs: 30
   terminationGracePeriodSeconds: 60
   # The backend's data volume (NEXC_DATA_DIR: run artifacts, uploaded documents), mounted by every
-  # backend replica. ReadWriteOnce attaches it to one node: fine on a single-node cluster. With
-  # backend replicas on several nodes (the chart spreads them across nodes, and the autoscaler
-  # adds more) use a ReadWriteMany class (NFS, EFS, Filestore, CephFS) in dataStorageClass, so a
-  # replica that takes a run over sees its artifacts; or name a claim you made in
-  # dataExistingClaim, which the chart then mounts instead of creating `backend-data`.
+  # backend replica. ReadWriteOnce attaches it to one node, so it carries one replica (the
+  # default). For more (the chart spreads them across nodes, and the autoscaler adds more) set
+  # ReadWriteMany with a class that offers it (NFS, EFS, Filestore, CephFS) in dataStorageClass,
+  # so a replica that takes a run over sees its artifacts; the chart refuses to render several
+  # replicas, or the autoscaler, on ReadWriteOnce. Or name a claim you made in
+  # dataExistingClaim (and its access mode here), which the chart then mounts instead of
+  # creating `backend-data`.
   dataStorage: 5Gi
   dataAccessMode: ReadWriteOnce
   dataStorageClass: ""
@@ -284,12 +291,19 @@ ingress:
   enabled: true
   className: nginx
   host: nexc.local
+  # The kubernetes.io/tls Secret the ingress serves ingress.host (and ontoIntelli.ingress.host)
+  # with, e.g. one cert-manager issues; ingress.tls below replaces it when set. Empty serves
+  # plain http, which NEXC_ENV=production refuses unless TLS ends in front of the ingress
+  # (tlsUpstream: a cloud load balancer that terminates it).
+  tlsSecretName: nexc-tls
+  tlsUpstream: false
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: "2m"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-buffering: "off"
     nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+  # Explicit TLS blocks, instead of tlsSecretName:
   # - hosts: [nexc.example.com]
   #   secretName: nexc-tls
   tls: []

@@ -315,7 +315,8 @@ async fn embed_document(
                 .embed_text(&document.name)
             })
             .collect();
-        let embedded = embeddings::embed(&state.http, target, &texts).await?;
+        let embedded =
+            embeddings::embed(state.llm_http(target.base_url.as_deref()), target, &texts).await?;
         let workspace = document.workspace_id;
         book(
             state,
@@ -569,7 +570,13 @@ pub async fn search(
         .iter()
         .any(|c| c.embedding_model.as_deref() == Some(model));
     let vector = if comparable || state.passage_vectors.available() {
-        match embeddings::embed(&state.http, &resolved.target, &[query.to_owned()]).await {
+        match embeddings::embed(
+            state.llm_http(resolved.target.base_url.as_deref()),
+            &resolved.target,
+            &[query.to_owned()],
+        )
+        .await
+        {
             Ok(mut embedded) => {
                 book(state, workspace, user, &resolved.target, embedded.tokens).await;
                 embedded.vectors.pop()

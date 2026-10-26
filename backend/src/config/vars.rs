@@ -78,9 +78,9 @@ pub const ENV_VARS: &[EnvVar] = &[
     ),
     var(
         "NEXC_ALLOW_SIGNUP",
-        "true",
+        "false",
         false,
-        "allow self registration",
+        "allow self registration (each new account owns a workspace of its own)",
     ),
     var(
         "NEXC_ADMIN_EMAIL",
@@ -282,6 +282,12 @@ pub const ENV_VARS: &[EnvVar] = &[
         "false",
         false,
         "let A2A counterparts be registered on private and loopback hosts (development only)",
+    ),
+    var(
+        "NEXC_EGRESS_ALLOW_PRIVATE",
+        "",
+        false,
+        "private ranges (10.0.0.0/8, fd00::/8, comma separated) the hosts users aim at may resolve to; none by default",
     ),
     var(
         "NEXC_API_CALLS_PER_MINUTE",

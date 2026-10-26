@@ -62,7 +62,8 @@ empty values count as unset.
 | `NEXC_RUNTIME_TOKEN` | **required** | ≥ 32 characters; bearer secret shared with the agent runtime. |
 | `NEXC_CORS_ORIGINS` | `http://localhost:5173` | Comma separated, explicit origins only. Also checked against the WebSocket `Origin`. |
 | `NEXC_COOKIE_SECURE` | `false` | Always on in production. |
-| `NEXC_ALLOW_SIGNUP` | `true` | |
+| `NEXC_ALLOW_SIGNUP` | `false` | each account opened by sign-up owns a workspace of its own |
+| `NEXC_EGRESS_ALLOW_PRIVATE` | — | private ranges the hosts users aim at may resolve to (the SSRF guard) |
 | `NEXC_ADMIN_EMAIL` / `NEXC_ADMIN_PASSWORD` | – | Platform administrator created on start when both are set. It works in the platform console (`/admin/*`) only, never inside a workspace. |
 | `NEXC_ACCESS_TTL_SECS` / `NEXC_REFRESH_TTL_SECS` | `900` / `1209600` | |
 | `NEXC_LLM_PROVIDER` | `anthropic` | `anthropic`, `openai_compatible` or `demo`. |

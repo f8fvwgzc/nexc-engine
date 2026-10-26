@@ -156,6 +156,11 @@ pub struct Settings {
     pub a2a_timeout: Duration,
     /// Lets A2A counterparts be registered on private and loopback hosts (development only).
     pub a2a_allow_private_hosts: bool,
+    /// Private ranges the targets users choose (an agent's `fetch_url`, MCP servers, alert
+    /// destinations, A2A counterparts, LLM and embeddings base URLs, a transfer's Redis) may
+    /// resolve to (`NEXC_EGRESS_ALLOW_PRIVATE`); none by default. Link-local and cloud
+    /// metadata addresses stay refused whatever is listed.
+    pub egress_allow_private: Vec<crate::security::egress::Cidr>,
     /// Single sign-on with an OpenID Connect provider; `None` when `NEXC_OIDC_ISSUER` is unset.
     pub oidc: Option<oidc::OidcSettings>,
 }
@@ -239,7 +244,8 @@ impl Settings {
             cors_origins: r.cors_origins(),
             // Production always sets `Secure` (browsers accept it on http://localhost too).
             cookie_secure: prod || r.parse("NEXC_COOKIE_SECURE", false),
-            allow_signup: r.parse("NEXC_ALLOW_SIGNUP", true),
+            // Off unless asked for: an account opened here owns a workspace of its own.
+            allow_signup: r.parse("NEXC_ALLOW_SIGNUP", false),
             admin_email: r
                 .optional("NEXC_ADMIN_EMAIL")
                 .map(|e| user::normalize_email(&e)),
@@ -311,6 +317,7 @@ impl Settings {
             alert_allow_private_hosts: r.parse("NEXC_ALERT_ALLOW_PRIVATE_HOSTS", false),
             a2a_timeout: Duration::from_secs(r.parse("NEXC_A2A_TIMEOUT_SECS", 120)),
             a2a_allow_private_hosts: r.parse("NEXC_A2A_ALLOW_PRIVATE_HOSTS", false),
+            egress_allow_private: r.egress_allow_private(),
             oidc: None,
         };
         settings.oidc = oidc::read(r.lookup, prod, &settings.public_url, &mut r.errors);
@@ -519,6 +526,16 @@ impl Reader<'_> {
                 default
             }),
         }
+    }
+
+    /// `NEXC_EGRESS_ALLOW_PRIVATE`: address ranges separated by commas.
+    fn egress_allow_private(&mut self) -> Vec<crate::security::egress::Cidr> {
+        let raw = self.string(crate::security::egress::ALLOW_VAR, "");
+        crate::security::egress::parse_allowed(&raw).unwrap_or_else(|why| {
+            self.errors
+                .push(format!("{}: {why}", crate::security::egress::ALLOW_VAR));
+            Vec::new()
+        })
     }
 
     /// `NEXC_ONTO_MODE`; service when `NEXC_ONTO_URL` is set and nothing else is said.
@@ -839,9 +856,30 @@ mod tests {
         assert_eq!(s.cors_origins, vec!["http://localhost:5173"]);
         assert!(!s.cookie_secure);
         assert!(
+            !s.allow_signup,
+            "nobody opens an account unless the operator says so"
+        );
+        assert!(s.egress_allow_private.is_empty());
+        assert!(
             !format!("{s:?}").contains("q8Xv2"),
             "secrets are redacted in Debug"
         );
+    }
+
+    #[test]
+    fn the_operator_lists_the_private_ranges_users_may_reach() {
+        let mut m = base();
+        m.insert("NEXC_EGRESS_ALLOW_PRIVATE", "10.20.0.0/16, fd00::/8".into());
+        let s = load(&m).unwrap();
+        let listed: Vec<String> = s
+            .egress_allow_private
+            .iter()
+            .map(|c| c.to_string())
+            .collect();
+        assert_eq!(listed, ["10.20.0.0/16", "fd00::/8"]);
+        m.insert("NEXC_EGRESS_ALLOW_PRIVATE", "10.0.0.0/40".into());
+        let err = load(&m).unwrap_err().to_string();
+        assert!(err.contains("NEXC_EGRESS_ALLOW_PRIVATE"), "{err}");
     }
 
     #[test]

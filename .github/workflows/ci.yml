@@ -208,7 +208,14 @@ jobs:
           docker compose config --quiet
           docker compose -f docker-compose.yml -f docker-compose.demo.yml --profile symphony config --quiet
       - name: kustomize render
-        run: kubectl kustomize deploy/k8s > /dev/null
+        run: |
+          kubectl kustomize deploy/k8s > "$RUNNER_TEMP/k8s.yaml"
+          # Production by default: TLS on the Ingress, Secure cookies, no sign-up, one backend on
+          # its ReadWriteOnce volume; deploy/minikube is the plain-http trial.
+          grep -q 'NEXC_ENV: production' "$RUNNER_TEMP/k8s.yaml"
+          grep -q 'NEXC_ALLOW_SIGNUP: "false"' "$RUNNER_TEMP/k8s.yaml"
+          grep -q 'secretName: nexc-tls' "$RUNNER_TEMP/k8s.yaml"
+          kubectl kustomize deploy/minikube > /dev/null
       - name: helm lint and render
         run: |
           helm lint deploy/helm/nexc-engine --set secrets.existingSecret=nexc-secrets
@@ -220,9 +227,24 @@ jobs:
           # HTTPS and HTTP/3 straight to the frontend pods (a LoadBalancer on TCP and UDP).
           helm template nexc deploy/helm/nexc-engine -n nexc --set secrets.existingSecret=nexc-secrets \
             --set frontend.http3.enabled=true --set frontend.http3.secretName=nexc-tls > /dev/null
+          # Several backend replicas need a ReadWriteMany data volume; on ReadWriteOnce the chart refuses.
           helm template nexc deploy/helm/nexc-engine -n nexc --set secrets.existingSecret=nexc-secrets \
             --set autoscaling.backend.enabled=true --set autoscaling.runtime.enabled=true \
-            --set podDisruptionBudgets.maxUnavailable=2 > /dev/null
+            --set backend.dataAccessMode=ReadWriteMany --set podDisruptionBudgets.maxUnavailable=2 > /dev/null
+          if helm template nexc deploy/helm/nexc-engine -n nexc --set secrets.existingSecret=nexc-secrets \
+            --set replicas.backend=2 > /dev/null 2>&1; then
+            echo "rendered two backend replicas on a ReadWriteOnce volume" >&2; exit 1
+          fi
+          # Production by default: TLS on the ingress, Secure cookies, no sign-up; plain http is refused.
+          helm template nexc deploy/helm/nexc-engine -n nexc --set secrets.existingSecret=nexc-secrets > "$RUNNER_TEMP/default.yaml"
+          grep -q 'NEXC_ENV: "production"' "$RUNNER_TEMP/default.yaml"
+          grep -q 'NEXC_ALLOW_SIGNUP: "false"' "$RUNNER_TEMP/default.yaml"
+          grep -q 'NEXC_CORS_ORIGINS: "https://nexc.local"' "$RUNNER_TEMP/default.yaml"
+          grep -q 'secretName: nexc-tls' "$RUNNER_TEMP/default.yaml"
+          if helm template nexc deploy/helm/nexc-engine -n nexc --set secrets.existingSecret=nexc-secrets \
+            --set ingress.tlsSecretName= > /dev/null 2>&1; then
+            echo "rendered production over plain http" >&2; exit 1
+          fi
           # Single sign-on on: the settings in the ConfigMap, the client secret from its own Secret.
           helm template nexc deploy/helm/nexc-engine -n nexc --set secrets.existingSecret=nexc-secrets \
             --set oidc.enabled=true --set oidc.issuer=https://idp.example.com/realms/acme \
@@ -234,8 +256,8 @@ jobs:
           helm template nexc deploy/helm/nexc-engine -n nexc --set secrets.existingSecret=nexc-secrets \
             --set ontoIntelli.enabled=true --set ontoIntelli.image.repository=registry.example.com/onto-intelli \
             --set ingress.host=nexc.example.com --set ontoIntelli.ingress.host=onto.example.com > "$RUNNER_TEMP/onto.yaml"
-          grep -q 'NEXC_ONTO_PUBLIC_URL: "http://onto.example.com"' "$RUNNER_TEMP/onto.yaml"
-          grep -A1 'name: NEXC_ONTO_PUBLIC_URL' "$RUNNER_TEMP/onto.yaml" | grep -q 'value: "http://onto.example.com"'
+          grep -q 'NEXC_ONTO_PUBLIC_URL: "https://onto.example.com"' "$RUNNER_TEMP/onto.yaml"
+          grep -A1 'name: NEXC_ONTO_PUBLIC_URL' "$RUNNER_TEMP/onto.yaml" | grep -q 'value: "https://onto.example.com"'
           # ...and refused with no address a browser can reach.
           if helm template nexc deploy/helm/nexc-engine -n nexc --set secrets.existingSecret=nexc-secrets \
             --set ontoIntelli.enabled=true --set ontoIntelli.image.repository=r/o > /dev/null 2>&1; then

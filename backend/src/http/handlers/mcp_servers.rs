@@ -97,6 +97,14 @@ pub async fn create(
     };
     let command = req.command.as_deref().map(str::trim).map(str::to_owned);
     let url = req.url.as_deref().map(str::trim).map(str::to_owned);
+    // The server is connected to at once, behind the SSRF guard; an address it refuses is
+    // refused here already, where the admin sees why.
+    if let Some(url) = url.as_deref() {
+        state
+            .egress
+            .check_url(url)
+            .map_err(|why| AppError::field("url", why))?;
+    }
     let allowed_tools: Vec<String> = req
         .allowed_tools
         .iter()

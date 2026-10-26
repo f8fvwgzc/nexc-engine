@@ -237,8 +237,12 @@ pub fn decide(caps: &Capabilities, action: &Action<'_>) -> Decision {
             }
             Some(_) => Decision::deny("models.allow", format!("model {model} is not allowed")),
         },
+        // Denied unless named: an agent reaches only the hosts its capabilities list.
         Action::Egress(host) => match &caps.egress_hosts {
-            None => Decision::allow("egress.hosts", "no host restriction"),
+            None => Decision::deny(
+                "egress.hosts",
+                format!("host {host} is not allowed: the agent's capabilities name no host"),
+            ),
             Some(hosts) if host_matches(hosts, host) => {
                 Decision::allow("egress.hosts", format!("{host} is in the allow-list"))
             }
@@ -585,7 +589,10 @@ mod tests {
         let caps = Capabilities::default();
         assert!(decide(&caps, &Action::Tool("make_docx")).allowed);
         assert!(decide(&caps, &Action::Model("anything")).allowed);
-        assert!(decide(&caps, &Action::Egress("api.example.com")).allowed);
+        // Egress is the exception: no host is reached until one is named.
+        let egress = decide(&caps, &Action::Egress("api.example.com"));
+        assert!(!egress.allowed);
+        assert_eq!(egress.rule, "egress.hosts");
         assert!(
             decide(
                 &caps,
@@ -848,7 +855,20 @@ mod tests {
             decide_with(&caps, &rules, &[], &Action::Egress("a.evil.example")).rule,
             "egress.deny"
         );
-        assert!(decide_with(&caps, &rules, &[], &Action::Egress("api.example.com")).allowed);
+        // Under the deny-list, the capabilities' host list decides (none named: none reached).
+        let named = Capabilities {
+            egress_hosts: some(&["api.example.com", "a.evil.example"]),
+            ..caps.clone()
+        };
+        assert!(decide_with(&named, &rules, &[], &Action::Egress("api.example.com")).allowed);
+        assert_eq!(
+            decide_with(&named, &rules, &[], &Action::Egress("a.evil.example")).rule,
+            "egress.deny"
+        );
+        assert_eq!(
+            decide_with(&caps, &rules, &[], &Action::Egress("api.example.com")).rule,
+            "egress.hosts"
+        );
         assert_eq!(
             decide_with(&caps, &rules, &[], &Action::Model("gpt-x")).rule,
             "models.deny"

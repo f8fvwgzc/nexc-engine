@@ -53,6 +53,11 @@ pub fn settings(overrides: &[(&str, &str)]) -> Settings {
         // The NDJSON stand-in runtime serves most suites; the gRPC ones switch the wire.
         ("NEXC_RUNTIME_PROTOCOL", "ndjson"),
         ("ANTHROPIC_API_KEY", "sk-test-not-a-real-key"),
+        // Off by default; the suites open accounts through `POST /auth/register`.
+        ("NEXC_ALLOW_SIGNUP", "true"),
+        // The stand-in servers (MCP, A2A, alert receivers, the transfer's database) listen on
+        // loopback, which the SSRF guard refuses unless the operator opens it.
+        ("NEXC_EGRESS_ALLOW_PRIVATE", "127.0.0.0/8,::1"),
     ]
     .iter()
     .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))

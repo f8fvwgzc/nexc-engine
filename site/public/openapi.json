@@ -58,7 +58,7 @@
         "tags": [
           "runs"
         ],
-        "summary": "The public keys everything nexc signs verifies with, as a JWK set: the\ncurrent key and the keys it replaced, each under its `kid` (the RFC 7638\nthumbprint of the key). Public. Run seals, firewall decisions and\nevidence bundles name the key they are signed with.",
+        "summary": "The public keys everything nexc signs verifies with, as a JWK set: the\ncurrent key and the keys it replaced, each under its `kid` (the RFC 7638\nthumbprint of the key). Public, and kept by any cache for five minutes\n(`PUBLIC_CACHE_CONTROL`). Run seals, firewall decisions and evidence\nbundles name the key they are signed with.",
         "operationId": "jwks",
         "responses": {
           "200": {
@@ -1197,7 +1197,7 @@
         "tags": [
           "agents"
         ],
-        "summary": "The keys agent tokens verify with: the one the backend signs with first,\nthen the others it still accepts (`NEXC_AGENT_TOKEN_VERIFY_KEYS`: the\nprevious key after a rotation, the next one before it). Public: they are\npublic keys, and the runtime fetches them without credentials.",
+        "summary": "The keys agent tokens verify with: the one the backend signs with first,\nthen the others it still accepts (`NEXC_AGENT_TOKEN_VERIFY_KEYS`: the\nprevious key after a rotation, the next one before it). Public: they are\npublic keys, and the runtime fetches them without credentials; any cache\nmay keep them for five minutes (`PUBLIC_CACHE_CONTROL`).",
         "operationId": "jwks",
         "responses": {
           "200": {
@@ -18298,7 +18298,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Hosts the agent may call out to (`api.example.com`, `*.example.com`);\n`null` allows any, `[]` none."
+            "description": "Hosts the agent may call out to (`api.example.com`, `*.example.com`);\n`null` and `[]` allow none: egress is denied unless a host is named."
           },
           "models": {
             "type": [

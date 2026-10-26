@@ -1,10 +1,12 @@
 # Keep at least one replica of each stateless tier during voluntary disruptions (node drains).
+# The backend runs one replica on its ReadWriteOnce volume: one pod at a time may go, so a drain
+# moves it (and with more replicas on ReadWriteMany, the others stay).
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: backend
 spec:
-  minAvailable: 1
+  maxUnavailable: 1
   selector:
     matchLabels: { app.kubernetes.io/name: backend }
 ---

@@ -355,8 +355,10 @@ def _host_allowed(allowed: tuple[str, ...], host: str) -> bool:
 
 
 def decide_egress(caps: Capabilities, host: str) -> Decision:
+    # Denied unless named, as the backend decides it: no host list is no host.
     if caps.egress_hosts is None:
-        return Decision(True, "egress.hosts", "no host restriction")
+        why = f"host {host} is not allowed: the agent's capabilities name no host"
+        return Decision(False, "egress.hosts", why)
     if _host_allowed(caps.egress_hosts, host):
         return Decision(True, "egress.hosts", f"{host} is in the allow-list")
     return Decision(False, "egress.hosts", f"host {host} is not allowed")

@@ -68,8 +68,12 @@ async fn destination_of(
 
 /// The URL checked against the server's host rules, sealed for the row.
 fn seal_url(state: &AppState, id: Uuid, url: &str) -> Result<(Vec<u8>, String), AppError> {
-    let host = alerting::check_destination_url(url, state.settings.alert_allow_private_hosts)
-        .map_err(|problem| AppError::field("url", problem))?;
+    let host = alerting::check_destination_url(
+        url,
+        state.settings.alert_allow_private_hosts,
+        &state.egress,
+    )
+    .map_err(|problem| AppError::field("url", problem))?;
     let sealed = state
         .secret_box
         .seal(url.trim().as_bytes(), id.as_bytes())

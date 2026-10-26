@@ -19,7 +19,7 @@ export function ssoErrorMessage(code: string, provider: string): string {
     case 'email_taken':
       return `An account with your e-mail address is linked to another ${provider} identity. Ask whoever administers this installation to unlink the old one.`;
     case 'link_required':
-      return `Your e-mail address belongs to an account here that ${provider} does not open by itself: it administers the platform, has two-factor sign-in, or is the break-glass account. Sign in with your password, then link ${provider} on your profile page.`;
+      return `Your e-mail address belongs to an account here that ${provider} does not open by itself: it has a password, administers the platform, has two-factor sign-in, or is the break-glass account. Sign in with your password, then link ${provider} on your profile page.`;
     case 'identity_taken':
       return `That ${provider} identity is linked to another account here, or this account to another ${provider} identity. Ask whoever administers this installation to unlink it.`;
     case 'suspended':

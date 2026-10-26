@@ -13,7 +13,7 @@ fi
 kubectl config use-context "$PROFILE" >/dev/null
 
 if [[ -f deploy/k8s/secret.env ]]; then
-  kubectl delete -k deploy/k8s --ignore-not-found --wait=true
+  kubectl delete -k deploy/minikube --ignore-not-found --wait=true
 else
   kubectl delete namespace nexc --ignore-not-found --wait=true
 fi

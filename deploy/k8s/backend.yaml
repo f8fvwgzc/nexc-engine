@@ -6,9 +6,9 @@ metadata:
   name: backend-data
   labels: { app.kubernetes.io/name: backend }
 spec:
-  # ReadWriteOnce works on single-node clusters (minikube). With several nodes and >1 replica,
-  # use a ReadWriteMany storage class (NFS, EFS, Filestore, CephFS) so every replica sees every
-  # artifact.
+  # ReadWriteOnce attaches to one node, so it carries one backend replica (below). For more, use
+  # a ReadWriteMany storage class (NFS, EFS, Filestore, CephFS) so every replica sees every
+  # artifact, then raise the replicas.
   accessModes: [ReadWriteOnce]
   resources:
     requests:
@@ -36,7 +36,8 @@ metadata:
   name: backend
   labels: { app.kubernetes.io/name: backend, app.kubernetes.io/component: api }
 spec:
-  replicas: 2
+  # One: the data volume is ReadWriteOnce. Two or more need it ReadWriteMany (docs/HA.md).
+  replicas: 1
   revisionHistoryLimit: 5
   selector:
     matchLabels: { app.kubernetes.io/name: backend }

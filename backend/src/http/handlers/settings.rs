@@ -137,6 +137,17 @@ fn prepare(
     {
         check_production_url(url)?;
     }
+    // An endpoint the operator did not configure is reached behind the SSRF guard; an
+    // address it refuses is refused here already.
+    if let Some(url) = base_url
+        && !crate::app::operator_endpoints(&state.settings)
+            .contains(&url.trim_end_matches('/').to_owned())
+    {
+        state
+            .egress
+            .check_url(url)
+            .map_err(|why| AppError::field("base_url", why))?;
+    }
     let key = match req.api_key.as_deref() {
         None => KeyUpdate::Keep,
         Some("") => KeyUpdate::Clear,
@@ -218,7 +229,8 @@ pub async fn llm_models(
 ) -> Result<Json<ModelCatalog>, AppError> {
     let workspace = checked_workspace(&state, auth, query.workspace_id).await?;
     let resolved = credentials::resolve(&state, auth.id, workspace).await?;
-    Ok(Json(catalog::list(&state.http, &resolved.target).await?))
+    let http = state.llm_http(resolved.target.base_url.as_deref());
+    Ok(Json(catalog::list(http, &resolved.target).await?))
 }
 
 /// The credential of a workspace, as every member may see it (never the key).

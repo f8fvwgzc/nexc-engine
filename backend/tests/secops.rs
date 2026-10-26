@@ -149,6 +149,8 @@ async fn add_member(app: &TestApp, owner: &str, wid: &str, email: &str, role: &s
     assert!(status.is_success(), "{body}");
 }
 
+/// An agent that may reach the partner host the `EGRESS` behaviour calls (egress reaches only
+/// the hosts named).
 async fn agent(app: &TestApp, token: &str, name: &str, role: &str) -> Value {
     let (status, agent) = call(
         app,
@@ -156,7 +158,8 @@ async fn agent(app: &TestApp, token: &str, name: &str, role: &str) -> Value {
         "/agents",
         token,
         Some(json!({"name": name, "role": role, "runtime": "python",
-            "purpose": format!("Handles {role} work in tests.")})),
+            "purpose": format!("Handles {role} work in tests."),
+            "capabilities": {"egress_hosts": ["api.partner.example"]}})),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{agent}");

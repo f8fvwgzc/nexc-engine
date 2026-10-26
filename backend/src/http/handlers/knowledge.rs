@@ -444,6 +444,15 @@ pub async fn put_settings(
             "must be an https URL in production",
         ));
     }
+    if let Some(url) = url
+        && !crate::app::operator_endpoints(&state.settings)
+            .contains(&url.trim_end_matches('/').to_owned())
+    {
+        state
+            .egress
+            .check_url(url)
+            .map_err(|why| AppError::field("embed_base_url", why))?;
+    }
     let model = req
         .embed_model
         .as_deref()

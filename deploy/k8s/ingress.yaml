@@ -1,4 +1,4 @@
-# http://nexc.local -> frontend (SPA); /api goes straight to the backend so SSE and WebSockets
+# https://nexc.local -> frontend (SPA); /api goes straight to the backend so SSE and WebSockets
 # skip a hop, and so do the A2A surface (/a2a, /.well-known/agent.json; CONTRACT §10) and the
 # signing keys (/.well-known/jwks.json).
 # /metrics is not routed at all.
@@ -13,13 +13,13 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-buffering: "off"
     nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
-    # Enable once TLS is configured (see README):
-    # nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
 spec:
   ingressClassName: nginx
-  # tls:
-  #   - hosts: [nexc.example.com]
-  #     secretName: nexc-tls
+  # TLS from the kubernetes.io/tls Secret nexc-tls (create it, or let cert-manager issue it):
+  # the backend runs in production, whose cookies are Secure. deploy/minikube removes this for plain http.
+  tls:
+    - hosts: [nexc.local]
+      secretName: nexc-tls
   rules:
     - host: nexc.local
       http:

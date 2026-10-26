@@ -1,6 +1,7 @@
 //! The built-in `fetch_url` tool: an HTTP GET the backend makes for an
-//! agent, under the policy's host lists, with every redirect's host checked
-//! again, the response bounded in size and limited to text-like content.
+//! agent, under the policy's host lists and the SSRF guard, following a
+//! redirect only on the same host, the response bounded in size and limited
+//! to text-like content.
 
 use std::net::IpAddr;
 
@@ -41,6 +42,27 @@ pub enum FetchError {
     ContentType(String),
     #[error("more than {HOPS_MAX} redirects")]
     TooManyRedirects,
+    /// A redirect to another host: never followed, so that the host the
+    /// policy decided is the host the answer comes from.
+    #[error("redirected to another host ({host}); fetch {location} to follow it")]
+    CrossHostRedirect { host: String, location: String },
+}
+
+/// A transport error with its causes (a refusal of the SSRF guard among
+/// them), without the URL (which may carry data).
+pub fn describe(err: reqwest::Error) -> String {
+    let err = err.without_url();
+    let mut text = err.to_string();
+    let mut cause = std::error::Error::source(&err);
+    while let Some(inner) = cause {
+        let more = inner.to_string();
+        if !text.contains(&more) {
+            text.push_str(": ");
+            text.push_str(&more);
+        }
+        cause = inner.source();
+    }
+    text
 }
 
 /// Whether a content type is passed on to the model.
@@ -139,7 +161,7 @@ pub async fn fetch(
             )
             .send()
             .await
-            .map_err(|e| FetchError::Transport(e.without_url().to_string()))?;
+            .map_err(|e| FetchError::Transport(describe(e)))?;
         let status = response.status();
         if status.is_redirection() {
             let Some(location) = response
@@ -159,6 +181,12 @@ pub async fn fetch(
                 .join(location)
                 .map_err(|e| FetchError::BadUrl(format!("redirect: {e}")))?;
             let (next, next_host) = host_of(next.as_str())?;
+            if next_host != host {
+                return Err(FetchError::CrossHostRedirect {
+                    host: next_host,
+                    location: next.to_string(),
+                });
+            }
             current = next;
             host = next_host;
             continue;
