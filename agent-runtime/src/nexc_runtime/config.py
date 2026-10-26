@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ssl
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -30,6 +31,13 @@ class Settings(BaseSettings):
     runtime_port: int = Field(default=8090, ge=1, le=65535)
     # The gRPC stream (`AgentRuntime/Execute`), on the same host; 0 turns it off.
     runtime_grpc_port: int = Field(default=8095, ge=0, le=65535)
+    # TLS of the gRPC stream, which carries the LLM keys of workspaces that bring their own (PEM
+    # files): the certificate and key it serves, and the CA whose client certificates it then
+    # requires (the backend's NEXC_GRPC_CLIENT_CERT_FILE). Plaintext when unset, for a hop that a
+    # network policy or a mesh keeps private.
+    runtime_grpc_tls_cert_file: Path | None = None
+    runtime_grpc_tls_key_file: Path | None = None
+    runtime_grpc_tls_client_ca_file: Path | None = None
 
     # --- security ----------------------------------------------------------------------------
     nexc_runtime_token: SecretStr = Field(
@@ -125,6 +133,36 @@ class Settings(BaseSettings):
                 "the backend's public keys no agent token verifies"
             )
         return self
+
+    @model_validator(mode="after")
+    def _grpc_tls(self) -> Settings:
+        cert, key = self.runtime_grpc_tls_cert_file, self.runtime_grpc_tls_key_file
+        if (cert is None) != (key is None):
+            raise ValueError(
+                "RUNTIME_GRPC_TLS_CERT_FILE and RUNTIME_GRPC_TLS_KEY_FILE must be set together"
+            )
+        if self.runtime_grpc_tls_client_ca_file is not None and cert is None:
+            raise ValueError(
+                "RUNTIME_GRPC_TLS_CLIENT_CA_FILE needs RUNTIME_GRPC_TLS_CERT_FILE and "
+                "RUNTIME_GRPC_TLS_KEY_FILE"
+            )
+        for path in (cert, key, self.runtime_grpc_tls_client_ca_file):
+            if path is not None and not path.is_file():
+                raise ValueError(f"{path} is not a readable file")
+        return self
+
+    def grpc_ssl_context(self) -> ssl.SSLContext | None:
+        """The TLS the gRPC stream serves (HTTP/2 by ALPN), or None for plaintext."""
+        if self.runtime_grpc_tls_cert_file is None or self.runtime_grpc_tls_key_file is None:
+            return None
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.load_cert_chain(self.runtime_grpc_tls_cert_file, self.runtime_grpc_tls_key_file)
+        context.set_alpn_protocols(["h2"])
+        if self.runtime_grpc_tls_client_ca_file is not None:
+            context.verify_mode = ssl.CERT_REQUIRED
+            context.load_verify_locations(cafile=self.runtime_grpc_tls_client_ca_file)
+        return context
 
     def key_ring(self) -> KeyRing:
         """A fresh ring of the configured public keys and the key set URL."""

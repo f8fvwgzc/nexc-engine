@@ -68,7 +68,7 @@ thiserror = "2"
 tokio = { version = "1.54.1", features = ["full"] }
 tokio-stream = { version = "0.1.19", features = ["sync"] }
 tokio-util = { version = "0.7.19", features = ["io"] }
-tonic = { version = "0.14", features = ["transport", "codegen", "router", "server", "channel"] }
+tonic = { version = "0.14", features = ["transport", "codegen", "router", "server", "channel", "tls-aws-lc", "tls-native-roots"] }
 tonic-health = "0.14"
 tonic-prost = "0.14"
 tonic-reflection = "0.14"

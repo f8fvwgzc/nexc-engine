@@ -7,6 +7,8 @@ backups/
 deploy/k8s/secret.env
 *.pem
 *.key
+# The throwaway PKI of the gRPC TLS tests (test-only; it protects nothing).
+!**/tests/fixtures/grpc-tls/*.pem
 
 # --- Rust ---
 target/

@@ -284,6 +284,42 @@ pub const ENV_VARS: &[EnvVar] = &[
         "let A2A counterparts be registered on private and loopback hosts (development only)",
     ),
     var(
+        "NEXC_GRPC_CA_FILE",
+        "",
+        false,
+        "PEM CA bundle the https:// gRPC endpoints (runtime, onto-intelli, OTLP) must chain to; the system's roots when unset",
+    ),
+    var(
+        "NEXC_GRPC_CLIENT_CERT_FILE",
+        "",
+        false,
+        "PEM client certificate for gRPC servers that ask for one (mutual TLS)",
+    ),
+    var(
+        "NEXC_GRPC_CLIENT_KEY_FILE",
+        "",
+        false,
+        "PEM key of NEXC_GRPC_CLIENT_CERT_FILE",
+    ),
+    var(
+        "NEXC_GRPC_TLS_CERT_FILE",
+        "",
+        false,
+        "PEM certificate the Agent Firewall API serves TLS with; plaintext when unset",
+    ),
+    var(
+        "NEXC_GRPC_TLS_KEY_FILE",
+        "",
+        false,
+        "PEM key of NEXC_GRPC_TLS_CERT_FILE",
+    ),
+    var(
+        "NEXC_GRPC_TLS_CLIENT_CA_FILE",
+        "",
+        false,
+        "PEM CA whose client certificates the Agent Firewall API requires (mutual TLS)",
+    ),
+    var(
         "NEXC_EGRESS_ALLOW_PRIVATE",
         "",
         false,

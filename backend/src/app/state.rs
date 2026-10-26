@@ -187,6 +187,24 @@ impl AppState {
             tracing::warn!(kid = %firewall_signer.kid(),
                 "the signing key is derived from NEXC_MASTER_KEY; set NEXC_SIGNING_KEY so that seals and decisions do not depend on the key that encrypts secrets");
         }
+        if settings.is_production() {
+            // The stream carries the LLM keys of workspaces that bring their own.
+            if settings.runtime_protocol == RuntimeProtocol::Grpc
+                && settings.runtime_grpc_url.starts_with("http://")
+            {
+                tracing::warn!(url = %settings.runtime_grpc_url,
+                    "the runtime's gRPC stream is plaintext, and it carries LLM keys: set NEXC_RUNTIME_GRPC_URL=https://… (NEXC_GRPC_CA_FILE for a private CA) and RUNTIME_GRPC_TLS_* on the runtime, unless a network policy or a mesh keeps the hop private");
+            }
+            if settings
+                .onto_url
+                .as_deref()
+                .is_some_and(|url| url.starts_with("http://"))
+            {
+                tracing::warn!(
+                    "onto-intelli is reached over plaintext gRPC, with the backend's token: use an https:// NEXC_ONTO_URL unless a network policy or a mesh keeps the hop private"
+                );
+            }
+        }
         let agent_tokens = Arc::new(AgentTokenKeys::new(
             settings.agent_token_signing_key.expose(),
             &settings.agent_token_verify_keys,

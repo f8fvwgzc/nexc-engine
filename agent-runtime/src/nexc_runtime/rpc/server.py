@@ -200,13 +200,14 @@ async def serve(
     keys: KeyRing | None = None,
 ) -> Server:
     """Starts the gRPC server; the caller closes it. `keys` is the HTTP app's ring, so both
-    wires learn a rotated key once."""
+    wires learn a rotated key once. Over TLS when RUNTIME_GRPC_TLS_* name a certificate."""
     server = Server(
         [AgentRuntimeService(settings, census, keys=keys, provider_factory=provider_factory)]
     )
     await server.start(
         host if host is not None else settings.runtime_host,
         port if port is not None else settings.runtime_grpc_port,
+        ssl=settings.grpc_ssl_context(),
     )
     return server
 
