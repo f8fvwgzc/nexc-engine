@@ -4,7 +4,7 @@ This page routes a workspace's alerts and approvals to a webhook or a Slack chan
 
 ## Destinations
 
-A workspace admin adds destinations under **Settings, Alerts**. A destination has a name, a kind (`webhook` for a signed JSON POST, `slack` for an incoming webhook with Block Kit), the URL, the alert kinds it receives, the least severity it receives, and whether approvals requested and decided go too. The URL is kept encrypted and only its host is shown again. The signing secret of a webhook is generated once and shown once. In production a destination on a private or loopback host is refused unless `NEXC_ALERT_ALLOW_PRIVATE_HOSTS` is set.
+A workspace admin adds destinations under **Settings, Alerts**. A destination has a name, a kind (`webhook` for a signed JSON POST, `slack` for an incoming webhook with Block Kit), the URL, the alert kinds it receives, the least severity it receives, and whether approvals requested and decided go too. The URL is kept encrypted and only its host is shown again. The signing secret of a webhook is generated once and shown once. A destination on a private or loopback host is refused unless `NEXC_ALERT_ALLOW_PRIVATE_HOSTS` is set and the operator opened its range in `NEXC_EGRESS_ALLOW_PRIVATE`; deliveries connect only to the addresses that check allows, and never to a link-local or cloud metadata address.
 
 | Behaviour              | Detail                                                                                                                                         |
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |

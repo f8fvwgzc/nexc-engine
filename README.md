@@ -335,7 +335,8 @@ authoritative table is [docs/CONTRACT.md §2](docs/CONTRACT.md#2-environment-var
 | `NEXC_DATABASE_URL`                                        | generated                  | `postgres://…` (PostgreSQL 17)                                 |
 | `NEXC_JWT_SECRET`, `NEXC_MASTER_KEY`, `NEXC_RUNTIME_TOKEN` | generated                  | secrets – never share, back up the master key with the DB      |
 | `NEXC_ENV`                                                 | `development`              | `production` enforces secure cookies, HSTS and strong secrets  |
-| `NEXC_ALLOW_SIGNUP`                                        | `true`                     | disable after creating your accounts                           |
+| `NEXC_ALLOW_SIGNUP`                                        | `false`                    | every account opened by sign-up owns a workspace of its own     |
+| `NEXC_EGRESS_ALLOW_PRIVATE`                                | —                          | private ranges the hosts users aim at may resolve to            |
 | `RUNTIME_ALLOW_CODE_EXEC`                                  | `false`                    | enables the sandboxed `run_python` agent tool                  |
 | `NEXC_ONTO_MODE`, `NEXC_ONTO_URL`, `NEXC_ONTO_TOKEN`       | off without a URL          | onto-intelli: graph vocabularies, the workspace map, schema proposals, "ask the audit" (`docs/ONTOLOGY.md`) |
 

@@ -1,7 +1,8 @@
 # ADR 0005: What breaks between localhost and a cluster, and the defaults that keep it working
 
-- **Status:** accepted, 2026-10-25. Replaces nothing; extends the edge of
-  [ADR 0001](0001-http3-edge-caching-and-indexes.md) and [ADR 0002](0002-edge-hardening-and-adaptive-grpc-windows.md).
+- **Status:** accepted, 2026-10-25; decision 3 amended 2026-10-28 (below). Replaces nothing;
+  extends the edge of [ADR 0001](0001-http3-edge-caching-and-indexes.md) and
+  [ADR 0002](0002-edge-hardening-and-adaptive-grpc-windows.md).
 - **Built and run:** `nginx -t` and a Compose-like run of the frontend's nginx, `helm lint` and
   `helm template`, `kubectl kustomize`, server-side dry runs through ingress-nginx's admission
   webhook, `docker compose config`, and the backend's tests (How to verify).
@@ -66,6 +67,13 @@ machine. Each of the following worked locally and failed only once deployed:
    only with `ReadWriteMany` (Helm: `backend.dataAccessMode`; kustomize: the spread stays in a
    comment). Two replicas still cover a crash and a rolling update; the loss of the node needs
    `ReadWriteMany`, which is the documented way to spread. The replica count stays at 2.
+
+   *Amended 2026-10-28*, when this work met `main`'s production defaults (Helm and kustomize in
+   production mode, TLS on the Ingress, no sign-up): on `ReadWriteOnce` the backend runs **one**
+   replica, and the chart refuses to render more, or the autoscaler, until
+   `backend.dataAccessMode=ReadWriteMany`. The affinity stays for that one replica, so a rollout's
+   new pod (`maxSurge: 1`, `maxUnavailable: 0`) lands on its node; the budget below counts two pods
+   for it (20 each), and the extra Ingress objects carry the same TLS as `nexc`.
 4. **Migrations in an init container.** Each backend pod runs `nexc migrate` in a `migrate` init
    container with the backend's environment, before `serve`; no probe applies to it, so nothing
    stops an index build half way. `serve` still migrates, and finds nothing to do. A Helm hook
@@ -96,8 +104,8 @@ down in `docs/INFRASTRUCTURE.md` (Serving it on a host of its own).
 
 ## Consequences
 
-- A `ReadWriteOnce` installation keeps its backend on one node, and draining that node waits on
-  the PodDisruptionBudget until the last backend pod is deleted by hand. A failure of that node
+- A `ReadWriteOnce` installation keeps its backend on one node (one replica since the amendment
+  above, which a drain moves). A failure of that node
   stops the backend until someone acts: its pods stay `Terminating` in the API while the node is
   `NotReady`, the scheduler still counts them for the affinity, so their replacements wait for the
   dead node and stay `Pending`, and the volume stays attached to it. Once the node is really off

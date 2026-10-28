@@ -23,6 +23,17 @@ pub struct ProviderRouter {
     claude_code: ClaudeCodeProvider,
     /// The breaker of the network providers; none until one is given.
     breaker: Option<Arc<CircuitBreaker>>,
+    /// The network providers on the guarded client, for a base URL a user or a
+    /// workspace chose; none until one is given.
+    guarded: Option<Guarded>,
+}
+
+/// The network providers behind the SSRF guard, and the base URLs that do not need it.
+struct Guarded {
+    anthropic: AnthropicProvider,
+    openai: OpenAiCompatProvider,
+    /// The operator's own endpoints (`NEXC_LLM_BASE_URL`, `NEXC_EMBED_BASE_URL`).
+    trusted: Vec<String>,
 }
 
 impl ProviderRouter {
@@ -35,7 +46,28 @@ impl ProviderRouter {
             demo: DemoProvider::new(Duration::from_millis(35)),
             claude_code,
             breaker: None,
+            guarded: None,
         }
+    }
+
+    /// Sends a request whose base URL is not one of `trusted` through `http`,
+    /// the client behind the SSRF guard.
+    pub fn with_guarded(mut self, http: reqwest::Client, trusted: Vec<String>) -> Self {
+        let fallbacks = self.anthropic.fallbacks();
+        self.guarded = Some(Guarded {
+            anthropic: AnthropicProvider::new(http.clone(), fallbacks),
+            openai: OpenAiCompatProvider::new(http),
+            trusted,
+        });
+        self
+    }
+
+    /// The guarded providers when the request goes to a base URL a user chose.
+    fn guarded_for(&self, request: &LlmRequest) -> Option<&Guarded> {
+        let url = request.target.base_url.as_deref()?.trim_end_matches('/');
+        self.guarded
+            .as_ref()
+            .filter(|g| !g.trusted.iter().any(|t| t == url))
     }
 
     /// Puts the network providers behind `breaker` (`NEXC_LLM_BREAKER_*`).
@@ -101,13 +133,14 @@ impl ProviderRouter {
 
 impl LlmProvider for ProviderRouter {
     fn stream(&self, request: LlmRequest) -> LlmStream {
+        let guarded = self.guarded_for(&request);
         match request.target.provider {
             LlmProviderKind::Anthropic => {
-                let provider = self.anthropic.clone();
+                let provider = guarded.map_or(&self.anthropic, |g| &g.anthropic).clone();
                 self.guarded(request, move |r| provider.stream(r))
             }
             LlmProviderKind::OpenaiCompatible => {
-                let provider = self.openai.clone();
+                let provider = guarded.map_or(&self.openai, |g| &g.openai).clone();
                 self.guarded(request, move |r| provider.stream(r))
             }
             LlmProviderKind::Demo => self.demo.stream(request),
@@ -174,5 +207,40 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(other, LlmError::Network(_)), "{other}");
+    }
+
+    /// A base URL a user or a workspace chose goes through the SSRF guard: a
+    /// name that resolves to this machine is never connected to. The
+    /// operator's own endpoint is reached wherever it is.
+    #[tokio::test]
+    async fn a_chosen_base_url_never_reaches_a_private_address() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let accepted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = accepted.clone();
+        tokio::spawn(async move {
+            while let Ok((socket, _)) = listener.accept().await {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                drop(socket);
+            }
+        });
+        let operator = format!("http://127.0.0.1:{port}/v1");
+        let guarded = crate::security::egress::EgressGuard::default()
+            .client(reqwest::Client::builder())
+            .unwrap();
+        let claude_code = ClaudeCodeProvider::new("claude", std::env::temp_dir());
+        let router = ProviderRouter::new(reqwest::Client::new(), false, claude_code)
+            .with_guarded(guarded, vec![operator.clone()]);
+
+        let chosen = format!("http://localhost:{port}/v1");
+        let err = collect(router.stream(request(&chosen)), |_| {})
+            .await
+            .unwrap_err();
+        assert!(matches!(err, LlmError::Network(_)), "{err}");
+        assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+        // The operator's endpoint (a trailing slash is the same URL) is connected to.
+        let _ = collect(router.stream(request(&format!("{operator}/"))), |_| {}).await;
+        assert!(accepted.load(std::sync::atomic::Ordering::SeqCst) > 0);
     }
 }

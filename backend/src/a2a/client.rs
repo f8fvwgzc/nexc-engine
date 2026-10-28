@@ -189,7 +189,7 @@ fn rpc_result(reply: &Value) -> Result<Value, OutboundError> {
 }
 
 fn transport(err: reqwest::Error) -> OutboundError {
-    OutboundError::Transport(err.without_url().to_string())
+    OutboundError::Transport(crate::gateway::fetch::describe(err))
 }
 
 /// Reads a whole response up to `max_bytes`.

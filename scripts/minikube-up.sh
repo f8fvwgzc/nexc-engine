@@ -39,7 +39,7 @@ echo "==> secrets"
 scripts/init-env.sh --k8s
 
 echo "==> deploying"
-kubectl apply -k deploy/k8s
+kubectl apply -k deploy/minikube   # the base over plain http, in development mode
 kubectl -n "$NAMESPACE" rollout status statefulset/postgres --timeout=300s
 for deployment in agent-runtime backend frontend; do
   # Restart so freshly built `local` images are picked up on re-runs.

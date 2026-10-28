@@ -260,3 +260,31 @@ async fn signups_can_be_disabled(pool: PgPool) {
         .await;
     assert_eq!(r.status, StatusCode::FORBIDDEN);
 }
+
+/// An account opened here owns a workspace of its own (where it is an
+/// admin), so signing up is off unless the operator turns it on: left
+/// unset, nobody opens an account, and the login page offers none.
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn signups_are_off_unless_the_operator_turns_them_on(pool: PgPool) {
+    // The test settings turn them on; an empty value takes the variable away.
+    let app = TestApp::new(pool, &[("NEXC_ALLOW_SIGNUP", "")]).await;
+    assert!(!app.state.settings.allow_signup);
+    let r = app
+        .request(
+            Method::POST,
+            "/api/v1/auth/register",
+            None,
+            Some(json!({"email": "a@example.com", "password": PASSWORD, "name": "A"})),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    let providers = app
+        .request(Method::GET, "/api/v1/auth/providers", None, None)
+        .await;
+    assert_eq!(providers.body["signup"], false, "{}", providers.body);
+    let users: i64 = sqlx::query_scalar("SELECT count(*) FROM users")
+        .fetch_one(&app.state.db)
+        .await
+        .unwrap();
+    assert_eq!(users, 0);
+}

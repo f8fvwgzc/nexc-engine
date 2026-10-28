@@ -4,8 +4,11 @@ nexc-engine is rolling out in namespace {{ .Release.Namespace }}.
   kubectl -n {{ .Release.Namespace }} get pods
 {{- if .Values.ingress.enabled }}
 
-Open http{{ if .Values.ingress.tls }}s{{ end }}://{{ .Values.ingress.host }} once the ingress answers
+Open {{ include "nexc.publicUrl" . }} once the ingress answers
 (map the host in /etc/hosts on minikube: `minikube ip`).
+{{- if and (not .Values.ingress.tls) .Values.ingress.tlsSecretName }}
+The ingress serves it with the TLS Secret {{ .Values.ingress.tlsSecretName }} (create it, or let cert-manager issue it).
+{{- end }}
 {{- end }}
 {{- if dig "http3" "enabled" false .Values.frontend }}
 
@@ -18,15 +21,19 @@ with the certificate of Secret {{ .Values.frontend.http3.secretName }}. Point th
 The namespace should carry the restricted Pod Security Standard, as deploy/k8s does:
   kubectl label namespace {{ .Release.Namespace }} pod-security.kubernetes.io/enforce=restricted --overwrite
 
-{{ if and (eq .Values.backend.dataAccessMode "ReadWriteOnce") (or .Values.autoscaling.backend.enabled (gt (int .Values.replicas.backend) 1)) -}}
-High availability: every backend replica ({{ if .Values.autoscaling.backend.enabled }}autoscaled{{ else }}{{ .Values.replicas.backend }} of them{{ end }}) mounts the data volume, which is
-ReadWriteOnce, so they all run on one node: they cover a crash and a rolling update, not the loss
-of that node, and a drain of it waits until the last backend pod is deleted. If that node fails,
-its pods stay Terminating and their replacements Pending until, with the node really off, you run
+{{ if eq (toString .Values.config.NEXC_ALLOW_SIGNUP) "false" -}}
+Sign-up is off (config.NEXC_ALLOW_SIGNUP): create accounts with
+  kubectl -n {{ .Release.Namespace }} exec -it deploy/backend -- nexc user create --email <address> --name <name>
+or turn on single sign-on (oidc.enabled).
+
+{{ end -}}
+{{ if eq .Values.backend.dataAccessMode "ReadWriteOnce" -}}
+The backend runs one replica on its ReadWriteOnce data volume, which attaches to one node: a
+drain moves it. If that node fails, the pod stays Terminating and its replacement Pending until,
+with the node really off, you run
   kubectl taint node <node> node.kubernetes.io/out-of-service=nodeshutdown:NoExecute
-or force-delete them (kubectl delete pod <pod> --force --grace-period=0). To spread them across
-nodes, set backend.dataAccessMode=ReadWriteMany with a storage class that offers it
-(backend.dataStorageClass) or a claim of that mode (backend.dataExistingClaim) (docs/HA.md).
+or force-delete it (kubectl delete pod <pod> --force --grace-period=0). More replicas, spread
+across nodes, need backend.dataAccessMode=ReadWriteMany (docs/HA.md).
 
 {{ end -}}
 PostgreSQL connections: up to {{ include "nexc.backendPods" . }} backend pods (a rollout's included) x a pool of {{ include "nexc.dbPool" . }}{{ if .Values.ontoIntelli.enabled }}, onto-intelli {{ mul .Values.ontoIntelli.replicas .Values.ontoIntelli.maxConnections }}{{ end }},

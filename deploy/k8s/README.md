@@ -19,10 +19,17 @@ The script:
 2. enables the ingress addon,
 3. builds the three images inside minikube's Docker daemon (`eval $(minikube docker-env)`),
 4. creates `secret.env` with generated secrets (`scripts/init-env.sh --k8s`),
-5. runs `kubectl apply -k deploy/k8s` and waits for every rollout,
+5. runs `kubectl apply -k deploy/minikube` and waits for every rollout,
 6. prints how to map `nexc.local` in `/etc/hosts`.
 
 Open http://nexc.local. Demo mode is on by default (`NEXC_LLM_PROVIDER=demo` in `config.env`).
+
+`deploy/minikube` is the trial: the base below in development mode over plain http, sign-up open.
+The base itself, `deploy/k8s`, is production: the Ingress serves `nexc.local` over TLS with the
+Secret `nexc-tls`, cookies are `Secure`, sign-up is off (an account opened by sign-up owns a
+workspace of its own; create accounts with `kubectl -n nexc exec -it deploy/backend -- nexc user
+create --email <address> --name <name>`, or turn on single sign-on) and one backend replica runs
+on its `ReadWriteOnce` volume.
 Remove everything with `make minikube-down` (deletes the namespace **and its data**) or
 `scripts/minikube-down.sh --delete` to delete the minikube profile too.
 
@@ -37,13 +44,13 @@ Tunables: `MINIKUBE_PROFILE`, `MINIKUBE_CPUS` (4), `MINIKUBE_MEMORY` (8192), `MI
 | `ConfigMap nexc-config` | from `config.env` (non-secret settings) |
 | `Secret nexc-secrets` | from `secret.env` (git-ignored; template `secret.example.env`) |
 | `StatefulSet postgres` + headless `Service` | `postgres:17-alpine`, 5 Gi PVC, runs as uid 70, read-only root |
-| `Deployment backend` (2 replicas) + `Service` + `PVC backend-data` | a `migrate` init container applies migrations first (`nexc migrate`, no probe to stop it); startup/liveness `/api/v1/healthz`, readiness `/api/v1/readyz`; port 8081 serves the agent-token key set alone (`NEXC_KEYS_ADDR`); every pod on one node, since `backend-data` is `ReadWriteOnce` |
+| `Deployment backend` (1 replica: its volume is `ReadWriteOnce`) + `Service` + `PVC backend-data` | a `migrate` init container applies migrations first (`nexc migrate`, no probe to stop it); startup/liveness `/api/v1/healthz`, readiness `/api/v1/readyz`; port 8081 serves the agent-token key set alone (`NEXC_KEYS_ADDR`); a pod affinity keeps a rollout's new pod on the node of the running one, since `backend-data` attaches to one node |
 | `Deployment agent-runtime` (2 replicas) + `Service` | gets only `NEXC_RUNTIME_TOKEN`, the backend's agent-token key set URL and runtime settings, workspace on an `emptyDir` |
 | `Deployment runtime-egress` (2 replicas) + `Service` | `nexc egress-proxy` from the backend image, no secrets: the runtime's only way out, to the `host:port` entries of `NEXC_RUNTIME_EGRESS_ALLOW` |
 | `Deployment frontend` (2 replicas) + `Service` | nginx-unprivileged on 8080; with the optional `http3` component also TLS and QUIC on 8443, published by the LoadBalancer `Service frontend-https` (TCP and UDP 443) |
-| `Ingress nexc`, `nexc-a2a`, `nexc-documents` | class `nginx`, host `nexc.local`; `/api` → backend, `/` → frontend; SSE/WebSocket timeouts and no buffering; bodies up to 2m, A2A tasks (`/a2a`) 17m, knowledge documents 51m (an annotation applies to every path of its Ingress, hence three) |
+| `Ingress nexc`, `nexc-a2a`, `nexc-documents` | class `nginx`, host `nexc.local` over TLS (Secret `nexc-tls`); `/api` → backend, `/` → frontend; SSE/WebSocket timeouts and no buffering; bodies up to 2m, A2A tasks (`/a2a`) 17m, knowledge documents 51m (an annotation applies to every path of its Ingress, hence three) |
 | `NetworkPolicy` ×8 | default deny ingress; frontend ← ingress; backend ← frontend + ingress (8080), runtime (8081, the agent-token key set alone); runtime ← backend (HTTP 8090 and the gRPC stream 8095); runtime → backend 8081 and runtime-egress only, no DNS (it finds both by their Service environment variables, so apply the Services first: `kubectl apply -k` does); runtime-egress ← runtime; runtime-egress → DNS and TLS on public addresses (IPv4 and IPv6); postgres ← backend. The Agent Firewall API (`NEXC_GRPC_ADDR`) is off by default and documented in the file for when you open it to another namespace |
-| `PodDisruptionBudget` ×4 | `minAvailable: 1` for backend, runtime, runtime-egress and frontend |
+| `PodDisruptionBudget` ×4 | `minAvailable: 1` for runtime, runtime-egress and frontend; `maxUnavailable: 1` for the backend, so a drain moves its one replica |
 
 Every pod runs as non-root with `readOnlyRootFilesystem`, `allowPrivilegeEscalation: false`,
 `capabilities.drop: [ALL]`, seccomp `RuntimeDefault` and no service-account token.
@@ -79,8 +86,9 @@ LoadBalancer (`frontend.http3`, off by default), whether the chart runs PostgreS
 (`postgres.enabled=false` for a managed database, its URL in the Secret) and the connection
 budget (`postgres.maxConnections`: each backend pod's pool is its share unless
 `config.NEXC_DB_MAX_CONNECTIONS` is set, and the chart refuses to render pools that overflow its
-own PostgreSQL). The backend's pods share one node while `backend.dataAccessMode` is
-`ReadWriteOnce` and spread across nodes with `ReadWriteMany`. Secrets come from a
+own PostgreSQL). On `ReadWriteOnce` (`backend.dataAccessMode`) the backend runs one replica and a
+rollout's new pod joins its node; more replicas, or the autoscaler, need `ReadWriteMany`, and spread
+across nodes (the chart refuses to render them otherwise). Secrets come from a
 Secret you create (`secrets.existingSecret`) or from `secrets.values`; the chart refuses to
 render while a required one is empty. One release per namespace: the object names are fixed.
 
@@ -99,11 +107,11 @@ CI lints the chart and renders it with the firewall, the collector and onto-inte
 <!-- #region production -->
 ## Production checklist
 
-* **TLS** – add a `tls:` block to `ingress.yaml` (for example with cert-manager), enable
-  `force-ssl-redirect` on its three Ingress objects, then set `NEXC_ENV=production`,
-  `NEXC_COOKIE_SECURE=true`, `NEXC_CORS_ORIGINS=https://<host>` and
-  `NEXC_PUBLIC_URL=https://<host>` in `config.env`. Without TLS, production's `Secure` refresh
-  cookie is dropped by browsers on any host but localhost, which signs users out
+* **TLS** – on by default: create the `kubernetes.io/tls` Secret `nexc-tls` for your host (or let
+  cert-manager issue it), and put the host in the three Ingress objects of `ingress.yaml` and in
+  `NEXC_CORS_ORIGINS` and `NEXC_PUBLIC_URL` (`https://<host>`) in `config.env`. The backend runs
+  with `NEXC_ENV=production` and `Secure` cookies, which a plain-http site cannot keep: browsers
+  drop the refresh cookie on any host but localhost, which signs users out
   ([docs/INFRASTRUCTURE.md](../../docs/INFRASTRUCTURE.md), Serving it on a host of its own).
 * **HTTP/3** – ingress-nginx terminates TLS over TCP alone, so the Ingress serves HTTP/1.1 and
   HTTP/2. For HTTP/3 either put a CDN or a Gateway API implementation that speaks it in front, or
@@ -113,15 +121,14 @@ CI lints the chart and renders it with the firewall, the collector and onto-inte
   [docs/INFRASTRUCTURE.md](../../docs/INFRASTRUCTURE.md).
 * **Database** – prefer a managed PostgreSQL 17 or an operator such as CloudNativePG with backups;
   point `NEXC_DATABASE_URL` at it (`sslmode=require`) and drop `postgres.yaml` from the resources.
-* **Artifact storage** – `backend-data` is `ReadWriteOnce`, so `backend.yaml` keeps every backend
-  pod on one node (a required pod affinity): the replicas cover a crash and a rollout, not the
-  loss of that node, and draining it waits until the last backend pod is deleted. If that node
-  fails, its pods stay `Terminating` and their replacements `Pending`; once the node is really off,
-  taint it `node.kubernetes.io/out-of-service=nodeshutdown:NoExecute` or force-delete those pods
-  (`kubectl delete pod --force --grace-period=0`) and they start elsewhere, the volume with them
-  ([docs/HA.md](../../docs/HA.md)). To spread them across nodes, use a `ReadWriteMany` storage
-  class and the topology spread in `backend.yaml`'s comment instead of the affinity.
-* **Scaling** – run two or more backend replicas: the backend scales horizontally (realtime
+* **Artifact storage** – `backend-data` is `ReadWriteOnce`, which attaches to one node and so carries
+  the one backend replica; `backend.yaml`'s pod affinity keeps a rollout's new pod on that node. If
+  the node fails, the pod stays `Terminating` and its replacement `Pending`; once the node is really
+  off, taint it `node.kubernetes.io/out-of-service=nodeshutdown:NoExecute` or force-delete the pod
+  (`kubectl delete pod --force --grace-period=0`) and it starts elsewhere, the volume with it
+  ([docs/HA.md](../../docs/HA.md)). More replicas need a `ReadWriteMany` storage class first, and
+  the topology spread in `backend.yaml`'s comment instead of the affinity.
+* **Scaling** – with `ReadWriteMany` artifact storage, run two or more backend replicas: the backend scales horizontally (realtime
   fan-out over PostgreSQL `LISTEN/NOTIFY`), any replica's dispatcher claims a queued run and holds
   it under a lease (`NEXC_RUN_LEASE_SECS`, the same on every replica), and when that replica dies
   or drains a peer takes the run over and resumes it (see [docs/HA.md](../../docs/HA.md) and
@@ -139,7 +146,9 @@ CI lints the chart and renders it with the firewall, the collector and onto-inte
   `v*` tags, so a release tag runs that release, not `main`.
 * **Egress** – the policies restrict ingress only. To restrict egress as well, allow DNS, the
   database, the runtime and your LLM provider's endpoints explicitly.
-* **Signups** – set `NEXC_ALLOW_SIGNUP=false` once your users exist.
+* **Sign-up** – off (`NEXC_ALLOW_SIGNUP=false`): every account opened by sign-up owns a workspace
+  of its own, where its holder registers MCP servers, policies and the rest. Create accounts with
+  `nexc user create`, or sign in with single sign-on.
 * **Metrics** – `/metrics` is not routed by the Ingress; scrape `backend:8080/metrics` from inside
   the cluster with `NEXC_METRICS_TOKEN` (add a NetworkPolicy rule for your Prometheus namespace).
 

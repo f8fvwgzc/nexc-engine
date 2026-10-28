@@ -2,7 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PlugZapIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from 'lucide-react';
 import { useState } from 'react';
-import { useForm, useWatch } from 'react-hook-form';
+import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 
 import { AnimatedButton } from '@/components/custom-ui/animated-button';
@@ -63,7 +63,6 @@ function RegisterDialog({
     resolver: zodResolver(mcpServerInputSchema),
     defaultValues: EMPTY_MCP_SERVER,
   });
-  const transport = useWatch({ control: form.control, name: 'transport' });
   const register = useMutation({
     mutationFn: (input: McpServerInput) => registerMcpServer(workspaceId, input),
     onSuccess: (server) => {
@@ -77,15 +76,7 @@ function RegisterDialog({
       onOpenChange(false);
     },
     onError: (error) => {
-      const fields = [
-        'name',
-        'command',
-        'args',
-        'url',
-        'auth_header',
-        'allowed_tools',
-        'max_label',
-      ] as const;
+      const fields = ['name', 'url', 'auth_header', 'allowed_tools', 'max_label'] as const;
       if (!applyProblemToForm(error, form.setError, fields)) toast.error(errorMessage(error));
     },
   });
@@ -96,72 +87,31 @@ function RegisterDialog({
           <DialogHeader>
             <DialogTitle>Register an MCP server</DialogTitle>
             <DialogDescription>
-              The backend connects to it on an agent&apos;s behalf and offers its tools as{' '}
-              <code>mcp:&lt;name&gt;/&lt;tool&gt;</code> under the policy. The runtime never talks
-              to it.
+              The backend connects to it over streamable HTTP on an agent&apos;s behalf and offers
+              its tools as <code>mcp:&lt;name&gt;/&lt;tool&gt;</code> under the policy. The runtime
+              never talks to it, and the backend starts no command: run a stdio server in a sandbox
+              of its own behind an HTTP bridge and register the bridge&apos;s URL.
             </DialogDescription>
           </DialogHeader>
           <FieldGroup className="py-4">
             <FormField control={form.control} name="name" label="Name">
               {(field) => <Input {...field} placeholder="github" autoComplete="off" />}
             </FormField>
-            <FormField control={form.control} name="transport" label="Transport">
-              {({ value, onChange, ...field }) => (
-                <OptionSelect
-                  {...field}
-                  value={value}
-                  onValueChange={onChange}
-                  options={[
-                    { value: 'stdio', label: 'Child process (stdio)' },
-                    { value: 'http', label: 'Streamable HTTP' },
-                  ]}
-                />
+            <FormField control={form.control} name="url" label="URL">
+              {(field) => (
+                <Input {...field} placeholder="https://mcp.example.com/mcp" autoComplete="off" />
               )}
             </FormField>
-            {transport === 'stdio' ? (
-              <>
-                <FormField
-                  control={form.control}
-                  name="command"
-                  label="Command"
-                  description="Started for every call with an empty environment, in a scratch directory."
-                >
-                  {(field) => <Input {...field} placeholder="python3" autoComplete="off" />}
-                </FormField>
-                <FormField
-                  control={form.control}
-                  name="args"
-                  label="Arguments"
-                  description="One per line."
-                >
-                  {(field) => (
-                    <Textarea {...field} rows={3} placeholder={'-I\n/srv/mcp/server.py'} />
-                  )}
-                </FormField>
-              </>
-            ) : (
-              <>
-                <FormField control={form.control} name="url" label="URL">
-                  {(field) => (
-                    <Input
-                      {...field}
-                      placeholder="https://mcp.example.com/mcp"
-                      autoComplete="off"
-                    />
-                  )}
-                </FormField>
-                <FormField
-                  control={form.control}
-                  name="auth_header"
-                  label="Authorization header"
-                  description="Kept encrypted and never shown again; empty sends none."
-                >
-                  {(field) => (
-                    <Input {...field} type="password" placeholder="Bearer …" autoComplete="off" />
-                  )}
-                </FormField>
-              </>
-            )}
+            <FormField
+              control={form.control}
+              name="auth_header"
+              label="Authorization header"
+              description="Kept encrypted and never shown again; empty sends none."
+            >
+              {(field) => (
+                <Input {...field} type="password" placeholder="Bearer …" autoComplete="off" />
+              )}
+            </FormField>
             <FormField
               control={form.control}
               name="allowed_tools"
@@ -230,7 +180,10 @@ function ServerRow({ server, workspace }: { server: McpServer; workspace: Worksp
           <span className="font-medium">{server.name}</span>
           <Badge variant="outline">{server.transport}</Badge>
           <Badge variant="outline">{server.max_label} at most</Badge>
-          {server.last_check_ok === null ? (
+          {server.transport === 'stdio' ? (
+            // Registered before the backend stopped starting commands: listed to be removed.
+            <Badge variant="destructive">never started</Badge>
+          ) : server.last_check_ok === null ? (
             <Badge variant="secondary">not checked</Badge>
           ) : (
             <Badge variant={server.last_check_ok ? 'outline' : 'destructive'}>

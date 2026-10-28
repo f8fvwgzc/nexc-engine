@@ -442,6 +442,73 @@ async fn llm_settings_store_encrypted_keys(pool: PgPool) {
     assert_eq!(cleared.body["has_api_key"], false);
 }
 
+/// `PUT /settings/llm`: an OpenAI-compatible endpoint at `base_url`.
+async fn set_base_url(app: &TestApp, token: &str, base_url: &str) -> common::Resp {
+    let body = json!({"provider": "openai_compatible", "model": "m", "base_url": base_url,
+                      "api_key": "sk-test-0123456789"});
+    app.request(Method::PUT, "/api/v1/settings/llm", Some(token), Some(body))
+        .await
+}
+
+/// A base URL a user or a workspace chooses is a target the server
+/// connects to on their word (SSRF): one on this machine, a private network
+/// or the metadata service is refused when it is set, and one stored before
+/// this check is only ever asked through the guard, which does not connect.
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_chosen_llm_base_url_never_reaches_a_private_address(pool: PgPool) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = hits.clone();
+    tokio::spawn(async move {
+        while let Ok((socket, _)) = listener.accept().await {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            drop(socket);
+        }
+    });
+    let closed = TestApp::new(pool.clone(), &[("NEXC_EGRESS_ALLOW_PRIVATE", "")]).await;
+    let (token, _) = closed.register("keys@example.com").await;
+    for url in [
+        format!("http://127.0.0.1:{port}/v1"),
+        format!("http://localhost:{port}/v1"),
+        format!("http://[::1]:{port}/v1"),
+        "http://169.254.169.254/latest".to_owned(),
+    ] {
+        let put = set_base_url(&closed, &token, &url).await;
+        assert_eq!(
+            put.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{url}: {}",
+            put.body
+        );
+        assert!(put.body["errors"]["base_url"].is_array(), "{}", put.body);
+    }
+
+    // Stored while the operator had loopback open; asked once it is closed again.
+    let open = TestApp::new(pool, &[]).await;
+    let put = set_base_url(&open, &token, &format!("http://localhost:{port}/v1")).await;
+    assert_eq!(put.status, StatusCode::OK, "{}", put.body);
+    let models = closed
+        .request(
+            Method::GET,
+            "/api/v1/settings/llm/models",
+            Some(&token),
+            None,
+        )
+        .await;
+    assert_eq!(
+        models.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        models.body
+    );
+    assert_eq!(
+        hits.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "nothing connected to the server"
+    );
+}
+
 /// A graph's vocabulary lives in onto-intelli (here the in-memory stub):
 /// nexc keeps its own rules (types in use, blocking cycles) and writes
 /// through it.

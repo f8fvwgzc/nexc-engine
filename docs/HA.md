@@ -130,31 +130,30 @@ for expired leases every 2 s.
 
 Run at least two backend replicas and two runtime replicas against one PostgreSQL that has a
 standby, with one data volume (`NEXC_DATA_DIR`: run artifacts, uploaded documents) that every
-backend replica mounts. A `ReadWriteOnce` volume attaches to one node, so the manifests and the
-chart keep every backend pod on one node (a required pod affinity): otherwise the second replica,
-or the new pod of a rollout, would wait on a Multi-Attach error and the rollout would stall. Those
-replicas cover a crash and a rolling update but not the loss of the node, and a drain of that node
-waits on the PodDisruptionBudget until the last backend pod is deleted (`kubectl delete pod`);
-the pods then start together on another node, where the volume follows them. When that node fails
-instead, nothing moves by itself: its pods stay `Terminating` while it is `NotReady`, the scheduler
-still counts them for the affinity, so their replacements stay `Pending` waiting for the dead
-node, and the volume stays attached to it. Once the node is really off (powered down, its VM
-stopped; not merely unreachable, or two nodes would write to one volume), taint it
-`kubectl taint node <node> node.kubernetes.io/out-of-service=nodeshutdown:NoExecute` (Kubernetes
-1.28+), or delete its backend pods with `kubectl delete pod <pod> --force --grace-period=0`: the
-replacements then start on another node and the volume is detached and follows them. Remove the
-taint when the node comes back. To spread the replicas across nodes, give them a `ReadWriteMany`
-volume: the chart then spreads them
-(`topologySpreadConstraints`), and a peer that takes a run over sees its artifacts. Every replica
-gets the same `NEXC_RUN_LEASE_SECS`; each run records the lease its holder works under
+backend replica mounts, which takes a `ReadWriteMany` volume. A `ReadWriteOnce` volume attaches
+to one node, so on it the manifests and the chart run one backend replica (the chart refuses to
+render more, or the autoscaler) and keep a rollout's new pod on that replica's node (a required
+pod affinity): placed on another node it would wait on a Multi-Attach error and the rollout would
+stall. That replica comes back after a crash and survives a rolling update, not the loss of its
+node; a drain moves it (its PodDisruptionBudget lets one pod go) and the volume follows it. When
+that node fails instead, nothing moves by itself: the pod stays `Terminating` while the node is
+`NotReady`, the scheduler still counts it for the affinity, so its replacement stays `Pending`
+waiting for the dead node, and the volume stays attached to it. Once the node is really off
+(powered down, its VM stopped; not merely unreachable, or two nodes would write to one volume),
+taint it `kubectl taint node <node> node.kubernetes.io/out-of-service=nodeshutdown:NoExecute`
+(Kubernetes 1.28+), or delete the pod with `kubectl delete pod <pod> --force --grace-period=0`:
+the replacement then starts on another node and the volume is detached and follows it. Remove the
+taint when the node comes back. With a `ReadWriteMany` volume the chart spreads the replicas
+across nodes (`topologySpreadConstraints`), and a peer that takes a run over sees its artifacts.
+Every replica gets the same `NEXC_RUN_LEASE_SECS`; each run records the lease its holder works under
 (`runs.lease_secs`) and a takeover waits for that one, so a replica set differently still takes a
 dead peer's runs over in time, and logs a warning when it does.
 
 | Setting                                  | Where                                    | What it does                                                                                                                       |
 | ---------------------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `NEXC_RUN_LEASE_SECS`                    | `.env`, Helm `backend.runLeaseSecs`      | The lease (1 to 3600 s, default 30). Shorter takes runs over sooner after a crash and renews more often; `NEXC_ENV=production` refuses less than 10 s, which a slow answer of the database would turn into takeovers. |
-| `replicas.backend`, `replicas.runtime`   | Helm values                              | Two each by default.                                                                                                               |
-| `backend.dataAccessMode`, `backend.dataStorageClass`, `backend.dataExistingClaim` | Helm values | The backend's data volume and where its pods run. `ReadWriteOnce` (the default) keeps every backend pod on one node; `ReadWriteMany` with a class that offers it (NFS, EFS, Filestore, CephFS) spreads them across nodes. A claim you made is mounted instead of `backend-data`; set `dataAccessMode` to its access mode. The chart's notes say which placement you got. |
+| `replicas.backend`, `replicas.runtime`   | Helm values                              | One backend (its `ReadWriteOnce` volume carries one; more need `ReadWriteMany`) and two runtimes by default.                       |
+| `backend.dataAccessMode`, `backend.dataStorageClass`, `backend.dataExistingClaim` | Helm values | The backend's data volume and where its pods run. `ReadWriteOnce` (the default) carries one backend replica and keeps a rollout's new pod on its node; `ReadWriteMany` with a class that offers it (NFS, EFS, Filestore, CephFS) takes several, or the autoscaler, spread across nodes. A claim you made is mounted instead of `backend-data`; set `dataAccessMode` to its access mode. The chart's notes say which placement you got. |
 | `autoscaling.backend`, `autoscaling.runtime` | Helm values                          | Optional HorizontalPodAutoscalers on CPU (off by default). When one is on, `replicas` no longer sets that Deployment's size; keep `minReplicas` at 2 or more, and give the backend a `ReadWriteMany` data volume. |
 | `podDisruptionBudgets.maxUnavailable`    | Helm values                              | How many pods of each tier a node drain may evict at once (default 1).                                                             |
 | `backend.terminationGracePeriodSeconds`  | Helm values                              | Time a backend pod gets to drain on `SIGTERM` (default 60 s; the hand-off itself takes at most 15 s).                              |
@@ -193,13 +192,14 @@ Past it PostgreSQL refuses new connections (`too many clients`) and requests fai
 Helm chart does the sum: unless `config.NEXC_DB_MAX_CONNECTIONS` is set, each pod's pool is its
 share of `postgres.maxConnections` (100, PostgreSQL's default) less `postgres.reservedConnections`
 (10) and onto-intelli's pools, among the autoscaler's maximum (or `replicas.backend`) plus one,
-at most 20: 20 for two replicas, 12 with the autoscaler at 6, 14 beside onto-intelli. With the
+at most 20: 20 for the one replica, 12 with the autoscaler at 6, 14 for two replicas beside
+onto-intelli. With the
 chart's PostgreSQL a pool that does not fit refuses to render, and `postgres.maxConnections`
 other than 100 is passed to it as `-c max_connections` (which restarts it). With your own
 database, set `postgres.maxConnections` to its limit. onto-intelli's rollout stops a pod before
 it starts its replacement (`maxSurge: 0`), so its pools never overlap; with one replica it is away
 for that moment, and the backend serves the vocabularies it holds meanwhile. The
-kustomize manifests compute nothing: two replicas plus one at 20 each is 60 of 100 there
+kustomize manifests compute nothing: the one replica plus one at 20 each is 40 of 100 there
 (`deploy/k8s/config.env`). Compose runs `NEXC_BACKEND_REPLICAS` pools of 20 against 100.
 
 A pooler in front of PostgreSQL has to give the backend sessions: its realtime `LISTEN` and the

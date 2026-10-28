@@ -34,13 +34,36 @@ readOnlyRootFilesystem: true
 capabilities: { drop: [ALL] }
 {{- end }}
 
+{{/* The ingress's TLS blocks: ingress.tls, else one of ingress.tlsSecretName for the chart's hosts. */}}
+{{- define "nexc.ingressTls" -}}
+{{- $i := .Values.ingress -}}
+{{- if $i.tls -}}
+{{ toYaml $i.tls }}
+{{- else if $i.tlsSecretName -}}
+{{- $hosts := list $i.host -}}
+{{- if and .Values.ontoIntelli.enabled .Values.ontoIntelli.ingress.host -}}
+{{- $hosts = append $hosts .Values.ontoIntelli.ingress.host -}}
+{{- end -}}
+{{ toYaml (list (dict "hosts" $hosts "secretName" $i.tlsSecretName)) }}
+{{- end -}}
+{{- end }}
+
 {{/* Whether `host` is served over TLS by the chart's ingress: `nexc.tlsHost (dict "host" … "root" $)`. */}}
 {{- define "nexc.tlsHost" -}}
 {{- $tls := false }}
-{{- range .root.Values.ingress.tls }}
+{{- range (include "nexc.ingressTls" .root | fromYamlArray) }}
 {{- if has $.host (.hosts | default list) }}{{ $tls = true }}{{ end }}
 {{- end }}
-{{- if $tls }}true{{ end }}
+{{- if or $tls .root.Values.ingress.tlsUpstream }}true{{ end }}
+{{- end }}
+
+{{/* Where browsers reach the console: config.NEXC_PUBLIC_URL, else ingress.host (https with TLS). */}}
+{{- define "nexc.publicUrl" -}}
+{{- if .Values.config.NEXC_PUBLIC_URL -}}
+{{ .Values.config.NEXC_PUBLIC_URL }}
+{{- else if .Values.ingress.enabled -}}
+http{{ if include "nexc.tlsHost" (dict "host" .Values.ingress.host "root" .) }}s{{ end }}://{{ .Values.ingress.host }}
+{{- end -}}
 {{- end }}
 
 {{/*

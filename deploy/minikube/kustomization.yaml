@@ -1,0 +1,27 @@
+# The plain-http trial on minikube (`make minikube-up`): the base, served at http://nexc.local in
+# development mode, without TLS, with sign-up open. Never for a cluster others can reach: anyone
+# who reaches it opens an account and a workspace of their own.
+#
+#   kubectl apply -k deploy/minikube
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../k8s
+
+configMapGenerator:
+  - name: nexc-config
+    behavior: merge
+    literals:
+      - NEXC_ENV=development
+      - NEXC_COOKIE_SECURE=false
+      - NEXC_CORS_ORIGINS=http://nexc.local
+      - NEXC_PUBLIC_URL=http://nexc.local
+      - NEXC_ALLOW_SIGNUP=true
+
+patches:
+  # Every Ingress of the base: nexc, and nexc-a2a and nexc-documents with their larger bodies.
+  - target: { kind: Ingress }
+    patch: |-
+      - op: remove
+        path: /spec/tls

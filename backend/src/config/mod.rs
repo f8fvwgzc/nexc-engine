@@ -141,6 +141,13 @@ pub struct Settings {
     pub grpc_keepalive_timeout: Duration,
     /// Connections per gRPC client channel (runtime, onto-intelli, OTLP collector).
     pub grpc_pool_size: usize,
+    /// How the gRPC channels to `https://` endpoints are secured: the CA
+    /// (`NEXC_GRPC_CA_FILE`, the system's roots when unset) and a client
+    /// certificate (`NEXC_GRPC_CLIENT_CERT_FILE`, `NEXC_GRPC_CLIENT_KEY_FILE`).
+    pub grpc_client_tls: crate::rpc::ClientTls,
+    /// The Agent Firewall API's TLS (`NEXC_GRPC_TLS_CERT_FILE`, `NEXC_GRPC_TLS_KEY_FILE`,
+    /// `NEXC_GRPC_TLS_CLIENT_CA_FILE`); plaintext when unset.
+    pub grpc_server_tls: Option<crate::rpc::ServerTls>,
     /// Consecutive failed provider calls that open the LLM circuit (0 turns the breaker off).
     pub llm_breaker_failures: u32,
     /// How long an open circuit refuses calls before one probe is let through.
@@ -160,6 +167,11 @@ pub struct Settings {
     pub a2a_timeout: Duration,
     /// Lets A2A counterparts be registered on private and loopback hosts (development only).
     pub a2a_allow_private_hosts: bool,
+    /// Private ranges the targets users choose (an agent's `fetch_url`, MCP servers, alert
+    /// destinations, A2A counterparts, LLM and embeddings base URLs, a transfer's Redis) may
+    /// resolve to (`NEXC_EGRESS_ALLOW_PRIVATE`); none by default. Link-local and cloud
+    /// metadata addresses stay refused whatever is listed.
+    pub egress_allow_private: Vec<crate::security::egress::Cidr>,
     /// Single sign-on with an OpenID Connect provider; `None` when `NEXC_OIDC_ISSUER` is unset.
     pub oidc: Option<oidc::OidcSettings>,
 }
@@ -246,7 +258,8 @@ impl Settings {
             cors_origins: r.cors_origins(),
             // Production always sets `Secure` (browsers accept it on http://localhost too).
             cookie_secure: prod || r.parse("NEXC_COOKIE_SECURE", false),
-            allow_signup: r.parse("NEXC_ALLOW_SIGNUP", true),
+            // Off unless asked for: an account opened here owns a workspace of its own.
+            allow_signup: r.parse("NEXC_ALLOW_SIGNUP", false),
             admin_email: r
                 .optional("NEXC_ADMIN_EMAIL")
                 .map(|e| user::normalize_email(&e)),
@@ -307,6 +320,8 @@ impl Settings {
                 r.parse("NEXC_GRPC_KEEPALIVE_TIMEOUT_SECS", 10),
             ),
             grpc_pool_size: r.parse("NEXC_GRPC_POOL_SIZE", 2),
+            grpc_client_tls: r.grpc_client_tls(),
+            grpc_server_tls: r.grpc_server_tls(),
             llm_breaker_failures: r.parse("NEXC_LLM_BREAKER_FAILURES", 5),
             llm_breaker_open: Duration::from_secs(r.parse("NEXC_LLM_BREAKER_OPEN_SECS", 30)),
             gateway_calls_per_minute: r.parse("NEXC_GATEWAY_CALLS_PER_MINUTE", 120),
@@ -319,6 +334,7 @@ impl Settings {
             alert_allow_private_hosts: r.parse("NEXC_ALERT_ALLOW_PRIVATE_HOSTS", false),
             a2a_timeout: Duration::from_secs(r.parse("NEXC_A2A_TIMEOUT_SECS", 120)),
             a2a_allow_private_hosts: r.parse("NEXC_A2A_ALLOW_PRIVATE_HOSTS", false),
+            egress_allow_private: r.egress_allow_private(),
             oidc: None,
         };
         settings.oidc = oidc::read(r.lookup, prod, &settings.public_url, &mut r.errors);
@@ -352,6 +368,7 @@ impl Settings {
             keepalive: self.grpc_keepalive,
             keepalive_timeout: self.grpc_keepalive_timeout,
             pool: self.grpc_pool_size,
+            tls: self.grpc_client_tls.clone(),
             ..crate::rpc::ChannelSettings::default()
         }
     }
@@ -530,6 +547,85 @@ impl Reader<'_> {
                 default
             }),
         }
+    }
+
+    /// The PEM file `key` names, read once at start; `None` when unset.
+    fn pem_file(&mut self, key: &str) -> Option<std::sync::Arc<[u8]>> {
+        let path = self.optional(key)?;
+        match std::fs::read(&path) {
+            Ok(bytes) if bytes.windows(11).any(|w| w == b"-----BEGIN ") => Some(bytes.into()),
+            Ok(_) => {
+                self.errors
+                    .push(format!("{key}: {path} holds no PEM block"));
+                None
+            }
+            Err(err) => {
+                self.errors
+                    .push(format!("{key}: cannot read {path}: {err}"));
+                None
+            }
+        }
+    }
+
+    /// `NEXC_GRPC_CA_FILE` and the client certificate, which go together.
+    fn grpc_client_tls(&mut self) -> crate::rpc::ClientTls {
+        let ca = self.pem_file("NEXC_GRPC_CA_FILE");
+        let identity = match (
+            self.pem_file("NEXC_GRPC_CLIENT_CERT_FILE"),
+            self.pem_file("NEXC_GRPC_CLIENT_KEY_FILE"),
+        ) {
+            (Some(cert), Some(key)) => Some(crate::rpc::CertKey { cert, key }),
+            (None, None) => None,
+            _ => {
+                self.errors.push(
+                    "NEXC_GRPC_CLIENT_CERT_FILE and NEXC_GRPC_CLIENT_KEY_FILE must be set together"
+                        .into(),
+                );
+                None
+            }
+        };
+        crate::rpc::ClientTls { ca, identity }
+    }
+
+    /// The firewall's certificate and key, which go together; a client CA needs them.
+    fn grpc_server_tls(&mut self) -> Option<crate::rpc::ServerTls> {
+        let client_ca = self.pem_file("NEXC_GRPC_TLS_CLIENT_CA_FILE");
+        match (
+            self.pem_file("NEXC_GRPC_TLS_CERT_FILE"),
+            self.pem_file("NEXC_GRPC_TLS_KEY_FILE"),
+        ) {
+            (Some(cert), Some(key)) => Some(crate::rpc::ServerTls {
+                cert,
+                key,
+                client_ca,
+            }),
+            (None, None) => {
+                if client_ca.is_some() {
+                    self.errors.push(
+                        "NEXC_GRPC_TLS_CLIENT_CA_FILE needs NEXC_GRPC_TLS_CERT_FILE and NEXC_GRPC_TLS_KEY_FILE"
+                            .into(),
+                    );
+                }
+                None
+            }
+            _ => {
+                self.errors.push(
+                    "NEXC_GRPC_TLS_CERT_FILE and NEXC_GRPC_TLS_KEY_FILE must be set together"
+                        .into(),
+                );
+                None
+            }
+        }
+    }
+
+    /// `NEXC_EGRESS_ALLOW_PRIVATE`: address ranges separated by commas.
+    fn egress_allow_private(&mut self) -> Vec<crate::security::egress::Cidr> {
+        let raw = self.string(crate::security::egress::ALLOW_VAR, "");
+        crate::security::egress::parse_allowed(&raw).unwrap_or_else(|why| {
+            self.errors
+                .push(format!("{}: {why}", crate::security::egress::ALLOW_VAR));
+            Vec::new()
+        })
     }
 
     /// `NEXC_ONTO_MODE`; service when `NEXC_ONTO_URL` is set and nothing else is said.
@@ -850,9 +946,82 @@ mod tests {
         assert_eq!(s.cors_origins, vec!["http://localhost:5173"]);
         assert!(!s.cookie_secure);
         assert!(
+            !s.allow_signup,
+            "nobody opens an account unless the operator says so"
+        );
+        assert!(s.egress_allow_private.is_empty());
+        assert!(
             !format!("{s:?}").contains("q8Xv2"),
             "secrets are redacted in Debug"
         );
+    }
+
+    #[test]
+    fn grpc_tls_is_read_from_pem_files_that_go_together() {
+        let dir = std::env::temp_dir().join(format!("nexc-tls-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pem = dir.join("a.pem");
+        std::fs::write(
+            &pem,
+            "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+        )
+        .unwrap();
+        let junk = dir.join("junk.txt");
+        std::fs::write(&junk, "not a certificate").unwrap();
+        let path = pem.to_str().unwrap().to_owned();
+
+        let s = load(&base()).unwrap();
+        assert_eq!(s.grpc_client_tls, crate::rpc::ClientTls::default());
+        assert!(s.grpc_server_tls.is_none());
+        assert_eq!(s.grpc_channel().tls, crate::rpc::ClientTls::default());
+
+        let mut m = base();
+        m.insert("NEXC_GRPC_CA_FILE", path.clone());
+        m.insert("NEXC_GRPC_CLIENT_CERT_FILE", path.clone());
+        m.insert("NEXC_GRPC_CLIENT_KEY_FILE", path.clone());
+        m.insert("NEXC_GRPC_TLS_CERT_FILE", path.clone());
+        m.insert("NEXC_GRPC_TLS_KEY_FILE", path.clone());
+        m.insert("NEXC_GRPC_TLS_CLIENT_CA_FILE", path.clone());
+        let s = load(&m).unwrap();
+        assert!(s.grpc_channel().tls.ca.is_some() && s.grpc_client_tls.identity.is_some());
+        assert!(s.grpc_server_tls.as_ref().unwrap().client_ca.is_some());
+        assert!(!format!("{s:?}").contains("BEGIN"), "no PEM in Debug");
+
+        for (key, value) in [
+            ("NEXC_GRPC_CLIENT_KEY_FILE", ""),
+            ("NEXC_GRPC_TLS_KEY_FILE", ""),
+            ("NEXC_GRPC_CA_FILE", junk.to_str().unwrap()),
+            ("NEXC_GRPC_CA_FILE", "/nonexistent/ca.pem"),
+        ] {
+            let mut bad = m.clone();
+            if value.is_empty() {
+                bad.remove(key);
+            } else {
+                bad.insert(key, value.into());
+            }
+            let err = load(&bad).unwrap_err().to_string();
+            assert!(
+                err.contains(key) || err.contains("together"),
+                "{key}: {err}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_operator_lists_the_private_ranges_users_may_reach() {
+        let mut m = base();
+        m.insert("NEXC_EGRESS_ALLOW_PRIVATE", "10.20.0.0/16, fd00::/8".into());
+        let s = load(&m).unwrap();
+        let listed: Vec<String> = s
+            .egress_allow_private
+            .iter()
+            .map(|c| c.to_string())
+            .collect();
+        assert_eq!(listed, ["10.20.0.0/16", "fd00::/8"]);
+        m.insert("NEXC_EGRESS_ALLOW_PRIVATE", "10.0.0.0/40".into());
+        let err = load(&m).unwrap_err().to_string();
+        assert!(err.contains("NEXC_EGRESS_ALLOW_PRIVATE"), "{err}");
     }
 
     #[test]

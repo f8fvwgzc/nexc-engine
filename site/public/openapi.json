@@ -18891,7 +18891,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Hosts the agent may call out to (`api.example.com`, `*.example.com`);\n`null` allows any, `[]` none."
+            "description": "Hosts the agent may call out to (`api.example.com`, `*.example.com`);\n`null` and `[]` allow none: egress is denied unless a host is named."
           },
           "models": {
             "type": [

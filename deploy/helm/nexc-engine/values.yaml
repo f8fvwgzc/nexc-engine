@@ -25,23 +25,28 @@ images:
   pullPolicy: IfNotPresent
 
 replicas:
-  backend: 2
+  # One backend: its data volume is ReadWriteOnce (backend.dataAccessMode), which attaches to one
+  # node. More than one needs a ReadWriteMany class; the chart refuses to render otherwise.
+  backend: 1
   runtime: 2
   frontend: 2
 
 # Non-secret settings of every service (ConfigMap nexc-config); CONTRACT §2 lists them.
-# `development` because an ingress without TLS serves plain http and production mode forces
-# Secure cookies: with TLS, set NEXC_ENV=production, NEXC_COOKIE_SECURE=true,
-# NEXC_CORS_ORIGINS=https://<your host> and NEXC_PUBLIC_URL=https://<your host> (A2A cards, alert
-# links and the SSO callback carry it; docs/INFRASTRUCTURE.md, Serving it on a host of its own).
+# Production by default: Secure cookies, served over TLS (ingress.tlsSecretName), and no
+# sign-up (an account opened by sign-up owns a workspace of its own: create accounts with
+# `nexc user create`, or sign in with single sign-on). NEXC_CORS_ORIGINS and NEXC_PUBLIC_URL
+# (A2A cards, alert links and the SSO callback carry it; docs/INFRASTRUCTURE.md, Serving it on a
+# host of its own) are derived from ingress.host when left empty. A plain-http trial on minikube
+# sets NEXC_ENV=development, NEXC_COOKIE_SECURE=false and ingress.tlsSecretName="".
 config:
-  NEXC_ENV: development
+  NEXC_ENV: production
   NEXC_LOG: info
   # NEXC_DB_MAX_CONNECTIONS, the backend's PostgreSQL pool per pod, is sized from the connection
   # budget (postgres.maxConnections) unless you set it here.
-  NEXC_CORS_ORIGINS: http://nexc.local
-  NEXC_COOKIE_SECURE: "false"
-  NEXC_ALLOW_SIGNUP: "true"
+  NEXC_CORS_ORIGINS: ""
+  NEXC_PUBLIC_URL: ""
+  NEXC_COOKIE_SECURE: "true"
+  NEXC_ALLOW_SIGNUP: "false"
   NEXC_TRUST_PROXY: "true"
   NEXC_ACCESS_TTL_SECS: "900"
   NEXC_REFRESH_TTL_SECS: "1209600"
@@ -119,13 +124,14 @@ backend:
   seedExpertAgents: true
   terminationGracePeriodSeconds: 60
   # The backend's data volume (NEXC_DATA_DIR: run artifacts, uploaded documents), mounted by every
-  # backend replica. ReadWriteOnce attaches it to one node, so the chart keeps every backend pod on
-  # one node (a required pod affinity): the replicas cover a crash and a rolling update, not the
-  # loss of that node, and a drain of it waits until the last backend pod is deleted. With
-  # ReadWriteMany (a class that offers it in dataStorageClass: NFS, EFS, Filestore, CephFS) the
-  # chart spreads the pods across nodes instead, and a replica that takes a run over still sees its
-  # artifacts. dataExistingClaim names a claim you made, mounted instead of `backend-data`; set
-  # dataAccessMode to its access mode.
+  # backend replica. ReadWriteOnce attaches it to one node, so it carries one replica (the
+  # default), and the chart keeps a rollout's new pod on that node (a required pod affinity) so it
+  # does not wait on a Multi-Attach error. For more (the chart spreads them across nodes, and the
+  # autoscaler adds more) set ReadWriteMany with a class that offers it (NFS, EFS, Filestore,
+  # CephFS) in dataStorageClass, so a replica that takes a run over sees its artifacts; the chart
+  # refuses to render several replicas, or the autoscaler, on ReadWriteOnce. Or name a claim you
+  # made in dataExistingClaim (and its access mode here), which the chart then mounts instead of
+  # creating `backend-data`.
   dataStorage: 5Gi
   dataAccessMode: ReadWriteOnce
   dataStorageClass: ""
@@ -303,7 +309,8 @@ secrets:
 # Ingress objects for the host carry the routes that take larger bodies, since an annotation
 # applies to every path of its Ingress: knowledge documents (documentsBodySize; the backend takes
 # 50 MiB and the multipart envelope) and A2A tasks (a2aBodySize; 16 MiB, files inline), each a
-# little over the backend's own cap so its 413 is the answer. Both copy `annotations` and `tls`.
+# little over the backend's own cap so its 413 is the answer. Both copy `annotations` and the TLS
+# blocks (tlsSecretName or tls).
 # The documents' path is a regular expression (it holds the workspace), and ingress-nginx then
 # matches every path of the host as one, which routes them as before. Client addresses (the
 # backend's per-address limits): docs/INFRASTRUCTURE.md, Client addresses.
@@ -311,6 +318,12 @@ ingress:
   enabled: true
   className: nginx
   host: nexc.local
+  # The kubernetes.io/tls Secret the ingress serves ingress.host (and ontoIntelli.ingress.host)
+  # with, e.g. one cert-manager issues; ingress.tls below replaces it when set. Empty serves
+  # plain http, which NEXC_ENV=production refuses unless TLS ends in front of the ingress
+  # (tlsUpstream: a cloud load balancer that terminates it).
+  tlsSecretName: nexc-tls
+  tlsUpstream: false
   documentsBodySize: 51m
   a2aBodySize: 17m
   annotations:
@@ -319,6 +332,7 @@ ingress:
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-buffering: "off"
     nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+  # Explicit TLS blocks, instead of tlsSecretName:
   # - hosts: [nexc.example.com]
   #   secretName: nexc-tls
   tls: []

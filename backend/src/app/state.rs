@@ -26,6 +26,7 @@ use crate::ontology::grpc::GrpcOntology;
 use crate::planner::health::HealthCache;
 use crate::realtime::hub::Hub;
 use crate::security::agent_token::AgentTokenKeys;
+use crate::security::egress::EgressGuard;
 use crate::security::gate::SessionGate;
 use crate::security::jwt::JwtKeys;
 use crate::security::oidc::OidcClient;
@@ -68,8 +69,14 @@ pub struct AppState {
     pub runtime_grpc: Option<Channel>,
     /// The channel to the OTLP collector (`NEXC_OTLP_ENDPOINT`), kept for the life of the process.
     pub otlp_channel: Option<Channel>,
-    /// The tools gateway's outbound HTTP client (no redirects of its own).
+    /// The SSRF guard of every connection a user aims (`NEXC_EGRESS_ALLOW_PRIVATE`).
+    pub egress: crate::security::egress::EgressGuard,
+    /// The tools gateway's outbound HTTP client, which alert deliveries and A2A use too:
+    /// guarded, no redirects of its own.
     pub gateway_http: reqwest::Client,
+    /// The client of LLM and embeddings endpoints a user or a workspace chose (guarded);
+    /// the operator's own endpoints go through [`AppState::http`].
+    pub egress_http: reqwest::Client,
     /// The MCP server registrations the gateway read lately.
     pub gateway_registry: Arc<crate::gateway::Registry>,
     /// Signs the decisions the Agent Firewall API hands out (the current key of `signing_keys`).
@@ -89,19 +96,20 @@ impl AppState {
     /// Builds the state with the production LLM provider router.
     pub fn new(settings: Settings, db: PgPool) -> anyhow::Result<Self> {
         let http = http_client()?;
+        let guard = EgressGuard::new(settings.egress_allow_private.clone());
         let claude_code = ClaudeCodeProvider::new(
             settings.claude_bin.clone(),
             settings.data_dir.join("claude-code"),
         );
         let metrics = Arc::new(Metrics::default());
         let router = Arc::new(
-            ProviderRouter::new(http.clone(), settings.llm_fallbacks, claude_code).with_breaker(
-                CircuitBreaker::new(
+            ProviderRouter::new(http.clone(), settings.llm_fallbacks, claude_code)
+                .with_guarded(guarded_http_client(&guard)?, operator_endpoints(&settings))
+                .with_breaker(CircuitBreaker::new(
                     settings.llm_breaker_failures,
                     settings.llm_breaker_open,
                     metrics.clone(),
-                ),
-            ),
+                )),
         );
         let ontology: Option<Arc<dyn OntologyBackend>> = match &settings.onto_url {
             Some(url) if settings.onto_mode == OntoMode::Service => {
@@ -183,10 +191,29 @@ impl AppState {
             tracing::warn!(kid = %firewall_signer.kid(),
                 "the signing key is derived from NEXC_MASTER_KEY; set NEXC_SIGNING_KEY so that seals and decisions do not depend on the key that encrypts secrets");
         }
+        if settings.is_production() {
+            // The stream carries the LLM keys of workspaces that bring their own.
+            if settings.runtime_protocol == RuntimeProtocol::Grpc
+                && settings.runtime_grpc_url.starts_with("http://")
+            {
+                tracing::warn!(url = %settings.runtime_grpc_url,
+                    "the runtime's gRPC stream is plaintext, and it carries LLM keys: set NEXC_RUNTIME_GRPC_URL=https://… (NEXC_GRPC_CA_FILE for a private CA) and RUNTIME_GRPC_TLS_* on the runtime, unless a network policy or a mesh keeps the hop private");
+            }
+            if settings
+                .onto_url
+                .as_deref()
+                .is_some_and(|url| url.starts_with("http://"))
+            {
+                tracing::warn!(
+                    "onto-intelli is reached over plaintext gRPC, with the backend's token: use an https:// NEXC_ONTO_URL unless a network policy or a mesh keeps the hop private"
+                );
+            }
+        }
         let agent_tokens = Arc::new(AgentTokenKeys::new(
             settings.agent_token_signing_key.expose(),
             &settings.agent_token_verify_keys,
         )?);
+        let egress = EgressGuard::new(settings.egress_allow_private.clone());
         let oidc = match &settings.oidc {
             Some(oidc) => Some(Arc::new(OidcClient::new(
                 oidc.clone(),
@@ -203,7 +230,9 @@ impl AppState {
             ),
             runtime_grpc,
             otlp_channel,
-            gateway_http: crate::gateway::http_client()?,
+            gateway_http: crate::gateway::http_client(&egress)?,
+            egress_http: guarded_http_client(&egress)?,
+            egress,
             gateway_registry: Arc::default(),
             firewall_signer,
             signing_keys,
@@ -245,11 +274,50 @@ impl AppState {
     }
 }
 
-/// The shared outbound HTTP client (rustls, connection pooling).
+/// The shared outbound HTTP client (rustls, connection pooling), for the
+/// services the operator configured: the runtime, onto-intelli, the
+/// single sign-on provider, the server's own LLM endpoint.
 pub fn http_client() -> anyhow::Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .read_timeout(Duration::from_secs(300))
         .user_agent(concat!("nexc-engine/", env!("CARGO_PKG_VERSION")))
         .build()?)
+}
+
+/// [`http_client`] behind the SSRF guard, for endpoints users choose.
+pub fn guarded_http_client(guard: &EgressGuard) -> anyhow::Result<reqwest::Client> {
+    Ok(guard.client(
+        reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .read_timeout(Duration::from_secs(300))
+            .user_agent(concat!("nexc-engine/", env!("CARGO_PKG_VERSION"))),
+    )?)
+}
+
+/// The LLM and embeddings endpoints the operator configured: reached
+/// without the guard, wherever they are.
+pub fn operator_endpoints(settings: &Settings) -> Vec<String> {
+    [&settings.llm_base_url, &settings.embed_base_url]
+        .into_iter()
+        .flatten()
+        .map(|url| url.trim_end_matches('/').to_owned())
+        .collect()
+}
+
+impl AppState {
+    /// The client for an LLM or embeddings endpoint: the server's own
+    /// (the operator's endpoints, the provider's default) or the guarded one
+    /// (an endpoint a user or a workspace chose).
+    pub fn llm_http(&self, base_url: Option<&str>) -> &reqwest::Client {
+        match base_url {
+            Some(url)
+                if !operator_endpoints(&self.settings)
+                    .contains(&url.trim_end_matches('/').to_owned()) =>
+            {
+                &self.egress_http
+            }
+            _ => &self.http,
+        }
+    }
 }

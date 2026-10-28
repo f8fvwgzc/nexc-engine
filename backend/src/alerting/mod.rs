@@ -33,6 +33,7 @@ use crate::gateway::fetch::is_private_host;
 use crate::repo;
 use crate::repo::alert_deliveries::{Claimed, NewDelivery};
 use crate::repo::alert_destinations::AlertDestinationRow;
+use crate::security::egress::EgressGuard;
 use payload::{Subject, WorkspaceLabel};
 
 /// How often the outbox is looked at.
@@ -63,13 +64,19 @@ pub struct Progress {
 /// Whether `url` may be a destination: an http(s) URL without credentials
 /// whose host is not this machine or a private network (unless the server
 /// allows those, for development); the host when it may.
-pub fn check_destination_url(url: &str, allow_private: bool) -> Result<String, String> {
+pub fn check_destination_url(
+    url: &str,
+    allow_private: bool,
+    guard: &EgressGuard,
+) -> Result<String, String> {
     let host = check_url(url)?;
     if !allow_private && is_private_host(&host) {
         return Err(format!(
             "{host} is on this machine or a private network; such a destination is not reached (NEXC_ALERT_ALLOW_PRIVATE_HOSTS=true allows it in development)"
         ));
     }
+    // Deliveries go out behind the SSRF guard; an address it refuses is refused here already.
+    guard.check_host(&host)?;
     Ok(host)
 }
 
@@ -195,7 +202,7 @@ pub async fn send(client: &reqwest::Client, url: &str, secret: &[u8], body: Vec<
             ok: false,
             status: None,
             retryable: true,
-            detail: err.without_url().to_string(),
+            detail: crate::gateway::fetch::describe(err),
         },
         Ok(response) => {
             let status = response.status();
@@ -600,17 +607,24 @@ mod tests {
 
     #[test]
     fn destination_urls_keep_private_hosts_out_unless_allowed() {
+        let guard = EgressGuard::default();
+        let check = |url, allow| check_destination_url(url, allow, &guard);
         assert_eq!(
-            check_destination_url("https://hooks.slack.com/services/T/B/x", false).unwrap(),
+            check("https://hooks.slack.com/services/T/B/x", false).unwrap(),
             "hooks.slack.com"
         );
-        assert!(check_destination_url("http://127.0.0.1:9/hook", false).is_err());
-        assert!(check_destination_url("http://localhost/hook", false).is_err());
-        assert!(check_destination_url("http://10.0.0.5/hook", false).is_err());
+        assert!(check("http://127.0.0.1:9/hook", false).is_err());
+        assert!(check("http://localhost/hook", false).is_err());
+        assert!(check("http://10.0.0.5/hook", false).is_err());
+        assert!(check("ftp://x.example", true).is_err());
+        // The development switch lets a private host through only where the operator opened
+        // its range for the SSRF guard too, and never the metadata service.
+        assert!(check("http://127.0.0.1:9/hook", true).is_err());
+        let open = EgressGuard::new(crate::security::egress::parse_allowed("127.0.0.0/8").unwrap());
         assert_eq!(
-            check_destination_url("http://127.0.0.1:9/hook", true).unwrap(),
+            check_destination_url("http://127.0.0.1:9/hook", true, &open).unwrap(),
             "127.0.0.1"
         );
-        assert!(check_destination_url("ftp://x.example", true).is_err());
+        assert!(check_destination_url("http://169.254.169.254/", true, &open).is_err());
     }
 }

@@ -17,9 +17,9 @@ metadata:
   {{- end }}
 spec:
   ingressClassName: {{ $i.className }}
-  {{- with $i.tls }}
+  {{- with include "nexc.ingressTls" . }}
   tls:
-    {{- toYaml . | nindent 4 }}
+    {{- . | nindent 4 }}
   {{- end }}
   rules:
     - host: {{ $i.host | quote }}
@@ -65,9 +65,9 @@ metadata:
     {{- toYaml (merge (dict "nginx.ingress.kubernetes.io/proxy-body-size" (toString (dig "a2aBodySize" "17m" $i))) ($i.annotations | default dict)) | nindent 4 }}
 spec:
   ingressClassName: {{ $i.className }}
-  {{- with $i.tls }}
+  {{- with include "nexc.ingressTls" $ }}
   tls:
-    {{- toYaml . | nindent 4 }}
+    {{- . | nindent 4 }}
   {{- end }}
   rules:
     - host: {{ $i.host | quote }}
@@ -92,9 +92,9 @@ metadata:
     {{- toYaml (merge (dict "nginx.ingress.kubernetes.io/proxy-body-size" (toString (dig "documentsBodySize" "51m" $i)) "nginx.ingress.kubernetes.io/use-regex" "true") ($i.annotations | default dict)) | nindent 4 }}
 spec:
   ingressClassName: {{ $i.className }}
-  {{- with $i.tls }}
+  {{- with include "nexc.ingressTls" $ }}
   tls:
-    {{- toYaml . | nindent 4 }}
+    {{- . | nindent 4 }}
   {{- end }}
   rules:
     - host: {{ $i.host | quote }}

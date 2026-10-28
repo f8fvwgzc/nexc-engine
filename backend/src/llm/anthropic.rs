@@ -29,6 +29,11 @@ impl AnthropicProvider {
         AnthropicProvider { http, fallbacks }
     }
 
+    /// Whether server-side refusal fallbacks are on.
+    pub fn fallbacks(&self) -> bool {
+        self.fallbacks
+    }
+
     fn base_url(req: &LlmRequest) -> &str {
         req.target
             .base_url

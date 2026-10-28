@@ -48,7 +48,7 @@ In Docker/K8s the frontend is served by unprivileged nginx on 8080 which proxies
 | `NEXC_MASTER_KEY`                                                       | — (required, base64 of 32 bytes)                          | backend: AES-256-GCM for stored LLM API keys                                                                                                                                                                                                                                             |
 | `NEXC_CORS_ORIGINS`                                                     | `http://localhost:5173`                                   | backend (comma separated)                                                                                                                                                                                                                                                                |
 | `NEXC_COOKIE_SECURE`                                                    | `false` dev / `true` prod                                 | backend                                                                                                                                                                                                                                                                                  |
-| `NEXC_ALLOW_SIGNUP`                                                     | `true`                                                    | backend                                                                                                                                                                                                                                                                                  |
+| `NEXC_ALLOW_SIGNUP`                                                     | `false`                                                   | backend: lets anyone who reaches the API open an account, which owns a workspace of its own (where it registers MCP servers, policies and the rest); off unless set                                                                                                      |
 | `NEXC_ADMIN_EMAIL` / `NEXC_ADMIN_PASSWORD`                              | —                                                         | backend bootstraps a platform administrator on first start if both set                                                                                                                                                                                                                   |
 | `NEXC_ACCESS_TTL_SECS` / `NEXC_REFRESH_TTL_SECS`                        | `900` / `1209600`                                         | backend                                                                                                                                                                                                                                                                                  |
 | `NEXC_OIDC_ISSUER`                                                      | — (off)                                                   | backend: single sign-on with an OpenID Connect provider (§5, single sign-on). The issuer identifier exactly as the provider's tokens carry it in `iss`; its `/.well-known/openid-configuration` is read. `https://` in production. Unset keeps SSO off and every other `NEXC_OIDC_*` variable is ignored |
@@ -77,10 +77,14 @@ In Docker/K8s the frontend is served by unprivileged nginx on 8080 which proxies
 | `NEXC_RUNTIME_PROTOCOL`                                                 | `grpc`                                                    | backend: the wire to the runtime, `grpc` (one `AgentRuntime/Execute` stream per node attempt, §8) or `ndjson` (`POST /v1/execute`, kept for one release)                                                                                                                                  |
 | `NEXC_RUNTIME_GRPC_URL`                                                 | `http://localhost:8095`                                   | backend → the runtime's gRPC endpoint                                                                                                                                                                                                                                                    |
 | `RUNTIME_GRPC_PORT`                                                     | `8095`                                                    | runtime: the gRPC stream next to its HTTP port; `0` turns it off                                                                                                                                                                                                                         |
+| `RUNTIME_GRPC_TLS_CERT_FILE` / `_KEY_FILE` / `_CLIENT_CA_FILE`          | — (plaintext)                                             | runtime: PEM files of the TLS the gRPC stream serves (it carries BYOK LLM keys), HTTP/2 by ALPN; with the client CA only a caller presenting a certificate of it (the backend's) is answered. Cert and key go together                                                   |
 | `NEXC_API_CALLS_PER_MINUTE`                                             | `600`                                                     | backend: authenticated API requests one account may make per minute (burst a fifth of it; 429 with `Retry-After` past it); `make prove-api` raises it on its own test server                                                                                                                 |
 | `NEXC_CACHE_TTL_SECS`                                                   | `60`                                                      | backend: longest a hot-read cache entry lives (agent cards, resolved policies per agent and policy version, guardrails, workspace LLM settings); a write drops the entry on every replica at once over the realtime fan-out, so this only bounds a missed notification; `0` turns the caches off                                                              |
 | `NEXC_GRPC_KEEPALIVE_SECS` / `NEXC_GRPC_KEEPALIVE_TIMEOUT_SECS`         | `30` / `10`                                               | backend: HTTP/2 keepalive of every gRPC channel it opens (the runtime, onto-intelli, the OTLP collector) and of the Agent Firewall server: how often a PING goes out, how long one may go unanswered before the connection is dropped                                                                                                        |
 | `NEXC_GRPC_POOL_SIZE`                                                   | `2`                                                       | backend: connections per gRPC client channel (1–64); requests and streams are spread over them, each connection kept with keepalive and adaptive HTTP/2 flow control for the life of the process; every client is a clone of its one channel, and messages travel uncompressed (tonic's `gzip` is not in this build)                       |
+| `NEXC_GRPC_CA_FILE`                                                     | — (the system's roots)                                    | backend: PEM CA bundle an `https://` gRPC endpoint (`NEXC_RUNTIME_GRPC_URL`, `NEXC_ONTO_URL`, `NEXC_OTLP_ENDPOINT`) must chain to; when set, the system's roots are not trusted for these hops. `http://` stays plaintext                                                |
+| `NEXC_GRPC_CLIENT_CERT_FILE` / `NEXC_GRPC_CLIENT_KEY_FILE`              | —                                                         | backend: PEM certificate and key it presents to a gRPC server that asks for one (mutual TLS); set together                                                                                                                                                               |
+| `NEXC_GRPC_TLS_CERT_FILE` / `_KEY_FILE` / `_CLIENT_CA_FILE`             | — (plaintext)                                             | backend: the TLS the Agent Firewall API (`NEXC_GRPC_ADDR`) serves; with the client CA it answers only callers presenting a certificate of it. Cert and key go together. In production a plaintext `http://` runtime or onto-intelli URL is logged as a warning at start  |
 | `NEXC_LLM_BREAKER_FAILURES` / `NEXC_LLM_BREAKER_OPEN_SECS`              | `5` / `30`                                                | backend: the circuit breaker of each network LLM provider endpoint (Anthropic, OpenAI-compatible, keyed `provider@base_url`): after that many consecutive provider failures (429, 5xx, no connection) the circuit opens and calls fail at once for that long, then one probe is let through; `0` failures turns it off                           |
 | `NEXC_GATEWAY_CALLS_PER_MINUTE` / `NEXC_GATEWAY_TIMEOUT_SECS` / `NEXC_GATEWAY_MAX_RESPONSE_BYTES` | `120` / `30` / `1048576`               | backend: the tools gateway (§8): calls one agent may make per minute (burst a quarter of it), the longest one call may take, the largest response passed on                                                                                                                               |
 | `NEXC_A2A_TIMEOUT_SECS`                                                 | `120`                                                     | backend: the A2A adapter (§10): the longest one outbound task (`a2a:<name>`) may take, the remote agent's work included (1–600)                                                                                                                                                             |
@@ -91,6 +95,7 @@ In Docker/K8s the frontend is served by unprivileged nginx on 8080 which proxies
 | `NEXC_OTLP_ENDPOINT`                                                    | — (off)                                                   | backend: OTLP/gRPC endpoint (`http://host:4317`) the trace spine is exported to; unset keeps it off                                                                                                                                                                                       |
 | `NEXC_PUBLIC_URL`                                                       | `http://localhost:8080`                                   | backend: where the console is reached from outside; the links every alert delivery carries (`/app/secops`, `/app/runs/{id}?span=`, `/app/agents?agent=`)                                                                                                                                |
 | `NEXC_ALERT_ALLOW_PRIVATE_HOSTS`                                        | `false`                                                   | backend: lets alert destinations name private and loopback hosts (development only: a receiver on this machine); otherwise such a URL is refused (422), as the gateway refuses the host                                                                                                   |
+| `NEXC_EGRESS_ALLOW_PRIVATE`                                             | — (none)                                                  | backend: private ranges (`10.20.0.0/16,fd00::/8`, addresses alone too) the hosts users aim at may resolve to: `fetch_url`, MCP servers, alert destinations, A2A counterparts, LLM and embeddings base URLs, a transfer's database and Redis. Judged on the resolved addresses as each connection opens (the SSRF guard, §8); link-local and cloud metadata addresses are refused whatever is listed |
 | `NEXC_DB_IMAGE`                                                         | `postgres:17-alpine`                                      | `scripts/db.sh`: image of the dev database. `pgvector/pgvector:pg17` enables HNSW memory search; only for a new volume. `nexc-postgres-pgvector:<tag>` is built from `deploy/postgres/pgvector.Dockerfile` when missing; any other image is pulled                                                                                                                                                                   |
 | `NEXC_SYMPHONY_ENABLED`                                                 | `false`                                                   | backend                                                                                                                                                                                                                                                                                  |
 | `NEXC_SYMPHONY_URL`                                                     | `http://localhost:4000`                                   | backend                                                                                                                                                                                                                                                                                  |
@@ -904,7 +909,7 @@ interface Capabilities {
     labels: DataLabel[]; // its clearance (default public, internal)
     memory_namespaces: ("user" | "graph" | "node")[] | null; // the scopes it may recall memories from
   };
-  egress_hosts: string[] | null; // `api.example.com`, `*.example.com`
+  egress_hosts: string[] | null; // `api.example.com`, `*.example.com`; `null` and `[]` reach no host
   counterparts: string[] | null; // roles of the sub-agents it may spawn
   delegation: { max_depth: number; max_fan_out: number }; // 0-8 levels below it, 0-32 children each (default 2, 4)
   models: string[] | null;
@@ -1002,14 +1007,14 @@ interface IssuedAgentApiToken { token: AgentApiToken; secret: string } // `nexc_
 
 // MCP servers of a workspace (the tools gateway, §8). The backend connects to them on an agent's
 // behalf; their tools are offered to agents as `mcp:<name>/<tool>` under the policy.
-type McpTransport = "stdio" | "http";
+type McpTransport = "stdio" | "http"; // `stdio` is refused (422) and never started: listed only for servers registered before
 interface McpTool { name: string; description: string; input_schema: object } // JSON Schema
 interface McpServer {
   id: string;
   workspace_id: string;
   name: string; // [a-z0-9_-]{1,64}
   transport: McpTransport;
-  command: string | null; // stdio: the executable, started for every call
+  command: string | null; // stdio (registered before): never started
   args: string[];
   url: string | null; // http: where the server listens
   has_auth_header: boolean; // an `Authorization` header is kept, encrypted, never shown
@@ -1722,12 +1727,14 @@ the authorization code flow with PKCE (`S256`), as a confidential client.
    be the same). The address and `email_verified` go together: userinfo's `email_verified` counts
    only for the address the ID token gave, or, when the ID token gave none, for userinfo's own.
 4. The account is the one linked to the `(issuer, subject)` pair. At an identity's first sign-in
-   it is linked to the account with its address only when the provider says the address is
-   verified and that account has no identity of this provider yet (`sso_linked` in the account's
-   activity), and never when that account administers the platform, is the break-glass account or
-   has two-factor sign-in (`link_required`): the provider's word on an address alone does not open
-   those, and single sign-on would skip their second factor. Their holders link it from the account
-   page: `POST /auth/oidc/link` (the password confirms) starts the same trip, and the identity that
+   it is linked to the account with its address only when that account has no password (the
+   provider created it, or a transfer brought it), the provider says the address is verified and
+   the account has no identity of this provider yet (`sso_linked` in the account's activity). It
+   is never linked when the account has a password, administers the platform, is the break-glass
+   account or has two-factor sign-in (`link_required`): the provider's word on an address alone
+   does not open those (a sign-up never proves its address, so whoever signed up with it would
+   share the account), and single sign-on would skip their second factor. Their holders link it
+   from the account page, with the account's own password: `POST /auth/oidc/link` (the password confirms) starts the same trip, and the identity that
    signs in is linked to that account whatever address it gives (`identity_taken` when it is
    another account's, or the account has another identity of the provider); the break-glass
    account is never linked, nor created by the provider. With no account of that address one is
@@ -2063,7 +2070,9 @@ the backend's named `policy_mismatch` (`decision: "mismatch"`, `rule`, `reason`,
 incident on the record, not a failure of the work.
 
 **The gRPC stream (the default wire, `NEXC_RUNTIME_PROTOCOL=grpc`).** The runtime also serves
-`nexc.runtime.v1.AgentRuntime` on `RUNTIME_GRPC_PORT` (8095), the service of
+`nexc.runtime.v1.AgentRuntime` on `RUNTIME_GRPC_PORT` (8095; over TLS with
+`RUNTIME_GRPC_TLS_*`, then `NEXC_RUNTIME_GRPC_URL=https://…` and the backend verifies it against
+`NEXC_GRPC_CA_FILE` and shows `NEXC_GRPC_CLIENT_CERT_FILE`), the service of
 `backend/proto/nexc/runtime/v1/runtime.proto` (vendored once; the runtime's stubs are
 regenerated by `make proto-runtime`). `Health` answers `{ok, version, agents_loaded,
 runs_active}`. `Execute(stream BackendCommand) returns (stream RuntimeEvent)` is one call per node
@@ -2108,9 +2117,11 @@ the rate limit (`NEXC_GATEWAY_CALLS_PER_MINUTE` per agent, a token bucket with a
 quarter; rule `limits.gateway_calls_per_minute`), the policy decision on the tool (the deny-list,
 the allow-list, `require_approval` as for any tool: the runtime raises the `approval_request`
 first and sends the granted id as `__approval_id` in the arguments), the policy decision on the
-host (`egress.hosts`: the server's URL host, `local:<name>` for a stdio server, or `fetch_url`'s
-URL with every redirect hop checked again; loopback, private and link-local addresses are
-refused as `egress.private` unless the allow-list names the host exactly), the DLP screen of the
+host (`egress.hosts`: the server's URL host or `fetch_url`'s URL; capabilities that name no host
+reach none; a redirect is followed on the same host only, and one to another host is answered
+with its location for the agent to fetch under the policy again; loopback, private and
+link-local addresses are refused as `egress.private` unless the allow-list names the host exactly
+and the operator opened the range, `NEXC_EGRESS_ALLOW_PRIVATE`), the DLP screen of the
 arguments under the context's labels (as for any egress: `block` refuses, `redact` sends the
 redacted text, with the `policy` span of rule `dlp.*`), the timeout
 (`NEXC_GATEWAY_TIMEOUT_SECS`) and the response size (`NEXC_GATEWAY_MAX_RESPONSE_BYTES`, cut
@@ -2119,11 +2130,18 @@ with a note). Every call is a `tool_call` span of the backend's (`tool`, `args_s
 `approval_id`, `policy_version`, `egress_host`, under the turn span the runtime named) and,
 when something was reached, an `egress` span under it (`host`, `transport`, `tool`, `server`,
 `bytes_out`, `bytes_in`, `status`, `url`); a refusal is a `policy` span naming the rule and the
-agent sees the reason as a tool error. A stdio server is started for every call with an empty
-environment (PATH, HOME, TMPDIR only) in a scratch directory and killed when the call ends; an
-HTTP server is spoken to with MCP streamable HTTP (`initialize`, `tools/list`, `tools/call`,
-`mcp-session-id`, SSE answers read), with the registered `Authorization` header. The gateway's
-own cost per call, the tool excluded, is what `make prove-gateway` measures.
+agent sees the reason as a tool error. A server is spoken to with MCP streamable HTTP
+(`initialize`, `tools/list`, `tools/call`, `mcp-session-id`, SSE answers read), with the
+registered `Authorization` header. The backend never starts a command: a stdio server runs in a
+sandbox of its own behind an HTTP bridge and is registered by the bridge's URL; one registered
+with `stdio` before is listed, its check fails, its tools are not offered and a call to one is
+refused (`mcp.transport`). Every connection a user aims (a server's URL, `fetch_url`, alert
+destinations, A2A counterparts, LLM and embeddings base URLs a user or a workspace chose, a
+transfer's targets) goes through the SSRF guard: the host must resolve only to public addresses
+or to a range of `NEXC_EGRESS_ALLOW_PRIVATE`, judged on the addresses as the connection opens (a
+name that answers differently later cannot slip through), never a link-local or metadata
+address, with no proxy. The gateway's own cost per call, the tool excluded, is what `make
+prove-gateway` measures.
 
 <!-- #endregion gateway-wire -->
 <!-- #region firewall-wire -->

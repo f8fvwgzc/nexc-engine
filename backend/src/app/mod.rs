@@ -13,7 +13,7 @@ use std::net::SocketAddr;
 
 use tokio_util::sync::CancellationToken;
 
-pub use state::{AppState, http_client};
+pub use state::{AppState, guarded_http_client, http_client, operator_endpoints};
 
 use crate::config::Settings;
 use crate::domain::user::{self, Role};

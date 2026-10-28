@@ -55,6 +55,11 @@ pub fn settings(overrides: &[(&str, &str)]) -> Settings {
         ("ANTHROPIC_API_KEY", "sk-test-not-a-real-key"),
         // Suites count the default organisation; tests/catalog.rs turns the expert catalog on.
         ("NEXC_SEED_EXPERT_AGENTS", "false"),
+        // Off by default; the suites open accounts through `POST /auth/register`.
+        ("NEXC_ALLOW_SIGNUP", "true"),
+        // The stand-in servers (MCP, A2A, alert receivers, the transfer's database) listen on
+        // loopback, which the SSRF guard refuses unless the operator opens it.
+        ("NEXC_EGRESS_ALLOW_PRIVATE", "127.0.0.0/8,::1"),
     ]
     .iter()
     .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))

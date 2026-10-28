@@ -51,7 +51,10 @@ async def run(settings: Settings) -> None:
     if settings.runtime_grpc_port:
         grpc = await serve_grpc(settings, app.state.census, keys=app.state.keys)
         log.info(
-            "gRPC stream listening on %s:%s", settings.runtime_host, settings.runtime_grpc_port
+            "gRPC stream listening on %s:%s (%s)",
+            settings.runtime_host,
+            settings.runtime_grpc_port,
+            "TLS" if settings.runtime_grpc_tls_cert_file else "plaintext",
         )
     try:
         await http.serve()

@@ -84,9 +84,9 @@ pub const ENV_VARS: &[EnvVar] = &[
     ),
     var(
         "NEXC_ALLOW_SIGNUP",
-        "true",
+        "false",
         false,
-        "allow self registration",
+        "allow self registration (each new account owns a workspace of its own)",
     ),
     var(
         "NEXC_ADMIN_EMAIL",
@@ -288,6 +288,48 @@ pub const ENV_VARS: &[EnvVar] = &[
         "false",
         false,
         "let A2A counterparts be registered on private and loopback hosts (development only)",
+    ),
+    var(
+        "NEXC_GRPC_CA_FILE",
+        "",
+        false,
+        "PEM CA bundle the https:// gRPC endpoints (runtime, onto-intelli, OTLP) must chain to; the system's roots when unset",
+    ),
+    var(
+        "NEXC_GRPC_CLIENT_CERT_FILE",
+        "",
+        false,
+        "PEM client certificate for gRPC servers that ask for one (mutual TLS)",
+    ),
+    var(
+        "NEXC_GRPC_CLIENT_KEY_FILE",
+        "",
+        false,
+        "PEM key of NEXC_GRPC_CLIENT_CERT_FILE",
+    ),
+    var(
+        "NEXC_GRPC_TLS_CERT_FILE",
+        "",
+        false,
+        "PEM certificate the Agent Firewall API serves TLS with; plaintext when unset",
+    ),
+    var(
+        "NEXC_GRPC_TLS_KEY_FILE",
+        "",
+        false,
+        "PEM key of NEXC_GRPC_TLS_CERT_FILE",
+    ),
+    var(
+        "NEXC_GRPC_TLS_CLIENT_CA_FILE",
+        "",
+        false,
+        "PEM CA whose client certificates the Agent Firewall API requires (mutual TLS)",
+    ),
+    var(
+        "NEXC_EGRESS_ALLOW_PRIVATE",
+        "",
+        false,
+        "private ranges (10.0.0.0/8, fd00::/8, comma separated) the hosts users aim at may resolve to; none by default",
     ),
     var(
         "NEXC_API_CALLS_PER_MINUTE",

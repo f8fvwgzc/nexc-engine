@@ -24,7 +24,7 @@ use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans, Span as O
 use serde::Serialize;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
-use tonic::transport::{Channel, Endpoint};
+use tonic::transport::Channel;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -82,7 +82,7 @@ pub fn channel(endpoint: &str) -> anyhow::Result<Channel> {
 pub fn channel_with(endpoint: &str, settings: &ChannelSettings) -> anyhow::Result<Channel> {
     Ok(crate::rpc::channel(
         endpoint,
-        &settings.connect_timeout(CONNECT_TIMEOUT),
+        &settings.clone().connect_timeout(CONNECT_TIMEOUT),
     )?)
 }
 
@@ -183,13 +183,14 @@ pub async fn status(state: &AppState) -> OtlpStatus {
     let Some(endpoint) = &state.settings.otlp_endpoint else {
         return OtlpStatus::default();
     };
-    let reachable = match Endpoint::from_shared(endpoint.clone()) {
-        Ok(endpoint) => tokio::time::timeout(
-            CONNECT_TIMEOUT,
-            endpoint.connect_timeout(CONNECT_TIMEOUT).connect(),
-        )
-        .await
-        .is_ok_and(|c| c.is_ok()),
+    let settings = state
+        .settings
+        .grpc_channel()
+        .connect_timeout(CONNECT_TIMEOUT);
+    let reachable = match crate::rpc::endpoint(endpoint, &settings) {
+        Ok(endpoint) => tokio::time::timeout(CONNECT_TIMEOUT, endpoint.connect())
+            .await
+            .is_ok_and(|c| c.is_ok()),
         Err(_) => false,
     };
     let standing = cursor::status(&state.db).await.unwrap_or_default();

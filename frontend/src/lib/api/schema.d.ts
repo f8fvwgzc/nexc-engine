@@ -4829,7 +4829,7 @@ export interface components {
             delegation: components["schemas"]["Delegation"];
             /**
              * @description Hosts the agent may call out to (`api.example.com`, `*.example.com`);
-             *     `null` allows any, `[]` none.
+             *     `null` and `[]` allow none: egress is denied unless a host is named.
              */
             egress_hosts: string[] | null;
             /** @description Models the agent may run on; `null` allows any. */
