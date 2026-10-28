@@ -164,6 +164,15 @@ export const agentTemplateSchema = z.object({
   policy: policyDocumentSchema,
   knowledge: z.array(z.string()),
   questions: z.array(competencyQuestionSchema),
+  /** The department it belongs to in the catalogue (`Finance & Risk`, `Core team`, ...). */
+  department: z.string(),
+  /**
+   * Certifications whose public outlines its knowledge is benchmarked against. The agents do not
+   * hold them: never say an agent is certified.
+   */
+  credentials: z.array(z.string()),
+  /** Ids of the skills an agent made from it is given. */
+  skills: z.array(z.string()),
 });
 export type AgentTemplate = z.infer<typeof agentTemplateSchema>;
 

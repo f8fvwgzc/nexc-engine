@@ -9,7 +9,7 @@ import { fixtures } from '../fixtures';
 export type DataMode = 'full' | 'empty' | 'loading' | 'error';
 
 /** What the shell needs to stand up at all: answered in every mode. */
-const SHELL = /^\/(auth\/|workspaces$|orchestrator\/)/;
+const SHELL = /^\/(auth\/|workspaces$|planner\/)/;
 
 /** Who is signed in: a workspace member, or a platform administrator (the console). */
 export type Persona = 'member' | 'admin';
@@ -32,6 +32,8 @@ interface Ctx {
   params: Record<string, string>;
   mode: DataMode;
   persona: Persona;
+  /** The request's JSON body, if it has one. */
+  body: unknown;
 }
 
 /** The JSON body to answer with; `undefined` answers 404, {@link PENDING} leaves the request open. */
@@ -91,7 +93,7 @@ const handlers: [string, Handler][] = [
   ['GET /workspaces/:wid/transfers', ({ mode }) => list(mode, fixtures.transfers)],
 
   /* issues */
-  ['GET /workspaces/:wid/issues', ({ mode, url }) => list(mode, filterIssues(url))],
+  ['GET /workspaces/:wid/issues', ({ mode, url }) => list(mode, filterIssues(url).map(summary))],
   ['GET /workspaces/:wid/labels', ({ mode }) => list(mode, fixtures.labels)],
   [
     'GET /workspaces/:wid/projects',
@@ -104,7 +106,25 @@ const handlers: [string, Handler][] = [
     },
   ],
   ['GET /workspaces/:wid/inbox', ({ mode }) => list(mode, fixtures.inbox)],
+  [
+    'GET /workspaces/:wid/inbox/unread-count',
+    ({ mode }) => ({ count: list(mode, fixtures.inbox).filter((n) => n.read_at === null).length }),
+  ],
   ['GET /issues/:iid/events', ({ mode }) => list(mode, fixtures.issueEvents)],
+  [
+    'POST /issues/:iid/comments',
+    ({ params, body, persona }) => postedComment(params.iid, body, persona),
+  ],
+  [
+    'POST /issues/:iid/events/:eid/reactions',
+    ({ params, body, persona }) =>
+      reactionsAfter(params.eid, (body as { emoji?: string } | null)?.emoji, true, persona),
+  ],
+  [
+    'DELETE /issues/:iid/events/:eid/reactions',
+    ({ params, url, persona }) =>
+      reactionsAfter(params.eid, url.searchParams.get('emoji'), false, persona),
+  ],
   ['GET /issues/:iid/run-artifacts', ({ mode }) => list(mode, fixtures.runArtifacts)],
   ['GET /issues/:iid', ({ params }) => fixtures.issues.find((i) => i.id === params.iid)],
 
@@ -125,7 +145,19 @@ const handlers: [string, Handler][] = [
   ],
 
   /* graphs and runs */
-  ['GET /graphs', ({ mode }) => list(mode, fixtures.graphs)],
+  [
+    'GET /graphs',
+    ({ mode, url }) => {
+      // `limit`: the most recently updated first, as the server answers the sidebar.
+      const limit = Number(url.searchParams.get('limit') ?? 0);
+      const graphs = limit
+        ? [...fixtures.graphs]
+            .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+            .slice(0, limit)
+        : fixtures.graphs;
+      return list(mode, graphs);
+    },
+  ],
   ['GET /graphs/:gid', ({ mode, params }) => (mode === 'full' ? graphById(params.gid) : undefined)],
   [
     'GET /graphs/:gid/runs',
@@ -135,10 +167,21 @@ const handlers: [string, Handler][] = [
         fixtures.runs.filter((r) => r.graph_id === params.gid),
       ),
   ],
+  [
+    'GET /workspaces/:wid/runs',
+    ({ mode }) =>
+      list(
+        mode,
+        fixtures.runs.map((r) => ({
+          ...r,
+          graph_name: fixtures.graphs.find((g) => g.id === r.graph_id)?.name ?? 'Graph',
+        })),
+      ),
+  ],
   ['GET /graphs/:gid/suggestions', () => []],
   ['GET /graphs/:gid/events', () => PENDING],
   ['GET /templates', () => fixtures.templates],
-  ['GET /orchestrator/status', () => fixtures.orchestrator],
+  ['GET /planner/status', () => fixtures.planner],
   ['POST /realtime/tickets', () => ({ ticket: 'e2e-ticket', expires_in: 30 })],
   ['GET /runs/:rid', ({ mode, params }) => (mode === 'full' ? runById(params.rid) : undefined)],
   ['GET /runs/:rid/artifacts', ({ mode }) => list(mode, fixtures.artifacts)],
@@ -158,6 +201,18 @@ const handlers: [string, Handler][] = [
   ['GET /agents/:aid/tokens', ({ mode }) => list(mode, fixtures.agentTokens)],
   ['GET /agents/:aid/a2a/tasks', ({ mode }) => list(mode, fixtures.a2aTasks)],
   ['GET /agent-templates', () => fixtures.agentTemplates],
+  // The skill library is a catalogue: there in every data mode, like the templates.
+  ['GET /skills', () => fixtures.skills],
+  [
+    'GET /skills/:sid',
+    ({ params }) => {
+      const summary = fixtures.skills.find((s) => s.id === params.sid);
+      if (!summary) return undefined;
+      // Every skill opens with the fixture skill's knowledge, under its own name.
+      const { chars: _chars, ...rest } = summary;
+      return { ...fixtures.skill, ...rest };
+    },
+  ],
   [
     'GET /workspaces/:wid/secops/overview',
     ({ mode }) => full(mode, fixtures.secopsOverview, fixtures.secopsOverviewEmpty),
@@ -226,6 +281,52 @@ const handlers: [string, Handler][] = [
   ],
 ];
 
+const signedIn = (persona: Persona) => {
+  const { id, name } = persona === 'admin' ? fixtures.auth.admin : fixtures.auth.user;
+  return { user_id: id, name };
+};
+
+/** A comment, or a reply (`parent_id`), as the server answers its creation: by the reader, now. */
+function postedComment(issueId: string | undefined, body: unknown, persona: Persona) {
+  const sent = (body ?? {}) as { body?: string; parent_id?: string };
+  return {
+    id: crypto.randomUUID(),
+    issue_id: issueId,
+    kind: 'comment',
+    actor: signedIn(persona),
+    body: sent.body ?? '',
+    from: null,
+    to: null,
+    created_at: new Date().toISOString(),
+    edited_at: null,
+    run_id: null,
+    parent_id: sent.parent_id ?? null,
+    reactions: [],
+  };
+}
+
+/** An entry's reactions once the reader reacted with `emoji` (`on`) or took it back. */
+function reactionsAfter(
+  eventId: string | undefined,
+  emoji: string | null | undefined,
+  on: boolean,
+  persona: Persona,
+) {
+  const event = fixtures.issueEvents.find((e) => e.id === eventId);
+  if (!event || !emoji) return undefined;
+  const me = signedIn(persona);
+  const others = (users: { user_id: string; name: string }[]) =>
+    users.filter((u) => u.user_id !== me.user_id);
+  const found = event.reactions.find((r) => r.emoji === emoji);
+  const named = found ? others(found.users) : [];
+  const count = (found?.count ?? 0) - (found?.reacted ? 1 : 0) + (on ? 1 : 0);
+  const after = { emoji, count, reacted: on, users: (on ? [me, ...named] : named).slice(0, 10) };
+  // As the server does: each emoji keeps its place, a new one goes last.
+  if (!found) return count === 0 ? event.reactions : [...event.reactions, after];
+  if (count === 0) return event.reactions.filter((r) => r !== found);
+  return event.reactions.map((r) => (r === found ? after : r));
+}
+
 function filterIssues(url: URL) {
   const q = url.searchParams;
   return fixtures.issues.filter(
@@ -239,6 +340,12 @@ function filterIssues(url: URL) {
       (!q.get('label_id') || i.labels.some((l) => l.id === q.get('label_id'))) &&
       (q.get('open') !== 'true' || !['completed', 'canceled'].includes(i.state.category)),
   );
+}
+
+/** An issue as lists carry it (`IssueSummary`): without its description. */
+function summary(issue: (typeof fixtures.issues)[number]) {
+  const { description: _description, ...rest } = issue;
+  return rest;
 }
 
 function filterArtifactFiles(url: URL) {
@@ -350,6 +457,7 @@ export async function mockApi(page: Page, options: MockOptions): Promise<MockLog
           params,
           mode: options.mode,
           persona: options.persona ?? 'member',
+          body: request.postData() ? (request.postDataJSON() as unknown) : undefined,
         });
         // A live stream stays open: the request is never answered.
         if (reply === PENDING) return;

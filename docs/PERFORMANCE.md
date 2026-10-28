@@ -107,7 +107,13 @@ the other kinds and go in a payload of their own: a replica still on a build wit
 a rolling update cannot read them and ignores that payload only (it keeps no onto-intelli reads
 anyway), and still drops the policies, guardrails, agents and vocabularies sent beside it. From
 this build on, a replica skips a kind of key it does not know and drops the rest of the payload's
-keys.
+keys. A `NOTIFY` sent while a replica's `LISTEN` connection is down never reaches it, so when that
+connection comes back (the listener reconnects after a failover or an idle timeout; after 30 s
+with no notification it sends a `SELECT 1`, and one not answered in 10 s counts as a lost
+connection, since a NAT or load balancer that forgets an idle connection sends no reset) the
+replica drops every entry of its hot-read and onto-intelli caches and marks its vocabularies
+stale: the next reads go to the database and to onto-intelli, and nothing a peer changed in the
+gap is served for the rest of its TTL.
 
 ### Cross-service calls
 
@@ -205,7 +211,7 @@ The harness's own header: nexc-engine API latency: 64 concurrent callers × 8 re
 | GET /api/v1/memories | 512 | 200 | 5.51 | 6.06 | 6.20 | 20 ms | pass |
 | GET /api/v1/memories/topics | 512 | 200 | 9.05 | 10.05 | 10.39 | 200 ms | pass |
 | GET /api/v1/memories/{id} | 512 | 404 | 3.22 | 3.96 | 4.21 | 20 ms | not gated (404) |
-| GET /api/v1/orchestrator/status | 512 | 200 | 7.34 | 8.31 | 8.55 | 20 ms | pass |
+| GET /api/v1/planner/status (measured as /orchestrator/status) | 512 | 200 | 7.34 | 8.31 | 8.55 | 20 ms | pass |
 | GET /api/v1/readyz | 512 | 200 | 2.93 | 3.58 | 3.74 | 20 ms | pass |
 | GET /api/v1/runs/{rid} | 512 | 200 | 8.41 | 9.33 | 9.56 | 20 ms | pass |
 | GET /api/v1/runs/{rid}/artifacts | 512 | 200 | 5.66 | 6.43 | 6.69 | 20 ms | pass |

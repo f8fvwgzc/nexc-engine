@@ -94,6 +94,17 @@ pub struct Run {
     pub node_runs: Vec<NodeRun>,
 }
 
+/// A run as the workspace's run list shows it: the run with its graph's name.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct WorkspaceRun {
+    #[serde(flatten)]
+    pub run: Run,
+    pub graph_name: String,
+}
+
+/// Most runs one list returns.
+pub const RUNS_LIST_MAX: i64 = 100;
+
 /// A file produced by a node during a run.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Artifact {

@@ -35,12 +35,14 @@ replicas:
 # Production by default: Secure cookies, served over TLS (ingress.tlsSecretName), and no
 # sign-up (an account opened by sign-up owns a workspace of its own: create accounts with
 # `nexc user create`, or sign in with single sign-on). NEXC_CORS_ORIGINS and NEXC_PUBLIC_URL
-# are derived from ingress.host when left empty. A plain-http trial on minikube sets
-# NEXC_ENV=development, NEXC_COOKIE_SECURE=false and ingress.tlsSecretName="".
+# (A2A cards, alert links and the SSO callback carry it; docs/INFRASTRUCTURE.md, Serving it on a
+# host of its own) are derived from ingress.host when left empty. A plain-http trial on minikube
+# sets NEXC_ENV=development, NEXC_COOKIE_SECURE=false and ingress.tlsSecretName="".
 config:
   NEXC_ENV: production
   NEXC_LOG: info
-  NEXC_DB_MAX_CONNECTIONS: "20"
+  # NEXC_DB_MAX_CONNECTIONS, the backend's PostgreSQL pool per pod, is sized from the connection
+  # budget (postgres.maxConnections) unless you set it here.
   NEXC_CORS_ORIGINS: ""
   NEXC_PUBLIC_URL: ""
   NEXC_COOKIE_SECURE: "true"
@@ -118,14 +120,17 @@ backend:
   # its peers at once and exits; the grace period leaves room for that and for HTTP requests in
   # flight.
   runLeaseSecs: 30
+  # Give every workspace the 30 expert agents and the core team's skills once (docs/AGENT-CATALOG.md).
+  seedExpertAgents: true
   terminationGracePeriodSeconds: 60
   # The backend's data volume (NEXC_DATA_DIR: run artifacts, uploaded documents), mounted by every
   # backend replica. ReadWriteOnce attaches it to one node, so it carries one replica (the
-  # default). For more (the chart spreads them across nodes, and the autoscaler adds more) set
-  # ReadWriteMany with a class that offers it (NFS, EFS, Filestore, CephFS) in dataStorageClass,
-  # so a replica that takes a run over sees its artifacts; the chart refuses to render several
-  # replicas, or the autoscaler, on ReadWriteOnce. Or name a claim you made in
-  # dataExistingClaim (and its access mode here), which the chart then mounts instead of
+  # default), and the chart keeps a rollout's new pod on that node (a required pod affinity) so it
+  # does not wait on a Multi-Attach error. For more (the chart spreads them across nodes, and the
+  # autoscaler adds more) set ReadWriteMany with a class that offers it (NFS, EFS, Filestore,
+  # CephFS) in dataStorageClass, so a replica that takes a run over sees its artifacts; the chart
+  # refuses to render several replicas, or the autoscaler, on ReadWriteOnce. Or name a claim you
+  # made in dataExistingClaim (and its access mode here), which the chart then mounts instead of
   # creating `backend-data`.
   dataStorage: 5Gi
   dataAccessMode: ReadWriteOnce
@@ -223,6 +228,19 @@ postgres:
   # NEXC_DATABASE_URL.
   enabled: true
   storage: 5Gi
+  # The connection budget. Every backend pod that can run at once (autoscaling.backend.maxReplicas,
+  # or replicas.backend, plus the one a rollout adds) fills a pool of NEXC_DB_MAX_CONNECTIONS, the
+  # realtime LISTEN connection included; onto-intelli adds replicas x maxConnections (its rollout
+  # stops a pod before it starts the next, so it adds no pool). Together
+  # they stay under maxConnections less reservedConnections (psql, backups, the superuser's own
+  # three): unless config.NEXC_DB_MAX_CONNECTIONS is set, each pod's pool is that share, at most
+  # 20, and with the chart's PostgreSQL a pool that does not fit refuses to render. maxConnections
+  # is PostgreSQL's max_connections: the chart's (passed as -c max_connections when it is not
+  # PostgreSQL's own default of 100; changing it restarts PostgreSQL), or, with enabled=false, set
+  # it to your database's. A transaction-pooling PgBouncer in front does not fit the backend: its
+  # LISTEN and its migration lock need a session of their own (docs/HA.md).
+  maxConnections: 100
+  reservedConnections: 10
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: "1", memory: 1Gi }
@@ -287,6 +305,15 @@ secrets:
     NEXC_ADMIN_EMAIL: ""
     NEXC_ADMIN_PASSWORD: ""
 
+# The host -> frontend; /api, /a2a and the well-known documents straight to the backend. Two more
+# Ingress objects for the host carry the routes that take larger bodies, since an annotation
+# applies to every path of its Ingress: knowledge documents (documentsBodySize; the backend takes
+# 50 MiB and the multipart envelope) and A2A tasks (a2aBodySize; 16 MiB, files inline), each a
+# little over the backend's own cap so its 413 is the answer. Both copy `annotations` and the TLS
+# blocks (tlsSecretName or tls).
+# The documents' path is a regular expression (it holds the workspace), and ingress-nginx then
+# matches every path of the host as one, which routes them as before. Client addresses (the
+# backend's per-address limits): docs/INFRASTRUCTURE.md, Client addresses.
 ingress:
   enabled: true
   className: nginx
@@ -297,6 +324,8 @@ ingress:
   # (tlsUpstream: a cloud load balancer that terminates it).
   tlsSecretName: nexc-tls
   tlsUpstream: false
+  documentsBodySize: 51m
+  a2aBodySize: 17m
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: "2m"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"

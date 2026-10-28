@@ -195,6 +195,8 @@ pub async fn create(
             ..Capabilities::default()
         },
         a2a_exposed: false,
+        skills: Vec::new(),
+        template_id: None,
     };
     let secret = api_token::generate();
     let mut tx = state.db.begin().await?;

@@ -18,16 +18,42 @@ pub use state::{AppState, guarded_http_client, http_client, operator_endpoints};
 use crate::config::Settings;
 use crate::domain::user::{self, Role};
 use crate::engine::scheduler;
-use crate::{memory, orchestrator, repo, security};
+use crate::{memory, planner, repo, security};
 
 /// Longest a shutting-down instance waits for its runs to be handed to its
 /// peers before it lets them go (they are then taken over when their lease
 /// runs out); well inside the default 60 s grace period of the Helm chart.
 pub const HAND_OFF_LIMIT: std::time::Duration = std::time::Duration::from_secs(15);
 
+/// Of `NEXC_DB_MAX_CONNECTIONS`, the connections a server sets aside for
+/// renewing the leases of its runs ([`AppState::with_lease_pool`]), so that a
+/// pod opens no more connections than the setting says: the Helm chart's
+/// connection budget counts on it (docs/HA.md).
+pub const LEASE_CONNECTIONS: u32 = 2;
+
+/// How many of `max_connections` go to the lease pool: none for a pool of
+/// fewer than four, which renews leases on itself rather than shrink further.
+fn lease_share(max_connections: u32) -> u32 {
+    if max_connections >= 4 {
+        LEASE_CONNECTIONS
+    } else {
+        0
+    }
+}
+
 /// Connects to the database and applies migrations.
 pub async fn connect_db(settings: &Settings) -> anyhow::Result<sqlx::PgPool> {
-    let pool = repo::connect(settings.database_url.expose(), settings.db_max_connections).await?;
+    connect_pool(settings, settings.db_max_connections).await
+}
+
+/// [`connect_db`], with a pool of `max_connections`.
+async fn connect_pool(settings: &Settings, max_connections: u32) -> anyhow::Result<sqlx::PgPool> {
+    let pool = repo::connect_limited(
+        settings.database_url.expose(),
+        max_connections,
+        settings.db_statement_timeout,
+    )
+    .await?;
     repo::migrate(&pool).await?;
     Ok(pool)
 }
@@ -83,9 +109,10 @@ pub async fn seed_missing_workspaces(state: &AppState) -> anyhow::Result<()> {
 /// fails, the runs executing here are handed to the other replicas, and
 /// connections finish.
 pub async fn serve(settings: Settings) -> anyhow::Result<()> {
-    let db = connect_db(&settings).await?;
+    let lease = lease_share(settings.db_max_connections);
+    let db = connect_pool(&settings, settings.db_max_connections - lease).await?;
     let addr = SocketAddr::new(settings.host, settings.port);
-    let state = AppState::new(settings, db)?;
+    let state = AppState::new(settings, db)?.with_lease_pool(lease);
     if memory::vectors::ensure(&state.db).await? {
         let filled = memory::vectors::backfill(&state.db).await?;
         state.memories.set_vector_search(true);
@@ -130,7 +157,7 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
         );
     }
     seed_missing_workspaces(&state).await?;
-    orchestrator::seed_missing_orgs(&state).await?;
+    planner::seed_missing_orgs(&state).await?;
     tokio::fs::create_dir_all(state.settings.artifacts_dir()).await?;
     tokio::fs::create_dir_all(state.settings.documents_dir()).await?;
 
@@ -193,5 +220,18 @@ pub(crate) async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c => {}
         _ = terminate => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_lease_pool_comes_out_of_the_connection_setting() {
+        assert_eq!(lease_share(20), LEASE_CONNECTIONS);
+        assert_eq!(lease_share(4), LEASE_CONNECTIONS);
+        assert_eq!(lease_share(3), 0);
+        assert_eq!(lease_share(1), 0);
     }
 }

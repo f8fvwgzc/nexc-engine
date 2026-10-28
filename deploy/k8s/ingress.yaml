@@ -2,6 +2,19 @@
 # skip a hop, and so do the A2A surface (/a2a, /.well-known/agent.json; CONTRACT §10) and the
 # signing keys (/.well-known/jwks.json).
 # /metrics is not routed at all.
+#
+# Three Ingress objects for the one host, because an annotation applies to every path of its
+# Ingress: requests are capped at 2m (the backend takes 1 MiB), knowledge documents at 51m and
+# A2A tasks at 17m (each a little over the backend's own cap, so its 413 is the answer).
+# ingress-nginx merges them into one server; each carries the TLS block, which deploy/minikube
+# removes from all three.
+#
+# Client addresses: the backend counts failed sign-ins per address (NEXC_TRUST_PROXY reads the
+# last X-Forwarded-For hop, the one ingress-nginx writes). Behind a cloud load balancer that
+# address is the load balancer's or a node's unless the controller sees the client: give the
+# controller's Service `externalTrafficPolicy: Local` (an L4 load balancer), or turn on the PROXY
+# protocol on both, or, behind an L7 one, set `use-forwarded-headers: "true"` and
+# `proxy-real-ip-cidr: <its ranges>` in the controller's ConfigMap (docs/INFRASTRUCTURE.md).
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -28,19 +41,71 @@ spec:
             pathType: Prefix
             backend:
               service: { name: backend, port: { name: http } }
-          - path: /a2a
-            pathType: Prefix
-            backend:
-              service: { name: backend, port: { name: http } }
+          # ImplementationSpecific, not Exact: ingress-nginx 1.12 and later refuse a dot in an Exact
+          # or Prefix path (strict-validate-path-type).
           - path: /.well-known/agent.json
-            pathType: Exact
+            pathType: ImplementationSpecific
             backend:
               service: { name: backend, port: { name: http } }
           - path: /.well-known/jwks.json
-            pathType: Exact
+            pathType: ImplementationSpecific
             backend:
               service: { name: backend, port: { name: http } }
           - path: /
             pathType: Prefix
             backend:
               service: { name: frontend, port: { name: http } }
+---
+# A2A: a task carries its files inline (base64), up to 16 MiB at the backend (RPC_BODY_LIMIT).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nexc-a2a
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "17m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [nexc.local]
+      secretName: nexc-tls
+  rules:
+    - host: nexc.local
+      http:
+        paths:
+          - path: /a2a
+            pathType: Prefix
+            backend:
+              service: { name: backend, port: { name: http } }
+---
+# Knowledge documents: up to 50 MiB and the multipart envelope (DOCUMENT_MAX_BYTES plus
+# UPLOAD_SLACK). The path has the workspace in it, hence a regular expression; ingress-nginx then
+# matches every path of the host as one (case-insensitive, longest first), which routes them as
+# before.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nexc-documents
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "51m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [nexc.local]
+      secretName: nexc-tls
+  rules:
+    - host: nexc.local
+      http:
+        paths:
+          - path: /api/v1/workspaces/[^/]+/documents$
+            pathType: ImplementationSpecific
+            backend:
+              service: { name: backend, port: { name: http } }

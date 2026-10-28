@@ -1,41 +1,42 @@
 {{- if .Values.ingress.enabled }}
+{{- $i := .Values.ingress }}
 # The host -> frontend (SPA); /api goes straight to the backend so SSE and WebSockets skip a hop,
 # and so do the A2A surface (/a2a, /.well-known/agent.json; CONTRACT §10) and the signing keys
-# (/.well-known/jwks.json). /metrics is not routed.
+# (/.well-known/jwks.json). /metrics is not routed. Knowledge documents and A2A tasks take larger
+# bodies, on Ingress objects of their own below (an annotation applies to every path of its
+# Ingress); ingress-nginx merges the three into one server.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: nexc
   labels:
     {{- include "nexc.labels" . | nindent 4 }}
-  {{- with .Values.ingress.annotations }}
+  {{- with $i.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  ingressClassName: {{ .Values.ingress.className }}
+  ingressClassName: {{ $i.className }}
   {{- with include "nexc.ingressTls" . }}
   tls:
     {{- . | nindent 4 }}
   {{- end }}
   rules:
-    - host: {{ .Values.ingress.host | quote }}
+    - host: {{ $i.host | quote }}
       http:
         paths:
           - path: /api
             pathType: Prefix
             backend:
               service: { name: backend, port: { name: http } }
-          - path: /a2a
-            pathType: Prefix
-            backend:
-              service: { name: backend, port: { name: http } }
+          # ImplementationSpecific, not Exact: ingress-nginx 1.12 and later refuse a dot in an
+          # Exact or Prefix path (strict-validate-path-type).
           - path: /.well-known/agent.json
-            pathType: Exact
+            pathType: ImplementationSpecific
             backend:
               service: { name: backend, port: { name: http } }
           - path: /.well-known/jwks.json
-            pathType: Exact
+            pathType: ImplementationSpecific
             backend:
               service: { name: backend, port: { name: http } }
           - path: /
@@ -52,4 +53,55 @@ spec:
             backend:
               service: { name: onto-intelli, port: { name: http } }
     {{- end }}
+---
+# A2A: a task carries its files inline (base64), up to 16 MiB at the backend (RPC_BODY_LIMIT).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nexc-a2a
+  labels:
+    {{- include "nexc.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml (merge (dict "nginx.ingress.kubernetes.io/proxy-body-size" (toString (dig "a2aBodySize" "17m" $i))) ($i.annotations | default dict)) | nindent 4 }}
+spec:
+  ingressClassName: {{ $i.className }}
+  {{- with include "nexc.ingressTls" $ }}
+  tls:
+    {{- . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ $i.host | quote }}
+      http:
+        paths:
+          - path: /a2a
+            pathType: Prefix
+            backend:
+              service: { name: backend, port: { name: http } }
+---
+# Knowledge documents: up to 50 MiB and the multipart envelope (DOCUMENT_MAX_BYTES plus
+# UPLOAD_SLACK). The path holds the workspace, hence a regular expression; ingress-nginx then
+# matches every path of the host as one (case-insensitive, longest first), which routes them as
+# before.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nexc-documents
+  labels:
+    {{- include "nexc.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml (merge (dict "nginx.ingress.kubernetes.io/proxy-body-size" (toString (dig "documentsBodySize" "51m" $i)) "nginx.ingress.kubernetes.io/use-regex" "true") ($i.annotations | default dict)) | nindent 4 }}
+spec:
+  ingressClassName: {{ $i.className }}
+  {{- with include "nexc.ingressTls" $ }}
+  tls:
+    {{- . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ $i.host | quote }}
+      http:
+        paths:
+          - path: /api/v1/workspaces/[^/]+/documents$
+            pathType: ImplementationSpecific
+            backend:
+              service: { name: backend, port: { name: http } }
 {{- end }}

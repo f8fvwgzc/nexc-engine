@@ -1,4 +1,4 @@
-//! Background workers: run dispatcher, realtime fan-out, orchestrator
+//! Background workers: run dispatcher, realtime fan-out, planner
 //! heartbeat and housekeeping.
 
 use std::future::Future;
@@ -9,9 +9,11 @@ use tokio_util::sync::CancellationToken;
 use super::AppState;
 use crate::engine::{knowledge, scheduler};
 use crate::ontology::{export, migrate};
-use crate::{alerting, firewall, orchestrator, otlp, realtime, repo};
+use crate::{alerting, firewall, otlp, planner, realtime, repo};
 
 const HEARTBEAT_EVERY: Duration = Duration::from_secs(10);
+/// The expert catalog sweep: at start, then for workspaces another backend made.
+const CATALOG_EVERY: Duration = Duration::from_secs(600);
 const HOUSEKEEPING_EVERY: Duration = Duration::from_secs(60);
 /// How soon a session ended on another server stops working on this one.
 const SESSIONS_EVERY: Duration = Duration::from_secs(10);
@@ -51,10 +53,16 @@ pub fn spawn(state: &AppState, shutdown: CancellationToken) {
     tokio::spawn(firewall::run(state.clone(), shutdown.clone()));
     alerting::spawn(state, shutdown.clone());
     tokio::spawn(every(
+        CATALOG_EVERY,
+        shutdown.clone(),
+        state.clone(),
+        |s| async move { planner::seed_catalog_everywhere(&s).await },
+    ));
+    tokio::spawn(every(
         HEARTBEAT_EVERY,
         shutdown.clone(),
         state.clone(),
-        |s| async move { orchestrator::heartbeat(&s).await },
+        |s| async move { planner::heartbeat(&s).await },
     ));
     tokio::spawn(every(
         SESSIONS_EVERY,

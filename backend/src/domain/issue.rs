@@ -6,6 +6,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use super::cycle::CycleRef;
+use super::run::RunStatus;
 use super::string_enum;
 
 /// Maximum issue and project title length.
@@ -84,7 +85,7 @@ pub const STARTER_STATES: [(&str, StateCategory, &str); 6] = [
 ];
 
 /// Someone an issue refers to.
-#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct IssuePerson {
     pub user_id: Uuid,
     pub name: String,
@@ -159,6 +160,104 @@ pub struct Issue {
     pub updated_at: DateTime<Utc>,
     #[schema(required = true)]
     pub completed_at: Option<DateTime<Utc>>,
+    /// The status of the latest run of the issue's graph; `null` without a graph or runs.
+    #[schema(required = true)]
+    pub run_status: Option<RunStatus>,
+}
+
+/// An issue as a list shows it: every field of [`Issue`] but its
+/// description, which only the issue's own page reads (it may be 64 KiB).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct IssueSummary {
+    pub id: Uuid,
+    pub workspace_id: Uuid,
+    pub team_id: Uuid,
+    /// The team key and the issue number, e.g. `ENG-12`.
+    pub identifier: String,
+    pub number: i32,
+    pub title: String,
+    pub state: IssueState,
+    /// `0` none, `1` urgent, `2` high, `3` medium, `4` low.
+    pub priority: i16,
+    /// The issue's labels, by name.
+    pub labels: Vec<Label>,
+    /// The issue this one is part of, if the caller can see it.
+    #[schema(required = true)]
+    pub parent: Option<IssueRef>,
+    pub sub_issues: SubIssueCount,
+    /// The cycle of its team the issue is planned in.
+    #[schema(required = true)]
+    pub cycle: Option<CycleRef>,
+    #[schema(required = true)]
+    pub assignee: Option<IssuePerson>,
+    /// The agent the issue is delegated to.
+    #[schema(required = true)]
+    pub agent_id: Option<Uuid>,
+    #[schema(required = true)]
+    pub project_id: Option<Uuid>,
+    /// The graph that plans and executes the issue, if one was created.
+    #[schema(required = true)]
+    pub graph_id: Option<Uuid>,
+    #[schema(required = true)]
+    pub creator_id: Option<Uuid>,
+    /// The day the issue is due, if it has one.
+    #[schema(required = true)]
+    pub due_date: Option<NaiveDate>,
+    /// The GitHub issue or pull request the issue is about (a link only; nothing is synced).
+    #[schema(required = true)]
+    pub github_url: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    #[schema(required = true)]
+    pub completed_at: Option<DateTime<Utc>>,
+    /// The status of the latest run of the issue's graph; `null` without a graph or runs.
+    #[schema(required = true)]
+    pub run_status: Option<RunStatus>,
+}
+
+impl IssueSummary {
+    /// The whole issue, given its description.
+    pub fn with_description(self, description: String) -> Issue {
+        Issue {
+            id: self.id,
+            workspace_id: self.workspace_id,
+            team_id: self.team_id,
+            identifier: self.identifier,
+            number: self.number,
+            title: self.title,
+            description,
+            state: self.state,
+            priority: self.priority,
+            labels: self.labels,
+            parent: self.parent,
+            sub_issues: self.sub_issues,
+            cycle: self.cycle,
+            assignee: self.assignee,
+            agent_id: self.agent_id,
+            project_id: self.project_id,
+            graph_id: self.graph_id,
+            creator_id: self.creator_id,
+            due_date: self.due_date,
+            github_url: self.github_url,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            completed_at: self.completed_at,
+            run_status: self.run_status,
+        }
+    }
+}
+
+/// Most unread notifications counted for the sidebar's badge: the inbox
+/// shows the newest 100 (`GET /workspaces/{wid}/inbox`), and the badge counts
+/// the unread among those, so it never counts one the inbox cannot show or
+/// mark read.
+pub const UNREAD_MAX: i64 = 100;
+
+/// How many of a member's notifications are unread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+pub struct UnreadCount {
+    /// At most [`UNREAD_MAX`].
+    pub count: i64,
 }
 
 /// A team, as much as a project shows of the team that owns it.
@@ -213,8 +312,44 @@ string_enum!(
         /// the file's name, `from` the version it replaced and `to` what was done
         /// (`uploaded`, `updated:v<N>`, `duplicated`, `deleted`).
         Artifact => "artifact",
+        /// A comment that mentioned an agent handed it the issue: `to` is the agent's name and
+        /// `body` what was asked ([`AGENT_DELEGATED`], [`AGENT_ASKED_TO_PLAN`]).
+        Agent => "agent",
     }
 );
+
+impl IssueEventKind {
+    /// Whether people may react to an entry of this kind: comments and run reports.
+    pub fn takes_reactions(self) -> bool {
+        matches!(self, IssueEventKind::Comment | IssueEventKind::Run)
+    }
+}
+
+/// The emoji people may react with, in the order a picker shows them.
+pub const REACTION_EMOJI: [&str; 10] = ["👍", "👎", "😄", "🎉", "😕", "❤️", "🚀", "👀", "🔥", "✅"];
+/// Most people a reaction names, newest first; `count` has them all.
+pub const REACTION_USERS_MAX: usize = 10;
+
+/// The emoji of [`REACTION_EMOJI`] that `raw` is, surrounding spaces aside;
+/// a heart without its emoji presentation selector is the same heart.
+pub fn reaction_emoji(raw: &str) -> Option<&'static str> {
+    let raw = raw.trim();
+    let raw = if raw == "\u{2764}" { "❤️" } else { raw };
+    REACTION_EMOJI.into_iter().find(|emoji| *emoji == raw)
+}
+
+/// One emoji given to a comment or a run report: how many gave it, whether
+/// the reader did, and who, newest first.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct Reaction {
+    /// One of 👍 👎 😄 🎉 😕 ❤️ 🚀 👀 🔥 ✅.
+    pub emoji: String,
+    pub count: i64,
+    /// Whether the reader is one of them.
+    pub reacted: bool,
+    /// Up to 10 of them, newest first.
+    pub users: Vec<IssuePerson>,
+}
 
 /// One entry of an issue's timeline: a comment, or a change to the issue.
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -240,6 +375,12 @@ pub struct IssueEvent {
     /// The run a `run` entry reports; `null` for other entries and once the run is deleted.
     #[schema(required = true)]
     pub run_id: Option<Uuid>,
+    /// The top-level comment a reply answers; `null` for every other entry.
+    #[schema(required = true)]
+    pub parent_id: Option<Uuid>,
+    /// The emoji given to a comment or a run report, each once, in the order
+    /// they were first given; empty for other entries.
+    pub reactions: Vec<Reaction>,
 }
 
 /// A change to record in an issue's timeline.
@@ -361,6 +502,10 @@ string_enum!(
         Alert => "alert",
         /// A run that executes the issue finished; its result is on the issue.
         Run => "run",
+        /// Someone mentioned the member in a comment on the issue.
+        Mention => "mention",
+        /// Someone reacted to the member's comment on the issue (`emoji` says with what).
+        Reaction => "reaction",
     }
 );
 
@@ -407,7 +552,8 @@ pub struct NotificationAlert {
 pub struct Notification {
     pub id: Uuid,
     pub kind: NotificationKind,
-    /// The issue (`assigned`, `comment`, `state`, `due`); `null` for the other kinds.
+    /// The issue (`assigned`, `comment`, `state`, `due`, `run`, `mention`, `reaction`); `null` for
+    /// the other kinds.
     #[schema(required = true)]
     pub issue: Option<NotificationIssue>,
     /// The approval to decide (`approval`); `null` for the other kinds.
@@ -419,6 +565,9 @@ pub struct Notification {
     /// Who assigned, commented or moved the issue; `null` once the account is gone.
     #[schema(required = true)]
     pub actor: Option<IssuePerson>,
+    /// What the actor reacted with (`reaction`); `null` for the other kinds.
+    #[schema(required = true)]
+    pub emoji: Option<String>,
     pub created_at: DateTime<Utc>,
     #[schema(required = true)]
     pub read_at: Option<DateTime<Utc>>,
@@ -489,6 +638,147 @@ pub fn run_report(results: &[NodeOutcome], failures: &[NodeOutcome]) -> String {
 /// `#rrggbb`.
 pub fn is_hex_color(s: &str) -> bool {
     s.len() == 7 && s.starts_with('#') && s[1..].chars().all(|c| c.is_ascii_hexdigit())
+}
+
+// ---------- mentions ----------
+
+/// Most people and agents one comment may mention.
+pub const COMMENT_MENTIONS_MAX: usize = 20;
+/// Most characters of the name a mention carries.
+pub const MENTION_NAME_MAX: usize = 100;
+/// Most characters of the instructions a mention gives the planner (what
+/// `POST /graphs/{gid}/plan` accepts).
+pub const MENTION_PLAN_MAX_CHARS: usize = 4_000;
+/// The `body` of an `agent` timeline entry when a mention delegated the issue to the agent.
+pub const AGENT_DELEGATED: &str = "delegated";
+/// The `body` of an `agent` timeline entry when a mention asked the agent for a plan.
+pub const AGENT_ASKED_TO_PLAN: &str = "asked to plan";
+
+/// Whom a mention names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MentionKind {
+    User,
+    Agent,
+}
+
+/// A person or an agent a comment mentions: `@[Name](user:<uuid>)` or
+/// `@[Name](agent:<uuid>)` in its text. The name is what the author saw; the
+/// id is what counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Mention {
+    pub kind: MentionKind,
+    pub id: Uuid,
+}
+
+/// One mention in a text: where it starts and ends, and the name it shows.
+struct MentionToken<'a> {
+    start: usize,
+    end: usize,
+    name: &'a str,
+    mention: Mention,
+}
+
+/// `rest` without `prefix`, compared without regard to ASCII case.
+fn strip_prefix_ignore_case<'a>(rest: &'a str, prefix: &str) -> Option<&'a str> {
+    rest.get(..prefix.len())
+        .filter(|head| head.eq_ignore_ascii_case(prefix))
+        .map(|_| &rest[prefix.len()..])
+}
+
+/// The mention that starts at `at` (on its `@[`), if one does: `@[`, a name
+/// of 1 to [`MENTION_NAME_MAX`] characters without `]` or a line break,
+/// `](user:` or `](agent:`, a hyphenated UUID, `)`.
+fn mention_at(body: &str, at: usize) -> Option<MentionToken<'_>> {
+    let rest = &body[at + 2..];
+    // The name ends at the first `]`, within a name's length: looking no
+    // further keeps a body full of `@[` quick to read.
+    let (close, end) = rest
+        .char_indices()
+        .take(MENTION_NAME_MAX + 1)
+        .find(|&(_, c)| c == ']' || c == '\n')?;
+    if end != ']' || close == 0 {
+        return None;
+    }
+    let name = &rest[..close];
+    let rest = rest[close + 1..].strip_prefix('(')?;
+    let (kind, rest) = match strip_prefix_ignore_case(rest, "user:") {
+        Some(rest) => (MentionKind::User, rest),
+        None => (
+            MentionKind::Agent,
+            strip_prefix_ignore_case(rest, "agent:")?,
+        ),
+    };
+    // Only the hyphenated form: `Uuid::parse_str` also takes braced, URN and bare ids.
+    let id = rest.get(..36)?;
+    let rest = rest[36..].strip_prefix(')')?;
+    let id = Uuid::parse_str(id).ok()?;
+    Some(MentionToken {
+        start: at,
+        end: body.len() - rest.len(),
+        name,
+        mention: Mention { kind, id },
+    })
+}
+
+/// Every mention in `body`, in order. Text that only looks like one stays text.
+fn mention_tokens(body: &str) -> Vec<MentionToken<'_>> {
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(at) = body[from..].find("@[").map(|i| from + i) {
+        match mention_at(body, at) {
+            Some(token) => {
+                from = token.end;
+                out.push(token);
+            }
+            None => from = at + 2,
+        }
+    }
+    out
+}
+
+/// The people and agents `body` mentions, each once, in the order they first
+/// appear.
+pub fn mentions(body: &str) -> Vec<Mention> {
+    let mut out: Vec<Mention> = Vec::new();
+    for token in mention_tokens(body) {
+        if !out.contains(&token.mention) {
+            out.push(token.mention);
+        }
+    }
+    out
+}
+
+/// `body` with every mention written `@Name`, as a person reads it.
+pub fn mentions_as_text(body: &str) -> String {
+    let mut out = String::with_capacity(body.len());
+    let mut from = 0;
+    for token in mention_tokens(body) {
+        out.push_str(&body[from..token.start]);
+        out.push('@');
+        out.push_str(token.name);
+        from = token.end;
+    }
+    out.push_str(&body[from..]);
+    out
+}
+
+/// What a comment that mentions an agent asks the planner: the comment as a
+/// person reads it, then which agent takes the steps. Cut to
+/// [`MENTION_PLAN_MAX_CHARS`], the comment giving way.
+pub fn mention_plan_instructions(comment: &str, agent_name: &str, agent_role: &str) -> String {
+    let ask = format!("Hand the steps to the {agent_role} agent ({agent_name}).");
+    let room = MENTION_PLAN_MAX_CHARS.saturating_sub(ask.chars().count() + 2);
+    let text: String = mentions_as_text(comment)
+        .trim()
+        .chars()
+        .take(room)
+        .collect();
+    let text = text.trim_end();
+    if text.is_empty() {
+        ask.chars().take(MENTION_PLAN_MAX_CHARS).collect()
+    } else {
+        format!("{text}\n\n{ask}")
+    }
 }
 
 #[cfg(test)]
@@ -616,6 +906,7 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
             completed_at: None,
+            run_status: None,
         };
         let link = "https://github.com/acme/app/issues/1";
         assert_eq!(
@@ -627,6 +918,26 @@ mod tests {
             }]
         );
         assert!(changes(&issue(Some(link)), &issue(Some(link))).is_empty());
+    }
+
+    #[test]
+    fn only_the_listed_emoji_are_reactions() {
+        for emoji in REACTION_EMOJI {
+            assert_eq!(reaction_emoji(emoji), Some(emoji));
+        }
+        assert_eq!(reaction_emoji(" 🎉 "), Some("🎉"));
+        assert_eq!(reaction_emoji("\u{2764}"), Some("❤️"));
+        for other in ["", " ", "🙂", "👍🏽", "🎉🎉", ":tada:", "\u{0}", "❤️ ❤️"] {
+            assert_eq!(reaction_emoji(other), None, "{other}");
+        }
+        assert!(IssueEventKind::Comment.takes_reactions() && IssueEventKind::Run.takes_reactions());
+        for kind in [
+            IssueEventKind::State,
+            IssueEventKind::Artifact,
+            IssueEventKind::Agent,
+        ] {
+            assert!(!kind.takes_reactions(), "{kind:?}");
+        }
     }
 
     #[test]
@@ -642,5 +953,89 @@ mod tests {
         }
         assert!(StateCategory::Canceled.is_closed() && !StateCategory::Started.is_closed());
         assert!(!is_hex_color("red") && !is_hex_color("#12345g"));
+    }
+
+    const ADA: &str = "d6b5915c-4605-7bcb-805f-46f6433df656";
+    const BOT: &str = "01cbdeb6-76f5-73d7-800d-7403e6bcc2f4";
+
+    #[test]
+    fn mentions_are_read_from_their_tokens() {
+        let ada = Mention {
+            kind: MentionKind::User,
+            id: ADA.parse().unwrap(),
+        };
+        let bot = Mention {
+            kind: MentionKind::Agent,
+            id: BOT.parse().unwrap(),
+        };
+        let body = format!(
+            "@[Ada Lovelace](user:{ADA}) can @[Researcher](agent:{BOT}) look? \
+             Thanks @[Ada](user:{ADA})."
+        );
+        // Each once, in the order they first appear; the name does not matter.
+        assert_eq!(mentions(&body), [ada, bot]);
+        assert_eq!(
+            mentions_as_text(&body),
+            "@Ada Lovelace can @Researcher look? Thanks @Ada."
+        );
+        // The kind and the id's hex digits are read in any case.
+        let upper = format!("@[Ada](USER:{})", ADA.to_uppercase());
+        assert_eq!(mentions(&upper), [ada]);
+        // A name may hold an `@[`: the first `]` ends it.
+        assert_eq!(mentions(&format!("@[a @[b](user:{ADA})")), [ada]);
+        assert_eq!(
+            mentions_as_text(&format!("x @[a @[b](user:{ADA}) y")),
+            "x @a @[b y"
+        );
+    }
+
+    #[test]
+    fn what_only_looks_like_a_mention_stays_text() {
+        let simple = ADA.replace('-', "");
+        for body in [
+            String::from("plain text, an email a@b.example and @Ada"),
+            format!("@[](user:{ADA})"),
+            format!("@[Ada\nLovelace](user:{ADA})"),
+            format!("@[Ada](team:{ADA})"),
+            format!("@[Ada](user:{simple})"),
+            format!("@[Ada](user:{{{ADA}}})"),
+            format!("@[Ada](user:urn:uuid:{ADA})"),
+            format!("@[Ada](user:{ADA}"),
+            format!("@[Ada] (user:{ADA})"),
+            format!("@[Ada](user:{})", &ADA[..35]),
+            format!("@[Ada](user:{}x)", &ADA[..35]),
+            format!("@[{}](user:{ADA})", "n".repeat(MENTION_NAME_MAX + 1)),
+            format!("@[Ada](user:{}é)", &ADA[..35]),
+        ] {
+            assert!(mentions(&body).is_empty(), "{body}");
+            assert_eq!(mentions_as_text(&body), body);
+        }
+        let longest = format!("@[{}](user:{ADA})", "n".repeat(MENTION_NAME_MAX));
+        assert_eq!(mentions(&longest).len(), 1);
+        // Names count characters, not bytes; past the longest name no `]` is looked for.
+        let wide = format!("@[{}](user:{ADA})", "é".repeat(MENTION_NAME_MAX));
+        assert_eq!(mentions(&wide).len(), 1);
+        let unclosed = format!("{}@[Ada](user:{ADA})", "@[".repeat(8_000));
+        assert_eq!(mentions(&unclosed).len(), 1);
+        // A broken token does not hide the next one.
+        let body = format!("@[Ada\n @[Ada](user:{ADA})");
+        assert_eq!(mentions(&body).len(), 1);
+        assert_eq!(mentions_as_text(&body), "@[Ada\n @Ada");
+    }
+
+    #[test]
+    fn a_mention_asks_the_planner_in_plain_words() {
+        let comment = format!("  @[Researcher](agent:{BOT}) compare the two portals.  ");
+        assert_eq!(
+            mention_plan_instructions(&comment, "Researcher", "researcher"),
+            "@Researcher compare the two portals.\n\n\
+             Hand the steps to the researcher agent (Researcher)."
+        );
+        // A long comment gives way to the request, within what the planner accepts.
+        let long = format!("@[Researcher](agent:{BOT}) {}", "word ".repeat(2_000));
+        let asked = mention_plan_instructions(&long, "Researcher", "researcher");
+        assert!(asked.chars().count() <= MENTION_PLAN_MAX_CHARS);
+        assert!(asked.ends_with("Hand the steps to the researcher agent (Researcher)."));
+        assert!(asked.starts_with("@Researcher word word"));
     }
 }

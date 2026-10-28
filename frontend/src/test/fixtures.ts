@@ -2,10 +2,13 @@ import type { Agent, AgentCard } from '@/schemas/agent';
 import type { AuthResponse, User } from '@/schemas/auth';
 import type { Graph, GraphEdge, GraphNode, Ontology } from '@/schemas/graph';
 import type { Memory } from '@/schemas/memory';
-import type { OrchestratorStatus } from '@/schemas/orchestrator';
 import type { Plan } from '@/schemas/plan';
+import type { PlannerStatus } from '@/schemas/planner';
+import { policyDocumentSchema } from '@/schemas/policy';
 import type { Artifact, NodeRun, Run } from '@/schemas/run';
+import type { AgentTemplate } from '@/schemas/secops';
 import type { LlmSettings } from '@/schemas/settings';
+import type { Skill, SkillSummary } from '@/schemas/skill';
 import type { GraphTemplate } from '@/schemas/template';
 import type { Span } from '@/schemas/trace';
 
@@ -267,6 +270,8 @@ export const agent: Agent = {
   risk_reasons: [],
   risk_updated_at: null,
   a2a_exposed: false,
+  skills: ['research-source-evaluation', 'core-evidence-and-sources'],
+  template_id: 'researcher',
 };
 
 export const memory: Memory = {
@@ -287,7 +292,7 @@ export const memory: Memory = {
 
 const health = { enabled: true, ok: true, url: 'http://localhost:8090', detail: null };
 
-export const orchestratorStatus: OrchestratorStatus = {
+export const plannerStatus: PlannerStatus = {
   demo_mode: true,
   queue_depth: 2,
   running_nodes: 1,
@@ -341,4 +346,66 @@ export const agentCard: AgentCard = {
       },
     ],
   },
+};
+
+export const skillSummaries: SkillSummary[] = [
+  {
+    id: 'core-evidence-and-sources',
+    name: 'Evidence and sources',
+    category: 'core',
+    description: 'Cites what it was given and says what is its own reasoning.',
+    keywords: ['cite', 'source'],
+    sources: [{ title: 'Citation guide', url: 'https://example.com/citations' }],
+    chars: 3600,
+  },
+  {
+    id: 'research-source-evaluation',
+    name: 'Source evaluation',
+    category: 'research',
+    description: 'Weighs how far a source can be trusted.',
+    keywords: ['credibility', 'bias'],
+    sources: [{ title: 'Evaluating sources', url: 'https://example.com/evaluating' }],
+    chars: 4100,
+  },
+  {
+    id: 'fin-equity-valuation',
+    name: 'Equity valuation',
+    category: 'finance',
+    description: 'Values a company with discounted cash flows and multiples.',
+    keywords: ['dcf', 'valuation', 'multiples'],
+    sources: [{ title: 'CFA Program curriculum outline', url: 'https://example.com/cfa' }],
+    chars: 3400,
+  },
+];
+
+export const skill: Skill = {
+  id: 'research-source-evaluation',
+  name: 'Source evaluation',
+  category: 'research',
+  description: 'Weighs how far a source can be trusted.',
+  keywords: ['credibility', 'bias'],
+  sources: [{ title: 'Evaluating sources', url: 'https://example.com/evaluating' }],
+  body: '## Checks\n\n- Who wrote it, and **when**.\n- What it cites.',
+};
+
+export const agentTemplate: AgentTemplate = {
+  id: 'researcher',
+  name: 'Researcher',
+  role: 'researcher',
+  title: 'Senior Researcher',
+  description: 'Finds and cites sources.',
+  purpose: 'Research questions with citations.',
+  runtime: 'python',
+  budget_tokens: 500000,
+  capabilities: agent.capabilities,
+  // Every rule at its default: what the template's policy is does not matter here.
+  policy: policyDocumentSchema.parse({}),
+  knowledge: [],
+  questions: [
+    { question: 'How do you weigh a source?', expected: ['author', 'date'] },
+    { question: 'What do you cite?', expected: ['source'] },
+  ],
+  department: 'Core team',
+  credentials: ['ACRL Framework for Information Literacy (ALA)'],
+  skills: ['research-source-evaluation', 'core-evidence-and-sources'],
 };

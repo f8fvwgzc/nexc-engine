@@ -7,7 +7,8 @@ import { ConfirmDialog } from '@/components/custom-ui/confirm-dialog';
 import { EmptyState } from '@/components/custom-ui/empty-state';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { PageSkeleton } from '@/components/layout/page-skeleton';
+import { ListPageSkeleton } from '@/components/layout/page-skeleton';
+import { QueryErrorBoundary } from '@/components/layout/query-error-boundary';
 import { Seo } from '@/components/seo/seo';
 import { Button } from '@/components/ui/button';
 import { agentsQuery } from '@/features/agents/api';
@@ -16,16 +17,20 @@ import { AgentFormDialog } from '@/features/agents/components/agent-form-dialog'
 import { AgentOrgChart } from '@/features/agents/components/agent-org-chart';
 import { AgentsTable } from '@/features/agents/components/agents-table';
 import { useDeleteAgent } from '@/features/agents/hooks/use-agent-mutations';
-import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
+import { useCurrentWorkspace, useWorkspaceId } from '@/features/workspaces/use-current-workspace';
 import type { Agent } from '@/schemas/agent';
 import { isWorkspaceAdmin } from '@/schemas/workspace';
 
 type Editing = { agent: Agent | null } | null;
 
+const DESCRIPTION =
+  'This workspace’s AI org chart: who reports to whom, which roles execute which nodes, what each may do, and how much budget each has left.';
+
 function Agents({ open }: { open: string | null }) {
   const { current } = useCurrentWorkspace();
   const workspaceId = current?.id;
   const admin = current !== undefined && isWorkspaceAdmin(current.role);
+  const member = current !== undefined && current.role !== 'guest';
   const { data: agents } = useSuspenseQuery(agentsQuery(workspaceId));
   const [editing, setEditing] = useState<Editing>(null);
   // `?agent=` opens that agent's card: the audit's answers link to it.
@@ -37,10 +42,10 @@ function Agents({ open }: { open: string | null }) {
   const create = () => setEditing({ agent: null });
 
   return (
-    <PageContainer>
+    <PageContainer className="motion-safe:animate-fade-in">
       <PageHeader
         title="Agents"
-        description="This workspace’s AI org chart: who reports to whom, which roles execute which nodes, what each may do, and how much budget each has left."
+        description={DESCRIPTION}
         actions={
           <Button onClick={create}>
             <PlusIcon />
@@ -79,6 +84,7 @@ function Agents({ open }: { open: string | null }) {
       <AgentCardSheet
         agent={card}
         admin={admin}
+        member={member}
         onOpenChange={(open) => !open && setCard(null)}
         onEdit={(agent) => {
           setCard(null);
@@ -107,12 +113,20 @@ function Agents({ open }: { open: string | null }) {
 export default function AgentsPage() {
   const [params] = useSearchParams();
   const open = params.get('agent');
+  const workspaceId = useWorkspaceId();
   return (
     <>
       <Seo title="Agents" noIndex />
-      <Suspense fallback={<PageSkeleton />}>
-        <Agents key={open ?? ''} open={open} />
-      </Suspense>
+      <QueryErrorBoundary
+        key={workspaceId}
+        page="default"
+        header={<PageHeader title="Agents" description={DESCRIPTION} />}
+        title="Couldn’t load the agents"
+      >
+        <Suspense fallback={<ListPageSkeleton filters={false} rows={6} />}>
+          <Agents key={open ?? ''} open={open} />
+        </Suspense>
+      </QueryErrorBoundary>
     </>
   );
 }

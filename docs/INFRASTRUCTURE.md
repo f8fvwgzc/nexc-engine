@@ -114,7 +114,10 @@ No other service is needed.
   version, a workspace's guardrails and LLM settings) are kept per instance until they are
   written: the write drops the entry locally and tells every other replica over PostgreSQL
   `NOTIFY`, the same channel the realtime events travel on; `NEXC_CACHE_TTL_SECS` (60 s) only
-  bounds a missed notification, and `0` turns the caches off. The smaller ones (a workspace's
+  bounds a missed notification, and `0` turns the caches off. A replica whose `LISTEN`
+  connection dropped (a failover, an idle timeout on the way, which a `SELECT 1` after 30 s with
+  no notification finds when no reset came) drops every entry once it listens again, since what
+  was sent meanwhile never reached it. The smaller ones (a workspace's
   memory set for 30 seconds, the list of common words for 10 minutes) expire on their own. Every
   JSON read also carries an `ETag`, so a console that asks again gets a `304` with no body: the
   caller's own `private` and varying by `Authorization`, the documents that are the same for
@@ -332,6 +335,86 @@ decision, the choices about WebSockets and 0-RTT, and what would make it change.
 and the Agent Firewall server, sizes its HTTP/2 flow-control window from the bandwidth-delay
 product it measures instead of hyper's fixed windows
 ([ADR 0002](adr/0002-edge-hardening-and-adaptive-grpc-windows.md)).
+
+## Serving it on a host of its own
+
+Everything works on `http://localhost` as it comes. On any other host name a few settings decide
+whether a sign-in lasts, whether links point back to the console and whether uploads get through
+the edge; none of them shows on localhost.
+
+| Setting | As it comes | On a host of its own |
+| --- | --- | --- |
+| `NEXC_ENV`, `NEXC_COOKIE_SECURE` | `development` and `false` in `.env` and the `deploy/minikube` trial; `production` and `true` in the Helm chart and `deploy/k8s`, which serve TLS (`ingress.tlsSecretName`, the Secret `nexc-tls`); the backend image alone defaults to `production` | Production (or `NEXC_COOKIE_SECURE=true`) marks the refresh cookie `Secure`. A browser keeps such a cookie on `http://localhost` but drops it on `http://<host>`, so users are signed out on the next reload, or when the 15-minute access token runs out. Serve the host over HTTPS; keep `development` and `false` only on a network you trust. |
+| `NEXC_PUBLIC_URL` | `http://localhost:8080`; the Helm chart derives it, and `NEXC_CORS_ORIGINS`, from `ingress.host` | Where the console is reached from outside: A2A agent cards, alert links and the single sign-on callback carry it. Set it to `https://<host>`. |
+| `NEXC_CORS_ORIGINS` | Compose: the localhost origins, set under the backend's `environment:` in `docker-compose.yml`, which wins over `.env` | The console calls its own origin (`/api/v1`), so this matters only for a console served from another origin: list it, in `docker-compose.yml` itself. Production refuses a plain `http://` origin other than localhost. A console on another site never gets the refresh cookie back either (`SameSite=Strict`): keep the console and the API on one site. |
+| The certificate | `make init` writes one for localhost | Browsers use HTTP/3 only with a certificate they trust: mount the host's (full chain) with a key uid 101 can read. certbot's keys are root's and 0600, and a key nginx cannot read stops the frontend container, plain HTTP included. |
+
+### Request sizes along the path
+
+A request crosses up to three limits on its way in, and the smallest one answers:
+
+| Request | Backend | Frontend nginx (`nginx/site.conf`) | Ingress |
+| --- | --- | --- | --- |
+| Anything else | 1 MiB (`BODY_LIMIT`, CONTRACT §3) | 2m | 2m (`Ingress nexc`) |
+| A knowledge document, `POST /api/v1/workspaces/{wid}/documents` | 50 MiB and 64 KiB of multipart envelope | 51m | 51m (`Ingress nexc-documents`) |
+| An A2A task, `POST /a2a/agents/...` | 16 MiB (files inline) | 17m | 17m (`Ingress nexc-a2a`) |
+
+Each edge allows a little more than the backend, so the backend's `413` (a problem document) is
+the answer to a body that is too large, not an nginx page. In Kubernetes the Ingress sends `/api`
+and `/a2a` straight to the backend; an annotation applies to every path of its Ingress, so the
+two larger routes sit on Ingress objects of their own (Helm: `ingress.documentsBodySize`,
+`ingress.a2aBodySize`), which ingress-nginx merges with `nexc` into one server. The documents'
+path holds the workspace, so it is a regular expression, and ingress-nginx then matches every path
+of the host as one (case-insensitive, longest first), which routes them as before. The well-known
+documents are `ImplementationSpecific` paths, since ingress-nginx 1.12 and later refuse a dot in
+an `Exact` one.
+
+Two limits are left as they are. The backend gives a request 60 s, reading its body included, so a
+50 MiB document needs about 7 Mbit/s up. And over HTTP/3, nginx's stream buffer
+(`http3_stream_buffer_size`, 64 KiB) bounds one upload to 64 KiB per round trip, about 1.3 MiB/s
+at 50 ms, so a large document on a distant link can run out of those 60 s; a larger buffer costs
+memory for every stream, so it stays as nginx sets it.
+
+### The backend's address in nginx
+
+The frontend's nginx looks the backend up while it runs, every 10 s (`server ... resolve` in the
+`upstream`, nginx 1.27.3 and later; the image has 1.28). `/docker-entrypoint.d/39-nexc-backend.sh`
+writes the server and the resolver when the container starts: the name servers of
+`/etc/resolv.conf` (Docker's `127.0.0.11` under Compose, the cluster DNS in Kubernetes) and
+`NEXC_BACKEND_UPSTREAM`, `backend:8080` by default. nginx's resolver has no search list, so in
+Kubernetes a bare name gets the namespace's domain (`backend.<namespace>.svc.<cluster domain>`,
+the first search domain there); an address is used as it is. So a backend container that is
+recreated or scaled in Compose is reached at its new address within 10 s with no restart of the
+frontend, and the image starts where no host is called `backend` (an `/api` request answers 502
+until the name resolves).
+
+### Client addresses
+
+With `NEXC_TRUST_PROXY=true` the backend takes a request's address from the last
+`X-Forwarded-For` hop, the one the proxy in front of it wrote, and counts sign-in failures per
+address (five a minute). That hop must be the client:
+
+- **Compose**: the frontend's nginx writes it from the connection, the client's.
+- **The `frontend-https` LoadBalancer** (`frontend.http3`, `deploy/k8s/http3`): keep its
+  `externalTrafficPolicy: Local`; `Cluster` replaces every client's address with a node's.
+- **ingress-nginx**: it writes the address of whoever connected to it. Behind a cloud load
+  balancer that is the load balancer or a node, so everyone behind it shares one address and one
+  sign-in budget. Give the controller's own Service `externalTrafficPolicy: Local` (an L4 load
+  balancer that passes addresses through), or turn the PROXY protocol on at the load balancer and
+  in the controller (`use-proxy-protocol: "true"`), or, behind an L7 load balancer that sends
+  `X-Forwarded-For`, set `use-forwarded-headers: "true"` and `proxy-real-ip-cidr` to its ranges
+  in the controller's ConfigMap. These are the controller's settings, outside this chart.
+
+### Images
+
+Images are pushed only for release tags (`v*`, `.github/workflows/release.yml`); CI builds them
+without pushing. So `latest` and the chart's `appVersion` are the last release, not `main`:
+`docker compose up -d` without `--build` (`pull_policy: missing` pulls when there is no local
+image) and `helm install` with the default tag run that release, without the issue pages,
+projects, artifacts or migrations merged since. A console built from `main` in front of it
+answers 404 on those endpoints. Build the images (`docker compose up -d --build`,
+`scripts/minikube-up.sh`), push your own and set `NEXC_IMAGE_TAG` (Compose) or `images.*.tag`
+(Helm), or tag a release once CI is green.
 
 <!-- #endregion secrets -->
 ## onto-intelli (optional): the audit's query engine

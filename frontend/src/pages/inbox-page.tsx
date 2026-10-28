@@ -18,7 +18,7 @@ import { ErrorState } from '@/components/custom-ui/error-state';
 import { PersonGlyph } from '@/components/custom-ui/issue-glyphs';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { PageSkeleton } from '@/components/layout/page-skeleton';
+import { ListPageSkeleton, ListSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -30,7 +30,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { inboxQuery, markInboxRead } from '@/features/issues/api';
 import { issuePath } from '@/features/issues/links';
@@ -45,15 +44,22 @@ import { SEVERITY_META } from '@/schemas/policy';
 import type { Workspace } from '@/schemas/workspace';
 
 /** What the actor did to the issue. */
-const VERB: Record<'assigned' | 'comment' | 'state' | 'due' | 'run', string> = {
+const VERB: Record<'assigned' | 'comment' | 'state' | 'due' | 'run' | 'mention', string> = {
   assigned: 'assigned you',
   comment: 'commented on',
+  mention: 'mentioned you in',
   state: 'moved',
   // Nobody did this one: the day arrived.
   due: 'is due:',
   // Agents did this one: a run of the issue's graph finished and its result is on the issue.
   run: 'finished work on',
 };
+
+/** What an issue entry says the actor did, up to the issue; a reaction names its emoji. */
+function verbOf(kind: keyof typeof VERB | 'reaction', emoji: string | null): string {
+  if (kind !== 'reaction') return VERB[kind];
+  return emoji ? `reacted ${emoji} to your comment on` : 'reacted to your comment on';
+}
 
 /** Who an issue entry names: nobody for a reminder, the agents for a run, else the actor. */
 function entryActor(n: Notification): string {
@@ -87,7 +93,7 @@ function IssueEntry({ n, onOpen }: { n: Notification; onOpen: (n: Notification) 
         className={`min-w-0 flex-1 truncate ${read ? 'text-muted-foreground' : ''}`}
         title={`${n.issue.identifier} ${n.issue.title}`}
       >
-        <span className="font-medium">{entryActor(n)}</span> {VERB[n.kind]}{' '}
+        <span className="font-medium">{entryActor(n)}</span> {verbOf(n.kind, n.emoji)}{' '}
         <span className="font-mono text-xs">{n.issue.identifier}</span> {n.issue.title}
       </span>
       <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
@@ -244,15 +250,7 @@ function List({ workspace }: { workspace: Workspace }) {
     mutationFn: (ids?: string[]) => markInboxRead(workspace.id, ids),
     onSuccess: (next) => queryClient.setQueryData(qk.issues.inbox(workspace.id), next),
   });
-  if (isPending) {
-    return (
-      <div className="space-y-2" aria-busy>
-        {[0, 1, 2, 3].map((i) => (
-          <Skeleton key={i} className="h-10 w-full" />
-        ))}
-      </div>
-    );
-  }
+  if (isPending) return <ListSkeleton rows={6} label="Loading the inbox" />;
   if (error) {
     return (
       <ErrorState title="Couldn’t load the inbox" error={error} onRetry={() => void refetch()} />
@@ -263,7 +261,7 @@ function List({ workspace }: { workspace: Workspace }) {
       <EmptyState
         icon={InboxIcon}
         title="Nothing for you yet"
-        description="You hear here when an issue is assigned to you, when someone comments on or moves an issue you created or are assigned, when an issue of yours is due, when an agent's tool call waits for your approval, and when an agent needs a look."
+        description="You hear here when an issue is assigned to you, when someone mentions you in a comment, replies to it or reacts to it, when someone comments on or moves an issue you created or are assigned, when an issue of yours is due, when an agent's tool call waits for your approval, and when an agent needs a look."
         action={
           <Button variant="outline" asChild>
             <Link to="/app/issues">
@@ -282,7 +280,7 @@ function List({ workspace }: { workspace: Workspace }) {
     else if (n.alert) void navigate('/app/settings/alerts');
   };
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 motion-safe:animate-fade-in">
       <div className="flex items-center justify-between text-[13px] text-muted-foreground">
         <span>{unread === 0 ? 'All read' : `${unread} unread`}</span>
         <Button
@@ -314,7 +312,7 @@ function List({ workspace }: { workspace: Workspace }) {
 
 function Inbox() {
   const { current } = useCurrentWorkspace();
-  if (!current) return <PageSkeleton />;
+  if (!current) return <ListPageSkeleton filters={false} />;
   return (
     <PageContainer>
       <PageHeader

@@ -659,8 +659,30 @@ async fn an_agent_made_from_a_template_has_its_scopes_policy_and_score(pool: PgP
         .iter()
         .map(|t| t["id"].as_str().unwrap())
         .collect();
-    assert_eq!(ids, ["analyst", "researcher", "reviewer"]);
-    assert_eq!(templates[0]["questions"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        ids.len(),
+        32,
+        "the expert catalog, the researcher and the reviewer"
+    );
+    for id in [
+        "analyst",
+        "researcher",
+        "reviewer",
+        "risk-manager",
+        "freight-specialist",
+    ] {
+        assert!(ids.contains(&id), "{id}");
+    }
+    let analyst = templates
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["id"] == "analyst")
+        .unwrap();
+    assert_eq!(analyst["questions"].as_array().unwrap().len(), 5);
+    assert_eq!(analyst["department"], "Finance & Risk");
+    assert!(!analyst["credentials"].as_array().unwrap().is_empty());
+    assert!(!analyst["skills"].as_array().unwrap().is_empty());
 
     let (status, card) = call(
         &app,
@@ -673,10 +695,15 @@ async fn an_agent_made_from_a_template_has_its_scopes_policy_and_score(pool: PgP
     assert_eq!(status, StatusCode::CREATED, "{card}");
     let agent = &card["agent"];
     let aid = agent["id"].as_str().unwrap().to_owned();
-    assert_eq!(agent["name"], "Analyst");
+    assert_eq!(agent["name"], "Financial Analyst");
+    assert_eq!(agent["template_id"], "analyst");
+    assert_eq!(agent["skills"], analyst["skills"]);
     assert_eq!(agent["role"], "analyst");
     assert_eq!(agent["runtime"], "python");
-    assert_eq!(agent["principal_id"], format!("agent://{wid}/Analyst"));
+    assert_eq!(
+        agent["principal_id"],
+        format!("agent://{wid}/Financial Analyst")
+    );
     let tools = agent["capabilities"]["tools"].as_array().unwrap();
     assert!(tools.iter().any(|t| t == "make_docx"), "{tools:?}");
     assert_eq!(
@@ -692,15 +719,15 @@ async fn an_agent_made_from_a_template_has_its_scopes_policy_and_score(pool: PgP
     );
     assert_eq!(card["owner"]["name"], "Test");
     assert!(card["recent_spans"].as_array().unwrap().is_empty());
-    // The fake model answered the three questions; they are scored and kept.
+    // The fake model answered the five questions; they are scored and kept.
     let evaluation = &card["evaluation"];
     assert_eq!(evaluation["template"], "analyst");
-    assert_eq!(evaluation["total"], 3, "{evaluation}");
+    assert_eq!(evaluation["total"], 5, "{evaluation}");
     let score = evaluation["score"].as_i64().unwrap();
-    assert!((0..=3).contains(&score));
+    assert!((0..=5).contains(&score));
     assert_eq!(evaluation["model"], agent["model"]);
     let questions = evaluation["questions"].as_array().unwrap();
-    assert_eq!(questions.len(), 3);
+    assert_eq!(questions.len(), 5);
     assert!(
         questions
             .iter()
@@ -710,11 +737,11 @@ async fn an_agent_made_from_a_template_has_its_scopes_policy_and_score(pool: PgP
         questions.iter().filter(|q| q["passed"] == true).count() as i64,
         score
     );
-    assert!(app.fake.calls.load(std::sync::atomic::Ordering::SeqCst) >= 3);
+    assert!(app.fake.calls.load(std::sync::atomic::Ordering::SeqCst) >= 5);
 
     // The card reads the score back; the template's policy is the agent's version 1.
     let (_, read) = call(&app, Method::GET, &format!("/agents/{aid}"), &owner, None).await;
-    assert_eq!(read["evaluation"]["total"], 3);
+    assert_eq!(read["evaluation"]["total"], 5);
     assert_eq!(read["evaluation"]["score"], score);
     let (_, versions) = call(
         &app,
@@ -753,7 +780,10 @@ async fn an_agent_made_from_a_template_has_its_scopes_policy_and_score(pool: PgP
         .filter(|e| e["action"] == "policy_changed")
         .collect();
     assert_eq!(changed.len(), 1, "{entries}");
-    assert_eq!(changed[0]["subject"], format!("agent://{wid}/Analyst"));
+    assert_eq!(
+        changed[0]["subject"],
+        format!("agent://{wid}/Financial Analyst")
+    );
     assert!(
         changed[0]["detail"]
             .as_str()

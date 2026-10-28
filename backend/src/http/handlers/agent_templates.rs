@@ -22,6 +22,7 @@ use crate::domain::agent_template::{
 use crate::domain::audit::AuditAction;
 use crate::domain::policy_document::{PolicyScope, diff_summary};
 use crate::domain::settings::LlmProviderKind;
+use crate::domain::skill;
 use crate::domain::usage::{UsageEvent, UsagePurpose};
 use crate::domain::validation::{FieldErrors, Validate, check_text};
 use crate::engine::policy::{self as engine, levels_for};
@@ -33,6 +34,10 @@ use crate::llm::{LlmRequest, Message, collect};
 use crate::repo;
 use crate::repo::agents::AgentFields;
 use crate::repo::audit::Subject;
+
+/// How long one competency question may take: the five are asked together,
+/// well inside the request's time limit.
+const ANSWER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(40);
 
 /// `POST /agents/from-template/{name}` body (every field optional).
 #[derive(Debug, Default, Deserialize, ToSchema)]
@@ -101,7 +106,7 @@ async fn workspace_for(
 /// Asks the agent its competency questions with the workspace's provider
 /// and scores the answers. `None` when no provider can be used, or when it
 /// does not answer: the agent exists either way.
-async fn evaluate(
+async fn evaluate_answers(
     state: &AppState,
     user: Uuid,
     workspace: Uuid,
@@ -131,56 +136,73 @@ async fn evaluate(
         target.model = agent.model.clone();
     }
     let (provider, model) = (target.provider, target.model.clone());
-    let mut questions = Vec::with_capacity(template.questions.len());
-    for question in &template.questions {
+    // The questions are independent: asked together, each within its own deadline, so that the
+    // evaluation fits the request's time limit even with a slow provider.
+    let asked = template.questions.iter().map(|question| {
         let request = LlmRequest {
             target: target.clone(),
-            system: policy.scrub(agent.system_prompt.clone()),
+            // Asked as it would be at work: its prompt with the skills the question calls on.
+            system: policy
+                .scrub(skill::compose(&agent.system_prompt, &agent.skills, &question.question).0),
             messages: vec![Message::user(question.question.clone())],
             max_tokens: ANSWER_MAX_TOKENS,
             json_schema: None,
             effort: Some("low"),
             cacheable: false,
         };
-        let done = match collect(state.llm.stream(request), |_| {}).await {
-            Ok(done) => done,
-            Err(err) => {
-                tracing::warn!(agent = %agent.principal_id, error = %err, "the model did not answer a competency question");
-                return None;
-            }
-        };
-        let cost = match provider {
-            LlmProviderKind::Demo => 0.0,
-            _ => cost_usd(&model, done.usage.input_tokens, done.usage.output_tokens),
-        };
-        usage::record(
-            state,
-            UsageEvent {
-                workspace_id: Some(workspace),
-                user_id: user,
-                graph_id: None,
-                run_id: None,
-                purpose: UsagePurpose::Evaluation,
-                provider,
-                model: model.clone(),
-                credential: llm.scope,
-                tokens_in: done.usage.input_tokens as i64,
-                tokens_out: done.usage.output_tokens as i64,
-                cost_usd: cost,
-                context_chars_saved: 0,
-                agent_id: Some(agent.id),
-                node_id: None,
-                span_id: None,
-            },
-        )
-        .await;
-        questions.push(EvaluatedQuestion {
-            question: question.question.clone(),
-            expected: question.expected.clone(),
-            passed: question.passes(&done.text),
-            answer: excerpt(&done.text),
-        });
-    }
+        let (llm, model) = (&llm, model.clone());
+        async move {
+            let answered =
+                tokio::time::timeout(ANSWER_TIMEOUT, collect(state.llm.stream(request), |_| {}))
+                    .await;
+            let done = match answered {
+                Ok(Ok(done)) => done,
+                Ok(Err(err)) => {
+                    tracing::warn!(agent = %agent.principal_id, error = %err, "the model did not answer a competency question");
+                    return None;
+                }
+                Err(_) => {
+                    tracing::warn!(agent = %agent.principal_id, "a competency question was not answered in time");
+                    return None;
+                }
+            };
+            let cost = match provider {
+                LlmProviderKind::Demo => 0.0,
+                _ => cost_usd(&model, done.usage.input_tokens, done.usage.output_tokens),
+            };
+            usage::record(
+                state,
+                UsageEvent {
+                    workspace_id: Some(workspace),
+                    user_id: user,
+                    graph_id: None,
+                    run_id: None,
+                    purpose: UsagePurpose::Evaluation,
+                    provider,
+                    model,
+                    credential: llm.scope,
+                    tokens_in: done.usage.input_tokens as i64,
+                    tokens_out: done.usage.output_tokens as i64,
+                    cost_usd: cost,
+                    context_chars_saved: 0,
+                    agent_id: Some(agent.id),
+                    node_id: None,
+                    span_id: None,
+                },
+            )
+            .await;
+            Some(EvaluatedQuestion {
+                question: question.question.clone(),
+                expected: question.expected.clone(),
+                passed: question.passes(&done.text),
+                answer: excerpt(&done.text),
+            })
+        }
+    });
+    let questions: Vec<EvaluatedQuestion> = futures::future::join_all(asked)
+        .await
+        .into_iter()
+        .collect::<Option<_>>()?;
     Some(AgentEvaluation {
         template: template.id.clone(),
         score: questions.iter().filter(|q| q.passed).count() as i32,
@@ -199,7 +221,7 @@ async fn evaluate(
 /// asked once and scored on the card. 404 for an unknown template, 409 when
 /// an agent of that name exists.
 #[utoipa::path(post, path = "/agents/from-template/{name}", tag = "agents", security(("bearer" = [])),
-    params(("name" = String, Path, description = "Template id: analyst, researcher or reviewer")),
+    params(("name" = String, Path, description = "Template id, e.g. analyst, risk-manager, freight-specialist (GET /agent-templates)")),
     request_body = FromAgentTemplate,
     responses((status = 201, body = AgentCard), (status = 403, body = Problem), (status = 404, body = Problem),
         (status = 409, body = Problem), (status = 422, body = Problem)))]
@@ -282,6 +304,8 @@ pub async fn instantiate(
         purpose: template.purpose.clone(),
         capabilities,
         a2a_exposed: false,
+        skills: skill::normalize(&template.skills),
+        template_id: Some(template.id.clone()),
     };
     let mut tx = state.db.begin().await?;
     let agent = repo::agents::create(&mut *tx, auth.id, workspace, &fields).await?;
@@ -322,7 +346,7 @@ pub async fn instantiate(
     .await;
 
     let evaluation = if req.evaluate.unwrap_or(true) {
-        let scored = evaluate(&state, auth.id, workspace, &agent, template).await;
+        let scored = evaluate_answers(&state, auth.id, workspace, &agent, template).await;
         if let Some(scored) = &scored {
             repo::agent_evaluations::upsert(&state.db, agent.id, scored).await?;
             state
@@ -347,4 +371,57 @@ pub async fn instantiate(
             evidence: AgentEvidence::default(),
         }),
     ))
+}
+
+/// Asks an agent made from a role template its competency questions again
+/// with the workspace's provider (members and above) and keeps the score for
+/// its card. 404 for an agent the caller cannot see; 422 for an agent made by
+/// hand, or when no usable provider answered.
+#[utoipa::path(post, path = "/agents/{id}/evaluate", tag = "agents", security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Agent id")),
+    responses((status = 200, body = AgentEvaluation), (status = 403, body = Problem), (status = 404, body = Problem),
+        (status = 422, body = Problem)))]
+pub async fn evaluate(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<AgentEvaluation>, AppError> {
+    let workspace = repo::agents::workspace_of(&state.db, id)
+        .await?
+        .flatten()
+        .ok_or(AppError::NotFound("agent"))?;
+    // An agent of a workspace the caller is not in is as good as missing.
+    let workspace =
+        workspace_for(&state, auth, Some(workspace))
+            .await
+            .map_err(|err| match err {
+                AppError::NotFound(_) => AppError::NotFound("agent"),
+                other => other,
+            })?;
+    let agent = repo::agents::find(&state.db, workspace, id)
+        .await?
+        .ok_or(AppError::NotFound("agent"))?;
+    let template = agent
+        .template_id
+        .as_deref()
+        .and_then(agent_template::find)
+        .ok_or_else(|| {
+            AppError::field(
+                "template_id",
+                "the agent was not made from a role template, so it has no competency questions",
+            )
+        })?;
+    let scored = evaluate_answers(&state, auth.id, workspace, &agent, template)
+        .await
+        .ok_or_else(|| {
+            AppError::field(
+                "provider",
+                "no usable model provider answered: check the workspace's model settings",
+            )
+        })?;
+    repo::agent_evaluations::upsert(&state.db, agent.id, &scored).await?;
+    state
+        .caches
+        .invalidate(crate::app::caches::Key::Agent(agent.id));
+    Ok(Json(scored))
 }

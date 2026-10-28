@@ -28,3 +28,8 @@ if (!window.matchMedia) {
       dispatchEvent: () => false,
     }) as MediaQueryList;
 }
+
+// jsdom lacks scrollIntoView (cmdk scrolls the selected item into view).
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => undefined;
+}

@@ -5,8 +5,10 @@ import type { IssueEvent } from '@/schemas/issue';
 import {
   changeText,
   DEFAULT_ACTIVITY_PREFS,
+  groupActivity,
   readActivityPrefs,
   showsEvent,
+  threadReplies,
   writeActivityPrefs,
 } from './activity';
 
@@ -24,6 +26,8 @@ function event(kind: IssueEvent['kind'], fields: Partial<IssueEvent> = {}): Issu
     created_at: '2026-10-14T12:00:00Z',
     edited_at: null,
     run_id: null,
+    reactions: [],
+    parent_id: null,
     ...fields,
   };
 }
@@ -102,5 +106,90 @@ describe('change entries', () => {
     expect(file('updated:v3', '2')).toBe('updated notes.md to v3');
     expect(file('duplicated')).toBe('duplicated notes.md');
     expect(file('deleted', '3')).toBe('deleted notes.md');
+  });
+
+  it('say what a mention handed an agent, among the changes', () => {
+    const agent = (body: string) => event('agent', { body, to: 'Researcher' });
+    expect(changeText(agent('delegated'))).toBe('delegated this to Researcher');
+    expect(changeText(agent('asked to plan'))).toBe('asked Researcher to plan this');
+    expect(showsEvent(agent('delegated'), 'changes')).toBe(true);
+    expect(showsEvent(agent('delegated'), 'comments')).toBe(false);
+  });
+});
+
+describe('grouping', () => {
+  const ada = { user_id: '0199bbbb-0000-7000-8000-00000000a001', name: 'Ada Lovelace' };
+  const alan = { user_id: '0199bbbb-0000-7000-8000-00000000a002', name: 'Alan Turing' };
+  const at = (minute: number) => `2026-10-14T12:${String(minute).padStart(2, '0')}:00Z`;
+  let n = 0;
+  const change = (
+    kind: IssueEvent['kind'],
+    minute: number,
+    actor: IssueEvent['actor'] = ada,
+    fields: Partial<IssueEvent> = {},
+  ) =>
+    event(kind, {
+      id: `01a10c67-ce89-7272-8865-1447210e0${String((n += 1)).padStart(3, '0')}`,
+      actor,
+      created_at: at(minute),
+      ...fields,
+    });
+  const who = (e: IssueEvent) => e.actor?.user_id ?? 'left';
+  const shape = (events: IssueEvent[]) =>
+    groupActivity(events, who).map((item) =>
+      item.kind === 'changes' ? item.events.map((e) => e.kind) : item.event.kind,
+    );
+
+  it('gathers changes one person made within a few minutes of each other', () => {
+    expect(
+      shape([change('state', 0), change('priority', 2), change('assignee', 6), change('due', 30)]),
+    ).toEqual([['state', 'priority', 'assignee'], ['due']]);
+  });
+
+  it('keeps changes apart when someone else made one, or something else came between', () => {
+    expect(
+      shape([
+        change('state', 0),
+        change('priority', 1, alan),
+        change('title', 2, alan),
+        change('comment', 3, alan),
+        change('due', 4, alan),
+        change('run', 5, null),
+        change('github', 6, alan),
+      ]),
+    ).toEqual([['state'], ['priority', 'title'], 'comment', ['due'], 'run', ['github']]);
+  });
+
+  it('reads newest first the same way, and takes a deleted file for a change', () => {
+    const events = [
+      change('state', 0),
+      change('artifact', 1, ada, { to: 'uploaded' }),
+      change('artifact', 2, ada, { to: 'deleted' }),
+      change('priority', 3),
+    ];
+    expect(shape(events)).toEqual([['state'], 'artifact', ['artifact', 'priority']]);
+    expect(shape([...events].reverse())).toEqual([['priority', 'artifact'], 'artifact', ['state']]);
+  });
+});
+
+describe('threads', () => {
+  const comment = (id: string, parent_id: string | null = null) =>
+    event('comment', { id: `01a10c67-ce89-7272-8865-1447210e0${id}`, parent_id });
+
+  it('put each reply under its comment, oldest first, and the rest in order', () => {
+    const first = comment('001');
+    const second = comment('002');
+    const replyA = comment('003', first.id);
+    const replyB = comment('004', first.id);
+    const moved = event('state', { id: '01a10c67-ce89-7272-8865-1447210e0005' });
+    const { entries, replies } = threadReplies([first, replyA, moved, second, replyB]);
+    expect(entries).toEqual([first, moved, second]);
+    expect(replies.get(first.id)).toEqual([replyA, replyB]);
+    expect(replies.has(second.id)).toBe(false);
+  });
+
+  it('let a reply whose comment is not shown stand on its own', () => {
+    const orphan = comment('003', '01a10c67-ce89-7272-8865-1447210e0999');
+    expect(threadReplies([orphan]).entries).toEqual([orphan]);
   });
 });

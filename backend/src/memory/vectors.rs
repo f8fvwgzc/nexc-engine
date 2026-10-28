@@ -20,7 +20,11 @@ const BACKFILL_BATCH: i64 = 500;
 
 /// Creates the extension, the column and the HNSW index when the server has
 /// pgvector and they are missing. Returns whether vector search is available.
+/// The pool's statement limit does not apply: building the index over many
+/// memories, or waiting for another instance that builds it, takes longer.
 pub async fn ensure(db: &PgPool) -> Result<bool, sqlx::Error> {
+    let mut tx = db.begin().await?;
+    crate::repo::lift_limits(&mut tx).await?;
     // One statement, so that two instances starting together cannot interleave;
     // lacking the privilege to create the extension is not an error, just "unavailable".
     sqlx::query(
@@ -41,8 +45,9 @@ pub async fn ensure(db: &PgPool) -> Result<bool, sqlx::Error> {
            RAISE NOTICE 'pgvector is installed but this role may not enable it';
          END $$",
     )
-    .execute(db)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM information_schema.columns
                         WHERE table_name = 'memories' AND column_name = 'embedding_vec')",

@@ -250,6 +250,29 @@ pub async fn members(
     .await
 }
 
+/// Members of a workspace whose name or e-mail contains `q` (any case), in
+/// the roster's order, at most `limit`: `(user_id, name, email)`, for search.
+pub async fn search_members(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    q: &str,
+    limit: i64,
+) -> Result<Vec<(Uuid, String, String)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT u.id, u.name, u.email
+         FROM workspace_members m JOIN users u ON u.id = m.user_id
+         WHERE m.workspace_id = $1
+           AND (strpos(lower(u.name), lower($2)) > 0 OR strpos(lower(u.email), lower($2)) > 0)
+         ORDER BY array_position(ARRAY['owner', 'admin', 'member', 'guest'], m.role), lower(u.name), u.id
+         LIMIT $3",
+    )
+    .bind(workspace_id)
+    .bind(q)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
 /// The owners and admins of a workspace: who decides approvals and hears alerts.
 pub async fn admins(db: impl PgExecutor<'_>, workspace_id: Uuid) -> Result<Vec<Uuid>, sqlx::Error> {
     sqlx::query_scalar(

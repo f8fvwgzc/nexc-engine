@@ -48,9 +48,10 @@ pub struct AccountExport {
     pub exported_at: DateTime<Utc>,
     pub account: User,
     /// `workspaces`, `teams`, `issues_created`, `issues_assigned`,
-    /// `comments`, `graphs`, `documents`, `memories`, `ai_account`, `usage`,
-    /// `security_activity`, `notifications`, `assistant_conversations`,
-    /// `sign_in_identities`: each a list of plain objects.
+    /// `comments`, `reactions`, `graphs`, `documents`, `memories`,
+    /// `ai_account`, `usage`, `security_activity`, `notifications`,
+    /// `assistant_conversations`, `sign_in_identities`: each a list of plain
+    /// objects.
     #[schema(value_type = Object)]
     pub sections: Map<String, Value>,
     /// Sections that hold more than [`EXPORT_SECTION_MAX`] rows and were cut there.
@@ -90,6 +91,13 @@ const SECTIONS: &[(&str, &str)] = &[
         "SELECT t.key || '-' || i.number AS issue, e.body, e.created_at
          FROM issue_events e JOIN issues i ON i.id = e.issue_id JOIN teams t ON t.id = i.team_id
          WHERE e.actor_id = $1 AND e.kind = 'comment' ORDER BY e.created_at",
+    ),
+    (
+        "reactions",
+        "SELECT r.event_id, t.key || '-' || i.number AS issue, r.emoji, r.created_at
+         FROM issue_event_reactions r JOIN issue_events e ON e.id = r.event_id
+         JOIN issues i ON i.id = e.issue_id JOIN teams t ON t.id = i.team_id
+         WHERE r.user_id = $1 ORDER BY r.created_at",
     ),
     (
         "graphs",

@@ -5,7 +5,15 @@ import { apiRequest } from '@/lib/api/client';
 import { saveDownload } from '@/lib/api/download';
 import { FRESH } from '@/lib/freshness';
 import { qk } from '@/lib/query-keys';
-import { artifactSchema, isRunActive, runSchema, type Artifact, type Run } from '@/schemas/run';
+import {
+  artifactSchema,
+  isRunActive,
+  runSchema,
+  workspaceRunSchema,
+  type Artifact,
+  type Run,
+  type WorkspaceRun,
+} from '@/schemas/run';
 import { tracePageSchema, traceVerificationSchema, type Span } from '@/schemas/trace';
 
 /** Spans fetched per request, and the most pages read for one run (20,000 spans). */
@@ -56,14 +64,39 @@ export function mergeSpan(spans: Span[] | undefined, span: Span): Span[] | undef
 const runsLive = (query: { state: { data?: Run[] } }) =>
   query.state.data?.some((r) => isRunActive(r.status)) ?? false;
 
-export const graphRunsQuery = (graphId: string) =>
+/**
+ * A graph's runs, newest first; only the latest `limit` of them when it is given (the issue page
+ * needs one). A focus refetches only while a run is live, and a live run is polled while it
+ * lasts: the run-status stream is graph-scoped and only the canvas holds it.
+ */
+export const graphRunsQuery = (graphId: string, limit?: number) =>
   queryOptions({
-    queryKey: qk.graphs.runs(graphId),
+    queryKey: limit ? [...qk.graphs.runs(graphId), limit] : qk.graphs.runs(graphId),
     queryFn: ({ signal }): Promise<Run[]> =>
-      apiRequest(`/graphs/${graphId}/runs`, z.array(runSchema), { signal }),
-    // One per graph on the Runs page, so a focus refetches only the graphs with a live run, and
-    // those poll while it lasts: the run-status stream is graph-scoped and only the canvas holds
-    // it, so without this a run that finished would stay "running" on the Runs page.
+      apiRequest(`/graphs/${graphId}/runs`, z.array(runSchema), {
+        signal,
+        query: { limit },
+      }),
+    staleTime: (query) => (runsLive(query) ? FRESH.live : FRESH.list),
+    refetchOnWindowFocus: runsLive,
+    refetchInterval: (query) => (runsLive(query) ? FRESH.live : false),
+  });
+
+/** How many runs the Runs page lists. */
+export const WORKSPACE_RUNS = 100;
+
+/**
+ * The latest runs across the workspace's graphs, newest first, each with its graph's name: one
+ * request for the Runs page. Polled while one of them is live, as a graph's runs are.
+ */
+export const workspaceRunsQuery = (workspaceId: string) =>
+  queryOptions({
+    queryKey: qk.runs.workspace(workspaceId),
+    queryFn: ({ signal }): Promise<WorkspaceRun[]> =>
+      apiRequest(`/workspaces/${workspaceId}/runs`, z.array(workspaceRunSchema), {
+        signal,
+        query: { limit: WORKSPACE_RUNS },
+      }),
     staleTime: (query) => (runsLive(query) ? FRESH.live : FRESH.list),
     refetchOnWindowFocus: runsLive,
     refetchInterval: (query) => (runsLive(query) ? FRESH.live : false),

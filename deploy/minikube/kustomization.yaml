@@ -20,7 +20,8 @@ configMapGenerator:
       - NEXC_ALLOW_SIGNUP=true
 
 patches:
-  - target: { kind: Ingress, name: nexc }
+  # Every Ingress of the base: nexc, and nexc-a2a and nexc-documents with their larger bodies.
+  - target: { kind: Ingress }
     patch: |-
       - op: remove
         path: /spec/tls

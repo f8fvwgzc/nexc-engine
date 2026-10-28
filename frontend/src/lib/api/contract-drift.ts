@@ -7,7 +7,7 @@
  * generated, a mismatch makes `pnpm typecheck` fail on the offending line.
  */
 import type { A2aCounterpart } from '@/schemas/a2a';
-import type { A2aTask, Agent, AgentCard, Capabilities } from '@/schemas/agent';
+import type { A2aTask, Agent, AgentCard, AgentEvaluation, Capabilities } from '@/schemas/agent';
 import type {
   ArtifactContent,
   ArtifactFile,
@@ -25,14 +25,17 @@ import type {
   GraphNode,
   GraphSummary,
 } from '@/schemas/graph';
+import type { IssueEvent, Notification, Reaction } from '@/schemas/issue';
 import type { KnowledgeDocument } from '@/schemas/knowledge';
 import type { Memory } from '@/schemas/memory';
-import type { OrchestratorStatus } from '@/schemas/orchestrator';
+import type { PlannerStatus } from '@/schemas/planner';
 import type { Plan } from '@/schemas/plan';
 import type { Artifact, NodeRun, Run } from '@/schemas/run';
+import type { AgentTemplate } from '@/schemas/secops';
 import type { AgentCancel, Session, SessionSummary, SpanPayloads } from '@/schemas/session';
 import type { TraceVerification } from '@/schemas/trace';
 import type { LlmSettings } from '@/schemas/settings';
+import type { Skill, SkillSource, SkillSummary } from '@/schemas/skill';
 import type { GraphTemplate } from '@/schemas/template';
 
 import type { components } from './schema';
@@ -71,12 +74,17 @@ export type ContractDrift = [
   Assert<Matches<'RunArtifact', RunArtifact>>,
   Assert<Matches<'Agent', Agent>>,
   Assert<Matches<'AgentCard', AgentCard>>,
+  Assert<Matches<'AgentEvaluation', AgentEvaluation>>,
+  Assert<Matches<'AgentTemplate', AgentTemplate>>,
+  Assert<Matches<'SkillSource', SkillSource>>,
+  Assert<Matches<'SkillSummary', SkillSummary>>,
+  Assert<Matches<'Skill', Skill>>,
   Assert<Matches<'Capabilities', Capabilities>>,
   Assert<Matches<'A2aTask', A2aTask>>,
   Assert<Matches<'A2aCounterpart', A2aCounterpart>>,
   Assert<Matches<'Document', KnowledgeDocument>>,
   Assert<Matches<'Memory', Memory>>,
-  Assert<Matches<'OrchestratorStatus', OrchestratorStatus>>,
+  Assert<Matches<'PlannerStatus', PlannerStatus>>,
   Assert<Matches<'TraceVerification', TraceVerification>>,
   Assert<Matches<'Session', Session>>,
   Assert<Matches<'SessionSummary', SessionSummary>>,
@@ -86,4 +94,7 @@ export type ContractDrift = [
   Assert<Matches<'AuditAnswer', AuditAnswer>>,
   Assert<Matches<'AuditFact', AuditFact>>,
   Assert<Matches<'CannedQuestion', CannedQuestion>>,
+  Assert<Matches<'Reaction', Reaction>>,
+  Assert<Matches<'IssueEvent', IssueEvent>>,
+  Assert<Matches<'Notification', Notification>>,
 ];

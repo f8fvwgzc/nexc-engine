@@ -1,5 +1,13 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  infiniteQueryOptions,
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
+import {
+  ChevronsUpDownIcon,
   CopyIcon,
   DownloadIcon,
   ExternalLinkIcon,
@@ -18,16 +26,24 @@ import {
 import { Fragment, useRef, useState, type DragEvent, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
+import { z } from 'zod';
 
 import { EmptyState } from '@/components/custom-ui/empty-state';
 import { ErrorState } from '@/components/custom-ui/error-state';
 import { IconButton } from '@/components/custom-ui/icon-button';
-import { OptionSelect } from '@/components/custom-ui/option-select';
+import { FadeIn } from '@/components/custom-ui/motion';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { PageSkeleton, TableSkeleton } from '@/components/layout/page-skeleton';
+import { TableSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Button } from '@/components/ui/button';
+import {
+  Command,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -36,6 +52,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
 import {
   artifactFilesQuery,
@@ -64,18 +82,47 @@ import {
   entriesFromFiles,
   useArtifactUpload,
 } from '@/features/artifacts/use-artifact-upload';
-import { issuesQuery } from '@/features/issues/api';
+import { issueQuery, issuesQuery } from '@/features/issues/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import { apiRequest } from '@/lib/api/client';
 import { errorMessage } from '@/lib/api/errors';
+import { FRESH } from '@/lib/freshness';
 import { formatBytes, formatDateTime, formatRelative } from '@/lib/format';
 import { qk } from '@/lib/query-keys';
 import { cn } from '@/lib/utils';
-import type { ArtifactFile, ArtifactFolder } from '@/schemas/artifact';
+import { artifactFileSchema, type ArtifactFile, type ArtifactFolder } from '@/schemas/artifact';
 import type { Workspace } from '@/schemas/workspace';
 
 const ROOT = 'root';
 const ANY = 'any';
+
+/** Files read at a time when every file is listed (a search, or a guest's files). */
+const RECENT_PAGE = 200;
+/** Issues the issue filter offers at a time: those whose title or identifier match what is typed. */
+const PICKER_ISSUES = 20;
+
+/**
+ * Every file of the workspace the caller can read (whose name contains `q`), most recently saved
+ * first, a page at a time: the server sends at most a page, and the last file of a page is where
+ * the next one starts. Under the workspace's file lists, so uploads and moves refresh it.
+ */
+function recentFilesQuery(workspaceId: string, q: string | undefined) {
+  return infiniteQueryOptions({
+    queryKey: [...qk.artifacts.list(workspaceId, { q }), 'pages'],
+    staleTime: FRESH.list,
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ signal, pageParam }) =>
+      apiRequest(`/workspaces/${workspaceId}/artifact-files`, z.array(artifactFileSchema), {
+        query: { q, limit: RECENT_PAGE, before: pageParam },
+        signal,
+      }),
+    getNextPageParam: (page) => {
+      const last = page.at(-1);
+      return page.length === RECENT_PAGE && last ? `${last.updated_at},${last.id}` : undefined;
+    },
+  });
+}
 
 /** Navigation state of a change to the issue filter, which keeps the search typed. */
 interface BrowserNavState {
@@ -419,8 +466,24 @@ function Browser({ workspace }: { workspace: Workspace }) {
     : folderId
       ? { folder_id: folderId }
       : { root: true };
-  const files = useQuery(artifactFilesQuery(workspace.id, filter));
-  const { data: issues = [] } = useQuery(issuesQuery(workspace.id));
+  // Every file (a search, or a guest's) comes a page at a time; a folder's or an issue's at once.
+  const paged = across && !issueId;
+  const folderFiles = useQuery({ ...artifactFilesQuery(workspace.id, filter), enabled: !paged });
+  const recent = useInfiniteQuery({
+    ...recentFilesQuery(workspace.id, search || undefined),
+    enabled: paged,
+  });
+  const files = paged
+    ? {
+        data: recent.data?.pages.flat(),
+        isPending: recent.isPending,
+        isError: recent.isError,
+        error: recent.error,
+        refetch: recent.refetch,
+      }
+    : folderFiles;
+  // The issue filtered by, for its name: that one issue, not the workspace's whole list.
+  const { data: issue } = useQuery({ ...issueQuery(issueId ?? ''), enabled: !!issueId });
 
   const fileActions = useFileActions(workspace.id);
   const folderActions = useFolderActions(workspace.id, {
@@ -460,7 +523,6 @@ function Browser({ workspace }: { workspace: Workspace }) {
       : folderId
         ? sortByName(folders.filter((f) => f.parent_id === folderId))
         : buildFolderTree(folders).map((node) => node.folder);
-  const issue = issueId ? issues.find((i) => i.id === issueId) : undefined;
   const lastCrumb = issueId
     ? `Files of ${issue?.identifier ?? 'an issue'}`
     : search
@@ -600,7 +662,7 @@ function Browser({ workspace }: { workspace: Workspace }) {
         onRetry={() => void files.refetch()}
       />
     );
-  } else if (shownFolders.length === 0 && files.data.length === 0) {
+  } else if (shownFolders.length === 0 && (files.data ?? []).length === 0) {
     table = filtering ? (
       <EmptyState
         icon={SearchIcon}
@@ -639,7 +701,7 @@ function Browser({ workspace }: { workspace: Workspace }) {
     );
   } else {
     table = (
-      <div className="overflow-hidden rounded-lg border">
+      <FadeIn variant="fade" className="overflow-hidden rounded-lg border">
         <div
           aria-hidden
           className="flex h-8 items-center gap-3 border-b bg-muted/40 px-3 text-xs text-muted-foreground"
@@ -670,7 +732,7 @@ function Browser({ workspace }: { workspace: Workspace }) {
               onDelete={() => folderActions.remove(folder)}
             />
           ))}
-          {files.data.map((file) => (
+          {(files.data ?? []).map((file) => (
             <FileRow
               key={file.id}
               file={file}
@@ -688,7 +750,7 @@ function Browser({ workspace }: { workspace: Workspace }) {
             />
           ))}
         </ul>
-      </div>
+      </FadeIn>
     );
   }
 
@@ -710,16 +772,13 @@ function Browser({ workspace }: { workspace: Workspace }) {
           onChange={(e) => setQ(e.target.value)}
           className="h-8 w-full text-[13px] sm:w-56"
         />
-        <OptionSelect
-          value={issueId ?? ANY}
-          onValueChange={setIssue}
-          options={[
-            { value: ANY, label: 'Any issue' },
-            ...(issueId && !issue ? [{ value: issueId, label: 'This issue' }] : []),
-            ...issues.map((i) => ({ value: i.id, label: `${i.identifier} · ${i.title}` })),
-          ]}
-          aria-label="Issue"
-          className="h-8 w-full text-[13px] sm:w-56"
+        <IssueFilter
+          workspaceId={workspace.id}
+          issueId={issueId}
+          label={
+            issueId ? (issue ? `${issue.identifier} · ${issue.title}` : 'This issue') : 'Any issue'
+          }
+          onChange={setIssue}
         />
       </div>
       {uploads.busy && (
@@ -729,6 +788,19 @@ function Browser({ workspace }: { workspace: Workspace }) {
         </p>
       )}
       {table}
+      {paged && recent.hasNextPage && (
+        <div className="flex justify-center">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void recent.fetchNextPage()}
+            disabled={recent.isFetchingNextPage}
+          >
+            {recent.isFetchingNextPage && <Spinner className="size-3.5" aria-hidden />}
+            Load more
+          </Button>
+        </div>
+      )}
       {overPage && (
         <div
           aria-hidden
@@ -767,12 +839,113 @@ function Browser({ workspace }: { workspace: Workspace }) {
   );
 }
 
+/**
+ * Which issue's files to show: a searchable menu of the workspace's issues, looked up on the
+ * server as the name or identifier is typed (a few at a time), never the whole list.
+ */
+function IssueFilter({
+  workspaceId,
+  issueId,
+  label,
+  onChange,
+}: {
+  workspaceId: string;
+  issueId: string | null;
+  label: string;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [typed, setTyped] = useState('');
+  const q = useDebouncedValue(typed.trim(), 200);
+  const found = useQuery({
+    ...issuesQuery(workspaceId, { q: q || undefined, limit: PICKER_ISSUES }),
+    enabled: open,
+    placeholderData: keepPreviousData,
+  });
+  const pick = (value: string) => {
+    setOpen(false);
+    setTyped('');
+    onChange(value);
+  };
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          aria-label="Issue"
+          className="h-8 w-full justify-between gap-2 px-2.5 text-[13px] font-normal sm:w-56"
+        >
+          <span className="truncate">{label}</span>
+          <ChevronsUpDownIcon className="size-3.5 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-[min(20rem,calc(100vw-2rem))] p-0">
+        <Command shouldFilter={false}>
+          <CommandInput
+            value={typed}
+            onValueChange={setTyped}
+            placeholder="Find an issue…"
+            aria-label="Find an issue"
+          />
+          <CommandList>
+            <CommandGroup>
+              <CommandItem value={ANY} data-checked={!issueId} onSelect={() => pick(ANY)}>
+                Any issue
+              </CommandItem>
+              {found.data?.map((i) => (
+                <CommandItem
+                  key={i.id}
+                  value={i.id}
+                  data-checked={i.id === issueId}
+                  onSelect={() => pick(i.id)}
+                >
+                  <span className="shrink-0 text-muted-foreground tabular-nums">
+                    {i.identifier}
+                  </span>
+                  <span className="truncate">{i.title}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+            {found.isPending ? (
+              <p className="px-3 pb-2 text-[13px] text-muted-foreground">Looking…</p>
+            ) : (
+              found.data?.length === 0 && (
+                <p className="px-3 pb-2 text-[13px] text-muted-foreground">No issue matches.</p>
+              )
+            )}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** The page before the workspace is known: its header, its filters and its table, still empty. */
+function ArtifactsSkeleton() {
+  return (
+    <PageContainer className="max-w-none flex-1" role="status" aria-busy aria-label="Loading">
+      <div className="space-y-2 border-b pb-4">
+        <Skeleton className="h-7 w-32" />
+        <Skeleton className="h-4 w-96 max-w-full" />
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Skeleton className="h-5 min-w-0 flex-1 basis-60" />
+        <Skeleton className="h-8 w-full sm:w-56" />
+        <Skeleton className="h-8 w-full sm:w-56" />
+      </div>
+      <TableSkeleton rows={5} />
+    </PageContainer>
+  );
+}
+
 export default function ArtifactsPage() {
   const { current } = useCurrentWorkspace();
   return (
     <>
       <Seo title="Artifacts" noIndex />
-      {current ? <Browser key={current.id} workspace={current} /> : <PageSkeleton />}
+      {current ? <Browser key={current.id} workspace={current} /> : <ArtifactsSkeleton />}
     </>
   );
 }

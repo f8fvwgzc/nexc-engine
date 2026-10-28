@@ -117,6 +117,19 @@ pub struct ContextEdge {
     pub reason: String,
 }
 
+/// An agent of the workspace as shown to the planner, so that it can give
+/// each node to the specialist that fits it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentBrief {
+    pub role: String,
+    pub title: String,
+    /// What the agent is for.
+    pub purpose: String,
+    /// The names of its skills.
+    #[serde(default)]
+    pub skills: Vec<String>,
+}
+
 /// Everything the planner tells the LLM about the graph. Serialised as JSON
 /// after [`PLAN_CONTEXT_MARKER`] so that offline providers can read it back.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -137,6 +150,9 @@ pub struct PlanContext {
     pub documents: Vec<String>,
     /// Agent roles available in the user's organisation.
     pub agent_roles: Vec<String>,
+    /// What each available agent is for and knows, one per role.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agents: Vec<AgentBrief>,
 }
 
 impl PlanContext {
@@ -415,12 +431,20 @@ mod tests {
             memories: vec![],
             documents: vec![],
             agent_roles: vec!["writer".into()],
+            agents: vec![AgentBrief {
+                role: "writer".into(),
+                title: "Lead Writer".into(),
+                purpose: "Writes.".into(),
+                skills: vec!["Plain language".into()],
+            }],
         };
         let prompt = format!(
             "Refine this.\n{PLAN_CONTEXT_MARKER}\n{}",
             serde_json::to_string(&ctx).unwrap()
         );
-        assert_eq!(PlanContext::extract(&prompt).unwrap().goal, "g");
+        let back = PlanContext::extract(&prompt).unwrap();
+        assert_eq!(back.goal, "g");
+        assert_eq!(back.agents[0].skills, vec!["Plain language"]);
         assert!(PlanContext::extract("nothing").is_none());
     }
 

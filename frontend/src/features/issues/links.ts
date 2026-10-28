@@ -20,7 +20,9 @@ export function legacyIssuePath(params: URLSearchParams): string | null {
  * What a row or card linking to an issue says on hover. Its link covers the whole row, so the
  * glyphs under it (state, priority, assignee, due date) cannot show tooltips of their own.
  */
-export function issueLinkTitle(issue: Issue): string {
+export function issueLinkTitle(
+  issue: Pick<Issue, 'identifier' | 'title' | 'state' | 'priority' | 'assignee' | 'due_date'>,
+): string {
   return [
     `${issue.identifier} ${issue.title}`,
     issue.state.name,

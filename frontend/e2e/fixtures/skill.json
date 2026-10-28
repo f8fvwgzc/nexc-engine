@@ -1,0 +1,14 @@
+{
+  "id": "research-source-evaluation",
+  "name": "Source evaluation",
+  "category": "research",
+  "description": "Weighs how far a source can be trusted: who wrote it, when, and what it rests on.",
+  "keywords": ["credibility", "bias", "primary source"],
+  "sources": [
+    {
+      "title": "Evaluating sources",
+      "url": "https://example.com/evaluating-sources"
+    }
+  ],
+  "body": "## When it applies\n\nA step that leans on outside material: weigh each source before using it.\n\n## Checks\n\n- **Who** wrote it, and what they gain from it.\n- **When** it was written, and whether it was revised.\n- **What it rests on**: primary data, other sources, or opinion.\n\n| Kind | Trust |\n| --- | --- |\n| Primary data | high |\n| Review article | medium |\n| Opinion piece | low |\n"
+}

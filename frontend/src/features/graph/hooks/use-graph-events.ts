@@ -14,11 +14,13 @@ import { useGraphStore } from '@/stores/graph-store';
 import { fetchPlan } from '../api';
 import { createStreamBuffer, type StreamBuffer } from './stream-buffer';
 
+/** A run that started or ended: its own copy, its graph's runs, and the Runs page read again. */
 function cacheRun(queryClient: QueryClient, graphId: string, run: Run) {
   queryClient.setQueryData(qk.runs.detail(run.id), run);
   queryClient.setQueryData<Run[]>(qk.graphs.runs(graphId), (runs) =>
     runs ? [run, ...runs.filter((r) => r.id !== run.id)] : runs,
   );
+  void queryClient.invalidateQueries({ queryKey: qk.runs.workspaces() });
 }
 
 function handleEvent(
@@ -113,6 +115,7 @@ export function useGraphEvents(graphId: string): ConnectionState {
     const resync = async () => {
       void queryClient.invalidateQueries({ queryKey: qk.graphs.detail(graphId), exact: true });
       void queryClient.invalidateQueries({ queryKey: qk.graphs.runs(graphId) });
+      void queryClient.invalidateQueries({ queryKey: qk.runs.workspaces() });
       const plan = useGraphStore.getState().plan;
       if (plan?.id && plan.status === 'streaming') {
         try {

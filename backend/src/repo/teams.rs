@@ -6,7 +6,7 @@ use sqlx::{FromRow, PgExecutor, Row};
 use uuid::Uuid;
 
 use super::enum_col;
-use crate::domain::workspace::{Team, TeamMember, TeamRole};
+use crate::domain::workspace::{Team, TeamMember, TeamRole, WorkspaceRole};
 
 impl FromRow<'_, PgRow> for Team {
     fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
@@ -103,6 +103,38 @@ pub async fn find(
         .bind(id)
         .fetch_optional(db)
         .await
+}
+
+/// One team of a workspace with the caller's role in it and in the
+/// workspace, in one statement; `None` when either is missing (the caller is
+/// not a member of the workspace, or the team is not one of its).
+pub async fn find_with_workspace_role(
+    db: impl PgExecutor<'_>,
+    user_id: Uuid,
+    workspace_id: Uuid,
+    id: Uuid,
+) -> Result<Option<(Team, WorkspaceRole)>, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT t.id, t.workspace_id, t.name, t.key, t.description, t.private, t.created_at,
+                tm.role, wm.role AS workspace_role,
+                (SELECT count(*) FROM team_members c WHERE c.team_id = t.id) AS member_count
+         FROM teams t
+         JOIN workspace_members wm ON wm.workspace_id = t.workspace_id AND wm.user_id = $1
+         LEFT JOIN team_members tm ON tm.team_id = t.id AND tm.user_id = $1
+         WHERE t.workspace_id = $2 AND t.id = $3",
+    )
+    .bind(user_id)
+    .bind(workspace_id)
+    .bind(id)
+    .fetch_optional(db)
+    .await?;
+    match row {
+        Some(row) => Ok(Some((
+            Team::from_row(&row)?,
+            enum_col(&row, "workspace_role")?,
+        ))),
+        None => Ok(None),
+    }
 }
 
 /// The workspace of a team and the role of `user_id` in the team, if any.

@@ -4,6 +4,7 @@ import {
   Navigate,
   type NonIndexRouteObject,
   type RouteObject,
+  type ShouldRevalidateFunction,
 } from 'react-router-dom';
 
 import { BootSplash } from '@/components/layout/boot-splash';
@@ -13,17 +14,39 @@ import { PublicRoute } from '@/components/layout/public-route';
 import { RootLayout } from '@/components/layout/root-layout';
 import { RouteError } from '@/components/layout/route-error';
 import type { RouteHandle } from '@/components/layout/route-handle';
+import type { PageLoaders } from '@/lib/prefetch';
 
 import { routeModules } from './route-modules';
 
-type PageRoute = Pick<NonIndexRouteObject, 'errorElement' | 'lazy' | 'handle'>;
+type PageRoute = Pick<NonIndexRouteObject, 'errorElement' | 'lazy' | 'handle' | 'shouldRevalidate'>;
 
-/** Lazy route from a module with a default-exported component, with a per-route error boundary. */
-function page(load: () => Promise<{ default: ComponentType }>, handle?: RouteHandle): PageRoute {
+/** A page whose route starts its first reads (see lib/prefetch.ts), by its loader's name. */
+type Prefetched = keyof PageLoaders;
+
+/** A search of the same page (a filter, a tab) reads what it needs itself. */
+const onlyAnotherPage: ShouldRevalidateFunction = ({ currentUrl, nextUrl }) =>
+  currentUrl.pathname !== nextUrl.pathname;
+
+/**
+ * Lazy route from a module with a default-exported component, with a per-route error boundary.
+ * Given a loader, the route starts the page's first reads while its code downloads: the loader
+ * comes from a small module of its own, in parallel with the page's, and returns at once.
+ */
+function page(
+  load: () => Promise<{ default: ComponentType }>,
+  handle?: RouteHandle,
+  prefetch?: Prefetched,
+): PageRoute {
   return {
     handle,
     errorElement: <RouteError />,
-    lazy: async () => ({ Component: (await load()).default }),
+    lazy: {
+      Component: async () => (await load()).default,
+      ...(prefetch && {
+        loader: async () => (await import('@/lib/prefetch')).pageLoaders[prefetch],
+      }),
+    },
+    ...(prefetch && { shouldRevalidate: onlyAnotherPage }),
   };
 }
 
@@ -37,8 +60,9 @@ function settingsPage(
   load: () => Promise<{ default: ComponentType }>,
   title: string,
   parent = SETTINGS_CRUMB,
+  prefetch?: Prefetched,
 ): PageRoute {
-  return page(load, crumbs(parent, { label: title }));
+  return page(load, crumbs(parent, { label: title }), prefetch);
 }
 
 export const routes: RouteObject[] = [
@@ -72,12 +96,16 @@ export const routes: RouteObject[] = [
           {
             ...page(routeModules.appShell),
             children: [
-              { index: true, ...page(routeModules.dashboard, crumbs({ label: 'Graphs' })) },
+              {
+                index: true,
+                ...page(routeModules.dashboard, crumbs({ label: 'Graphs' }), 'dashboard'),
+              },
               {
                 path: 'graphs/:graphId',
                 ...page(
                   routeModules.graph,
                   crumbs({ label: 'Graphs', to: '/app' }, { dynamic: 'graph' }),
+                  'graph',
                 ),
               },
               { path: 'graphs', element: <Navigate to="/app" replace /> },
@@ -87,42 +115,69 @@ export const routes: RouteObject[] = [
                 ...page(
                   routeModules.runDetail,
                   crumbs({ label: 'Runs', to: '/app/runs' }, { dynamic: 'run' }),
+                  'runDetail',
                 ),
               },
-              { path: 'agents', ...page(routeModules.agents, crumbs({ label: 'Agents' })) },
-              { path: 'secops', ...page(routeModules.secops, crumbs({ label: 'Trust' })) },
+              {
+                path: 'agents',
+                ...page(routeModules.agents, crumbs({ label: 'Agents' }), 'agents'),
+              },
+              {
+                path: 'skills',
+                ...page(
+                  routeModules.skills,
+                  crumbs({ label: 'Agents', to: '/app/agents' }, { label: 'Skills' }),
+                ),
+              },
+              {
+                path: 'secops',
+                ...page(routeModules.secops, crumbs({ label: 'Trust' }), 'secops'),
+              },
               { path: 'sessions', ...page(routeModules.sessions, crumbs({ label: 'Sessions' })) },
               {
                 path: 'sessions/:runId',
                 ...page(
                   routeModules.session,
                   crumbs({ label: 'Sessions', to: '/app/sessions' }, { dynamic: 'run' }),
+                  'session',
                 ),
               },
               { path: 'memory', element: <Navigate to="/app/settings/memory" replace /> },
-              { path: 'inbox', ...page(routeModules.inbox, crumbs({ label: 'Inbox' })) },
-              { path: 'issues', ...page(routeModules.issues, crumbs({ label: 'Issues' })) },
+              { path: 'inbox', ...page(routeModules.inbox, crumbs({ label: 'Inbox' }), 'inbox') },
+              {
+                path: 'issues',
+                ...page(routeModules.issues, crumbs({ label: 'Issues' }), 'issues'),
+              },
               {
                 path: 'issues/:issueId',
                 ...page(
                   routeModules.issue,
                   crumbs({ label: 'Issues', to: '/app/issues' }, { dynamic: 'issue' }),
+                  'issue',
                 ),
               },
               {
                 path: 'my-issues',
-                ...page(routeModules.myIssues, crumbs({ label: 'My issues' })),
+                ...page(routeModules.myIssues, crumbs({ label: 'My issues' }), 'myIssues'),
               },
-              { path: 'projects', ...page(routeModules.projects, crumbs({ label: 'Projects' })) },
+              {
+                path: 'projects',
+                ...page(routeModules.projects, crumbs({ label: 'Projects' }), 'projects'),
+              },
               {
                 path: 'conversations',
-                ...page(routeModules.conversations, crumbs({ label: 'Conversations' })),
+                ...page(
+                  routeModules.conversations,
+                  crumbs({ label: 'Conversations' }),
+                  'conversations',
+                ),
               },
               {
                 path: 'projects/:projectId',
                 ...page(
                   routeModules.project,
                   crumbs({ label: 'Projects', to: '/app/projects' }, { dynamic: 'project' }),
+                  'project',
                 ),
               },
               {
@@ -152,8 +207,14 @@ export const routes: RouteObject[] = [
                     path: 'preferences',
                     ...settingsPage(routeModules.settingsPreferences, 'Preferences'),
                   },
-                  { path: 'members', ...settingsPage(routeModules.members, 'Members') },
-                  { path: 'teams', ...settingsPage(routeModules.teams, 'Teams') },
+                  {
+                    path: 'members',
+                    ...settingsPage(routeModules.members, 'Members', SETTINGS_CRUMB, 'members'),
+                  },
+                  {
+                    path: 'teams',
+                    ...settingsPage(routeModules.teams, 'Teams', SETTINGS_CRUMB, 'teams'),
+                  },
                   { path: 'ai', ...settingsPage(routeModules.settingsAi, 'AI accounts') },
                   {
                     path: 'guardrails',
@@ -165,7 +226,7 @@ export const routes: RouteObject[] = [
                   },
                   {
                     path: 'alerts',
-                    ...settingsPage(routeModules.settingsAlerts, 'Alerts', TRUST_CRUMB),
+                    ...settingsPage(routeModules.settingsAlerts, 'Alerts', TRUST_CRUMB, 'alerts'),
                   },
                   {
                     path: 'alert-destinations',
@@ -188,7 +249,10 @@ export const routes: RouteObject[] = [
                     path: 'knowledge',
                     ...settingsPage(routeModules.settingsKnowledge, 'Knowledge'),
                   },
-                  { path: 'usage', ...settingsPage(routeModules.usage, 'Usage') },
+                  {
+                    path: 'usage',
+                    ...settingsPage(routeModules.usage, 'Usage', SETTINGS_CRUMB, 'usage'),
+                  },
                   { path: 'audit', ...settingsPage(routeModules.audit, 'Audit log', TRUST_CRUMB) },
                   { path: 'activity', ...settingsPage(routeModules.settingsActivity, 'Activity') },
                   { path: 'map', ...settingsPage(routeModules.settingsMap, 'Workspace map') },

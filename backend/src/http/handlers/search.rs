@@ -64,9 +64,11 @@ pub async fn search(
         limit,
         ..IssueFilter::default()
     };
+    // Each kind reads only its hits (the issues without their descriptions); only the teams,
+    // a handful per workspace, are read whole and matched here.
     let (issues, projects, graphs, documents, teams, members) = tokio::try_join!(
         repo::issues::list(db, auth.id, wid, &filter),
-        repo::issues::projects(db, auth.id, wid, None),
+        repo::issues::search_projects(db, auth.id, wid, &q, limit),
         repo::graphs::search(db, auth.id, wid, &q, limit),
         async {
             if member {
@@ -78,7 +80,7 @@ pub async fn search(
         repo::teams::list(db, auth.id, wid),
         async {
             if roster {
-                repo::workspaces::members(db, wid).await
+                repo::workspaces::search_members(db, wid, &q, limit).await
             } else {
                 Ok(Vec::new())
             }
@@ -101,9 +103,7 @@ pub async fn search(
     hits.extend(
         projects
             .into_iter()
-            .filter(|p| search::matches(&p.name, &needle))
-            .take(take)
-            .map(|p| hit(SearchKind::Project, p.id, p.name, p.status.to_string())),
+            .map(|(id, name, status)| hit(SearchKind::Project, id, name, status)),
     );
     hits.extend(
         graphs
@@ -133,9 +133,7 @@ pub async fn search(
     hits.extend(
         members
             .into_iter()
-            .filter(|m| search::matches(&m.name, &needle) || search::matches(&m.email, &needle))
-            .take(take)
-            .map(|m| hit(SearchKind::Member, m.user_id, m.name, m.email)),
+            .map(|(id, name, email)| hit(SearchKind::Member, id, name, email)),
     );
     Ok(Json(hits))
 }

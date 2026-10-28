@@ -37,7 +37,13 @@
     "risk_score": 4.6,
     "risk_reasons": ["New egress host", "Denials above baseline"],
     "risk_updated_at": "2026-10-14T11:30:00Z",
-    "a2a_exposed": true
+    "a2a_exposed": true,
+    "skills": [
+      "research-source-evaluation",
+      "research-synthesis-and-citation",
+      "core-evidence-and-sources"
+    ],
+    "template_id": "researcher"
   },
   "owner": {
     "id": "673aeeb0-8cfb-700b-81e5-e3c60b5ba318",

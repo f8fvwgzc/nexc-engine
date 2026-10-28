@@ -29,13 +29,16 @@ import {
   CommandShortcut,
 } from '@/components/ui/command';
 import { useLogout } from '@/features/auth/hooks/use-logout';
-import { graphsQuery } from '@/features/graphs/api';
+import { recentGraphsQuery } from '@/features/graphs/api';
 import { SEARCH_MIN, workspaceSearchQuery, type SearchHit } from '@/features/search/api';
 import { pageOf } from '@/features/search/pages';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useTheme } from '@/hooks/use-theme';
 import { useCommandStore } from '@/stores/command-store';
 import { useWorkspaceId } from '@/features/workspaces/use-current-workspace';
+
+/** Graphs offered before anything is typed: the sidebar's, most recently updated first. */
+const RECENT_GRAPHS = 8;
 
 /** What each kind of search hit is called and drawn with, in the order the groups are shown. */
 const HIT_GROUPS: { kind: SearchHit['kind']; heading: string; icon: LucideIcon }[] = [
@@ -60,7 +63,11 @@ export function CommandPalette() {
   const { setTheme } = useTheme();
   const logout = useLogout();
   const workspaceId = useWorkspaceId();
-  const { data: graphs } = useQuery({ ...graphsQuery(workspaceId), enabled: open });
+  // The sidebar's recent graphs (the same request, shared): a search finds the others.
+  const { data: graphs } = useQuery({
+    ...recentGraphsQuery(workspaceId, RECENT_GRAPHS),
+    enabled: open && !!workspaceId,
+  });
   const [input, setInput] = useState('');
   const term = useDebouncedValue(input.trim(), 200);
   const searching = term.length >= SEARCH_MIN;

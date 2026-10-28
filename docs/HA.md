@@ -96,8 +96,8 @@ for expired leases every 2 s.
 
 | Aspect    | Behaviour                                                                                                                                                                                                                                                                                                                       |
 | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Detection | Connections drop; writes and renewals fail; `/readyz` fails on every replica until the new primary answers. The pool reconnects on the next use.                                                                                                                                                                                 |
-| Recovery  | A replica whose write for a run fails stops executing that run rather than going on with a state the database does not have. Span batches are kept and retried with back-off for up to two minutes. When the new primary answers, the stopped runs' leases run out and a replica takes each over from what was committed. |
+| Detection | Connections drop; writes and renewals fail; `/readyz` fails on every replica until the new primary answers. The pool reconnects on the next use, and so does each replica's realtime listener (`LISTEN`).                                                                                                                       |
+| Recovery  | A replica whose write for a run fails stops executing that run rather than going on with a state the database does not have. Span batches are kept and retried with back-off for up to two minutes. When the new primary answers, the stopped runs' leases run out and a replica takes each over from what was committed. The cache invalidations other replicas sent while a listener was away are lost, so once it listens again the replica drops every entry of its caches (policies, guardrails, LLM settings, agent cards, onto-intelli's reads; a vocabulary is only made stale, still the fallback while onto-intelli is away), and nothing stale is served until `NEXC_CACHE_TTL_SECS` runs out. Realtime events sent in the gap are not replayed: a console catches up on its next refetch. |
 | RTO       | The database's failover time plus `L + 5 s`.                                                                                                                                                                                                                                                                                    |
 | RPO       | Committed data: nothing with a synchronous standby, the replication lag with an asynchronous one. Node attempts in flight are run again.                                                                                                                                                                                         |
 
@@ -106,7 +106,7 @@ for expired leases every 2 s.
 | Aspect    | Behaviour                                                                                                                                                                                                                                                                                                                        |
 | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Detection | The replica receives `SIGTERM`.                                                                                                                                                                                                                                                                                                  |
-| Recovery  | The replica drains: `/readyz` answers 503, its dispatcher stops claiming, each run it executes is stopped, its chained spans are written and its lease is released with the next epoch. A peer takes each run over within one dispatcher poll. HTTP requests in flight finish; then the process exits. Migrations are additive, so old and new replicas share the database during the rollout. During the first rollout to a version with leases, a replica of the earlier version still cancels its runs when it stops; a run it holds (one it claimed has no lease) is not taken over while it sends heartbeats, and is taken over once its heartbeat is older than `L`. |
+| Recovery  | The replica drains: `/readyz` answers 503, its dispatcher stops claiming, each run it executes is stopped, its chained spans are written and its lease is released with the next epoch. A peer takes each run over within one dispatcher poll. HTTP requests in flight finish; then the process exits. Migrations are additive, so old and new replicas share the database during the rollout; on Kubernetes a new pod applies them in its `migrate` init container before it serves, with no probe that could stop an index build half way. During the first rollout to a version with leases, a replica of the earlier version still cancels its runs when it stops; a run it holds (one it claimed has no lease) is not taken over while it sends heartbeats, and is taken over once its heartbeat is older than `L`. |
 | RTO       | About 5 s per run: the drain plus one poll of a peer.                                                                                                                                                                                                                                                                           |
 | RPO       | The node attempts in flight, which run again. No span is lost.                                                                                                                                                                                                                                                                  |
 
@@ -130,27 +130,42 @@ for expired leases every 2 s.
 
 Run at least two backend replicas and two runtime replicas against one PostgreSQL that has a
 standby, with one data volume (`NEXC_DATA_DIR`: run artifacts, uploaded documents) that every
-backend replica mounts: on more than one node it must be `ReadWriteMany`, or a replica cannot start
-(a `ReadWriteOnce` volume attaches to one node) and a peer that takes a run over cannot see its
-artifacts. Every replica gets the same `NEXC_RUN_LEASE_SECS`; each run records the lease its holder
-works under (`runs.lease_secs`) and a takeover waits for that one, so a replica set differently
-still takes a dead peer's runs over in time, and logs a warning when it does.
+backend replica mounts, which takes a `ReadWriteMany` volume. A `ReadWriteOnce` volume attaches
+to one node, so on it the manifests and the chart run one backend replica (the chart refuses to
+render more, or the autoscaler) and keep a rollout's new pod on that replica's node (a required
+pod affinity): placed on another node it would wait on a Multi-Attach error and the rollout would
+stall. That replica comes back after a crash and survives a rolling update, not the loss of its
+node; a drain moves it (its PodDisruptionBudget lets one pod go) and the volume follows it. When
+that node fails instead, nothing moves by itself: the pod stays `Terminating` while the node is
+`NotReady`, the scheduler still counts it for the affinity, so its replacement stays `Pending`
+waiting for the dead node, and the volume stays attached to it. Once the node is really off
+(powered down, its VM stopped; not merely unreachable, or two nodes would write to one volume),
+taint it `kubectl taint node <node> node.kubernetes.io/out-of-service=nodeshutdown:NoExecute`
+(Kubernetes 1.28+), or delete the pod with `kubectl delete pod <pod> --force --grace-period=0`:
+the replacement then starts on another node and the volume is detached and follows it. Remove the
+taint when the node comes back. With a `ReadWriteMany` volume the chart spreads the replicas
+across nodes (`topologySpreadConstraints`), and a peer that takes a run over sees its artifacts.
+Every replica gets the same `NEXC_RUN_LEASE_SECS`; each run records the lease its holder works under
+(`runs.lease_secs`) and a takeover waits for that one, so a replica set differently still takes a
+dead peer's runs over in time, and logs a warning when it does.
 
 | Setting                                  | Where                                    | What it does                                                                                                                       |
 | ---------------------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `NEXC_RUN_LEASE_SECS`                    | `.env`, Helm `backend.runLeaseSecs`      | The lease (1 to 3600 s, default 30). Shorter takes runs over sooner after a crash and renews more often; `NEXC_ENV=production` refuses less than 10 s, which a slow answer of the database would turn into takeovers. |
-| `replicas.backend`, `replicas.runtime`   | Helm values                              | Two each by default.                                                                                                               |
-| `backend.dataAccessMode`, `backend.dataStorageClass`, `backend.dataExistingClaim` | Helm values | The backend's data volume. `ReadWriteOnce` (the default) suits a single node; with backend replicas on several nodes (the chart spreads them across nodes, and the autoscaler adds more) set `ReadWriteMany` and a class that offers it (NFS, EFS, Filestore, CephFS), or mount a claim you made. The chart's notes warn when replicas share a `ReadWriteOnce` volume. |
+| `replicas.backend`, `replicas.runtime`   | Helm values                              | One backend (its `ReadWriteOnce` volume carries one; more need `ReadWriteMany`) and two runtimes by default.                       |
+| `backend.dataAccessMode`, `backend.dataStorageClass`, `backend.dataExistingClaim` | Helm values | The backend's data volume and where its pods run. `ReadWriteOnce` (the default) carries one backend replica and keeps a rollout's new pod on its node; `ReadWriteMany` with a class that offers it (NFS, EFS, Filestore, CephFS) takes several, or the autoscaler, spread across nodes. A claim you made is mounted instead of `backend-data`; set `dataAccessMode` to its access mode. The chart's notes say which placement you got. |
 | `autoscaling.backend`, `autoscaling.runtime` | Helm values                          | Optional HorizontalPodAutoscalers on CPU (off by default). When one is on, `replicas` no longer sets that Deployment's size; keep `minReplicas` at 2 or more, and give the backend a `ReadWriteMany` data volume. |
 | `podDisruptionBudgets.maxUnavailable`    | Helm values                              | How many pods of each tier a node drain may evict at once (default 1).                                                             |
 | `backend.terminationGracePeriodSeconds`  | Helm values                              | Time a backend pod gets to drain on `SIGTERM` (default 60 s; the hand-off itself takes at most 15 s).                              |
-| `NEXC_BACKEND_REPLICAS=2`                | `.env`, Docker Compose                   | Two backend replicas on one host, kept by every later `docker compose up -d`; restart `frontend` after changing it so its nginx resolves every replica. Each gets 30 s to drain (`stop_grace_period`). |
+| `NEXC_BACKEND_REPLICAS=2`                | `.env`, Docker Compose                   | Two backend replicas on one host, kept by every later `docker compose up -d`. The frontend's nginx looks `backend` up again every 10 s, so it reaches a new or recreated replica without a restart. Each gets 30 s to drain (`stop_grace_period`). |
+| `postgres.maxConnections`, `postgres.reservedConnections`, `config.NEXC_DB_MAX_CONNECTIONS` | Helm values | The connection budget, below. |
 
 Every write the executor makes for a run is one short transaction that sets
 `idle_in_transaction_session_timeout` to `L` for itself (`set_config(…, true)`, as `SET LOCAL`
 does), so nothing needs configuring on PostgreSQL or a managed database. A connection pooler in
 front of it must keep each transaction on one server connection, as PgBouncer does in session and
-transaction pooling (not in statement pooling).
+transaction pooling (not in statement pooling); the realtime listener and migrations need a session
+of their own besides (Connections to PostgreSQL, below).
 
 The backend's readiness probe is `/api/v1/readyz`. It answers 503 while the database does not
 answer and from the moment the replica is told to stop, so a load balancer stops sending it
@@ -158,6 +173,38 @@ requests while it hands its runs over. The Helm chart probes it every 2 s (5 s t
 takes the pod out of the Service after three failures in a row, so a database that is slow for a
 moment does not take every replica out at once; a pod being deleted leaves the Service at once
 anyway.
+
+### Connections to PostgreSQL
+
+Every backend pod keeps a pool of `NEXC_DB_MAX_CONNECTIONS` connections (20 by default), and its
+realtime listener holds one of them for as long as it runs. Two of them (from a setting of 4 up)
+form a small pool of their own that renews the leases of the pod's runs, so a burst of requests
+never holds a renewal up; the pod opens no more than the setting. Under load each pool fills, so the
+pods that can run at once must fit under PostgreSQL's `max_connections` together:
+
+```
+(most backend pods + 1 during a rollout) x NEXC_DB_MAX_CONNECTIONS
+  + onto-intelli replicas x its maxConnections (its rollouts add no pod)
+  + a few reserved (psql, backups, the superuser's own three)   <=   max_connections
+```
+
+Past it PostgreSQL refuses new connections (`too many clients`) and requests fail with 5xx. The
+Helm chart does the sum: unless `config.NEXC_DB_MAX_CONNECTIONS` is set, each pod's pool is its
+share of `postgres.maxConnections` (100, PostgreSQL's default) less `postgres.reservedConnections`
+(10) and onto-intelli's pools, among the autoscaler's maximum (or `replicas.backend`) plus one,
+at most 20: 20 for the one replica, 12 with the autoscaler at 6, 14 for two replicas beside
+onto-intelli. With the
+chart's PostgreSQL a pool that does not fit refuses to render, and `postgres.maxConnections`
+other than 100 is passed to it as `-c max_connections` (which restarts it). With your own
+database, set `postgres.maxConnections` to its limit. onto-intelli's rollout stops a pod before
+it starts its replacement (`maxSurge: 0`), so its pools never overlap; with one replica it is away
+for that moment, and the backend serves the vocabularies it holds meanwhile. The
+kustomize manifests compute nothing: the one replica plus one at 20 each is 40 of 100 there
+(`deploy/k8s/config.env`). Compose runs `NEXC_BACKEND_REPLICAS` pools of 20 against 100.
+
+A pooler in front of PostgreSQL has to give the backend sessions: its realtime `LISTEN` and the
+advisory lock `nexc migrate` takes hold a session, which PgBouncer in transaction pooling does not
+keep. Point `NEXC_DATABASE_URL` at a session pool or at PostgreSQL itself.
 
 ## Shutting down
 

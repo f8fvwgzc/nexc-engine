@@ -1,7 +1,8 @@
 /**
  * What the pages do over time, against the mocked API: a list that follows a live run, a page
  * that recovers from a failed load, data kept on screen when a background refetch fails, an
- * issue that opens on its own page (and from an old `?issue=` link), the issue board's full
+ * issue that opens on its own page (and from an old `?issue=` link), a reaction and a reply in
+ * the thread of a comment on it and a reaction in the inbox, the issue board's full
  * height, per-column `+` and folded columns, a filter that matches nothing, one team's projects
  * and a card dragged across the board, the unread count in the tablet's icon rail, and the
  * workspace map's embedded onto-intelli UI: framed under the console's own
@@ -50,15 +51,17 @@ test.describe('the Runs page', () => {
     const status = page.locator('tr', { hasText: live.id.slice(0, 8) }).getByRole('status');
     await expect(status).toHaveAccessibleName('Running');
 
-    // The run finishes; nothing on this page holds the graph's event stream.
+    // The run finishes; nothing on this page holds the graph's event stream. The page reads the
+    // workspace's runs in one request, polled while one of them is live.
     const finished = { ...live, status: 'succeeded', finished_at: '2026-10-14T12:00:05Z' };
     await page.route(
-      (url) => url.pathname === `${API}/graphs/${live.graph_id}/runs`,
+      (url) => /^\/api\/v1\/workspaces\/[^/]+\/runs$/.test(url.pathname),
       (r) =>
         r.fulfill({
-          json: fixtures.runs
-            .filter((run) => run.graph_id === live.graph_id)
-            .map((run) => (run.id === live.id ? finished : run)),
+          json: fixtures.runs.map((run) => ({
+            ...(run.id === live.id ? finished : run),
+            graph_name: fixtures.graphs.find((g) => g.id === run.graph_id)?.name ?? 'Graph',
+          })),
         }),
     );
     await page.clock.fastForward('00:11');
@@ -67,22 +70,56 @@ test.describe('the Runs page', () => {
 });
 
 test.describe('a page that failed to load', () => {
-  for (const name of ['runs', 'agents']) {
+  // The route's error page stands in for a page without a boundary of its own (runs); a page
+  // that has one (agents) keeps its header and shows the error under it.
+  for (const { name, heading, loaded, first } of [
+    { name: 'runs', heading: 'Something went wrong', loaded: 'Runs', first: undefined },
+    { name: 'agents', heading: 'Agents', loaded: 'Agents', first: fixtures.agents[0]?.name },
+  ]) {
     test(`${name}: Try again reads it again`, async ({ page }) => {
       await page.setViewportSize({ width: 1280, height: 800 });
       const target = route(name);
       await openRoute(page, target, { mode: 'error', theme: 'light' });
-      await expect(page.getByRole('heading', { level: 1 })).toHaveText('Something went wrong');
+      await expect(page.getByRole('heading', { level: 1 })).toHaveText(heading);
+      await expect(page.getByRole('alert').filter({ hasText: 'Try again' })).toBeVisible();
 
       // The server is back.
       await page.unrouteAll({ behavior: 'ignoreErrors' });
       await mockApi(page, { mode: 'full', persona: target.persona });
       await page.getByRole('button', { name: 'Try again' }).click();
 
-      await expect(page.getByRole('heading', { level: 1 })).not.toHaveText('Something went wrong');
+      // The list itself is back, not just its placeholder.
+      await expect(page.getByRole('heading', { level: 1 })).toHaveText(loaded);
+      const rows = page.getByRole('table').first().getByRole('row');
+      await expect(rows.nth(1)).toBeVisible();
+      if (first) await expect(rows.filter({ hasText: first }).first()).toBeVisible();
       await expect(page.getByRole('button', { name: 'Try again' })).toHaveCount(0);
     });
   }
+
+  test('run-detail: the next run opened shows itself, not the last one’s error', async ({
+    page,
+  }) => {
+    const next = fixtures.runs[1];
+    if (!next) throw new Error('the fixtures need a second run');
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const target = route('run-detail');
+    await openRoute(page, target, { mode: 'error', theme: 'light' });
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Couldn’t load the run');
+
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+    await mockApi(page, { mode: 'full', persona: target.persona });
+    // In the app, as Back or a link would go there: the page stays mounted with a new run id.
+    await page.evaluate((path) => {
+      window.history.pushState({}, '', path);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, `/app/runs/${next.id}`);
+
+    await expect(page.getByRole('heading', { level: 1 })).toContainText(
+      `Run ${next.id.slice(0, 8)}`,
+    );
+    await expect(page.getByRole('button', { name: 'Try again' })).toHaveCount(0);
+  });
 });
 
 test.describe('a background refetch that fails', () => {
@@ -160,6 +197,95 @@ test.describe('an issue', () => {
     await page.getByRole('button', { name: `Delete ${issue.identifier}` }).click();
     await page.getByRole('button', { name: 'Delete issue' }).click();
     await expect(page).toHaveURL(/\/app\/issues$/);
+  });
+});
+
+test.describe('an issue’s activity', () => {
+  const comment = fixtures.issueEvents.find((e) => e.body.startsWith('I found two more'));
+  if (!comment?.actor) throw new Error('the fixtures need a comment with reactions');
+
+  test('takes the reader’s reaction back, and a reply into the comment’s thread', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await openRoute(page, route('issue'), { mode: 'full', theme: 'light' });
+    const thread = page
+      .getByRole('region', { name: 'Activity' })
+      .getByRole('listitem')
+      .filter({ hasText: comment.body });
+    await expect(thread.getByText('I added both to the source list.')).toBeVisible();
+    await expect(thread.getByText('Grace Hopper and 2 others reacted')).toBeVisible();
+
+    // The reader's 👍 comes off at once, and stays off as the server answers.
+    const thumbs = thread.getByRole('button', { name: '👍 2' });
+    await expect(thumbs).toHaveAttribute('aria-pressed', 'true');
+    const removed = page.waitForResponse(
+      (r) =>
+        r.request().method() === 'DELETE' &&
+        r.url().endsWith(`/events/${comment.id}/reactions?emoji=%F0%9F%91%8D`),
+    );
+    await thumbs.click();
+    await removed;
+    await expect(thread.getByRole('button', { name: '👍 1' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+    // It keeps its place, before 🎉.
+    await expect(
+      thread.locator('[data-slot="bubble-reactions"]').first().getByRole('button').first(),
+    ).toHaveAccessibleName('👍 1');
+
+    // Another from the picker.
+    await thread
+      .locator('[data-slot="bubble-reactions"]')
+      .first()
+      .getByRole('button', { name: 'Add a reaction' })
+      .click();
+    await page
+      .getByRole('group', { name: 'Pick a reaction' })
+      .getByRole('button', { name: 'rocket' })
+      .click();
+    await expect(thread.getByRole('button', { name: '🚀 1' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+
+    // Enter sends a reply into the thread.
+    const box = thread.getByRole('textbox', { name: `Reply to ${comment.actor?.name}` });
+    const posted = page.waitForRequest(
+      (r) => r.method() === 'POST' && r.url().endsWith(`/issues/${comment.issue_id}/comments`),
+    );
+    await box.fill('On it.');
+    await box.press('Enter');
+    expect((await posted).postDataJSON()).toEqual({ body: 'On it.', parent_id: comment.id });
+  });
+});
+
+test.describe('the inbox', () => {
+  test('says who reacted to the reader’s comment, and with what', async ({ page }) => {
+    const on = fixtures.inbox.find((n) => n.kind === 'comment');
+    if (!on?.issue) throw new Error('the fixtures need a comment in the inbox');
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await openRoute(page, route('inbox'), { mode: 'full', theme: 'light' });
+
+    const reaction = {
+      ...on,
+      id: '1f0c5d7e-9a2b-7c34-8d5e-6f7a8b9c0d1e',
+      kind: 'reaction',
+      actor: { user_id: '673aeeb0-8cfb-700b-81e5-e3c60b5ba318', name: 'Grace Hopper' },
+      emoji: '🎉',
+      read_at: null,
+    };
+    await page.route(
+      (url) => url.pathname.startsWith(`${API}/`) && url.pathname.endsWith('/inbox'),
+      (r) => r.fulfill({ json: [reaction, ...fixtures.inbox] }),
+    );
+    await page.reload();
+    await expect(
+      page.getByRole('button', {
+        name: `Grace Hopper reacted 🎉 to your comment on ${on.issue.identifier} ${on.issue.title}`,
+      }),
+    ).toBeVisible();
   });
 });
 

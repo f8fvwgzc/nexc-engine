@@ -23,6 +23,7 @@ export const ROUTES: Record<string, string> = {
   'docs/CONTRACT.md#2-environment-variables-one-env-at-repo-root-see-envexample':
     '/reference/environment',
   'docs/AGENTSECOPS.md': '/secops/assessment',
+  'docs/AGENT-CATALOG.md': '/concepts/catalog',
   'docs/INFRASTRUCTURE.md': '/operate/infrastructure',
   'docs/HA.md': '/operate/ha',
   'docs/adr/0001-http3-edge-caching-and-indexes.md': '/operate/transport',

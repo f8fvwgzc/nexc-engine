@@ -7,11 +7,15 @@ metadata:
   labels:
     {{- include "nexc.labels" . | nindent 4 }}
 data:
+  {{- $pool := include "nexc.dbPool" . }}
   {{- range $key, $value := .Values.config }}
-  {{- if not (and (has $key (list "NEXC_CORS_ORIGINS" "NEXC_PUBLIC_URL")) (not $value)) }}
+  {{- if not (or (eq $key "NEXC_DB_MAX_CONNECTIONS") (and (has $key (list "NEXC_CORS_ORIGINS" "NEXC_PUBLIC_URL")) (not $value))) }}
   {{ $key }}: {{ $value | quote }}
   {{- end }}
   {{- end }}
+  # The backend's pool per pod: config.NEXC_DB_MAX_CONNECTIONS, or its share of the connection
+  # budget (postgres.maxConnections).
+  NEXC_DB_MAX_CONNECTIONS: {{ $pool | quote }}
   {{- $public := include "nexc.publicUrl" . }}
   {{- if and (not .Values.config.NEXC_PUBLIC_URL) $public }}
   NEXC_PUBLIC_URL: {{ $public | quote }}
@@ -41,6 +45,7 @@ data:
   NEXC_GRPC_POOL_SIZE: {{ .Values.backend.grpc.poolSize | quote }}
   NEXC_CACHE_TTL_SECS: {{ .Values.backend.cacheTtlSecs | quote }}
   NEXC_RUN_LEASE_SECS: {{ .Values.backend.runLeaseSecs | quote }}
+  NEXC_SEED_EXPERT_AGENTS: {{ .Values.backend.seedExpertAgents | quote }}
   NEXC_LLM_BREAKER_FAILURES: {{ .Values.backend.llmBreaker.failures | quote }}
   NEXC_LLM_BREAKER_OPEN_SECS: {{ .Values.backend.llmBreaker.openSecs | quote }}
   {{- if .Values.backend.grpcAddr }}

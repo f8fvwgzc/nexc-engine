@@ -1,8 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowDownUpIcon, ChevronRightIcon, ListFilterIcon } from 'lucide-react';
-import { useId, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 
-import { PersonGlyph } from '@/components/custom-ui/issue-glyphs';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -13,201 +12,172 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Textarea } from '@/components/ui/textarea';
+import { artifactFilesQuery } from '@/features/artifacts/api';
 import { errorMessage } from '@/lib/api/errors';
-import { formatRelative } from '@/lib/format';
+import { MotionPresence } from '@/lib/motion';
 import { qk } from '@/lib/query-keys';
 import { cn } from '@/lib/utils';
 import type { Issue, IssueEvent } from '@/schemas/issue';
 import { useAuthStore } from '@/stores/auth-store';
 
-import { ACTIVITY_SHOW_OPTIONS, changeText, showsEvent, useActivityPrefs } from './activity';
-import { createComment, deleteComment, issueEventsQuery, updateComment } from './api';
+import {
+  ACTIVITY_SHOW_OPTIONS,
+  groupActivity,
+  showsEvent,
+  threadReplies,
+  useActivityPrefs,
+} from './activity';
+import { ArtifactEntry, ChangeEntry, EntryAvatar, EntryGrid, EntryRow } from './activity-entry';
+import { createComment, issueEventsQuery } from './api';
+import { CommentEntry, type CommentContext, type DraftUpdate } from './comment-entry';
+import { Composer } from './composer';
 import { RunReport } from './issue-run';
+import { EMPTY_DRAFT, mentionsIn, toWire, type MentionDraft, type MentionKind } from './mentions';
+import { AddReaction, ReactionBar, ReactionSummary } from './reaction-bar';
+import { useMentionables } from './use-mentionables';
+import { useReactions } from './use-reactions';
 
-/**
- * One comment, with Edit for its author and Delete for its author and moderators. The edit in
- * progress is the timeline's (`draft`, null while not editing), so it outlasts this comment being
- * folded away or filtered out.
- */
-function Comment({
-  event,
-  issueId,
-  own,
-  canDelete,
-  draft,
-  setDraft,
-  onChanged,
-}: {
-  event: IssueEvent;
-  issueId: string;
-  own: boolean;
-  canDelete: boolean;
-  draft: string | null;
-  setDraft: (draft: string | null) => void;
-  onChanged: () => void;
-}) {
-  // The field takes focus when Edit is clicked, not when an edit in progress comes back into view.
-  const [focusEdit, setFocusEdit] = useState(false);
-  const edit = useMutation({
-    mutationFn: (body: string) => updateComment(issueId, event.id, body),
-    onSuccess: () => {
-      setDraft(null);
-      onChanged();
-    },
-  });
-  const remove = useMutation({
-    mutationFn: () => deleteComment(issueId, event.id),
-    onSuccess: () => {
-      setDraft(null);
-      onChanged();
-    },
-  });
-  const name = event.actor?.name ?? 'Someone who left';
-  return (
-    <li className="rounded-md border bg-card px-3 py-2">
-      <div className="flex items-center gap-2 text-[13px]">
-        <PersonGlyph name={event.actor?.name} />
-        <span className="font-medium">{name}</span>
-        <span className="text-muted-foreground">
-          {formatRelative(event.created_at)}
-          {event.edited_at ? ' · edited' : ''}
-        </span>
-        <span className="ml-auto flex gap-1">
-          {own && draft === null && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 px-2 text-xs"
-              onClick={() => {
-                setFocusEdit(true);
-                setDraft(event.body);
-              }}
-            >
-              Edit
-            </Button>
-          )}
-          {canDelete && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 px-2 text-xs text-destructive"
-              disabled={remove.isPending}
-              aria-label={`Delete comment by ${name}`}
-              onClick={() => remove.mutate()}
-            >
-              Delete
-            </Button>
-          )}
-        </span>
-      </div>
-      {draft === null ? (
-        <p className="mt-1.5 text-sm break-words whitespace-pre-wrap">{event.body}</p>
-      ) : (
-        <form
-          className="mt-2 space-y-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (draft.trim()) edit.mutate(draft.trim());
-          }}
-        >
-          <Textarea
-            autoFocus={focusEdit}
-            rows={3}
-            value={draft}
-            aria-label="Edit comment"
-            onFocus={(e) =>
-              e.target.setSelectionRange(e.target.value.length, e.target.value.length)
-            }
-            onChange={(e) => setDraft(e.target.value)}
-          />
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="ghost" size="sm" onClick={() => setDraft(null)}>
-              Cancel
-            </Button>
-            <Button type="submit" size="sm" disabled={!draft.trim() || edit.isPending}>
-              Save
-            </Button>
-          </div>
-        </form>
-      )}
-      {(edit.error ?? remove.error) && (
-        <p role="alert" className="mt-1 text-xs text-destructive">
-          {errorMessage(edit.error ?? remove.error)}
-        </p>
-      )}
-    </li>
-  );
+/** The line under the agents in the mention list: what mentioning one will do. */
+function agentNote(canPlan: boolean | null): string | undefined {
+  if (canPlan === null) return undefined;
+  return canPlan
+    ? 'An active agent you mention takes the issue if it has no agent yet, and is asked for a plan.'
+    : 'An active agent you mention takes the issue if it has no agent yet. Join the team to have it plan.';
 }
 
+/** Whether the text a comment was sent with mentions an agent: the issue may have changed. */
+const mentionsAgent = (body: string) => mentionsIn(body).some((m) => m.kind === 'agent');
+
+/** A change to one of the timeline's drafts, by comment id. */
+const changeDraft =
+  (id: string, next: DraftUpdate) => (all: Record<string, MentionDraft | null>) => ({
+    ...all,
+    [id]: typeof next === 'function' ? next(all[id] ?? null) : next,
+  });
+
 /**
- * The comments on an issue, the history of its state, priority, assignee, title, GitHub link and
- * files, and what its runs reported, with a box to add a comment. The header folds it away and
- * picks what it shows and in which order; the choice is the member's, the same on every issue.
+ * The comments on an issue and their threads, the history of its state, priority, assignee,
+ * title, GitHub link and files, what its runs reported and what mentions handed its agents, with
+ * a box to add a comment (`@` mentions a teammate or an agent). Each entry has its kind's mark,
+ * its author's avatar and the time on the right; changes one person made in a row read as one
+ * entry, runs and files sit on cards, and comments and run reports take reactions. The header
+ * folds it away and picks what it shows and in which order; the choice is the member's, the same
+ * on every issue.
  */
 export function IssueTimeline({ issue, canModerate }: { issue: Issue; canModerate: boolean }) {
   const queryClient = useQueryClient();
-  const me = useAuthStore((s) => s.user?.id);
+  const user = useAuthStore((s) => s.user);
   const bodyId = useId();
-  const [body, setBody] = useState('');
-  // Comment edits in progress, by comment id (null once saved or given up).
-  const [drafts, setDrafts] = useState<Record<string, string | null>>({});
-  const setDraft = (eventId: string) => (draft: string | null) =>
-    setDrafts((current) => ({ ...current, [eventId]: draft }));
+  const [draft, setDraft] = useState<MentionDraft>(EMPTY_DRAFT);
+  // Comment edits and replies in progress, by comment id (null once sent or given up).
+  const [edits, setEdits] = useState<Record<string, MentionDraft | null>>({});
+  const [replies, setReplies] = useState<Record<string, MentionDraft | null>>({});
   const [prefs, setPrefs] = useActivityPrefs();
   const { data: events, isPending, error } = useQuery(issueEventsQuery(issue.id));
-  const reload = () => void queryClient.invalidateQueries({ queryKey: qk.issues.events(issue.id) });
+  const react = useReactions(issue.id);
+  // A file entry offers the file while the issue still has one of that name.
+  const { data: files } = useQuery({
+    ...artifactFilesQuery(issue.workspace_id, { issue_id: issue.id }),
+    enabled: (events ?? []).some((e) => e.kind === 'artifact'),
+  });
+  // Whom to mention is read once someone starts to write; before that, only what the comments'
+  // mentions need to show.
+  const [writing, setWriting] = useState(false);
+  const mentioned = useMemo(() => {
+    const kinds = new Set<MentionKind>();
+    for (const e of events ?? [])
+      if (e.kind === 'comment') for (const m of mentionsIn(e.body)) kinds.add(m.kind);
+    return kinds;
+  }, [events]);
+  const mentionables = useMentionables(issue, {
+    write: writing,
+    users: mentioned.has('user'),
+    agents: mentioned.has('agent'),
+  });
+
+  /** After a comment was added, edited or deleted: one that was added shows at once. */
+  const changed = (body: string, posted?: IssueEvent) => {
+    if (posted) {
+      queryClient.setQueryData<IssueEvent[]>(qk.issues.events(issue.id), (all) =>
+        all && !all.some((e) => e.id === posted.id) ? [...all, posted] : all,
+      );
+      // Posted while the filter hides comments, it would seem to vanish: show everything instead.
+      if (prefs.show !== 'all' && prefs.show !== 'comments') setPrefs({ show: 'all' });
+    }
+    void queryClient.invalidateQueries({ queryKey: qk.issues.events(issue.id) });
+    // A mentioned agent may have been delegated the issue and given it a graph to plan in.
+    if (mentionsAgent(body))
+      void queryClient.invalidateQueries({ queryKey: qk.issues.one(issue.id) });
+  };
+
   // A change nobody made in the same moment a run reported is the run's: it moved the issue.
   const reported = new Set((events ?? []).filter((e) => e.kind === 'run').map((e) => e.created_at));
   const byAgents = (event: IssueEvent) => event.actor === null && reported.has(event.created_at);
+  const nameOf = (event: IssueEvent) =>
+    event.actor?.name ?? (byAgents(event) ? 'Agents' : 'Someone who left');
   const shown = (events ?? []).filter((event) => showsEvent(event, prefs.show));
-  // The server sends the oldest first.
-  const ordered = prefs.order === 'desc' ? [...shown].reverse() : shown;
+  // The server sends the oldest first; a thread reads oldest first whatever the order.
+  const thread = threadReplies(shown);
+  const ordered = prefs.order === 'desc' ? [...thread.entries].reverse() : thread.entries;
+  const items = groupActivity(
+    ordered,
+    (event) => event.actor?.user_id ?? (byAgents(event) ? 'agents' : 'left'),
+  );
   const showLabel = ACTIVITY_SHOW_OPTIONS.find((o) => o.value === prefs.show)?.label;
+
+  const comments: CommentContext = {
+    issueId: issue.id,
+    me: user?.id,
+    myName: user?.name,
+    canModerate,
+    mentionables,
+    agentNote: agentNote(mentionables.canPlan),
+    startWriting: () => setWriting(true),
+    editDraft: (id) => edits[id] ?? null,
+    setEditDraft: (id, next) => setEdits(changeDraft(id, next)),
+    replyDraft: (id) => replies[id] ?? null,
+    setReplyDraft: (id, next) => setReplies(changeDraft(id, next)),
+    onChanged: changed,
+    react,
+  };
+
   const add = useMutation({
-    mutationFn: () => createComment(issue.id, body.trim()),
+    mutationFn: (body: string) => createComment(issue.id, body),
     meta: { errorToast: false },
-    onSuccess: () => {
-      setBody('');
-      // Posted while the filter hides comments, it would seem to vanish: show everything instead.
-      if (prefs.show !== 'all' && prefs.show !== 'comments') setPrefs({ show: 'all' });
-      reload();
+    onSuccess: (posted, body) => {
+      setDraft(EMPTY_DRAFT);
+      changed(body, posted);
     },
   });
+  const send = () => {
+    if (draft.text.trim() && !add.isPending) add.mutate(toWire(draft.text.trim(), draft.picked));
+  };
 
   const composer = (
-    <form
-      className="space-y-2"
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (body.trim()) add.mutate();
-      }}
-    >
-      <Textarea
-        rows={2}
-        value={body}
-        placeholder="Leave a comment…"
-        aria-label="New comment"
-        onChange={(e) => setBody(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && body.trim()) add.mutate();
-        }}
-      />
-      {add.error && (
-        <p role="alert" className="text-sm text-destructive">
-          {errorMessage(add.error)}
-        </p>
-      )}
-      <div className="flex justify-end">
-        <Button type="submit" size="sm" disabled={!body.trim() || add.isPending}>
-          Comment
-        </Button>
-      </div>
-    </form>
+    <EntryGrid>
+      <EntryRow avatar={<EntryAvatar name={user?.name} />}>
+        <Composer
+          draft={draft}
+          onDraftChange={setDraft}
+          onSend={send}
+          sending={add.isPending}
+          label="New comment"
+          placeholder="Leave a comment…"
+          candidates={mentionables.candidates}
+          agentNote={comments.agentNote}
+          onFocus={() => setWriting(true)}
+        />
+        {add.error && (
+          <p role="alert" className="mt-1 text-sm text-destructive">
+            {errorMessage(add.error)}
+          </p>
+        )}
+      </EntryRow>
+    </EntryGrid>
   );
 
   return (
-    <section aria-label="Activity" className="space-y-3 border-t pt-4">
+    <section aria-label="Activity" className="space-y-3">
       <div className="flex items-center gap-1">
         <h2 className="min-w-0 flex-1">
           <button
@@ -272,7 +242,7 @@ export function IssueTimeline({ issue, canModerate }: { issue: Issue; canModerat
           </p>
         )
       ) : (
-        <div id={bodyId} className="space-y-3">
+        <div id={bodyId} className="space-y-5">
           {prefs.order === 'desc' && composer}
           {isPending ? (
             <div className="space-y-2">
@@ -284,45 +254,84 @@ export function IssueTimeline({ issue, canModerate }: { issue: Issue; canModerat
               {errorMessage(error)}
             </p>
           ) : (
-            <ol className="space-y-2">
-              {ordered.length === 0 && (
+            // One-line changes in a row sit closer together than the entries around them.
+            <ol className="space-y-4 [&>[data-compact]:has(+[data-compact])]:mb-2">
+              {items.length === 0 && (
                 <li className="text-[13px] text-muted-foreground">
                   {events.length === 0
                     ? 'Nothing yet. Changes to this issue and comments show up here.'
                     : 'Nothing of this kind yet. Pick All activity to see every entry.'}
                 </li>
               )}
-              {ordered.map((event) =>
-                event.kind === 'run' ? (
-                  <RunReport key={event.id} event={event} />
-                ) : event.kind === 'comment' ? (
-                  <Comment
-                    key={event.id}
-                    event={event}
-                    issueId={issue.id}
-                    own={event.actor?.user_id === me}
-                    canDelete={event.actor?.user_id === me || canModerate}
-                    draft={drafts[event.id] ?? null}
-                    setDraft={setDraft(event.id)}
-                    onChanged={reload}
-                  />
-                ) : (
-                  <li key={event.id} className="flex items-center gap-2 px-3 text-[13px]">
-                    <PersonGlyph
-                      name={event.actor?.name ?? (byAgents(event) ? 'Agents' : undefined)}
+              <MotionPresence>
+                {items.map((item) => {
+                  if (item.kind === 'changes') {
+                    const first = item.events[0];
+                    if (!first) return null;
+                    return (
+                      <ChangeEntry
+                        key={first.id}
+                        events={item.events}
+                        name={nameOf(first)}
+                        person={first.actor?.name ?? (byAgents(first) ? 'Agents' : undefined)}
+                      />
+                    );
+                  }
+                  const { event } = item;
+                  const toggle = (emoji: string, on: boolean) => react(event.id, emoji, on);
+                  if (event.kind === 'run') {
+                    return (
+                      <RunReport
+                        key={event.id}
+                        event={event}
+                        actions={
+                          // Once it has reactions, their bubble holds the `+`.
+                          event.reactions.length === 0 && (
+                            <AddReaction
+                              reactions={event.reactions}
+                              onToggle={toggle}
+                              align="end"
+                              className="size-7"
+                            />
+                          )
+                        }
+                        footer={
+                          <>
+                            <ReactionBar
+                              reactions={event.reactions}
+                              me={user?.id}
+                              onToggle={toggle}
+                            />
+                            {event.reactions.length > 0 && (
+                              <div className="mt-2">
+                                <ReactionSummary reactions={event.reactions} me={user?.id} />
+                              </div>
+                            )}
+                          </>
+                        }
+                      />
+                    );
+                  }
+                  if (event.kind === 'artifact') {
+                    return (
+                      <ArtifactEntry
+                        key={event.id}
+                        event={event}
+                        name={nameOf(event)}
+                        file={files?.find((f) => f.name === event.body)}
+                      />
+                    );
+                  }
+                  return (
+                    <CommentEntry
+                      key={event.id}
+                      event={event}
+                      replies={thread.replies.get(event.id) ?? []}
+                      comments={comments}
                     />
-                    <span className="min-w-0 truncate text-muted-foreground">
-                      <span className="font-medium text-foreground">
-                        {event.actor?.name ?? (byAgents(event) ? 'Agents' : 'Someone who left')}
-                      </span>{' '}
-                      {changeText(event)}
-                    </span>
-                    <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-                      {formatRelative(event.created_at)}
-                    </span>
-                  </li>
-                ),
-              )}
+                  );
+                })}
+              </MotionPresence>
             </ol>
           )}
           {prefs.order === 'asc' && composer}

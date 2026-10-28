@@ -1353,7 +1353,7 @@
           {
             "name": "name",
             "in": "path",
-            "description": "Template id: analyst, researcher or reviewer",
+            "description": "Template id, e.g. analyst, risk-manager, freight-specialist (GET /agent-templates)",
             "required": true,
             "schema": {
               "type": "string"
@@ -1697,6 +1697,70 @@
             }
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/agents/{id}/evaluate": {
+      "post": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Asks an agent made from a role template its competency questions again\nwith the workspace's provider (members and above) and keeps the score for\nits card. 404 for an agent the caller cannot see; 422 for an agent made by\nhand, or when no usable provider answered.",
+        "operationId": "evaluate",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentEvaluation"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3579,7 +3643,7 @@
         "tags": [
           "auth"
         ],
-        "summary": "A copy of what the installation holds about the caller, as a JSON file:\nthe account, its workspaces and teams, the issues and comments it wrote,\nits graphs, documents and personal memories, and what it spent. No\ncredential is in it.",
+        "summary": "A copy of what the installation holds about the caller, as a JSON file:\nthe account, its workspaces and teams, the issues and comments it wrote\nand the reactions it gave, its graphs, documents and personal memories,\nand what it spent. No credential is in it.",
         "operationId": "export",
         "responses": {
           "200": {
@@ -4190,6 +4254,19 @@
                 "null"
               ],
               "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Only the most recently updated ones, 1-500 (the sidebar shows 8); all of them by default.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
             }
           }
         ],
@@ -5304,6 +5381,19 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "1-100, default 100: the issue page asks for the latest run only.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
           }
         ],
         "responses": {
@@ -5726,7 +5816,8 @@
         "tags": [
           "issues"
         ],
-        "summary": "Comments on an issue. Whoever may edit the issue may comment on it.",
+        "summary": "Comments on an issue, or replies to one of its comments. Whoever may edit\nthe issue may comment on it.",
+        "description": "Each member the comment mentions who can see the issue hears of it in\ntheir inbox (`mention`), in place of the `comment` entry the assignee and\nthe creator get; a reply also tells the author of the comment it answers\n(`comment`, once, whether or not they watch the issue). The first active\nagent it mentions is delegated an issue that has none; then, when the\nauthor is a member of the issue's team and the issue's graph is idle, one\nmentioned agent is asked for a plan (the issue gets its graph if it has\nnone). The plan waits to be applied like any other: nothing runs by\nitself. Both show in the timeline as `agent` entries.",
         "operationId": "create_comment",
         "parameters": [
           {
@@ -5744,7 +5835,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CommentBody"
+                "$ref": "#/components/schemas/NewComment"
               }
             }
           },
@@ -5779,6 +5870,7 @@
             }
           },
           "422": {
+            "description": "Invalid fields, or `parent_id` is not a top-level comment of the issue",
             "content": {
               "application/json": {
                 "schema": {
@@ -5800,7 +5892,7 @@
         "tags": [
           "issues"
         ],
-        "summary": "Deletes a comment: its author, or whoever manages the team.",
+        "summary": "Deletes a comment, with its replies: its author, or whoever manages the\nteam.",
         "operationId": "delete_comment",
         "parameters": [
           {
@@ -5858,6 +5950,7 @@
           "issues"
         ],
         "summary": "Edits a comment. Only its author can.",
+        "description": "Only the mentions the edit adds act: the members it newly mentions are\ntold, and agents it newly mentions are handed the issue as on a new\ncomment. Nobody hears of the same mention twice.",
         "operationId": "update_comment",
         "parameters": [
           {
@@ -5941,7 +6034,7 @@
         "tags": [
           "issues"
         ],
-        "summary": "The timeline of an issue, oldest first: its comments, the changes to its\nstate, priority, assignee, title, due date and GitHub link, what happened\nto its files, and what its runs reported.",
+        "summary": "The timeline of an issue, oldest first: its comments and their replies,\nthe changes to its state, priority, assignee, title, due date and GitHub\nlink, what happened to its files, and what its runs reported; comments\nand run reports with their reactions.",
         "operationId": "events",
         "parameters": [
           {
@@ -5969,6 +6062,182 @@
             }
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/issues/{iid}/events/{eid}/reactions": {
+      "post": {
+        "tags": [
+          "issues"
+        ],
+        "summary": "Reacts to a comment or a run report with an emoji; giving the same emoji\nagain changes nothing. Whoever may comment on the issue may react.",
+        "description": "The comment's author hears of it in their inbox (`reaction`, with the\nemoji): never of their own, and once a day for the same emoji from the\nsame person on the comment, however often it is taken back and given again.",
+        "operationId": "add_reaction",
+        "parameters": [
+          {
+            "name": "iid",
+            "in": "path",
+            "description": "Issue id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "eid",
+            "in": "path",
+            "description": "Timeline entry id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReactionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The entry's reactions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Reaction"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "An emoji not on the list, or an entry that is not a comment or a run report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "issues"
+        ],
+        "summary": "Takes the caller's emoji back from a comment or a run report; one they\nnever gave is no error. The inbox entry it gave stays.",
+        "operationId": "remove_reaction",
+        "parameters": [
+          {
+            "name": "iid",
+            "in": "path",
+            "description": "Issue id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "eid",
+            "in": "path",
+            "description": "Timeline entry id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "emoji",
+            "in": "query",
+            "description": "The emoji to take back: one of 👍 👎 😄 🎉 😕 ❤️ 🚀 👀 🔥 ✅.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The entry's reactions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Reaction"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "An emoji not on the list, or an entry that is not a comment or a run report",
             "content": {
               "application/json": {
                 "schema": {
@@ -6581,7 +6850,42 @@
     "/api/v1/orchestrator/status": {
       "get": {
         "tags": [
-          "orchestrator"
+          "planner"
+        ],
+        "summary": "The same report at its former address; use `GET /planner/status`.",
+        "operationId": "status_legacy",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlannerStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "deprecated": true,
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/planner/status": {
+      "get": {
+        "tags": [
+          "planner"
         ],
         "summary": "Queue, running work, agents and backend health for the caller.",
         "operationId": "status",
@@ -6590,7 +6894,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OrchestratorStatus"
+                  "$ref": "#/components/schemas/PlannerStatus"
                 }
               }
             }
@@ -7355,6 +7659,111 @@
           },
           "422": {
             "description": "The provider could not be asked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/skills": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Every skill of the library, in id order, without their bodies.",
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "category",
+            "in": "query",
+            "description": "Only the skills of this category (`finance`, `shipping`, ...).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SkillSummary"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/skills/{id}": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "One skill with its working knowledge.",
+        "operationId": "get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Skill id, e.g. fin-equity-valuation",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Skill"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
             "content": {
               "application/json": {
                 "schema": {
@@ -8808,7 +9217,7 @@
         "tags": [
           "artifact-files"
         ],
-        "summary": "Files of a workspace the caller can see: those directly in a folder, at\nthe top level, or of an issue, by name; or every one, most recently\nsaved first. At most 1,000.",
+        "summary": "Files of a workspace the caller can see: those directly in a folder, at\nthe top level, or of an issue, by name (at most 1,000); or every one, most\nrecently saved first, a page of `limit` at a time (`before` continues).",
         "operationId": "list_files",
         "parameters": [
           {
@@ -8863,6 +9272,31 @@
             "name": "q",
             "in": "query",
             "description": "Part of the name, any case; without control characters.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Every file, most recently saved first: how many, 1-1000 (default 200).\nIgnored with a folder, `root` or an issue, whose files all come at once.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "description": "Every file: only those saved before `<updated_at>,<id>`, the last file of the\nprevious page (its `updated_at` as given and its id).",
             "required": false,
             "schema": {
               "type": [
@@ -10686,6 +11120,52 @@
         ]
       }
     },
+    "/api/v1/workspaces/{wid}/inbox/unread-count": {
+      "get": {
+        "tags": [
+          "issues"
+        ],
+        "summary": "How many of the notifications the caller's inbox shows in a workspace\n(the newest 100) are unread: what the sidebar shows, without reading the\ninbox itself.",
+        "operationId": "unread_count",
+        "parameters": [
+          {
+            "name": "wid",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnreadCount"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/workspaces/{wid}/invites": {
       "get": {
         "tags": [
@@ -10808,7 +11288,7 @@
         "tags": [
           "issues"
         ],
-        "summary": "Issues of a workspace in the teams the caller can see, most recently\nupdated first.",
+        "summary": "Issues of a workspace in the teams the caller can see, most recently\nupdated first, without their descriptions (`GET /issues/{iid}` has it).",
         "operationId": "list",
         "parameters": [
           {
@@ -10954,7 +11434,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/Issue"
+                    "$ref": "#/components/schemas/IssueSummary"
                   }
                 }
               }
@@ -13119,6 +13599,81 @@
             }
           },
           "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/workspaces/{wid}/runs": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "The latest runs across the graphs of a workspace the caller may work on,\nnewest first (at most 100), each with its graph's name: what the Runs page\nlists, in one request.",
+        "operationId": "workspace_runs",
+        "parameters": [
+          {
+            "name": "wid",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "1-100, default 100.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "description": "Only runs older than this run (the last one of the previous page).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WorkspaceRun"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
             "content": {
               "application/json": {
                 "schema": {
@@ -15940,7 +16495,7 @@
           },
           "sections": {
             "type": "object",
-            "description": "`workspaces`, `teams`, `issues_created`, `issues_assigned`,\n`comments`, `graphs`, `documents`, `memories`, `ai_account`, `usage`,\n`security_activity`, `notifications`, `assistant_conversations`,\n`sign_in_identities`: each a list of plain objects."
+            "description": "`workspaces`, `teams`, `issues_created`, `issues_assigned`,\n`comments`, `reactions`, `graphs`, `documents`, `memories`,\n`ai_account`, `usage`, `security_activity`, `notifications`,\n`assistant_conversations`, `sign_in_identities`: each a list of plain\nobjects."
           },
           "truncated": {
             "type": "array",
@@ -16023,7 +16578,9 @@
           "risk_score",
           "risk_reasons",
           "risk_updated_at",
-          "a2a_exposed"
+          "a2a_exposed",
+          "skills",
+          "template_id"
         ],
         "properties": {
           "a2a_exposed": {
@@ -16119,6 +16676,13 @@
           "runtime": {
             "$ref": "#/components/schemas/AgentRuntime"
           },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ids of its skills (`GET /skills`): the working knowledge added to its\nsystem prompt when it runs a step, most relevant first."
+          },
           "spent_tokens": {
             "type": "integer",
             "format": "int64"
@@ -16135,6 +16699,13 @@
               "null"
             ],
             "format": "uuid"
+          },
+          "template_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The role template it was made from; `null` for an agent made by hand."
           },
           "title": {
             "type": "string"
@@ -16577,6 +17148,9 @@
           "name",
           "role",
           "title",
+          "department",
+          "credentials",
+          "skills",
           "description",
           "purpose",
           "runtime",
@@ -16593,6 +17167,17 @@
           },
           "capabilities": {
             "$ref": "#/components/schemas/Capabilities"
+          },
+          "credentials": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Certifications whose public outlines its knowledge is benchmarked against\n(the agents do not hold them)."
+          },
+          "department": {
+            "type": "string",
+            "description": "The department it belongs to in the catalog."
           },
           "description": {
             "type": "string"
@@ -16626,6 +17211,13 @@
           },
           "runtime": {
             "$ref": "#/components/schemas/AgentRuntime"
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ids of the skills an agent made from it is given."
           },
           "title": {
             "type": "string"
@@ -17829,7 +18421,8 @@
           "agent_created",
           "agent_deleted",
           "artifact_folder_deleted",
-          "artifact_file_deleted"
+          "artifact_file_deleted",
+          "agent_skills_changed"
         ]
       },
       "AuditAnswer": {
@@ -18447,14 +19040,14 @@
       },
       "CommentBody": {
         "type": "object",
-        "description": "`POST /issues/{iid}/comments` and `PATCH /issues/{iid}/comments/{cid}` body.",
+        "description": "`PATCH /issues/{iid}/comments/{cid}` body.",
         "required": [
           "body"
         ],
         "properties": {
           "body": {
             "type": "string",
-            "description": "Markdown, 1 byte to 16 KiB."
+            "description": "Markdown, 1 byte to 16 KiB. `@[Name](user:<uuid>)` mentions a member and\n`@[Name](agent:<uuid>)` an agent of the workspace, at most 20 of them."
           }
         },
         "additionalProperties": false
@@ -18702,6 +19295,13 @@
                 "type": "null"
               }
             ]
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ids of its skills (`GET /skills`), at most 12."
           },
           "system_prompt": {
             "type": "string"
@@ -20983,7 +21583,8 @@
           "github_url",
           "created_at",
           "updated_at",
-          "completed_at"
+          "completed_at",
+          "run_status"
         ],
         "properties": {
           "agent_id": {
@@ -21101,6 +21702,17 @@
             ],
             "format": "uuid"
           },
+          "run_status": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RunStatus",
+                "description": "The status of the latest run of the issue's graph; `null` without a graph or runs."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "state": {
             "$ref": "#/components/schemas/IssueState"
           },
@@ -21137,7 +21749,9 @@
           "to",
           "created_at",
           "edited_at",
-          "run_id"
+          "run_id",
+          "parent_id",
+          "reactions"
         ],
         "properties": {
           "actor": {
@@ -21185,6 +21799,21 @@
           "kind": {
             "$ref": "#/components/schemas/IssueEventKind"
           },
+          "parent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The top-level comment a reply answers; `null` for every other entry."
+          },
+          "reactions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Reaction"
+            },
+            "description": "The emoji given to a comment or a run report, each once, in the order\nthey were first given; empty for other entries."
+          },
           "run_id": {
             "type": [
               "string",
@@ -21214,7 +21843,8 @@
           "due",
           "run",
           "github",
-          "artifact"
+          "artifact",
+          "agent"
         ]
       },
       "IssuePerson": {
@@ -21287,6 +21917,181 @@
             "description": "Order within the workflow, lowest first."
           },
           "team_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "IssueSummary": {
+        "type": "object",
+        "description": "An issue as a list shows it: every field of [`Issue`] but its\ndescription, which only the issue's own page reads (it may be 64 KiB).",
+        "required": [
+          "id",
+          "workspace_id",
+          "team_id",
+          "identifier",
+          "number",
+          "title",
+          "state",
+          "priority",
+          "labels",
+          "parent",
+          "sub_issues",
+          "cycle",
+          "assignee",
+          "agent_id",
+          "project_id",
+          "graph_id",
+          "creator_id",
+          "due_date",
+          "github_url",
+          "created_at",
+          "updated_at",
+          "completed_at",
+          "run_status"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The agent the issue is delegated to."
+          },
+          "assignee": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IssuePerson"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "creator_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "cycle": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CycleRef",
+                "description": "The cycle of its team the issue is planned in."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "due_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "The day the issue is due, if it has one."
+          },
+          "github_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The GitHub issue or pull request the issue is about (a link only; nothing is synced)."
+          },
+          "graph_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The graph that plans and executes the issue, if one was created."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "identifier": {
+            "type": "string",
+            "description": "The team key and the issue number, e.g. `ENG-12`."
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Label"
+            },
+            "description": "The issue's labels, by name."
+          },
+          "number": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "parent": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IssueRef",
+                "description": "The issue this one is part of, if the caller can see it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int32",
+            "description": "`0` none, `1` urgent, `2` high, `3` medium, `4` low."
+          },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "run_status": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RunStatus",
+                "description": "The status of the latest run of the issue's graph; `null` without a graph or runs."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/IssueState"
+          },
+          "sub_issues": {
+            "$ref": "#/components/schemas/SubIssueCount"
+          },
+          "team_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "workspace_id": {
             "type": "string",
             "format": "uuid"
           }
@@ -22423,6 +23228,28 @@
           }
         }
       },
+      "NewComment": {
+        "type": "object",
+        "description": "`POST /issues/{iid}/comments` body.",
+        "required": [
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "Markdown, 1 byte to 16 KiB. `@[Name](user:<uuid>)` mentions a member and\n`@[Name](agent:<uuid>)` an agent of the workspace, at most 20 of them."
+          },
+          "parent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The comment this one replies to: a top-level comment of the same issue."
+          }
+        },
+        "additionalProperties": false
+      },
       "NodeOrigin": {
         "type": "string",
         "description": "Who created a node.",
@@ -22644,6 +23471,7 @@
           "approval",
           "alert",
           "actor",
+          "emoji",
           "created_at",
           "read_at"
         ],
@@ -22685,6 +23513,13 @@
             "type": "string",
             "format": "date-time"
           },
+          "emoji": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the actor reacted with (`reaction`); `null` for the other kinds."
+          },
           "id": {
             "type": "string",
             "format": "uuid"
@@ -22693,7 +23528,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/NotificationIssue",
-                "description": "The issue (`assigned`, `comment`, `state`, `due`); `null` for the other kinds."
+                "description": "The issue (`assigned`, `comment`, `state`, `due`, `run`, `mention`, `reaction`); `null` for\nthe other kinds."
               },
               {
                 "type": "null"
@@ -22842,7 +23677,9 @@
           "due",
           "approval",
           "alert",
-          "run"
+          "run",
+          "mention",
+          "reaction"
         ]
       },
       "OntoMode": {
@@ -22956,43 +23793,6 @@
               "null"
             ],
             "description": "The onto-intelli workspace inside the tenant; `null` when off."
-          }
-        }
-      },
-      "OrchestratorStatus": {
-        "type": "object",
-        "description": "Live view of the orchestrator for the current user.",
-        "required": [
-          "demo_mode",
-          "queue_depth",
-          "running_nodes",
-          "active_runs",
-          "agents_active",
-          "backends"
-        ],
-        "properties": {
-          "active_runs": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "agents_active": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "backends": {
-            "$ref": "#/components/schemas/Backends"
-          },
-          "demo_mode": {
-            "type": "boolean",
-            "description": "True when the effective LLM provider is the offline demo provider."
-          },
-          "queue_depth": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "running_nodes": {
-            "type": "integer",
-            "format": "int64"
           }
         }
       },
@@ -23384,6 +24184,43 @@
           "failed",
           "applied"
         ]
+      },
+      "PlannerStatus": {
+        "type": "object",
+        "description": "Live view of the Planner for the current user: queue, running work, agents and backend health.",
+        "required": [
+          "demo_mode",
+          "queue_depth",
+          "running_nodes",
+          "active_runs",
+          "agents_active",
+          "backends"
+        ],
+        "properties": {
+          "active_runs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "agents_active": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "backends": {
+            "$ref": "#/components/schemas/Backends"
+          },
+          "demo_mode": {
+            "type": "boolean",
+            "description": "True when the effective LLM provider is the offline demo provider."
+          },
+          "queue_depth": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "running_nodes": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
       },
       "PlatformAction": {
         "type": "string",
@@ -24052,6 +24889,51 @@
             "type": "string"
           }
         }
+      },
+      "Reaction": {
+        "type": "object",
+        "description": "One emoji given to a comment or a run report: how many gave it, whether\nthe reader did, and who, newest first.",
+        "required": [
+          "emoji",
+          "count",
+          "reacted",
+          "users"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "emoji": {
+            "type": "string",
+            "description": "One of 👍 👎 😄 🎉 😕 ❤️ 🚀 👀 🔥 ✅."
+          },
+          "reacted": {
+            "type": "boolean",
+            "description": "Whether the reader is one of them."
+          },
+          "users": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssuePerson"
+            },
+            "description": "Up to 10 of them, newest first."
+          }
+        }
+      },
+      "ReactionBody": {
+        "type": "object",
+        "description": "`POST /issues/{iid}/events/{eid}/reactions` body.",
+        "required": [
+          "emoji"
+        ],
+        "properties": {
+          "emoji": {
+            "type": "string",
+            "description": "One of 👍 👎 😄 🎉 😕 ❤️ 🚀 👀 🔥 ✅."
+          }
+        },
+        "additionalProperties": false
       },
       "Recording": {
         "type": "object",
@@ -25648,6 +26530,114 @@
           }
         }
       },
+      "Skill": {
+        "type": "object",
+        "description": "A skill with its working knowledge.",
+        "required": [
+          "id",
+          "name",
+          "category",
+          "description",
+          "keywords",
+          "sources",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "The working knowledge, in Markdown."
+          },
+          "category": {
+            "type": "string",
+            "description": "The field it belongs to (`finance`, `shipping`, ...)."
+          },
+          "description": {
+            "type": "string",
+            "description": "What it does and when it applies, in a sentence."
+          },
+          "id": {
+            "type": "string",
+            "description": "Its id in agents' skill lists (`fin-equity-valuation`)."
+          },
+          "keywords": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Terms a step that needs it tends to use (matched to rank skills)."
+          },
+          "name": {
+            "type": "string"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillSource"
+            },
+            "description": "The public pages it was written from."
+          }
+        }
+      },
+      "SkillSource": {
+        "type": "object",
+        "description": "A public source a skill was written from.",
+        "required": [
+          "title",
+          "url"
+        ],
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "SkillSummary": {
+        "type": "object",
+        "description": "A skill as listed by `GET /skills`, without its body.",
+        "required": [
+          "id",
+          "name",
+          "category",
+          "description",
+          "keywords",
+          "sources",
+          "chars"
+        ],
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "chars": {
+            "type": "integer",
+            "description": "Characters of its body: what it costs in a prompt.",
+            "minimum": 0
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "keywords": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillSource"
+            }
+          }
+        }
+      },
       "Span": {
         "type": "object",
         "description": "One span of a run's trace, as stored and as served (and as an evidence\nbundle carries it, to be read back by the offline verifier).",
@@ -26686,6 +27676,20 @@
         },
         "additionalProperties": false
       },
+      "UnreadCount": {
+        "type": "object",
+        "description": "How many of a member's notifications are unread.",
+        "required": [
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "At most [`UNREAD_MAX`]."
+          }
+        }
+      },
       "UpdateAgent": {
         "type": "object",
         "description": "`PATCH /agents/{id}` body (any subset; `reports_to: null` and `team_id: null` detach).",
@@ -26762,6 +27766,16 @@
                 "type": "null"
               }
             ]
+          },
+          "skills": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Replaces its skills (ids from `GET /skills`, at most 12; audited as\n`agent_skills_changed`)."
           },
           "status": {
             "oneOf": [
@@ -27800,6 +28814,25 @@
           "guest"
         ]
       },
+      "WorkspaceRun": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Run"
+          },
+          {
+            "type": "object",
+            "required": [
+              "graph_name"
+            ],
+            "properties": {
+              "graph_name": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "description": "A run as the workspace's run list shows it: the run with its graph's name."
+      },
       "WsMessage": {
         "oneOf": [
           {
@@ -28068,7 +29101,8 @@
       "description": "Where a workspace's alerts and approvals are sent: signed webhooks and Slack"
     },
     {
-      "name": "orchestrator"
+      "name": "planner",
+      "description": "The Planner: queue, running work, agents and the backends it routes nodes to"
     },
     {
       "name": "realtime"

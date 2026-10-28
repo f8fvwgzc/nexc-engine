@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { ShieldCheckIcon } from 'lucide-react';
-import { useState } from 'react';
+import { ChartLineIcon, ShieldCheckIcon } from 'lucide-react';
+import { lazy, Suspense, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { EmptyState } from '@/components/custom-ui/empty-state';
@@ -9,6 +9,7 @@ import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
 import { ContentSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { agentsQuery } from '@/features/agents/api';
 import { AgentCardSheet } from '@/features/agents/components/agent-card-sheet';
@@ -20,13 +21,54 @@ import { Panel } from '@/features/secops/components/console-panel';
 import { LiveFeedPanel } from '@/features/secops/components/live-feed-panel';
 import { PoliciesPanel } from '@/features/secops/components/policies-panel';
 import { RegistryPanel } from '@/features/secops/components/registry-panel';
-import { RiskPanel } from '@/features/secops/components/risk-panel';
+import type { RiskPanel as RiskPanelComponent } from '@/features/secops/components/risk-panel';
 import { SecopsStats } from '@/features/secops/components/secops-stats';
 import { TraceExplorer } from '@/features/secops/components/trace-explorer';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { formatRelative } from '@/lib/format';
+import { retryImport } from '@/lib/retry-import';
 import { isWorkspaceAdmin, type Workspace } from '@/schemas/workspace';
 import { ScrollTextIcon } from 'lucide-react';
+
+/** The risk panel when its chart's code could not be downloaded; the rest of the console works. */
+const RiskPanelUnavailable: typeof RiskPanelComponent = () => (
+  <Panel id="secops-risk" title="Risk" icon={ChartLineIcon}>
+    <ErrorState
+      compact
+      title="Couldn’t load the risk chart"
+      error={null}
+      description="Its code did not download. Reloading the page tries again."
+      onRetry={() => window.location.reload()}
+    />
+  </Panel>
+);
+
+const loadRiskPanel = retryImport(() => import('@/features/secops/components/risk-panel'));
+
+/**
+ * The risk chart draws with recharts, which loads with the panel and not with the page. A failed
+ * download shows in the panel instead of throwing, which would replace the whole console.
+ */
+const RiskPanel = lazy(() =>
+  loadRiskPanel().then(
+    (module) => ({ default: module.RiskPanel }),
+    () => ({ default: RiskPanelUnavailable }),
+  ),
+);
+
+/** The risk panel while its chart's code loads: its frame, and the chart's place. */
+function RiskPanelSkeleton() {
+  return (
+    <Panel id="secops-risk" title="Risk" icon={ChartLineIcon}>
+      <Skeleton
+        role="status"
+        aria-busy
+        aria-label="Loading the risk scores"
+        className="h-40 rounded-lg"
+      />
+    </Panel>
+  );
+}
 
 function Console({ workspace }: { workspace: Workspace }) {
   const navigate = useNavigate();
@@ -71,7 +113,7 @@ function Console({ workspace }: { workspace: Workspace }) {
           <TabsTrigger value="console">Console</TabsTrigger>
           <TabsTrigger value="explorer">Trace explorer</TabsTrigger>
         </TabsList>
-        <TabsContent value="console" className="space-y-4">
+        <TabsContent value="console" className="space-y-4 motion-safe:animate-fade-in">
           {overview.error && !overview.data ? (
             <ErrorState
               compact
@@ -109,13 +151,15 @@ function Console({ workspace }: { workspace: Workspace }) {
               <LiveFeedPanel workspaceId={workspace.id} agents={agents} />
               <ApprovalsPanel workspaceId={workspace.id} admin={admin} />
               <AlertsPanel workspaceId={workspace.id} admin={admin} />
-              <RiskPanel
-                overview={overview.data}
-                error={overview.error}
-                onRetry={() => void overview.refetch()}
-                agents={agents}
-                onOpenAgent={openCard}
-              />
+              <Suspense fallback={<RiskPanelSkeleton />}>
+                <RiskPanel
+                  overview={overview.data}
+                  error={overview.error}
+                  onRetry={() => void overview.refetch()}
+                  agents={agents}
+                  onOpenAgent={openCard}
+                />
+              </Suspense>
             </div>
           </div>
           {overview.data && (
@@ -131,6 +175,7 @@ function Console({ workspace }: { workspace: Workspace }) {
       <AgentCardSheet
         agent={card}
         admin={admin}
+        member={member}
         onOpenChange={(open) => !open && openCard(null)}
         onEdit={(agent) => navigate(`/app/agents?agent=${agent.id}`)}
       />

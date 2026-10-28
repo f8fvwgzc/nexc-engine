@@ -1,16 +1,20 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { RunArtifact } from '@/schemas/artifact';
 import type { Issue, IssueEvent } from '@/schemas/issue';
 import type { SseEvent } from '@/schemas/realtime';
 import type { Artifact, Run } from '@/schemas/run';
 
-import { IssueRun, RunReport } from './issue-run';
+import { IssueRun, RunReport, SubIssueRun } from './issue-run';
 
-const { files, stream } = vi.hoisted(() => ({
-  files: { list: [] as Artifact[] },
+const { files, reads, stream } = vi.hoisted(() => ({
+  /** The files the issue's runs made, as `/issues/{id}/run-artifacts` answers. */
+  files: { list: [] as RunArtifact[], ofRun: [] as Artifact[] },
+  /** Requests made, by path. */
+  reads: { issue: 0, run: 0 },
   /** What the run stream hands its events to; each test sends them by hand. */
   stream: { onEvent: null as ((event: SseEvent) => void) | null },
 }));
@@ -32,10 +36,23 @@ vi.mock('@/features/graphs/api', () => ({
   }),
 }));
 
+vi.mock('@/features/artifacts/api', () => ({
+  issueRunArtifactsQuery: (issueId: string) => ({
+    queryKey: ['artifacts', 'runs', issueId],
+    queryFn: () => {
+      reads.issue += 1;
+      return Promise.resolve(files.list);
+    },
+  }),
+}));
+
 vi.mock('@/features/runs/api', () => ({
   artifactsQuery: (runId: string) => ({
     queryKey: ['runs', runId, 'artifacts'],
-    queryFn: () => Promise.resolve(files.list),
+    queryFn: () => {
+      reads.run += 1;
+      return Promise.resolve(files.ofRun);
+    },
   }),
   downloadArtifact: vi.fn(),
   cancelRun: vi.fn(),
@@ -58,10 +75,12 @@ const report = (over: Partial<IssueEvent> = {}): IssueEvent => ({
   created_at: '2026-10-20T09:00:00Z',
   edited_at: null,
   run_id: RUN,
+  reactions: [],
+  parent_id: null,
   ...over,
 });
 
-const file: Artifact = {
+const file: RunArtifact = {
   id: '0199bbbb-0000-7000-8000-00000000a001',
   run_id: RUN,
   node_id: '0199bbbb-0000-7000-8000-00000000d001',
@@ -72,23 +91,35 @@ const file: Artifact = {
   quarantined_at: null,
   quarantine_reason: '',
   released_at: null,
+  run_status: 'succeeded',
+  run_created_at: '2026-10-20T08:59:00Z',
 };
 
-function renderReport(event: IssueEvent) {
+function renderReport(...events: IssueEvent[]) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
         <ol>
-          <RunReport event={event} />
+          {events.map((event) => (
+            <RunReport key={event.id} event={event} />
+          ))}
         </ol>
       </MemoryRouter>
     </QueryClientProvider>,
   );
 }
 
+beforeAll(async () => {
+  // A report's Markdown is loaded with the first report; a cold import can outlast `findBy`.
+  await import('@/components/custom-ui/markdown');
+});
+
 beforeEach(() => {
   files.list = [];
+  files.ofRun = [];
+  reads.issue = 0;
+  reads.run = 0;
   stream.onEvent = null;
 });
 
@@ -98,7 +129,7 @@ describe('RunReport', () => {
     renderReport(report());
     expect(screen.getByText('Agents')).toBeInTheDocument();
     expect(screen.getByText('finished the work')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Findings' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Findings' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open run' })).toHaveAttribute(
       'href',
       `/app/runs/${RUN}`,
@@ -117,6 +148,73 @@ describe('RunReport', () => {
   it('has no link once the run is gone', () => {
     renderReport(report({ run_id: null }));
     expect(screen.queryByRole('link', { name: 'Open run' })).not.toBeInTheDocument();
+  });
+
+  it('reads the files of every run on the timeline once, and shows each report its own', async () => {
+    const other = '0199bbbb-0000-7000-8000-00000000b002';
+    files.list = [file, { ...file, id: `${file.id.slice(0, -1)}2`, run_id: other, path: 'b.md' }];
+    renderReport(
+      report(),
+      report({ id: '0199bbbb-0000-7000-8000-00000000e002', run_id: other }),
+      report({ id: '0199bbbb-0000-7000-8000-00000000e003', run_id: other }),
+    );
+    expect(await screen.findByRole('button', { name: /final-deliverable\.docx/ })).toBeEnabled();
+    expect(await screen.findAllByRole('button', { name: /b\.md/ })).toHaveLength(2);
+    expect(reads).toEqual({ issue: 1, run: 0 });
+  });
+
+  it('reads a run’s own files only when asked, once the shared list is full', async () => {
+    const someoneElse = { ...file, run_id: '0199bbbb-0000-7000-8000-00000000b009' };
+    files.list = Array.from({ length: 500 }, () => someoneElse);
+    files.ofRun = [file];
+    renderReport(report());
+    const ask = await screen.findByRole('button', { name: /Show the run’s files/ });
+    expect(reads.run).toBe(0);
+
+    fireEvent.click(ask);
+    expect(await screen.findByRole('button', { name: /final-deliverable\.docx/ })).toBeEnabled();
+    expect(reads.run).toBe(1);
+  });
+
+  it('offers all the files of the oldest run a full list holds, which it may have cut short', async () => {
+    const newer = { ...file, run_id: '0199bbbb-0000-7000-8000-00000000b009' };
+    files.list = [...Array.from({ length: 499 }, () => newer), file];
+    files.ofRun = [file, { ...file, id: `${file.id.slice(0, -1)}2`, path: 'appendix.md' }];
+    renderReport(report());
+    expect(await screen.findByRole('button', { name: /final-deliverable\.docx/ })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole('button', { name: /Show all the run’s files/ }));
+    expect(await screen.findByRole('button', { name: /appendix\.md/ })).toBeEnabled();
+    expect(reads.run).toBe(1);
+  });
+
+  it('says so when the run, read on its own, made no files', async () => {
+    const someoneElse = { ...file, run_id: '0199bbbb-0000-7000-8000-00000000b009' };
+    files.list = Array.from({ length: 500 }, () => someoneElse);
+    renderReport(report());
+    fireEvent.click(await screen.findByRole('button', { name: /Show the run’s files/ }));
+    expect(await screen.findByText('The run made no files.')).toBeInTheDocument();
+  });
+
+  it('offers nothing more when the list is short enough to hold every file', async () => {
+    files.list = [file];
+    renderReport(report());
+    await screen.findByRole('button', { name: /final-deliverable\.docx/ });
+    expect(screen.queryByRole('button', { name: /run’s files/ })).not.toBeInTheDocument();
+  });
+});
+
+describe('SubIssueRun', () => {
+  it('shows where the latest run stands, moving while it runs', () => {
+    const { rerender } = render(<SubIssueRun status="running" />);
+    expect(screen.getByText('running')).toBeInTheDocument();
+    rerender(<SubIssueRun status="failed" />);
+    expect(screen.getByText('failed')).toBeInTheDocument();
+  });
+
+  it('shows nothing without a run', () => {
+    const { container } = render(<SubIssueRun status={null} />);
+    expect(container).toBeEmptyDOMElement();
   });
 });
 

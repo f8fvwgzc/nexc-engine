@@ -46,10 +46,11 @@ LABEL org.opencontainers.image.title="nexc-engine-frontend" \
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 # The site both listeners serve, the edge cache of the public documents, the HTTPS listener.
 COPY nginx/ /etc/nginx/nexc/
-# Before nginx starts: the CSP's frame-src (onto-intelli's origin, NEXC_ONTO_PUBLIC_URL), and the
+# Before nginx starts: the backend and the resolver it is looked up with (NEXC_BACKEND_UPSTREAM,
+# /etc/resolv.conf), the CSP's frame-src (onto-intelli's origin, NEXC_ONTO_PUBLIC_URL), and the
 # HTTPS listener when a certificate is mounted.
-COPY --chmod=0755 docker-entrypoint.d/40-nexc-frame-src.sh docker-entrypoint.d/41-nexc-tls.sh \
-     /docker-entrypoint.d/
+COPY --chmod=0755 docker-entrypoint.d/39-nexc-backend.sh docker-entrypoint.d/40-nexc-frame-src.sh \
+     docker-entrypoint.d/41-nexc-tls.sh /docker-entrypoint.d/
 COPY --from=build /app/dist /usr/share/nginx/html
 
 # nginx-unprivileged runs as uid 101 and writes only to /tmp (pid, temp paths).

@@ -22,6 +22,8 @@ pub const FOLDER_NAME_MAX: usize = 120;
 pub const FOLDERS_MAX: i64 = 1_000;
 /// Most files one list answers with.
 pub const LIST_MAX: i64 = 1_000;
+/// Files the list of every file answers with when no `limit` is given.
+pub const RECENT_DEFAULT: i64 = 200;
 /// Why a file was refused: not a name or content that can be an artifact (415).
 pub const NOT_TEXT: &str = "Only text files (code, HTML, Markdown) can be artifacts";
 /// Why content was refused: it carries a credential (422).

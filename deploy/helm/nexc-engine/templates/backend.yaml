@@ -13,8 +13,9 @@ metadata:
     app.kubernetes.io/name: backend
     {{- include "nexc.labels" . | nindent 4 }}
 spec:
-  # ReadWriteOnce carries one replica; more need a ReadWriteMany storage class so every replica
-  # sees every artifact (backend.dataAccessMode).
+  # ReadWriteOnce carries one replica, and the Deployment keeps a rollout's new pod on its node;
+  # more need a ReadWriteMany storage class so every replica sees every artifact, and the pods then
+  # spread across nodes (backend.dataAccessMode).
   accessModes: [{{ .Values.backend.dataAccessMode }}]
   {{- with .Values.backend.dataStorageClass }}
   storageClassName: {{ . | quote }}
@@ -78,12 +79,39 @@ spec:
       terminationGracePeriodSeconds: {{ .Values.backend.terminationGracePeriodSeconds }}
       securityContext:
         {{- include "nexc.podSecurity" (dict "uid" 10001 "fsGroup" true) | nindent 8 }}
+      {{- if eq .Values.backend.dataAccessMode "ReadWriteOnce" }}
+      # A rollout's new pod on the node the running one is on: the ReadWriteOnce data volume
+      # attaches to one node, and a pod placed on another would wait on a Multi-Attach error and
+      # stall the rollout (maxUnavailable 0; backend.dataAccessMode, docs/HA.md).
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels: { app.kubernetes.io/name: backend }
+      {{- else }}
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
           whenUnsatisfiable: ScheduleAnyway
           labelSelector:
             matchLabels: { app.kubernetes.io/name: backend }
+      {{- end }}
+      # Migrations first, with no probe to stop them: an index built CONCURRENTLY on a large table
+      # can outlast the startup probe, and a build killed half way leaves an invalid index that
+      # keeps every later start out (docs/DATABASE.md). `serve` then finds nothing to do.
+      initContainers:
+        - name: migrate
+          image: {{ include "nexc.image" (dict "image" .Values.images.backend "chart" .Chart) }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          args: ["migrate"]
+          {{- include "nexc.backendEnv" . | nindent 10 }}
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          securityContext:
+            {{- include "nexc.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
       containers:
         - name: backend
           image: {{ include "nexc.image" (dict "image" .Values.images.backend "chart" .Chart) }}
@@ -98,22 +126,11 @@ spec:
             - name: firewall
               containerPort: {{ .Values.backend.firewall.port }}
             {{- end }}
-          envFrom:
-            - configMapRef: { name: nexc-config }
-            - secretRef: { name: {{ include "nexc.secretName" . }} }
-          {{- if .Values.oidc.enabled }}
-          env:
-            # Single sign-on's client secret, from a Secret of its own.
-            - name: NEXC_OIDC_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.oidc.existingSecret | quote }}
-                  key: {{ .Values.oidc.existingSecretKey | quote }}
-          {{- end }}
+          {{- include "nexc.backendEnv" . | nindent 10 }}
           startupProbe:
             httpGet: { path: /api/v1/healthz, port: http }
             periodSeconds: 5
-            failureThreshold: 30 # migrations run before the server listens
+            failureThreshold: 30 # the init container ran the migrations already
           livenessProbe:
             httpGet: { path: /api/v1/healthz, port: http }
             periodSeconds: 15

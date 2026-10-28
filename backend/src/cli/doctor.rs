@@ -9,7 +9,7 @@ use crate::domain::ontology::OntoMode;
 use crate::domain::settings::LlmProviderKind;
 use crate::ontology::grpc::GrpcOntology;
 use crate::ontology::{OntoError, OntologyBackend, Principal, role};
-use crate::orchestrator::health::probe;
+use crate::planner::health::probe;
 use crate::repo;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

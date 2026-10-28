@@ -1,4 +1,4 @@
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ChevronRightIcon,
   CircleDotIcon,
@@ -39,9 +39,10 @@ import { teamsQuery } from '@/features/workspaces/api';
 import { useCurrentWorkspace } from '@/features/workspaces/use-current-workspace';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { formatRelative } from '@/lib/format';
+import { onIntent, prefetchIssue } from '@/lib/prefetch';
 import { cn } from '@/lib/utils';
 import { cycleLabel } from '@/schemas/cycle';
-import type { Issue, Project, StateCategory } from '@/schemas/issue';
+import type { IssueSummary, Project, StateCategory } from '@/schemas/issue';
 import type { Workspace } from '@/schemas/workspace';
 
 const VIEW_KEY = 'nexc.issues.view';
@@ -71,9 +72,13 @@ const CATEGORY_ORDER: StateCategory[] = [
  * over the row, and its tooltip names what the glyphs under it show); the GitHub chip opens
  * GitHub instead.
  */
-function IssueRow({ issue }: { issue: Issue }) {
+function IssueRow({ issue }: { issue: IssueSummary }) {
+  const queryClient = useQueryClient();
   return (
-    <li className="relative flex h-9 items-center gap-2.5 px-3 text-[13px] transition-colors hover:bg-muted/60 has-[a[data-row-link]:focus-visible]:bg-muted/60">
+    <li
+      {...onIntent(() => prefetchIssue(queryClient, issue))}
+      className="relative flex h-9 items-center gap-2.5 px-3 text-[13px] transition-colors hover:bg-muted/60 has-[a[data-row-link]:focus-visible]:bg-muted/60"
+    >
       <PriorityGlyph priority={issue.priority} />
       <span className="hidden w-16 shrink-0 font-mono text-xs text-muted-foreground sm:block">
         {issue.identifier}
@@ -280,7 +285,7 @@ export function IssueExplorer({
   };
 
   // One group per state name, ordered by what the state means and then by the workflow.
-  const groups = new Map<string, Issue[]>();
+  const groups = new Map<string, IssueSummary[]>();
   for (const issue of issues ?? []) {
     const group = groups.get(issue.state.name) ?? [];
     group.push(issue);

@@ -10,9 +10,9 @@ const WIDTH = {
   /** The app's pages: lists, boards and details, using all the room beside the sidebar. */
   default: 'max-w-none',
   /** Consoles that use every column they get (AgentSecOps, a session's tree and spans). */
-  wide: 'max-w-[96rem]',
-  /** Settings and the platform console. */
-  narrow: 'max-w-5xl',
+  wide: 'max-w-none',
+  /** Settings and the platform console: full width too, never a centred column. */
+  narrow: 'max-w-none',
 } as const;
 
 export type PageWidth = keyof typeof WIDTH;

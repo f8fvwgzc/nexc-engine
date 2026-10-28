@@ -42,6 +42,11 @@ spec:
         - name: postgres
           image: {{ include "nexc.image" (dict "image" .Values.images.postgres "chart" .Chart) }}
           imagePullPolicy: {{ .Values.images.pullPolicy }}
+          {{- $max := int (dig "maxConnections" 100 .Values.postgres) }}
+          {{- if ne $max 100 }}
+          # The connection budget (postgres.maxConnections); 100 is PostgreSQL's own default.
+          args: ["-c", "max_connections={{ $max }}"]
+          {{- end }}
           ports:
             - name: postgres
               containerPort: 5432

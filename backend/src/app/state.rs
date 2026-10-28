@@ -23,7 +23,7 @@ use crate::observability::metrics::Metrics;
 use crate::ontology::OntologyBackend;
 use crate::ontology::cached::CachedOntology;
 use crate::ontology::grpc::GrpcOntology;
-use crate::orchestrator::health::HealthCache;
+use crate::planner::health::HealthCache;
 use crate::realtime::hub::Hub;
 use crate::security::agent_token::AgentTokenKeys;
 use crate::security::egress::EgressGuard;
@@ -38,6 +38,10 @@ use crate::security::signing::{Keyring, Signer};
 pub struct AppState {
     pub settings: Arc<Settings>,
     pub db: PgPool,
+    /// Where the leases of the runs executing here are renewed: a pool of its own in a server
+    /// ([`AppState::with_lease_pool`]), so a burst of requests never makes a renewal wait for a
+    /// connection until the lease is given up; `db` itself otherwise (tests, the CLI).
+    pub lease_db: PgPool,
     pub http: reqwest::Client,
     pub jwt: Arc<JwtKeys>,
     /// Signs the per-run tokens the agent runtime verifies.
@@ -254,9 +258,19 @@ impl AppState {
             hub,
             metrics,
             http,
+            lease_db: db.clone(),
             db,
             settings: Arc::new(settings),
         })
+    }
+
+    /// The state with run leases renewed on a pool of their own (`connections`, opened when
+    /// first needed) rather than on `db`; none asked for keeps them on `db`.
+    pub fn with_lease_pool(mut self, connections: u32) -> Self {
+        if connections > 0 {
+            self.lease_db = crate::repo::connect_lazy_small(&self.db, connections);
+        }
+        self
     }
 }
 

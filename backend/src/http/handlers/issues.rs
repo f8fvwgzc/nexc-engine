@@ -5,6 +5,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use chrono::NaiveDate;
 use serde::{Deserialize, Deserializer};
+use std::time::Duration;
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
@@ -14,18 +15,20 @@ use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::audit::AuditAction;
 use crate::domain::issue::{
-    COMMENT_MAX_BYTES, DESCRIPTION_MAX_BYTES, ISSUE_LABELS_MAX, Issue, IssueEvent, IssueEventKind,
-    IssuePerson, IssueState, LABEL_NAME_MAX, LABELS_MAX, Label, Notification, NotificationKind,
-    PRIORITY_MAX, Project, ProjectStatus, STATE_NAME_MAX, STATES_MAX, StateCategory, TITLE_MAX,
-    changes, github_url, is_hex_color,
+    AGENT_DELEGATED, COMMENT_MAX_BYTES, COMMENT_MENTIONS_MAX, DESCRIPTION_MAX_BYTES,
+    ISSUE_LABELS_MAX, Issue, IssueEvent, IssueEventKind, IssuePerson, IssueState, IssueSummary,
+    LABEL_NAME_MAX, LABELS_MAX, Label, Mention, MentionKind, Notification, NotificationKind,
+    PRIORITY_MAX, Project, ProjectStatus, REACTION_EMOJI, Reaction, STATE_NAME_MAX, STATES_MAX,
+    StateCategory, TITLE_MAX, UNREAD_MAX, UnreadCount, changes, github_url, is_hex_color, mentions,
+    reaction_emoji,
 };
 use crate::domain::validation::{FieldErrors, Validate, check_text, search_text};
 use crate::domain::workspace::TeamAccess;
-use crate::engine::editor;
+use crate::engine::issue_agents;
 use crate::http::extract::{AuthUser, Path, Query, ValidatedJson};
 use crate::http::problem::Problem;
 use crate::repo::audit::Subject;
-use crate::repo::issues::{IssueFilter, NewIssue, NewProject};
+use crate::repo::issues::{IssueFilter, IssueMoves, MentionedAgent, NewIssue, NewProject};
 use crate::repo::{self, OrNotFound};
 
 /// Reads a nullable PATCH field: absent is `None`, `null` is `Some(None)`.
@@ -69,10 +72,7 @@ fn check_github_url(errors: &mut FieldErrors, raw: Option<&str>) {
 
 /// Checks that `cycle_id` is a cycle of the team.
 async fn check_cycle(state: &AppState, team_id: Uuid, cycle_id: Uuid) -> Result<(), AppError> {
-    if repo::cycles::find(&state.db, team_id, cycle_id)
-        .await?
-        .is_none()
-    {
+    if !repo::cycles::exists(&state.db, team_id, cycle_id).await? {
         return Err(AppError::field("cycle_id", "not a cycle of this team"));
     }
     Ok(())
@@ -85,12 +85,13 @@ async fn check_parent(
     workspace_id: Uuid,
     parent_id: Uuid,
 ) -> Result<(), AppError> {
-    match repo::issues::find(&state.db, auth.id, parent_id).await? {
-        Some(parent) if parent.workspace_id == workspace_id => Ok(()),
-        _ => Err(AppError::field(
+    if repo::issues::visible_in(&state.db, auth.id, workspace_id, parent_id).await? {
+        Ok(())
+    } else {
+        Err(AppError::field(
             "parent_id",
             "unknown issue in this workspace",
-        )),
+        ))
     }
 }
 
@@ -103,6 +104,9 @@ async fn known_labels(
     let mut ids = ids.to_vec();
     ids.sort_unstable();
     ids.dedup();
+    if ids.is_empty() {
+        return Ok(ids);
+    }
     let known = repo::issues::count_known_labels(&state.db, workspace_id, &ids).await?;
     if usize::try_from(known).ok() != Some(ids.len()) {
         return Err(AppError::field(
@@ -288,16 +292,16 @@ impl Validate for UpdateIssue {
 }
 
 /// Issues of a workspace in the teams the caller can see, most recently
-/// updated first.
+/// updated first, without their descriptions (`GET /issues/{iid}` has it).
 #[utoipa::path(get, path = "/workspaces/{wid}/issues", tag = "issues", security(("bearer" = [])),
     params(("wid" = Uuid, Path, description = "Workspace id"), IssueQuery),
-    responses((status = 200, body = [Issue]), (status = 404, body = Problem)))]
+    responses((status = 200, body = [IssueSummary]), (status = 404, body = Problem)))]
 pub async fn list(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(wid): Path<Uuid>,
     Query(query): Query<IssueQuery>,
-) -> Result<Json<Vec<Issue>>, AppError> {
+) -> Result<Json<Vec<IssueSummary>>, AppError> {
     member_of(&state, auth, wid).await?;
     let filter = IssueFilter {
         team_id: query.team_id,
@@ -370,20 +374,14 @@ pub async fn create(
         project_id: req.project_id,
         creator_id: auth.id,
         github_url: github.as_deref(),
+        parent_id: req.parent_id,
+        cycle_id: req.cycle_id,
+        due_date: req.due_date,
     };
     let mut tx = state.db.begin().await?;
     let id = repo::issues::create(&mut tx, &new).await?;
-    if req.parent_id.is_some() {
-        repo::issues::set_parent(&mut *tx, id, req.parent_id).await?;
-    }
-    if req.cycle_id.is_some() {
-        repo::issues::set_cycle(&mut *tx, id, req.cycle_id).await?;
-    }
-    if req.due_date.is_some() {
-        repo::issues::set_due(&mut *tx, id, req.due_date).await?;
-    }
     if !labels.is_empty() {
-        repo::issues::set_labels(&mut tx, id, &labels).await?;
+        repo::issues::set_labels(&mut *tx, id, &labels).await?;
     }
     if let Some(assignee) = req.assignee_id.filter(|a| *a != auth.id) {
         repo::issues::notify(&mut *tx, id, assignee, auth.id, NotificationKind::Assigned).await?;
@@ -490,26 +488,22 @@ pub async fn update(
     if let Some(url) = &req.github_url {
         issue.github_url = github_link(url.as_deref())?;
     }
+    let moves = IssueMoves {
+        parent_id: req.parent_id,
+        cycle_id: req.cycle_id,
+        due_date: req.due_date,
+    };
     let mut tx = state.db.begin().await?;
-    repo::issues::save(&mut *tx, &issue).await?;
-    if let Some(parent) = req.parent_id {
-        repo::issues::set_parent(&mut *tx, iid, parent).await?;
-    }
-    if let Some(cycle) = req.cycle_id {
-        repo::issues::set_cycle(&mut *tx, iid, cycle).await?;
-    }
-    if let Some(due) = req.due_date {
-        repo::issues::set_due(&mut *tx, iid, due).await?;
-    }
+    repo::issues::save(&mut *tx, &issue, &moves).await?;
     if let Some(labels) = &labels {
-        repo::issues::set_labels(&mut tx, iid, labels).await?;
+        repo::issues::set_labels(&mut *tx, iid, labels).await?;
     }
     // Read back for the assignee's name, which the timeline shows.
     let after = repo::issues::find(&mut *tx, auth.id, iid)
         .await
         .or_not_found("issue")?;
     let changed = changes(&before, &after);
-    repo::issues::record_changes(&mut tx, iid, auth.id, &changed).await?;
+    repo::issues::record_changes(&mut *tx, iid, auth.id, &changed).await?;
     for change in &changed {
         match change.kind {
             IssueEventKind::Assignee => {
@@ -577,6 +571,22 @@ pub async fn inbox(
     Ok(Json(
         repo::issues::inbox(&state.db, auth.id, wid, 100).await?,
     ))
+}
+
+/// How many of the notifications the caller's inbox shows in a workspace
+/// (the newest 100) are unread: what the sidebar shows, without reading the
+/// inbox itself.
+#[utoipa::path(get, path = "/workspaces/{wid}/inbox/unread-count", tag = "issues", security(("bearer" = [])),
+    params(("wid" = Uuid, Path, description = "Workspace id")),
+    responses((status = 200, body = UnreadCount), (status = 404, body = Problem)))]
+pub async fn unread_count(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(wid): Path<Uuid>,
+) -> Result<Json<UnreadCount>, AppError> {
+    member_of(&state, auth, wid).await?;
+    let count = repo::issues::unread_count(&state.db, auth.id, wid, UNREAD_MAX).await?;
+    Ok(Json(UnreadCount { count }))
 }
 
 /// Marks the caller's notifications read and returns the inbox.
@@ -743,27 +753,149 @@ pub async fn delete_label(
 
 // ---------- timeline ----------
 
-/// `POST /issues/{iid}/comments` and `PATCH /issues/{iid}/comments/{cid}` body.
+/// `POST /issues/{iid}/comments` body.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NewComment {
+    /// Markdown, 1 byte to 16 KiB. `@[Name](user:<uuid>)` mentions a member and
+    /// `@[Name](agent:<uuid>)` an agent of the workspace, at most 20 of them.
+    pub body: String,
+    /// The comment this one replies to: a top-level comment of the same issue.
+    pub parent_id: Option<Uuid>,
+}
+
+/// `PATCH /issues/{iid}/comments/{cid}` body.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CommentBody {
-    /// Markdown, 1 byte to 16 KiB.
+    /// Markdown, 1 byte to 16 KiB. `@[Name](user:<uuid>)` mentions a member and
+    /// `@[Name](agent:<uuid>)` an agent of the workspace, at most 20 of them.
     pub body: String,
+}
+
+fn check_comment(errors: &mut FieldErrors, body: &str) {
+    if body.trim().is_empty() {
+        errors.add("body", "must not be empty");
+    } else if body.len() > COMMENT_MAX_BYTES {
+        errors.add("body", "must be at most 16 KiB");
+    } else if mentions(body).len() > COMMENT_MENTIONS_MAX {
+        errors.add("body", "mentions at most 20 people and agents");
+    }
+}
+
+impl Validate for NewComment {
+    fn validate(&self, errors: &mut FieldErrors) {
+        check_comment(errors, &self.body);
+    }
 }
 
 impl Validate for CommentBody {
     fn validate(&self, errors: &mut FieldErrors) {
-        if self.body.trim().is_empty() {
-            errors.add("body", "must not be empty");
-        } else if self.body.len() > COMMENT_MAX_BYTES {
-            errors.add("body", "must be at most 16 KiB");
-        }
+        check_comment(errors, &self.body);
     }
 }
 
-/// The timeline of an issue, oldest first: its comments, the changes to its
-/// state, priority, assignee, title, due date and GitHub link, what happened
-/// to its files, and what its runs reported.
+/// The author of the comment a reply answers, which must be a top-level
+/// comment of the issue; it is kept from being deleted until the reply is
+/// saved. `None` once the author's account is gone.
+async fn replied_to(
+    tx: &mut sqlx::PgConnection,
+    issue_id: Uuid,
+    parent_id: Uuid,
+) -> Result<Option<Uuid>, AppError> {
+    match repo::issues::event_for_share(tx, issue_id, parent_id).await? {
+        Some(parent) if parent.kind == IssueEventKind::Comment && parent.parent_id.is_none() => {
+            Ok(parent.actor_id)
+        }
+        Some(_) => Err(AppError::field(
+            "parent_id",
+            "a reply answers a top-level comment, not a reply or a change",
+        )),
+        None => Err(AppError::field(
+            "parent_id",
+            "unknown comment on this issue",
+        )),
+    }
+}
+
+/// The people among `mentions`.
+fn mentioned_users(mentions: &[Mention]) -> Vec<Uuid> {
+    mentions
+        .iter()
+        .filter(|m| m.kind == MentionKind::User)
+        .map(|m| m.id)
+        .collect()
+}
+
+/// What a comment's mentions do in its transaction: tells each member it
+/// newly mentions (returning them), and delegates an issue that has no agent
+/// yet to the first agent it mentions, with an `agent` timeline entry. Also
+/// returns the agents it mentions that belong to the issue's workspace and
+/// take work, in the order the comment names them; others stay plain text.
+async fn act_on_mentions(
+    tx: &mut sqlx::PgConnection,
+    issue: &Issue,
+    actor: Uuid,
+    mentions: &[Mention],
+) -> Result<(Vec<Uuid>, Vec<MentionedAgent>), AppError> {
+    let users = mentioned_users(mentions);
+    let told = repo::issues::notify_mentioned(&mut *tx, issue.id, actor, &users).await?;
+    let ids: Vec<Uuid> = mentions
+        .iter()
+        .filter(|m| m.kind == MentionKind::Agent)
+        .map(|m| m.id)
+        .collect();
+    let agents = repo::issues::active_agents(&mut *tx, issue.workspace_id, &ids).await?;
+    if issue.agent_id.is_none()
+        && let Some(agent) = agents.first()
+        && repo::issues::delegate(&mut *tx, issue.id, agent.id).await?
+    {
+        repo::issues::record_agent(&mut *tx, issue.id, actor, &agent.name, AGENT_DELEGATED).await?;
+    }
+    Ok((told, agents))
+}
+
+/// How long a comment's response waits for its mentioned agent to be asked
+/// for a plan. That takes a moment as a rule, so the timeline shows the entry
+/// with the comment; when it takes longer (the ontology service is slow, say)
+/// the comment is answered anyway and the ask carries on.
+const MENTION_ASK_WAIT: Duration = Duration::from_secs(2);
+
+/// After a comment that mentions agents is saved, asks one of them (the
+/// issue's own when the comment names it, else the first) for a plan, as the
+/// author ([`issue_agents::ask_to_plan`]), in a task of its own that the
+/// response waits for at most [`MENTION_ASK_WAIT`]. Best effort: the comment
+/// stands whatever happens there, and a failure is only logged.
+async fn ask_mentioned_agent(
+    state: &AppState,
+    actor: Uuid,
+    issue: &Issue,
+    agents: &[MentionedAgent],
+    comment: &str,
+) {
+    let Some(agent) = agents
+        .iter()
+        .find(|a| Some(a.id) == issue.agent_id)
+        .or_else(|| agents.first())
+        .cloned()
+    else {
+        return;
+    };
+    let (state, issue, comment) = (state.clone(), issue.clone(), comment.to_owned());
+    let ask = tokio::spawn(async move {
+        if let Err(err) = issue_agents::ask_to_plan(&state, actor, &issue, &agent, &comment).await {
+            tracing::warn!(issue = %issue.id, agent = %agent.id, error = %err,
+                "a mentioned agent could not be asked for a plan");
+        }
+    });
+    // Once the wait is over the task is let go, not stopped.
+    let _ = tokio::time::timeout(MENTION_ASK_WAIT, ask).await;
+}
+
+/// The timeline of an issue, oldest first: its comments and their replies,
+/// the changes to its state, priority, assignee, title, due date and GitHub
+/// link, what happened to its files, and what its runs reported; comments
+/// and run reports with their reactions.
 #[utoipa::path(get, path = "/issues/{iid}/events", tag = "issues", security(("bearer" = [])),
     params(("iid" = Uuid, Path, description = "Issue id")),
     responses((status = 200, body = [IssueEvent]), (status = 404, body = Problem)))]
@@ -775,32 +907,64 @@ pub async fn events(
     let issue = repo::issues::find(&state.db, auth.id, iid)
         .await
         .or_not_found("issue")?;
-    Ok(Json(repo::issues::events(&state.db, issue.id).await?))
+    Ok(Json(
+        repo::issues::events(&state.db, auth.id, issue.id).await?,
+    ))
 }
 
-/// Comments on an issue. Whoever may edit the issue may comment on it.
+/// Comments on an issue, or replies to one of its comments. Whoever may edit
+/// the issue may comment on it.
+///
+/// Each member the comment mentions who can see the issue hears of it in
+/// their inbox (`mention`), in place of the `comment` entry the assignee and
+/// the creator get; a reply also tells the author of the comment it answers
+/// (`comment`, once, whether or not they watch the issue). The first active
+/// agent it mentions is delegated an issue that has none; then, when the
+/// author is a member of the issue's team and the issue's graph is idle, one
+/// mentioned agent is asked for a plan (the issue gets its graph if it has
+/// none). The plan waits to be applied like any other: nothing runs by
+/// itself. Both show in the timeline as `agent` entries.
 #[utoipa::path(post, path = "/issues/{iid}/comments", tag = "issues", security(("bearer" = [])),
-    params(("iid" = Uuid, Path, description = "Issue id")), request_body = CommentBody,
+    params(("iid" = Uuid, Path, description = "Issue id")), request_body = NewComment,
     responses((status = 201, body = IssueEvent), (status = 403, body = Problem), (status = 404, body = Problem),
-        (status = 422, body = Problem)))]
+        (status = 422, description = "Invalid fields, or `parent_id` is not a top-level comment of the issue", body = Problem)))]
 pub async fn create_comment(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(iid): Path<Uuid>,
-    ValidatedJson(req): ValidatedJson<CommentBody>,
+    ValidatedJson(req): ValidatedJson<NewComment>,
 ) -> Result<(StatusCode, Json<IssueEvent>), AppError> {
     let issue = editable(&state, auth, iid).await?;
+    let body = req.body.trim();
+    let mentioned = mentions(body);
     let mut tx = state.db.begin().await?;
-    let id = repo::issues::add_comment(&mut *tx, issue.id, auth.id, req.body.trim()).await?;
-    repo::issues::notify_watchers(&mut *tx, issue.id, auth.id, NotificationKind::Comment).await?;
+    let parent_author = match req.parent_id {
+        Some(parent) => replied_to(&mut tx, issue.id, parent).await?,
+        None => None,
+    };
+    let id = repo::issues::add_comment(&mut *tx, issue.id, auth.id, body, req.parent_id).await?;
+    let (told, agents) = act_on_mentions(&mut tx, &issue, auth.id, &mentioned).await?;
+    let kind = NotificationKind::Comment;
+    // The author of the comment replied to hears once, below, not as a watcher too.
+    let mut except = told.clone();
+    except.extend(parent_author);
+    repo::issues::notify_watchers_except(&mut *tx, issue.id, auth.id, kind, &except).await?;
+    if let Some(author) = parent_author.filter(|a| !told.contains(a)) {
+        repo::issues::notify_members(&mut *tx, issue.id, auth.id, &[author], kind).await?;
+    }
     tx.commit().await?;
-    let comment = repo::issues::find_comment(&state.db, issue.id, id)
+    ask_mentioned_agent(&state, auth.id, &issue, &agents, body).await;
+    let comment = repo::issues::find_comment(&state.db, auth.id, issue.id, id)
         .await
         .or_not_found("comment")?;
     Ok((StatusCode::CREATED, Json(comment)))
 }
 
 /// Edits a comment. Only its author can.
+///
+/// Only the mentions the edit adds act: the members it newly mentions are
+/// told, and agents it newly mentions are handed the issue as on a new
+/// comment. Nobody hears of the same mention twice.
 #[utoipa::path(patch, path = "/issues/{iid}/comments/{cid}", tag = "issues", security(("bearer" = [])),
     params(("iid" = Uuid, Path, description = "Issue id"), ("cid" = Uuid, Path, description = "Comment id")),
     request_body = CommentBody,
@@ -813,7 +977,7 @@ pub async fn update_comment(
     ValidatedJson(req): ValidatedJson<CommentBody>,
 ) -> Result<Json<IssueEvent>, AppError> {
     let issue = editable(&state, auth, iid).await?;
-    let comment = repo::issues::find_comment(&state.db, issue.id, cid)
+    let comment = repo::issues::find_comment(&state.db, auth.id, issue.id, cid)
         .await
         .or_not_found("comment")?;
     if comment.actor.as_ref().map(|a| a.user_id) != Some(auth.id) {
@@ -821,15 +985,31 @@ pub async fn update_comment(
             "only its author can edit a comment".into(),
         ));
     }
-    repo::issues::edit_comment(&state.db, cid, req.body.trim()).await?;
+    let body = req.body.trim();
+    let mut tx = state.db.begin().await?;
+    // Read under a lock: of two edits at the same moment, the second sees the
+    // first's text, so a mention they both add acts once.
+    let before = repo::issues::comment_body_for_update(&mut tx, cid)
+        .await
+        .or_not_found("comment")?;
+    let before = mentions(&before);
+    let added: Vec<Mention> = mentions(body)
+        .into_iter()
+        .filter(|m| !before.contains(m))
+        .collect();
+    repo::issues::edit_comment(&mut *tx, cid, body).await?;
+    let (_, agents) = act_on_mentions(&mut tx, &issue, auth.id, &added).await?;
+    tx.commit().await?;
+    ask_mentioned_agent(&state, auth.id, &issue, &agents, body).await;
     Ok(Json(
-        repo::issues::find_comment(&state.db, issue.id, cid)
+        repo::issues::find_comment(&state.db, auth.id, issue.id, cid)
             .await
             .or_not_found("comment")?,
     ))
 }
 
-/// Deletes a comment: its author, or whoever manages the team.
+/// Deletes a comment, with its replies: its author, or whoever manages the
+/// team.
 #[utoipa::path(delete, path = "/issues/{iid}/comments/{cid}", tag = "issues", security(("bearer" = [])),
     params(("iid" = Uuid, Path, description = "Issue id"), ("cid" = Uuid, Path, description = "Comment id")),
     responses((status = 204, description = "Deleted"), (status = 403, body = Problem), (status = 404, body = Problem)))]
@@ -842,7 +1022,7 @@ pub async fn delete_comment(
         .await
         .or_not_found("issue")?;
     let (_, access) = visible_team(&state, auth, issue.workspace_id, issue.team_id).await?;
-    let comment = repo::issues::find_comment(&state.db, issue.id, cid)
+    let comment = repo::issues::find_comment(&state.db, auth.id, issue.id, cid)
         .await
         .or_not_found("comment")?;
     let own = comment.actor.as_ref().map(|a| a.user_id) == Some(auth.id);
@@ -853,6 +1033,122 @@ pub async fn delete_comment(
     }
     repo::issues::delete_comment(&state.db, cid).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------- reactions ----------
+
+/// `POST /issues/{iid}/events/{eid}/reactions` body.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReactionBody {
+    /// One of 👍 👎 😄 🎉 😕 ❤️ 🚀 👀 🔥 ✅.
+    pub emoji: String,
+}
+
+/// Query of `DELETE /issues/{iid}/events/{eid}/reactions`.
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+pub struct ReactionQuery {
+    /// The emoji to take back: one of 👍 👎 😄 🎉 😕 ❤️ 🚀 👀 🔥 ✅.
+    pub emoji: String,
+}
+
+/// Why an emoji is not a reaction (the message of the `emoji` field error).
+fn not_a_reaction() -> String {
+    format!("must be one of {}", REACTION_EMOJI.join(" "))
+}
+
+/// The emoji of [`REACTION_EMOJI`] that `raw` is.
+fn reaction(raw: &str) -> Result<&'static str, AppError> {
+    reaction_emoji(raw).ok_or_else(|| AppError::field("emoji", not_a_reaction()))
+}
+
+impl Validate for ReactionBody {
+    fn validate(&self, errors: &mut FieldErrors) {
+        if reaction_emoji(&self.emoji).is_none() {
+            errors.add("emoji", not_a_reaction());
+        }
+    }
+}
+
+/// Checks that `eid` is an entry of the issue (404) that takes reactions, a
+/// comment or a run report (422), and keeps it from being deleted until the
+/// transaction ends.
+async fn reactable(tx: &mut sqlx::PgConnection, issue_id: Uuid, eid: Uuid) -> Result<(), AppError> {
+    let event = repo::issues::event_for_share(tx, issue_id, eid)
+        .await
+        .or_not_found("timeline entry")?;
+    if !event.kind.takes_reactions() {
+        return Err(AppError::Unprocessable(
+            "only comments and run reports take reactions".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// An entry's reactions as the caller reads them.
+async fn reactions_of(
+    state: &AppState,
+    auth: AuthUser,
+    issue_id: Uuid,
+    eid: Uuid,
+) -> Result<Json<Vec<Reaction>>, AppError> {
+    let event = repo::issues::find_event(&state.db, auth.id, issue_id, eid)
+        .await
+        .or_not_found("timeline entry")?;
+    Ok(Json(event.reactions))
+}
+
+/// Reacts to a comment or a run report with an emoji; giving the same emoji
+/// again changes nothing. Whoever may comment on the issue may react.
+///
+/// The comment's author hears of it in their inbox (`reaction`, with the
+/// emoji): never of their own, and once a day for the same emoji from the
+/// same person on the comment, however often it is taken back and given again.
+#[utoipa::path(post, path = "/issues/{iid}/events/{eid}/reactions", tag = "issues", security(("bearer" = [])),
+    params(("iid" = Uuid, Path, description = "Issue id"), ("eid" = Uuid, Path, description = "Timeline entry id")),
+    request_body = ReactionBody,
+    responses((status = 200, description = "The entry's reactions", body = [Reaction]),
+        (status = 403, body = Problem), (status = 404, body = Problem),
+        (status = 422, description = "An emoji not on the list, or an entry that is not a comment or a run report", body = Problem)))]
+pub async fn add_reaction(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((iid, eid)): Path<(Uuid, Uuid)>,
+    ValidatedJson(req): ValidatedJson<ReactionBody>,
+) -> Result<Json<Vec<Reaction>>, AppError> {
+    let issue = editable(&state, auth, iid).await?;
+    let emoji = reaction(&req.emoji)?;
+    let mut tx = state.db.begin().await?;
+    reactable(&mut tx, issue.id, eid).await?;
+    if repo::issues::add_reaction(&mut *tx, eid, auth.id, emoji).await? {
+        repo::issues::notify_reaction(&mut *tx, eid, auth.id, emoji).await?;
+    }
+    tx.commit().await?;
+    reactions_of(&state, auth, issue.id, eid).await
+}
+
+/// Takes the caller's emoji back from a comment or a run report; one they
+/// never gave is no error. The inbox entry it gave stays.
+#[utoipa::path(delete, path = "/issues/{iid}/events/{eid}/reactions", tag = "issues", security(("bearer" = [])),
+    params(("iid" = Uuid, Path, description = "Issue id"), ("eid" = Uuid, Path, description = "Timeline entry id"),
+        ReactionQuery),
+    responses((status = 200, description = "The entry's reactions", body = [Reaction]),
+        (status = 403, body = Problem), (status = 404, body = Problem),
+        (status = 422, description = "An emoji not on the list, or an entry that is not a comment or a run report", body = Problem)))]
+pub async fn remove_reaction(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((iid, eid)): Path<(Uuid, Uuid)>,
+    Query(query): Query<ReactionQuery>,
+) -> Result<Json<Vec<Reaction>>, AppError> {
+    let issue = editable(&state, auth, iid).await?;
+    let emoji = reaction(&query.emoji)?;
+    let mut tx = state.db.begin().await?;
+    reactable(&mut tx, issue.id, eid).await?;
+    repo::issues::remove_reaction(&mut *tx, eid, auth.id, emoji).await?;
+    tx.commit().await?;
+    reactions_of(&state, auth, issue.id, eid).await
 }
 
 /// Gives the issue a graph that plans and executes it: a graph of the issue's
@@ -872,37 +1168,7 @@ pub async fn create_graph(
         return Ok(Json(issue));
     }
     // Graphs of a team are open to its members only, so only a member can start one.
-    let home = editor::graph_home(&state, auth.id, None, Some(issue.team_id))
-        .await
-        .map_err(|_| {
-            AppError::Forbidden("join the team to plan and run its issues as graphs".into())
-        })?;
-    let name: String = format!("{} {}", issue.identifier, issue.title)
-        .chars()
-        .take(crate::domain::graph::GRAPH_NAME_MAX)
-        .collect();
-    let goal = if issue.description.trim().is_empty() {
-        issue.title.clone()
-    } else {
-        format!("{}\n\n{}", issue.title, issue.description.trim())
-    };
-    let goal: String = goal
-        .chars()
-        .take(crate::domain::graph::GRAPH_TEXT_MAX)
-        .collect();
-    let mut tx = state.db.begin().await?;
-    let graph = repo::graphs::create(
-        &mut *tx,
-        auth.id,
-        home.workspace_id,
-        home.team_id,
-        &name,
-        &format!("Plans and executes {}", issue.identifier),
-        &goal,
-    )
-    .await?;
-    repo::issues::link_graph(&mut *tx, issue.id, graph.id).await?;
-    tx.commit().await?;
+    issue_agents::create_graph(&state, auth.id, &issue).await?;
     Ok(Json(
         repo::issues::find(&state.db, auth.id, iid)
             .await

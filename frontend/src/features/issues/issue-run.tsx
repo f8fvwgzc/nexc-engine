@@ -1,24 +1,33 @@
 import { type QueryKey, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  BotIcon,
   CheckCircle2Icon,
   CircleDotIcon,
   CircleIcon,
   CircleXIcon,
+  CopyIcon,
   FileIcon,
   HandIcon,
+  LinkIcon,
   MinusCircleIcon,
   PlayIcon,
   RouteIcon,
   SparklesIcon,
   SquareIcon,
 } from 'lucide-react';
-import { useEffect, useEffectEvent, useMemo, useState } from 'react';
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react';
 import { Link } from 'react-router-dom';
 
-import { Markdown } from '@/components/custom-ui/markdown';
 import { Button } from '@/components/ui/button';
 import { CodeBlock, CodeBlockContent } from '@/components/ui/code-block';
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import {
   Trace,
   TraceCollapsible,
@@ -29,20 +38,43 @@ import {
   TraceLine,
   TraceTitle,
 } from '@/components/ui/trace';
+import { issueRunArtifactsQuery } from '@/features/artifacts/api';
 import { applyPlan, requestPlan, startRun } from '@/features/graph/api';
 import { graphQuery } from '@/features/graphs/api';
 import { artifactsQuery, cancelRun, downloadArtifact, graphRunsQuery } from '@/features/runs/api';
 import { errorMessage } from '@/lib/api/errors';
+import { copyText } from '@/lib/clipboard';
 import { formatRelative } from '@/lib/format';
 import { qk } from '@/lib/query-keys';
 import { GraphEventStream } from '@/lib/realtime/sse';
+import { cn } from '@/lib/utils';
 import type { NodeStatus } from '@/schemas/graph';
 import type { Issue, IssueEvent } from '@/schemas/issue';
 import type { Plan } from '@/schemas/plan';
 import type { SseEvent } from '@/schemas/realtime';
-import { type Artifact, isRunActive, type Run } from '@/schemas/run';
+import { type Artifact, isRunActive, type Run, type RunStatus } from '@/schemas/run';
 
+import {
+  ActivityEntry,
+  AgentsAvatar,
+  EntryHeader,
+  EntryMenu,
+  EntryRow,
+  KindIcon,
+} from './activity-entry';
 import { createIssueGraph } from './api';
+
+/** A run's report renders as Markdown, loaded with the first report rather than with the page. */
+const Markdown = lazy(() =>
+  import('@/components/custom-ui/markdown').then((module) => ({ default: module.Markdown })),
+);
+
+/**
+ * The most files `/issues/{id}/run-artifacts` answers with, newest run first (the server's
+ * `RUN_ARTIFACTS_MAX`). A list that long may have been cut off: a report whose run it leaves out,
+ * or holds only part of, reads its own files when asked.
+ */
+const RUN_ARTIFACTS_MAX = 500;
 
 /** Most characters of a step's streamed output kept on screen. */
 const OUTPUT_MAX_CHARS = 20_000;
@@ -165,15 +197,20 @@ function Step({
 }
 
 /** Files a run made, each a download (a file the DLP classifier kept in says so). */
-function FileList({ files }: { files: Artifact[] }) {
+function FileList({ files, onCard = false }: { files: Artifact[]; onCard?: boolean }) {
   return (
     <ul className="flex flex-wrap gap-1.5">
       {files.map((file) => (
         <li key={file.id}>
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
-            className="h-7 gap-1.5 px-2 text-xs"
+            className={cn(
+              'h-7 gap-1.5 px-2 text-xs font-normal',
+              onCard
+                ? 'rounded-full bg-background/80 hover:bg-background dark:bg-background/40'
+                : 'bg-muted/60 hover:bg-muted',
+            )}
             disabled={file.quarantined_at !== null}
             title={file.quarantined_at ? `Held back: ${file.quarantine_reason}` : file.path}
             onClick={() => void downloadArtifact(file)}
@@ -214,7 +251,7 @@ export function IssueRun({ issue }: { issue: Issue }) {
 
   if (!graphId) {
     return (
-      <section aria-label="Agent work" className="space-y-2 border-t pt-4">
+      <section aria-label="Agent work" className="space-y-2">
         <h2 className="text-[13px] font-medium text-muted-foreground">Agent work</h2>
         <p className="text-[13px] text-muted-foreground">
           Hand this issue to agents. They plan it as steps, run them, and post the result here for
@@ -263,7 +300,9 @@ function LiveRun({
 }) {
   const queryClient = useQueryClient();
   const { data: graph } = useQuery(graphQuery(graphId));
-  const { data: runs } = useQuery(graphRunsQuery(graphId));
+  // Only the latest run is shown, so only it is read.
+  const latest = graphRunsQuery(graphId, 1);
+  const { data: runs } = useQuery(latest);
   const run: Run | undefined = runs?.[0];
   const active = run ? isRunActive(run.status) : false;
   const { data: files = [] } = useQuery({
@@ -282,10 +321,8 @@ function LiveRun({
     switch (event.type) {
       case 'run.started':
         setLive({ runId: event.data.run.id, steps: {} });
-        queryClient.setQueryData<Run[]>(qk.graphs.runs(graphId), (prev) => [
-          event.data.run,
-          ...(prev ?? []).filter((r) => r.id !== event.data.run.id),
-        ]);
+        queryClient.setQueryData<Run[]>(latest.queryKey, [event.data.run]);
+        void queryClient.invalidateQueries({ queryKey: qk.runs.workspaces() });
         break;
       case 'node.status':
         step(event.data.run_id, event.data.node_id, (s) => ({
@@ -314,9 +351,10 @@ function LiveRun({
         void queryClient.invalidateQueries({ queryKey: qk.artifacts.runs(issue.id) });
         break;
       case 'run.finished':
-        queryClient.setQueryData<Run[]>(qk.graphs.runs(graphId), (prev) =>
+        queryClient.setQueryData<Run[]>(latest.queryKey, (prev) =>
           (prev ?? []).map((r) => (r.id === event.data.run.id ? event.data.run : r)),
         );
+        void queryClient.invalidateQueries({ queryKey: qk.runs.workspaces() });
         // The run reported back on this issue: a timeline entry, maybe a new state (in the
         // workspace's lists and projects too), an inbox entry, and the run's status on each file
         // it made. Nothing else of the workspace changed.
@@ -359,6 +397,7 @@ function LiveRun({
       onReconnect: () => {
         void queryClient.invalidateQueries({ queryKey: qk.graphs.runs(graphId) });
         void queryClient.invalidateQueries({ queryKey: qk.graphs.detail(graphId) });
+        void queryClient.invalidateQueries({ queryKey: qk.runs.workspaces() });
       },
     });
     stream.start();
@@ -380,14 +419,18 @@ function LiveRun({
     },
     onSuccess: (started) => {
       setLive({ runId: started.id, steps: {} });
-      queryClient.setQueryData<Run[]>(qk.graphs.runs(graphId), (prev) => [
-        started,
-        ...(prev ?? []).filter((r) => r.id !== started.id),
-      ]);
+      queryClient.setQueryData<Run[]>(latest.queryKey, [started]);
+      void queryClient.invalidateQueries({ queryKey: qk.runs.workspaces() });
     },
   });
   const stop = useMutation({
     mutationFn: () => (run ? cancelRun(run.id) : Promise.reject(new Error('nothing runs'))),
+    onSuccess: (cancelled) => {
+      queryClient.setQueryData<Run[]>(latest.queryKey, (prev) =>
+        (prev ?? []).map((r) => (r.id === cancelled.id ? cancelled : r)),
+      );
+      void queryClient.invalidateQueries({ queryKey: qk.runs.workspaces() });
+    },
   });
 
   const titles = useMemo(
@@ -421,7 +464,7 @@ function LiveRun({
   const error = askPlan.error ?? go.error ?? stop.error;
 
   return (
-    <section aria-label="Agent work" className="space-y-3 border-t pt-4">
+    <section aria-label="Agent work" className="space-y-3">
       <div className="flex items-center gap-2">
         <h2 className="text-[13px] font-medium text-muted-foreground">Agent work</h2>
         {run && (
@@ -562,15 +605,55 @@ function LiveRun({
 }
 
 /**
- * A finished run's report on the issue's timeline: whether it worked, the deliverable it
- * produced, the files it made, and a link to the whole run.
+ * The files a run made, for its report. Every report of the issue shares one read of the files
+ * its runs made (the same one its "From runs" list shows), so a timeline of many runs costs one
+ * request, not one per report. When that list may have been cut off before all of this run's
+ * files (it holds none of them, or the run is the oldest in it), the run reads its own files,
+ * but only when the reader asks for them.
  */
-export function RunReport({ event }: { event: IssueEvent }) {
-  const runId = event.run_id;
-  const { data: files = [] } = useQuery({
-    ...artifactsQuery(runId ?? ''),
+function useReportFiles(issueId: string, runId: string | null) {
+  const [asked, setAsked] = useState(false);
+  const shared = useQuery({
+    ...issueRunArtifactsQuery(issueId),
     enabled: Boolean(runId),
   });
+  const listed = shared.data ?? [];
+  const mine = listed.filter((file) => file.run_id === runId);
+  // Newest run first: a list cut off leaves out older runs, and may split the oldest it holds.
+  const partial =
+    listed.length >= RUN_ARTIFACTS_MAX && (mine.length === 0 || listed.at(-1)?.run_id === runId);
+  const own = useQuery({
+    ...artifactsQuery(runId ?? ''),
+    enabled: Boolean(runId) && partial && asked,
+  });
+  return {
+    files: partial && own.data ? own.data : mine,
+    /** Reads the run's own files: set when the shared list may not hold them all. */
+    ask: partial && !asked ? () => setAsked(true) : null,
+    /** Whether more files may be read (some of the run's are shown already). */
+    more: mine.length > 0,
+    /** The run's own files were read, and it made none. */
+    none: partial && own.data?.length === 0,
+  };
+}
+
+/**
+ * A finished run's report on the issue's timeline, written by the agents the way a comment is by
+ * a member, on a card: whether it worked, the deliverable it produced, the files it made, and the
+ * way to the whole run. The timeline adds `actions` beside its menu and `footer` under it (its
+ * reactions).
+ */
+export function RunReport({
+  event,
+  actions,
+  footer,
+}: {
+  event: IssueEvent;
+  actions?: ReactNode;
+  footer?: ReactNode;
+}) {
+  const runId = event.run_id;
+  const { files, ask, more, none } = useReportFiles(event.issue_id, runId);
   const status = event.to ?? 'finished';
   const verb =
     status === 'succeeded'
@@ -579,58 +662,108 @@ export function RunReport({ event }: { event: IssueEvent }) {
         ? 'could not finish the work'
         : 'were stopped';
   return (
-    <li className="rounded-md border bg-card px-3 py-2">
-      <div className="flex items-center gap-2 text-[13px]">
-        <span
-          aria-hidden
-          className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
-        >
-          <BotIcon className="size-3.5" />
-        </span>
-        <span className="font-medium">Agents</span>
-        <span className={status === 'failed' ? 'text-destructive' : 'text-muted-foreground'}>
-          {verb}
-        </span>
-        <span className="text-muted-foreground">{formatRelative(event.created_at)}</span>
-        {runId && (
-          <Link
-            to={`/app/runs/${runId}`}
-            className="ml-auto text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-          >
-            Open run
-          </Link>
+    <ActivityEntry highlighted>
+      <EntryRow icon={<KindIcon kind="run" />} avatar={<AgentsAvatar />}>
+        <EntryHeader
+          name="Agents"
+          action={<span className={cn(status === 'failed' && 'text-destructive')}>{verb}</span>}
+          at={event.created_at}
+        />
+        {event.body && (
+          // A deliverable can run long: it scrolls inside the card, its headings sized for a
+          // timeline. Until the renderer has loaded, it reads as plain text.
+          <div className="mt-2 max-h-80 overflow-y-auto rounded-xl bg-background/80 px-3 py-2.5 dark:bg-background/40">
+            <Suspense
+              fallback={<p className="text-sm break-words whitespace-pre-wrap">{event.body}</p>}
+            >
+              <Markdown className="text-sm [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm">
+                {event.body}
+              </Markdown>
+            </Suspense>
+          </div>
         )}
-      </div>
-      {event.body && (
-        // A deliverable can run long: it scrolls inside the entry, its headings sized for a timeline.
-        <div className="mt-1.5 max-h-80 overflow-y-auto pr-1">
-          <Markdown className="text-sm [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm">
-            {event.body}
-          </Markdown>
+        {files.length > 0 && (
+          <div className="mt-2">
+            <FileList files={files} onCard />
+          </div>
+        )}
+        {none && <p className="mt-2 text-xs text-muted-foreground">The run made no files.</p>}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {runId && (
+            <Button size="sm" className="rounded-full px-3.5" asChild>
+              <Link to={`/app/runs/${runId}`}>Open run</Link>
+            </Button>
+          )}
+          {ask && (
+            <Button
+              variant="secondary"
+              size="sm"
+              className="rounded-full bg-background/80 px-3.5 hover:bg-background dark:bg-background/40"
+              onClick={ask}
+            >
+              <FileIcon />
+              {more ? 'Show all the run’s files' : 'Show the run’s files'}
+            </Button>
+          )}
+          <span className="ml-auto flex items-center gap-1">
+            {actions}
+            {(event.body || runId) && (
+              <EntryMenu label="More for the run’s report" className="rounded-full">
+                {event.body && (
+                  <DropdownMenuItem onSelect={() => void copyText(event.body, 'Copied the result')}>
+                    <CopyIcon />
+                    Copy result
+                  </DropdownMenuItem>
+                )}
+                {runId && (
+                  <DropdownMenuItem
+                    onSelect={() =>
+                      void copyText(
+                        `${window.location.origin}/app/runs/${runId}`,
+                        'Copied the link to the run',
+                      )
+                    }
+                  >
+                    <LinkIcon />
+                    Copy link to the run
+                  </DropdownMenuItem>
+                )}
+              </EntryMenu>
+            )}
+          </span>
         </div>
-      )}
-      {files.length > 0 && (
-        <div className="mt-2">
-          <FileList files={files} />
-        </div>
-      )}
-    </li>
+        {footer}
+      </EntryRow>
+    </ActivityEntry>
   );
 }
 
-/** The latest run of a sub-issue's graph, as one small trace line that moves while it runs. */
-export function SubIssueRun({ graphId }: { graphId: string }) {
-  const { data: runs } = useQuery(graphRunsQuery(graphId));
-  const run = runs?.[0];
-  if (!run) return null;
-  const look =
-    run.status === 'succeeded'
-      ? { trace: undefined, icon: <CheckCircle2Icon className="text-emerald-600" />, word: 'done' }
-      : run.status === 'failed'
-        ? { trace: 'error' as const, icon: <CircleXIcon />, word: 'failed' }
-        : run.status === 'cancelled'
-          ? { trace: 'pending' as const, icon: <MinusCircleIcon />, word: 'stopped' }
-          : { trace: 'running' as const, icon: <CircleDotIcon />, word: 'running' };
+/** How a run's status reads on a sub-issue: its trace marker, its icon and one word. */
+function runLook(status: RunStatus): { trace: TraceStatus; icon: React.ReactNode; word: string } {
+  switch (status) {
+    case 'succeeded':
+      return {
+        trace: undefined,
+        icon: <CheckCircle2Icon className="text-emerald-600" />,
+        word: 'done',
+      };
+    case 'failed':
+      return { trace: 'error', icon: <CircleXIcon />, word: 'failed' };
+    case 'cancelled':
+      return { trace: 'pending', icon: <MinusCircleIcon />, word: 'stopped' };
+    case 'queued':
+    case 'running':
+      return { trace: 'running', icon: <CircleDotIcon />, word: 'running' };
+  }
+}
+
+/**
+ * The latest run of a sub-issue's graph, as one small trace line that moves while it runs. The
+ * status comes with the sub-issue (its list carries it); without one there is nothing to show.
+ */
+export function SubIssueRun({ status }: { status: RunStatus | null }) {
+  if (!status) return null;
+  const look = runLook(status);
   return (
     <TraceLine status={look.trace} className="shrink-0 text-xs">
       <TraceIcon className="size-3.5 [&_svg:not([class*='size-'])]:size-3.5">{look.icon}</TraceIcon>

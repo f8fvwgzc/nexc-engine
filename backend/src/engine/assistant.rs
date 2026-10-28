@@ -360,6 +360,9 @@ pub async fn reply(
             project_id: None,
             creator_id: user,
             github_url: None,
+            parent_id: None,
+            cycle_id: None,
+            due_date: None,
         };
         let mut tx = state.db.begin().await?;
         let id = repo::issues::create(&mut tx, &new).await?;

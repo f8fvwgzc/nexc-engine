@@ -383,7 +383,7 @@ async fn an_exposed_agent_serves_its_card(pool: PgPool) {
         .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     let card = r.body;
-    assert_eq!(card["name"], "Analyst");
+    assert_eq!(card["name"], "Financial Analyst");
     assert_eq!(card["principal"], principal);
     assert_eq!(
         card["url"],
@@ -404,6 +404,13 @@ async fn an_exposed_agent_serves_its_card(pool: PgPool) {
         skills.iter().any(|s| s["id"] == "tool:make_docx"),
         "the capabilities' tools are skills: {skills:?}"
     );
+    assert!(
+        skills
+            .iter()
+            .any(|s| s["id"] == "skill:fin-equity-valuation"
+                && s["tags"].as_array().unwrap().contains(&json!("finance"))),
+        "the agent's skills are A2A skills: {skills:?}"
+    );
     let r = app
         .request(
             Method::GET,
@@ -413,7 +420,7 @@ async fn an_exposed_agent_serves_its_card(pool: PgPool) {
         )
         .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    assert_eq!(r.body["name"], "Analyst");
+    assert_eq!(r.body["name"], "Financial Analyst");
     // By id too.
     let r = app
         .request(Method::GET, &format!("/a2a/agents/{id}/card"), None, None)
@@ -583,7 +590,7 @@ async fn a_counterpart_sends_a_task_and_gets_the_artifacts_back(pool: PgPool) {
         None,
     )
     .await;
-    assert_eq!(graph["name"], "A2A: Analyst");
+    assert_eq!(graph["name"], "A2A: Financial Analyst");
     assert_eq!(graph["nodes"][0]["title"], "DOCX quarterly report");
     assert_eq!(graph["nodes"][0]["agent_role"], "analyst");
 

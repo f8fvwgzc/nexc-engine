@@ -35,8 +35,11 @@ import type { Span } from '@/schemas/trace';
 
 import { agentCardQuery } from '../api';
 import { summarizeCapabilities } from '../capabilities';
+import { useAgentDepartments } from '../departments';
 import { useQuarantineAgent } from '../hooks/use-agent-mutations';
 import { AgentA2a } from './agent-a2a';
+import { AgentCompetency } from './agent-competency';
+import { AgentSkills } from './agent-skills';
 import { AgentStatusBadge } from './agent-status-badge';
 import { AgentTokens } from './agent-tokens';
 import { BudgetProgress } from './budget-progress';
@@ -183,60 +186,20 @@ function EvidenceSummary({ card }: { card: AgentCard }) {
   );
 }
 
-function Evaluation({ card }: { card: AgentCard }) {
-  const evaluation = card.evaluation;
-  if (!evaluation) return null;
-  const good = evaluation.total > 0 && evaluation.score * 2 >= evaluation.total;
-  return (
-    <section className="space-y-1.5">
-      <h3 className="text-xs font-medium text-muted-foreground">Evaluation</h3>
-      <p className="text-sm">
-        <span className={cn('font-medium tabular-nums', !good && 'text-destructive')}>
-          {evaluation.score} / {evaluation.total}
-        </span>
-        <span className="text-muted-foreground">
-          {' '}
-          competency questions · {evaluation.model} · {formatRelative(evaluation.evaluated_at)}
-        </span>
-      </p>
-      <ul className="space-y-1 text-xs">
-        {evaluation.questions.map((q) => (
-          <li key={q.question} className="flex gap-2">
-            <span
-              className={cn(
-                'shrink-0 font-medium',
-                q.passed ? 'text-[var(--status-succeeded)]' : 'text-destructive',
-              )}
-              aria-label={q.passed ? 'passed' : 'failed'}
-            >
-              {q.passed ? '✓' : '✗'}
-            </span>
-            <span className="min-w-0">
-              <span>{q.question}</span>
-              {q.answer && (
-                <span className="block truncate text-muted-foreground" title={q.answer}>
-                  {q.answer}
-                </span>
-              )}
-            </span>
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
 function Overview({
   shown,
   card,
   isPending,
   admin,
+  member,
 }: {
   shown: Agent;
   card: AgentCard | undefined;
   isPending: boolean;
   admin: boolean;
+  member: boolean;
 }) {
+  const departmentOf = useAgentDepartments();
   return (
     <div className="space-y-5">
       <p className="text-sm">
@@ -261,6 +224,7 @@ function Overview({
         <Fact label="Role">
           <code className="rounded bg-muted px-1 py-0.5 text-xs">{shown.role}</code>
         </Fact>
+        <Fact label="Department">{departmentOf(shown) ?? '—'}</Fact>
         <Fact label="Budget left">
           {card?.budget_left === null
             ? 'no limit'
@@ -277,6 +241,8 @@ function Overview({
         <Fact label="Created">{formatDateTime(shown.created_at)}</Fact>
       </dl>
       <BudgetProgress spent={shown.spent_tokens} budget={shown.budget_tokens} />
+      <AgentSkills skillIds={shown.skills} />
+      <AgentCompetency agent={shown} evaluation={card?.evaluation ?? null} member={member} />
       <section className="space-y-1.5">
         <h3 className="text-xs font-medium text-muted-foreground">Risk</h3>
         {shown.risk_updated_at === null ? (
@@ -320,7 +286,6 @@ function Overview({
       </section>
       {shown.runtime === 'external' && <AgentTokens agentId={shown.id} admin={admin} />}
       {card && <EvidenceSummary card={card} />}
-      {card && <Evaluation card={card} />}
     </div>
   );
 }
@@ -416,18 +381,27 @@ interface AgentCardSheetProps {
   agent: Agent | null;
   /** Whether the viewer may quarantine and release (workspace admins). */
   admin: boolean;
+  /** Whether the viewer may ask its competency questions again (members and above). */
+  member: boolean;
   onOpenChange: (open: boolean) => void;
   onEdit: (agent: Agent) => void;
 }
 
 /**
- * The agent's ID card, in tabs: who it is and what it may do (Overview; for an external agent
- * also its API tokens, issued and revoked there by admins), its last twenty actions
- * (Activity), the policy that governs it rule by rule (Policy), its held calls and alerts, its
- * A2A exposure with the card's addresses and the tasks it received (A2A), and the audit's
- * questions with the agent filled in (Ask). Admins quarantine and release from the footer.
+ * The agent's ID card, in tabs: who it is and what it may do (Overview: its department, its
+ * skills, what its template is benchmarked against and its competency score, which members check
+ * again; for an external agent also its API tokens, issued and revoked there by admins), its last
+ * twenty actions (Activity), the policy that governs it rule by rule (Policy), its held calls and
+ * alerts, its A2A exposure with the card's addresses and the tasks it received (A2A), and the
+ * audit's questions with the agent filled in (Ask). Admins quarantine and release from the footer.
  */
-export function AgentCardSheet({ agent, admin, onOpenChange, onEdit }: AgentCardSheetProps) {
+export function AgentCardSheet({
+  agent,
+  admin,
+  member,
+  onOpenChange,
+  onEdit,
+}: AgentCardSheetProps) {
   const {
     data: card,
     error,
@@ -510,7 +484,13 @@ export function AgentCardSheet({ agent, admin, onOpenChange, onEdit }: AgentCard
                   <TabsTrigger value="ask">Ask</TabsTrigger>
                 </TabsList>
                 <TabsContent value="overview">
-                  <Overview shown={shown} card={card} isPending={isPending} admin={admin} />
+                  <Overview
+                    shown={shown}
+                    card={card}
+                    isPending={isPending}
+                    admin={admin}
+                    member={member}
+                  />
                 </TabsContent>
                 <TabsContent value="activity">
                   {card ? <RecentSpans card={card} /> : <Skeleton className="h-16 rounded-lg" />}

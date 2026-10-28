@@ -6,7 +6,6 @@ import { EmptyState } from '@/components/custom-ui/empty-state';
 import { ErrorState } from '@/components/custom-ui/error-state';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { ContentSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -28,10 +27,22 @@ function viewOf(params: URLSearchParams, workspace: string): string {
   return `/map?${map.toString()}`;
 }
 
+/** The map's frame while it loads: as tall as the map will be. */
+function MapSkeleton() {
+  return (
+    <Skeleton
+      role="status"
+      aria-busy
+      aria-label="Loading the map"
+      className="h-[70vh] w-full rounded-lg"
+    />
+  );
+}
+
 function OntologyMap({ workspace }: { workspace: Workspace }) {
   const [params] = useSearchParams();
   const { data: status, isPending, error, refetch } = useQuery(ontologyStatusQuery(workspace.id));
-  if (isPending) return <Skeleton className="h-[70vh] w-full rounded-lg" />;
+  if (isPending) return <MapSkeleton />;
   if (error) {
     return (
       <ErrorState title="Couldn’t load the map" error={error} onRetry={() => void refetch()} />
@@ -73,7 +84,7 @@ export default function MapPage() {
         description="The workspace as onto-intelli models it: teams, people, projects, cycles, issues, agents, graphs, documents and runs, and how they relate. Explore paths and impact, and configure entity kinds, link types and actions there."
       />
       {!current ? (
-        <ContentSkeleton />
+        <MapSkeleton />
       ) : current.role === 'guest' ? (
         <EmptyState
           icon={WaypointsIcon}

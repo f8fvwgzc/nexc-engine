@@ -56,7 +56,7 @@ pub const UPLOAD_SLACK: usize = 64 * 1024;
         (name = "approvals", description = "Tool calls that wait for a human"),
         (name = "alerts", description = "What needs a look"),
         (name = "alert-destinations", description = "Where a workspace's alerts and approvals are sent: signed webhooks and Slack"),
-        (name = "orchestrator"), (name = "realtime"), (name = "health"),
+        (name = "planner", description = "The Planner: queue, running work, agents and the backends it routes nodes to"), (name = "realtime"), (name = "health"),
         (name = "audit", description = "Ask the audit: questions about what agents did, answered from onto-intelli's facts"),
         (name = "admin", description = "The platform console: every workspace and account, for platform administrators only"),
         (name = "secops", description = "The AgentSecOps console: the workspace's agents, runs, denials, approvals, alerts and risk on one screen"),
@@ -204,9 +204,11 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(cycles::update, cycles::delete))
         .routes(routes!(issues::events))
         .routes(routes!(issues::inbox))
+        .routes(routes!(issues::unread_count))
         .routes(routes!(issues::mark_read))
         .routes(routes!(issues::create_comment))
         .routes(routes!(issues::update_comment, issues::delete_comment))
+        .routes(routes!(issues::add_reaction, issues::remove_reaction))
         .routes(routes!(issues::states, issues::create_state))
         .routes(routes!(issues::update_state, issues::delete_state))
         .routes(routes!(issues::projects, issues::create_project))
@@ -254,6 +256,7 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(plans::get))
         .routes(routes!(plans::apply))
         .routes(routes!(runs::create, runs::list))
+        .routes(routes!(runs::workspace_runs))
         .routes(routes!(runs::get))
         .routes(routes!(runs::cancel))
         .routes(routes!(runs::cancel_agent))
@@ -272,6 +275,9 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(agents::release))
         .routes(routes!(agent_templates::list))
         .routes(routes!(agent_templates::instantiate))
+        .routes(routes!(agent_templates::evaluate))
+        .routes(routes!(skills::list))
+        .routes(routes!(skills::get))
         .routes(routes!(agents::tokens, agents::issue_token))
         .routes(routes!(agents::revoke_token))
         .routes(routes!(a2a::tasks))
@@ -305,10 +311,17 @@ fn v1_routes() -> OpenApiRouter<AppState> {
             memories::set_label,
             memories::delete
         ))
-        .routes(routes!(orchestrator::status))
+        .routes(routes!(planner::status))
         .routes(routes!(realtime::ticket))
         .routes(routes!(realtime::events))
         .routes(routes!(realtime::websocket))
+        .merge(deprecated_routes())
+}
+
+/// Former addresses that keep working, documented as deprecated.
+#[allow(deprecated)]
+fn deprecated_routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new().routes(routes!(planner::status_legacy))
 }
 
 /// Every documented route: `/api/v1/*`, `/metrics`, the signing keys at

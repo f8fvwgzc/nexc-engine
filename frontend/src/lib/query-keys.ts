@@ -46,6 +46,10 @@ export const qk = {
     artifacts: (runId: string) => [...qk.runs.all, runId, 'artifacts'] as const,
     trace: (runId: string) => [...qk.runs.all, runId, 'trace'] as const,
     verify: (runId: string) => [...qk.runs.all, runId, 'trace', 'verify'] as const,
+    /** Every workspace's run list: read again whenever a run starts or ends anywhere. */
+    workspaces: () => [...qk.runs.all, 'workspace'] as const,
+    /** The latest runs across a workspace's graphs (the Runs page). */
+    workspace: (workspaceId: string) => [...qk.runs.workspaces(), workspaceId] as const,
   },
   issues: {
     all: ['issues'] as const,
@@ -64,6 +68,8 @@ export const qk = {
     labels: (workspaceId: string) => ['issues', workspaceId, 'labels'] as const,
     one: (issueId: string) => ['issues', 'detail', issueId] as const,
     inbox: (workspaceId: string) => ['issues', workspaceId, 'inbox'] as const,
+    /** Under the inbox's key, so whatever refreshes the inbox refreshes the count too. */
+    unread: (workspaceId: string) => ['issues', workspaceId, 'inbox', 'unread'] as const,
   },
   /** Artifact folders and files: not copied to browser storage, so file contents stay on the server. */
   artifacts: {
@@ -132,6 +138,12 @@ export const qk = {
     /** The tasks an exposed agent received over A2A. */
     a2aTasks: (agentId: string) => ['agents', 'a2a-tasks', agentId] as const,
   },
+  /** The skill library: a catalogue that changes with a release. */
+  skills: {
+    all: ['skills'] as const,
+    list: ['skills', 'list'] as const,
+    one: (skillId: string) => ['skills', 'detail', skillId] as const,
+  },
   a2a: {
     all: ['a2a'] as const,
     list: (workspaceId: string) => ['a2a', workspaceId] as const,
@@ -142,7 +154,7 @@ export const qk = {
     one: (memoryId: string) => [...qk.memories.all, 'detail', memoryId] as const,
     topics: (workspaceId: string) => [...qk.memories.all, 'topics', workspaceId] as const,
   },
-  orchestrator: ['orchestrator', 'status'] as const,
+  planner: ['planner', 'status'] as const,
   /** Sessions: runs as trees, and what their spans said (never copied to browser storage). */
   sessions: {
     all: ['sessions'] as const,

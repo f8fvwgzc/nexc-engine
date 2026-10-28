@@ -203,7 +203,7 @@ pub async fn create_user(
             &mut tx,
             user.id,
             &personal_workspace_name(name),
-            &state.settings.llm_model,
+            &state.settings,
         )
         .await?;
     }

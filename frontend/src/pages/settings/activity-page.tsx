@@ -8,10 +8,9 @@ import { ErrorState } from '@/components/custom-ui/error-state';
 import { PersonGlyph } from '@/components/custom-ui/issue-glyphs';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { ContentSkeleton } from '@/components/layout/page-skeleton';
+import { ListSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Input } from '@/components/ui/input';
-import { Skeleton } from '@/components/ui/skeleton';
 import { timelineDaysQuery, timelineQuery } from '@/features/insight/api';
 import { DaySummaryCard } from '@/features/insight/day-summary';
 import { issuePath } from '@/features/issues/links';
@@ -84,15 +83,7 @@ function href(entry: TimelineEntry): string | null {
 
 function Day({ workspace, day }: { workspace: Workspace; day: string }) {
   const { data: entries, isPending, error, refetch } = useQuery(timelineQuery(workspace.id, day));
-  if (isPending) {
-    return (
-      <div className="space-y-2" aria-busy>
-        {[0, 1, 2, 3].map((i) => (
-          <Skeleton key={i} className="h-8 w-full" />
-        ))}
-      </div>
-    );
-  }
+  if (isPending) return <ListSkeleton rows={6} label="Loading the day" />;
   if (error) {
     return (
       <ErrorState title="Couldn’t load that day" error={error} onRetry={() => void refetch()} />
@@ -108,7 +99,7 @@ function Day({ workspace, day }: { workspace: Workspace; day: string }) {
     );
   }
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 motion-safe:animate-fade-in">
       <DaySummaryCard workspaceId={workspace.id} day={day} entries={entries.length} />
       <Entries entries={entries} />
     </div>
@@ -212,7 +203,7 @@ export default function ActivityPage() {
         description="What happened in the workspace on a day: people, teams, issues, graphs, runs, documents and memory, newest first, with a summary the workspace's AI writes when you ask."
       />
       {!current ? (
-        <ContentSkeleton />
+        <ListSkeleton rows={6} />
       ) : isWorkspaceAdmin(current.role) ? (
         <Activity key={current.id} workspace={current} />
       ) : (

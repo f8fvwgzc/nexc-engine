@@ -23,8 +23,8 @@ use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::artifact_file::{
     ArtifactContent, ArtifactFile, ArtifactFolder, ArtifactVersion, FILE_MAX_BYTES, FILE_NAME_MAX,
-    FOLDER_NAME_MAX, FOLDERS_MAX, HAS_CREDENTIAL, LIST_MAX, NOT_TEXT, RunArtifact, check_name,
-    copy_name, extension_of, text_of,
+    FOLDER_NAME_MAX, FOLDERS_MAX, HAS_CREDENTIAL, LIST_MAX, NOT_TEXT, RECENT_DEFAULT, RunArtifact,
+    check_name, copy_name, extension_of, text_of,
 };
 use crate::domain::audit::AuditAction;
 use crate::domain::guardrails::redact_secrets;
@@ -386,6 +386,21 @@ pub struct FileQuery {
     pub issue_id: Option<Uuid>,
     /// Part of the name, any case; without control characters.
     pub q: Option<String>,
+    /// Every file, most recently saved first: how many, 1-1000 (default 200).
+    /// Ignored with a folder, `root` or an issue, whose files all come at once.
+    pub limit: Option<i64>,
+    /// Every file: only those saved before `<updated_at>,<id>`, the last file of the
+    /// previous page (its `updated_at` as given and its id).
+    pub before: Option<String>,
+}
+
+/// Reads a `before` cursor: `<updated_at>,<id>`.
+fn file_cursor(raw: &str) -> Result<(chrono::DateTime<chrono::Utc>, Uuid), AppError> {
+    let invalid = || AppError::field("before", "must be <updated_at>,<id> of a file");
+    let (at, id) = raw.rsplit_once(',').ok_or_else(invalid)?;
+    let at = chrono::DateTime::parse_from_rfc3339(at.trim()).map_err(|_| invalid())?;
+    let id = id.trim().parse().map_err(|_| invalid())?;
+    Ok((at.with_timezone(&chrono::Utc), id))
 }
 
 /// Query of `POST /workspaces/{wid}/artifact-files`.
@@ -477,8 +492,8 @@ impl Validate for KeepArtifact {
 }
 
 /// Files of a workspace the caller can see: those directly in a folder, at
-/// the top level, or of an issue, by name; or every one, most recently
-/// saved first. At most 1,000.
+/// the top level, or of an issue, by name (at most 1,000); or every one, most
+/// recently saved first, a page of `limit` at a time (`before` continues).
 #[utoipa::path(get, path = "/workspaces/{wid}/artifact-files", tag = "artifact-files", security(("bearer" = [])),
     params(("wid" = Uuid, Path, description = "Workspace id"), FileQuery),
     responses((status = 200, body = [ArtifactFile]), (status = 404, body = Problem), (status = 422, body = Problem)))]
@@ -501,12 +516,21 @@ pub async fn list_files(
         None if root => Some(None),
         None => None,
     };
+    let by_name = folder.is_some() || query.issue_id.is_some();
     let filter = FileFilter {
-        by_name: folder.is_some() || query.issue_id.is_some(),
+        by_name,
         folder,
         issue_id: query.issue_id,
         q: search_text("q", query.q, 200)?,
-        limit: LIST_MAX,
+        before: match (&query.before, by_name) {
+            (Some(raw), false) => Some(file_cursor(raw)?),
+            _ => None,
+        },
+        limit: if by_name {
+            LIST_MAX
+        } else {
+            query.limit.unwrap_or(RECENT_DEFAULT).clamp(1, LIST_MAX)
+        },
     };
     Ok(Json(
         repo::artifact_files::files(&state.db, auth.id, wid, &filter).await?,

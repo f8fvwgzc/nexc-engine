@@ -1,61 +1,78 @@
-import { useQueries, useSuspenseQuery } from '@tanstack/react-query';
+import { useSuspenseQuery } from '@tanstack/react-query';
 import { PlayIcon } from 'lucide-react';
 import { Suspense } from 'react';
 import { Link } from 'react-router-dom';
 
 import { EmptyState } from '@/components/custom-ui/empty-state';
+import { FadeIn } from '@/components/custom-ui/motion';
 import { PageContainer } from '@/components/custom-ui/page-container';
 import { PageHeader } from '@/components/custom-ui/page-header';
-import { PageSkeleton, TableSkeleton } from '@/components/layout/page-skeleton';
+import { TableSkeleton } from '@/components/layout/page-skeleton';
 import { Seo } from '@/components/seo/seo';
 import { Button } from '@/components/ui/button';
-import { graphsQuery } from '@/features/graphs/api';
-import { graphRunsQuery } from '@/features/runs/api';
+import { Skeleton } from '@/components/ui/skeleton';
+import { workspaceRunsQuery } from '@/features/runs/api';
 import { RunsTable, type RunRow } from '@/features/runs/components/runs-table';
 import { useWorkspaceId } from '@/features/workspaces/use-current-workspace';
 
-const MAX_ROWS = 100;
+const TITLE = 'Runs';
+const DESCRIPTION = 'Recent executions across all of your graphs.';
 
-function RecentRuns() {
-  const workspaceId = useWorkspaceId();
-  const { data: graphs } = useSuspenseQuery(graphsQuery(workspaceId));
-  const results = useQueries({ queries: graphs.map((g) => graphRunsQuery(g.id)) });
-  const loading = results.some((r) => r.isPending);
-  const rows: RunRow[] = results
-    .flatMap((r, i) => (r.data ?? []).map((run) => ({ run, graphName: graphs[i]?.name ?? '—' })))
-    .sort((a, b) => b.run.created_at.localeCompare(a.run.created_at))
-    .slice(0, MAX_ROWS);
+/** The page while its runs load: the same header, then the table's shape. */
+function RunsSkeleton() {
+  return (
+    <PageContainer role="status" aria-busy aria-label="Loading">
+      <div className="space-y-2 border-b pb-4">
+        <Skeleton className="h-7 w-24" />
+        <Skeleton className="h-4 w-72 max-w-full" />
+      </div>
+      <TableSkeleton rows={8} />
+    </PageContainer>
+  );
+}
+
+function RecentRuns({ workspaceId }: { workspaceId: string }) {
+  // One request for the newest runs of every graph the caller may open, with their graphs' names.
+  const { data: runs } = useSuspenseQuery(workspaceRunsQuery(workspaceId));
+  const rows: RunRow[] = runs.map((run) => ({ run, graphName: run.graph_name }));
 
   return (
     <PageContainer>
-      <PageHeader title="Runs" description="Recent executions across all of your graphs." />
-      {loading && rows.length === 0 ? (
-        <TableSkeleton />
-      ) : rows.length === 0 ? (
-        <EmptyState
-          icon={PlayIcon}
-          title="No runs yet"
-          description="Open a graph and press Run to execute it. Runs show up here with tokens, cost and artifacts."
-          action={
-            <Button asChild>
-              <Link to="/app">Go to graphs</Link>
-            </Button>
-          }
-        />
+      <PageHeader title={TITLE} description={DESCRIPTION} />
+      {rows.length === 0 ? (
+        <FadeIn>
+          <EmptyState
+            icon={PlayIcon}
+            title="No runs yet"
+            description="Open a graph and press Run to execute it. Runs show up here with tokens, cost and artifacts."
+            action={
+              <Button asChild>
+                <Link to="/app">Go to graphs</Link>
+              </Button>
+            }
+          />
+        </FadeIn>
       ) : (
-        <RunsTable rows={rows} />
+        <FadeIn variant="fade">
+          <RunsTable rows={rows} />
+        </FadeIn>
       )}
     </PageContainer>
   );
 }
 
 export default function RunsPage() {
+  const workspaceId = useWorkspaceId();
   return (
     <>
-      <Seo title="Runs" noIndex />
-      <Suspense fallback={<PageSkeleton />}>
-        <RecentRuns />
-      </Suspense>
+      <Seo title={TITLE} noIndex />
+      {workspaceId ? (
+        <Suspense fallback={<RunsSkeleton />}>
+          <RecentRuns workspaceId={workspaceId} />
+        </Suspense>
+      ) : (
+        <RunsSkeleton />
+      )}
     </>
   );
 }

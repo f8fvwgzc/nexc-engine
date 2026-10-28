@@ -8,6 +8,7 @@ use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use crate::app::AppState;
+use crate::config::Settings;
 use crate::domain::AppError;
 use crate::domain::assistant::{
     AssistantReply, CONVERSATIONS_MAX, Conversation, ConversationDetail, MESSAGE_MAX, PAGE_MAX,
@@ -25,7 +26,7 @@ use crate::domain::workspace::{
 use crate::engine;
 use crate::http::extract::{AuthUser, Path, Query, ValidatedJson};
 use crate::http::problem::Problem;
-use crate::orchestrator;
+use crate::planner;
 use crate::repo::audit::Subject;
 use crate::repo::usage::Window;
 use crate::repo::{self, OrNotFound};
@@ -68,13 +69,14 @@ pub fn require(workspace: &Workspace, action: WorkspaceAction) -> Result<(), App
 }
 
 /// Creates a workspace owned by `owner`, with a slug derived from `name`
-/// (suffixed when taken) and the default agent organisation running on
-/// `model`. Runs inside the caller's transaction.
+/// (suffixed when taken), the default agent organisation running on the
+/// server's model and, with `NEXC_SEED_EXPERT_AGENTS`, the expert catalog.
+/// Runs inside the caller's transaction.
 pub async fn create_owned(
     tx: &mut sqlx::PgConnection,
     owner: Uuid,
     name: &str,
-    model: &str,
+    settings: &Settings,
 ) -> Result<Uuid, AppError> {
     let base = Some(slugify(name))
         .filter(|s| s.len() >= 2)
@@ -87,7 +89,10 @@ pub async fn create_owned(
     debug_assert!(slug.len() <= SLUG_MAX);
     let id = repo::workspaces::create(&mut *tx, name, &slug, owner).await?;
     repo::workspaces::add_member(&mut *tx, id, owner, WorkspaceRole::Owner).await?;
-    orchestrator::seed_default_org(&mut *tx, owner, id, model).await?;
+    planner::seed_default_org(&mut *tx, owner, id, &settings.llm_model).await?;
+    if settings.seed_expert_agents {
+        planner::seed_catalog(&mut *tx, owner, id, &settings.llm_model).await?;
+    }
     Ok(id)
 }
 
@@ -160,7 +165,7 @@ pub async fn create(
     ValidatedJson(req): ValidatedJson<WorkspaceInput>,
 ) -> Result<(StatusCode, Json<Workspace>), AppError> {
     let mut tx = state.db.begin().await?;
-    let id = create_owned(&mut tx, auth.id, req.name.trim(), &state.settings.llm_model).await?;
+    let id = create_owned(&mut tx, auth.id, req.name.trim(), &state.settings).await?;
     tx.commit().await?;
     Ok((
         StatusCode::CREATED,
@@ -243,7 +248,7 @@ pub async fn ensure_personal(state: &AppState) -> Result<usize, AppError> {
             &mut tx,
             *user,
             &super::auth::personal_workspace_name(name),
-            &state.settings.llm_model,
+            &state.settings,
         )
         .await?;
         tx.commit().await?;

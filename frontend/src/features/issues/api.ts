@@ -9,9 +9,12 @@ import {
   issueEventSchema,
   issueSchema,
   issueStateSchema,
+  issueSummarySchema,
   labelSchema,
   notificationSchema,
   projectSchema,
+  reactionSchema,
+  unreadCountSchema,
   type IssueInput,
   type ProjectStatus,
   type StateCategory,
@@ -29,16 +32,22 @@ export interface IssueFilter {
   creator_id?: string;
   open?: boolean;
   q?: string;
+  /** At most this many (1-500; the server's default is 200). */
+  limit?: number;
 }
 
-/** Issues of a workspace in the teams the caller can see. */
+/**
+ * Issues of a workspace in the teams the caller can see, without their descriptions
+ * (`IssueSummary`): `issueQuery` reads one issue whole.
+ */
 export const issuesQuery = (workspaceId: string, filter: IssueFilter = {}) =>
   queryOptions({
     queryKey: qk.issues.list(workspaceId, filter),
     staleTime: FRESH.list,
     queryFn: ({ signal }) =>
-      apiRequest(`/workspaces/${workspaceId}/issues`, z.array(issueSchema), {
+      apiRequest(`/workspaces/${workspaceId}/issues`, z.array(issueSummarySchema), {
         query: {
+          limit: filter.limit,
           team_id: filter.team_id,
           project_id: filter.project_id,
           label_id: filter.label_id,
@@ -134,6 +143,24 @@ export const inboxQuery = (workspaceId: string) =>
     refetchInterval: 60_000,
   });
 
+/**
+ * How many of the notifications the caller's inbox shows in a workspace (the newest 100) are
+ * unread, for the sidebar's badge: a count, not the inbox. Checked again every minute; marking read and issue
+ * edits refresh it with the inbox (it lives under the same `issues` root).
+ */
+export const unreadCountQuery = (workspaceId: string) =>
+  queryOptions({
+    queryKey: qk.issues.unread(workspaceId),
+    staleTime: FRESH.live,
+    queryFn: async ({ signal }) =>
+      (
+        await apiRequest(`/workspaces/${workspaceId}/inbox/unread-count`, unreadCountSchema, {
+          signal,
+        })
+      ).count,
+    refetchInterval: 60_000,
+  });
+
 /** Marks the given notifications read, or all of them. */
 export function markInboxRead(workspaceId: string, ids?: string[]) {
   return apiRequest(`/workspaces/${workspaceId}/inbox/read`, z.array(notificationSchema), {
@@ -196,10 +223,11 @@ export const issueEventsQuery = (issueId: string) =>
       apiRequest(`/issues/${issueId}/events`, z.array(issueEventSchema), { signal }),
   });
 
-export function createComment(issueId: string, body: string) {
+/** Comments on the issue; with `parentId`, replies to that comment in its thread. */
+export function createComment(issueId: string, body: string, parentId?: string) {
   return apiRequest(`/issues/${issueId}/comments`, issueEventSchema, {
     method: 'POST',
-    body: { body },
+    body: parentId ? { body, parent_id: parentId } : { body },
   });
 }
 
@@ -212,6 +240,22 @@ export function updateComment(issueId: string, commentId: string, body: string) 
 
 export function deleteComment(issueId: string, commentId: string) {
   return apiSend(`/issues/${issueId}/comments/${commentId}`, { method: 'DELETE' });
+}
+
+/** Reacts to a comment or a run report; answers with the entry's reactions. Twice is once. */
+export function addReaction(issueId: string, eventId: string, emoji: string) {
+  return apiRequest(`/issues/${issueId}/events/${eventId}/reactions`, z.array(reactionSchema), {
+    method: 'POST',
+    body: { emoji },
+  });
+}
+
+/** Takes the caller's reaction back; answers with the entry's reactions. */
+export function removeReaction(issueId: string, eventId: string, emoji: string) {
+  return apiRequest(`/issues/${issueId}/events/${eventId}/reactions`, z.array(reactionSchema), {
+    method: 'DELETE',
+    query: { emoji },
+  });
 }
 
 /** The projects of a workspace the caller can see, or only those one team owns. */

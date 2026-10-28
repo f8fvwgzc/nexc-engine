@@ -46,6 +46,8 @@ impl FromRow<'_, PgRow> for Agent {
             .unwrap_or_default(),
             risk_updated_at: row.try_get("risk_updated_at")?,
             a2a_exposed: row.try_get("a2a_exposed")?,
+            skills: row.try_get("skills")?,
+            template_id: row.try_get("template_id")?,
         })
     }
 }
@@ -86,6 +88,10 @@ pub struct AgentFields {
     pub capabilities: Capabilities,
     /// Whether the agent is published as an A2A agent.
     pub a2a_exposed: bool,
+    /// Ids of its skills.
+    pub skills: Vec<String>,
+    /// The role template it is made from (set when it is created; an update keeps it).
+    pub template_id: Option<String>,
 }
 
 impl AgentFields {
@@ -106,6 +112,8 @@ impl AgentFields {
             purpose: agent.purpose.clone(),
             capabilities: agent.capabilities.clone(),
             a2a_exposed: agent.a2a_exposed,
+            skills: agent.skills.clone(),
+            template_id: agent.template_id.clone(),
         }
     }
 }
@@ -171,8 +179,9 @@ pub async fn create(
     sqlx::query_as(
         "INSERT INTO agents (id, owner_id, name, role, title, model, system_prompt, reports_to, budget_tokens,
                              runtime, status, workspace_id, principal_id, owner_user_id, team_id, purpose,
-                             capabilities, a2a_exposed)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING *",
+                             capabilities, a2a_exposed, skills, template_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+         RETURNING *",
     )
     .bind(Uuid::now_v7())
     .bind(owner_id)
@@ -192,6 +201,8 @@ pub async fn create(
     .bind(&f.purpose)
     .bind(capabilities)
     .bind(f.a2a_exposed)
+    .bind(&f.skills)
+    .bind(&f.template_id)
     .fetch_one(db)
     .await
 }
@@ -211,7 +222,7 @@ pub async fn update(
                 principal_id = 'agent://' || workspace_id::text || '/' || $3,
                 owner_user_id = $12, team_id = $13, purpose = $14,
                 policy_version = policy_version + CASE WHEN capabilities = $15::jsonb THEN 0 ELSE 1 END,
-                capabilities = $15, a2a_exposed = $16
+                capabilities = $15, a2a_exposed = $16, skills = $17
          WHERE workspace_id = $1 AND id = $2 RETURNING *",
     )
     .bind(workspace_id)
@@ -230,8 +241,58 @@ pub async fn update(
     .bind(&f.purpose)
     .bind(capabilities)
     .bind(f.a2a_exposed)
+    .bind(&f.skills)
     .fetch_optional(db)
     .await
+}
+
+/// Gives an agent the current default `prompt` when it still has one of the
+/// `former` prompts, and the current `purpose` when its purpose is one of the
+/// `former_purposes` too; true when it changed. Touches nothing else, so an
+/// edit made meanwhile elsewhere is kept.
+pub async fn upgrade_default_prompt(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    id: Uuid,
+    prompt: &str,
+    purpose: &str,
+    former: &[&str],
+    former_purposes: &[&str],
+) -> Result<bool, sqlx::Error> {
+    let changed: Option<i32> = sqlx::query_scalar(
+        "UPDATE agents SET system_prompt = $3,
+                purpose = CASE WHEN btrim(purpose) = ANY($6) THEN $4 ELSE purpose END,
+                updated_at = now()
+         WHERE workspace_id = $1 AND id = $2 AND btrim(system_prompt) = ANY($5) RETURNING 1",
+    )
+    .bind(workspace_id)
+    .bind(id)
+    .bind(prompt)
+    .bind(purpose)
+    .bind(former)
+    .bind(former_purposes)
+    .fetch_optional(db)
+    .await?;
+    Ok(changed.is_some())
+}
+
+/// Gives an agent `skills` when it has none; true when it changed.
+pub async fn set_skills_if_none(
+    db: impl PgExecutor<'_>,
+    workspace_id: Uuid,
+    id: Uuid,
+    skills: &[String],
+) -> Result<bool, sqlx::Error> {
+    let changed: Option<i32> = sqlx::query_scalar(
+        "UPDATE agents SET skills = $3, updated_at = now()
+         WHERE workspace_id = $1 AND id = $2 AND cardinality(skills) = 0 RETURNING 1",
+    )
+    .bind(workspace_id)
+    .bind(id)
+    .bind(skills)
+    .fetch_optional(db)
+    .await?;
+    Ok(changed.is_some())
 }
 
 /// Takes an agent out of service: status `quarantined`, the policy version

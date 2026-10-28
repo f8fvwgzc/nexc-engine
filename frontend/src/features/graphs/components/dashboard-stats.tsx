@@ -5,10 +5,10 @@ import { Stagger } from '@/components/custom-ui/motion';
 import { StatTile } from '@/components/custom-ui/stat-tile';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import type { BackendHealth } from '@/schemas/orchestrator';
+import type { BackendHealth } from '@/schemas/planner';
 import type { GraphSummary } from '@/schemas/graph';
 
-import { ORCHESTRATOR_POLL_MS, orchestratorQuery } from '../api';
+import { PLANNER_POLL_MS, plannerQuery } from '../api';
 
 function HealthChip({ label, health }: { label: string; health: BackendHealth }) {
   const state = !health.enabled ? 'disabled' : health.ok ? 'ok' : 'down';
@@ -38,8 +38,8 @@ function HealthChip({ label, health }: { label: string; health: BackendHealth })
 export function DashboardStats({ graphs }: { graphs: GraphSummary[] }) {
   // Only the dashboard polls: elsewhere (the demo banner) the status is read once.
   const { data: status } = useQuery({
-    ...orchestratorQuery(),
-    refetchInterval: ORCHESTRATOR_POLL_MS,
+    ...plannerQuery(),
+    refetchInterval: PLANNER_POLL_MS,
   });
   const nodes = graphs.reduce((sum, g) => sum + g.node_count, 0);
   const placeholder = '—';

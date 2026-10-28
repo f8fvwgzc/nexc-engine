@@ -145,11 +145,17 @@ pub struct Claimed {
     pub projected: Vec<(String, Uuid)>,
 }
 
+/// Claims up to `limit` queued rows of the workspace for the transaction
+/// `tx`. The transaction then waits on onto-intelli (the projection, then the
+/// stream) before it deletes them, so the pool's limits are lifted for it:
+/// ended in between, the records would be sent again although onto-intelli
+/// has them.
 pub async fn claim(
     tx: &mut sqlx::PgConnection,
     workspace_id: Uuid,
     limit: i64,
 ) -> Result<Claimed, sqlx::Error> {
+    super::lift_limits(&mut *tx).await?;
     let rows: Vec<(i64, String, Uuid)> = sqlx::query_as(
         "SELECT id, kind, subject_id FROM onto_export_queue
          WHERE workspace_id = $1 ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED",
