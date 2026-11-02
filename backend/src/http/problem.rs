@@ -7,7 +7,7 @@ use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use crate::domain::{AppError, error_chain};
+use crate::domain::{AppError, INTERNAL_DETAIL, error_chain};
 
 /// Media type of error responses.
 pub const PROBLEM_JSON: &str = "application/problem+json";
@@ -84,7 +84,7 @@ impl IntoResponse for AppError {
             }
             AppError::Internal(err) => {
                 tracing::error!(error = %error_chain(err.as_ref()), "internal error");
-                problem.detail = Some("An unexpected error occurred.".into());
+                problem.detail = Some(INTERNAL_DETAIL.into());
             }
             other => problem.detail = Some(other.to_string()),
         }
