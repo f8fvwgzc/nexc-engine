@@ -34,8 +34,8 @@ use super::{
     OntologyBackend, Principal, TraverseQuery,
 };
 use crate::app::AppState;
-use crate::domain::AppError;
 use crate::domain::workspace::WorkspaceRole;
+use crate::domain::{AppError, INTERNAL_DETAIL, error_chain};
 use crate::repo::onto_export as repo;
 
 /// Longest question accepted.
@@ -196,6 +196,18 @@ fn failed(err: OntoError) -> AppError {
         OntoError::Invalid(detail) | OntoError::NotFound(detail) => AppError::Unprocessable(detail),
         OntoError::Other(detail) => AppError::Internal(anyhow::anyhow!("onto-intelli: {detail}")),
     }
+}
+
+/// The stream's event for `err`. An internal error's details are logged and
+/// never returned, as in `http::problem`; any other error keeps its message.
+fn stream_error(err: AppError) -> AuditStreamEvent {
+    AuditStreamEvent::Error(match err {
+        AppError::Internal(err) => {
+            tracing::error!(error = %error_chain(err.as_ref()), "internal error");
+            INTERNAL_DETAIL.to_owned()
+        }
+        other => other.to_string(),
+    })
 }
 
 /// Refuses a question that is empty, too long, or asked by a guest.
@@ -450,14 +462,14 @@ pub async fn answer_stream(
         if direct {
             match answer(&state, &asker, &question).await {
                 Ok(done) => yield AuditStreamEvent::Done(done),
-                Err(err) => yield AuditStreamEvent::Error(err.to_string()),
+                Err(err) => yield stream_error(err),
             }
             return;
         }
         let backend = match backend(&state) {
             Ok(backend) => backend,
             Err(err) => {
-                yield AuditStreamEvent::Error(err.to_string());
+                yield stream_error(err);
                 return;
             }
         };
@@ -466,7 +478,7 @@ pub async fn answer_stream(
         let mut inner = match backend.ask_stream(&principal, request).await {
             Ok(inner) => inner,
             Err(err) => {
-                yield AuditStreamEvent::Error(failed(err).to_string());
+                yield stream_error(failed(err));
                 return;
             }
         };
@@ -482,7 +494,7 @@ pub async fn answer_stream(
                             state.metrics.onto_asks.add(&[("mode", mode_label(done.mode))], 1);
                             yield AuditStreamEvent::Done(done);
                         }
-                        Err(err) => yield AuditStreamEvent::Error(err.to_string()),
+                        Err(err) => yield stream_error(err),
                     }
                     return;
                 }
@@ -1369,5 +1381,64 @@ mod tests {
         );
         assert_eq!(parent_principal("agent://w/writer"), "agent://w/writer");
         assert_eq!(parent_principal("system"), "system");
+    }
+
+    /// Where a test's log lines land.
+    #[derive(Clone, Default)]
+    struct Log(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Log {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn an_internal_error_is_logged_and_only_the_generic_text_is_sent() {
+        let log = Log::default();
+        let writer = log.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        let err = anyhow::Error::new(std::io::Error::other(
+            "refused by postgres://nexc:hunter2@db.internal/app",
+        ))
+        .context("cannot read the facts");
+        let event =
+            tracing::subscriber::with_default(subscriber, || stream_error(AppError::Internal(err)));
+        assert_eq!(event, AuditStreamEvent::Error(INTERNAL_DETAIL.to_owned()));
+        let lines = String::from_utf8(log.0.lock().unwrap().clone()).unwrap();
+        assert!(
+            lines.contains("cannot read the facts: refused by postgres://db.internal/app"),
+            "{lines}"
+        );
+        assert!(!lines.contains("hunter2"), "{lines}");
+    }
+
+    #[test]
+    fn a_client_facing_error_keeps_its_message() {
+        for (err, text) in [
+            (
+                AppError::BadRequest("a bad question".into()),
+                "a bad question",
+            ),
+            (AppError::NotFound("run"), "run not found"),
+            (AppError::Forbidden("not yours".into()), "not yours"),
+            (AppError::Unprocessable("no model".into()), "no model"),
+            (AppError::Unavailable("off".into()), "off"),
+            (AppError::field("question", "too long"), "validation failed"),
+            (
+                failed(OntoError::Invalid("unknown entity".into())),
+                "unknown entity",
+            ),
+        ] {
+            assert_eq!(stream_error(err), AuditStreamEvent::Error(text.to_owned()));
+        }
     }
 }

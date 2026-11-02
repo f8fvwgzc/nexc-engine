@@ -96,6 +96,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   still go to the provider without passing the tools gateway, and a compromised runtime can send
   data to an allowed provider under a key of its own: an open gap, recorded in
   `docs/AGENTSECOPS.md` §4.3.
+- **The audit stream keeps an internal error's message from the client.** The `error` event of
+  `POST /workspaces/{wid}/audit/ask/stream` used to carry the error's own text, which could be a
+  database's message or onto-intelli's detail. It now says what a 500 says, and the causes go to
+  the log. Errors meant for the client keep their words.
 
 **Upgrade note for existing deployments.**
 

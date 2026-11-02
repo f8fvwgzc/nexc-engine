@@ -6,6 +6,9 @@ use std::error::Error;
 use super::guardrails::redact_secrets;
 use super::validation::FieldErrors;
 
+/// All a client reads of an [`AppError::Internal`], wherever it is answered.
+pub const INTERNAL_DETAIL: &str = "An unexpected error occurred.";
+
 /// Every failure a request can end with.
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
