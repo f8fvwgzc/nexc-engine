@@ -13,6 +13,7 @@ use super::workspaces::{audit, member_of, require};
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::audit::AuditAction;
+use crate::domain::error_chain;
 use crate::domain::validation::{FieldErrors, Validate};
 use crate::domain::workspace::WorkspaceAction;
 use crate::engine::transfer::{self, TableReport};
@@ -163,7 +164,7 @@ pub async fn check(
         Err(reason) => (false, reason),
         Ok(pinned) => match transfer::probe_target(&pinned, wid).await {
             Ok(version) => (true, version),
-            Err(err) => (false, err.to_string()),
+            Err(err) => (false, error_chain(err.as_ref())),
         },
     };
     let redis = match req.redis_url.as_deref() {
@@ -175,7 +176,7 @@ pub async fn check(
         .await
         {
             Ok(Ok(detail)) => (Some(true), Some(detail)),
-            Ok(Err(err)) => (Some(false), Some(err.to_string())),
+            Ok(Err(err)) => (Some(false), Some(error_chain(err.as_ref()))),
             Err(_) => (Some(false), Some("no answer within 5 seconds".into())),
         },
     };

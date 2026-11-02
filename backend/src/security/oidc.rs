@@ -899,7 +899,11 @@ pub(crate) async fn read_capped(
         return Err(format!("the answer is larger than {max} bytes"));
     }
     let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|err| err.to_string())? {
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|err| err.without_url().to_string())?
+    {
         if body.len() + chunk.len() > max {
             return Err(format!("the answer is larger than {max} bytes"));
         }

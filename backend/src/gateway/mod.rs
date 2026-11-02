@@ -25,6 +25,7 @@ use crate::app::AppState;
 use crate::domain::alert::AlertKind;
 use crate::domain::capabilities::{Capabilities, DataLabel};
 use crate::domain::dlp::{self, Destination};
+use crate::domain::error_chain;
 use crate::domain::mcp::{
     FETCH_URL, GatewayTool, McpCheck, McpServer, McpTransport, STDIO_DISABLED, split_tool_name,
 };
@@ -232,7 +233,7 @@ fn auth_header_of(state: &AppState, row: &McpServerRow) -> Option<String> {
     match state.secret_box.open(sealed, row.server.id.as_bytes()) {
         Ok(bytes) => String::from_utf8(bytes).ok(),
         Err(err) => {
-            tracing::error!(server = %row.server.id, error = %err, "MCP auth header not decrypted");
+            tracing::error!(server = %row.server.id, error = %error_chain(err.as_ref()), "MCP auth header not decrypted");
             None
         }
     }

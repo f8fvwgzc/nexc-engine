@@ -156,8 +156,8 @@ pub fn endpoint_url(state: &AppState, principal: &str) -> String {
     )
 }
 
-pub(crate) fn internal(err: impl std::fmt::Display) -> RpcError {
-    tracing::error!(error = %err, "A2A request failed");
+pub(crate) fn internal(err: impl std::error::Error + 'static) -> RpcError {
+    tracing::error!(error = %crate::domain::error_chain(&err), "A2A request failed");
     RpcError::new(
         crate::domain::a2a::E_INTERNAL,
         "the request could not be served",

@@ -19,6 +19,7 @@ use uuid::Uuid;
 use super::facts::{Batch, ReadLabels};
 use super::{OntoError, OntologyBackend, Principal, projection};
 use crate::app::AppState;
+use crate::domain::error_chain;
 use crate::domain::trace::SpanKind;
 use crate::repo::onto_export::ExportSpan;
 use crate::repo::{self, onto_export as cursors};
@@ -83,7 +84,7 @@ async fn run(state: AppState, shutdown: CancellationToken) {
                             tracing::debug!(?progress, "onto-intelli export pass");
                         }
                     }
-                    Err(err) => tracing::warn!(error = %err, "onto-intelli export pass failed"),
+                    Err(err) => tracing::warn!(error = %error_chain(err.as_ref()), "onto-intelli export pass failed"),
                 }
             }
         }
@@ -101,7 +102,7 @@ pub async fn pass(state: &AppState) -> anyhow::Result<Progress> {
         Ok(records) => progress.records += records,
         Err(err) => {
             progress.failed += 1;
-            tracing::debug!(error = %err, "a deleted workspace's tenant was not cleared");
+            tracing::debug!(error = %error_chain(err.as_ref()), "a deleted workspace's tenant was not cleared");
         }
     }
     for workspace_id in cursors::workspaces_behind(&state.db).await? {
@@ -110,9 +111,9 @@ pub async fn pass(state: &AppState) -> anyhow::Result<Progress> {
             Ok(done) => progress.add(done),
             Err(err) => {
                 progress.failed += 1;
-                tracing::debug!(%workspace_id, error = %err, "workspace export failed");
+                tracing::debug!(%workspace_id, error = %error_chain(err.as_ref()), "workspace export failed");
                 if let Err(note) =
-                    cursors::note_error(&state.db, workspace_id, &err.to_string()).await
+                    cursors::note_error(&state.db, workspace_id, &error_chain(err.as_ref())).await
                 {
                     tracing::debug!(error = %note, "export error not noted");
                 }

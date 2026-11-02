@@ -7,7 +7,7 @@ use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use crate::domain::AppError;
+use crate::domain::{AppError, error_chain};
 
 /// Media type of error responses.
 pub const PROBLEM_JSON: &str = "application/problem+json";
@@ -83,7 +83,7 @@ impl IntoResponse for AppError {
                 problem.errors = Some(errors.as_map().clone());
             }
             AppError::Internal(err) => {
-                tracing::error!(error = ?err, "internal error");
+                tracing::error!(error = %error_chain(err.as_ref()), "internal error");
                 problem.detail = Some("An unexpected error occurred.".into());
             }
             other => problem.detail = Some(other.to_string()),
@@ -132,5 +132,44 @@ mod tests {
             !json.to_string().contains("xyz"),
             "internal details never leak"
         );
+    }
+
+    /// Where a test's log lines land.
+    #[derive(Clone, Default)]
+    struct Log(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Log {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn an_internal_error_is_logged_with_its_causes_and_without_secrets() {
+        let log = Log::default();
+        let writer = log.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        let failed = anyhow::Error::new(std::io::Error::other(
+            "refused by postgres://nexc:hunter2@db.internal/app",
+        ))
+        .context("cannot load the graph");
+        let response = tracing::subscriber::with_default(subscriber, || {
+            AppError::Internal(failed).into_response()
+        });
+        assert_eq!(response.status(), 500);
+        let lines = String::from_utf8(log.0.lock().unwrap().clone()).unwrap();
+        assert!(
+            lines.contains("cannot load the graph: refused by postgres://db.internal/app"),
+            "{lines}"
+        );
+        assert!(!lines.contains("hunter2"), "{lines}");
     }
 }

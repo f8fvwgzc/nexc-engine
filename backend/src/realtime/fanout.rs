@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use super::hub::{Envelope, Hub};
 use crate::app::caches::{Caches, Key};
+use crate::domain::error_chain;
 use crate::repo::outbox;
 
 /// A NOTIFY payload: the envelope itself, a reference to a parked one, or
@@ -88,7 +89,7 @@ async fn notifier(
             next = rx.recv() => match next {
                 Some(envelope) => {
                     if let Err(err) = send(&db, envelope).await {
-                        tracing::warn!(error = %err, "realtime NOTIFY failed");
+                        tracing::warn!(error = %error_chain(err.as_ref()), "realtime NOTIFY failed");
                     }
                 }
                 None => return,
@@ -142,7 +143,7 @@ async fn listener(hub: Arc<Hub>, caches: Arc<Caches>, db: PgPool, shutdown: Canc
     while !shutdown.is_cancelled() {
         if let Err(err) = listen(&hub, &caches, &db, &shutdown, gap).await {
             gap = true;
-            tracing::warn!(error = %err, "realtime LISTEN connection lost; reconnecting");
+            tracing::warn!(error = %error_chain(err.as_ref()), "realtime LISTEN connection lost; reconnecting");
             tokio::select! {
                 _ = shutdown.cancelled() => return,
                 _ = tokio::time::sleep(Duration::from_secs(2)) => {}

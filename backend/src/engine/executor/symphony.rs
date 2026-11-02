@@ -593,7 +593,7 @@ async fn latest_run(
     let list: RunList = resp
         .json()
         .await
-        .map_err(|e| ExecError::fatal(format!("invalid symphony response: {e}")))?;
+        .map_err(|e| ExecError::fatal(format!("invalid symphony response: {}", e.without_url())))?;
     Ok(list
         .runs
         .into_iter()

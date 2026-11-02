@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use super::events::{Cursor, WsMessage};
 use crate::app::AppState;
+use crate::domain::error_chain;
 use crate::domain::validation::{FieldErrors, check_coordinate};
 use crate::dsa::token_bucket::TokenBucket;
 use crate::engine::editor;
@@ -140,7 +141,7 @@ fn handle(
 async fn flush_moves(state: &AppState, peer: &Peer, moves: &mut HashMap<Uuid, (f64, f64)>) {
     for (node_id, (x, y)) in moves.drain() {
         if let Err(err) = editor::move_node(state, peer.graph_id, node_id, x, y).await {
-            tracing::warn!(%node_id, error = %err, "cannot persist node move");
+            tracing::warn!(%node_id, error = %error_chain(&err), "cannot persist node move");
         }
     }
 }

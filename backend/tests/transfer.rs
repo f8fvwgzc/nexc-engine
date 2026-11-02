@@ -381,6 +381,44 @@ async fn a_workspace_moves_to_its_owners_database(pool: PgPool) {
     }
 }
 
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_failed_check_says_why_without_the_password(pool: PgPool) {
+    let app = TestApp::new(pool, &[]).await;
+    let (owner, _) = app.register("owner@example.com").await;
+    let (_, list) = call(&app, Method::GET, "/workspaces", &owner, None).await;
+    let wid = list[0]["id"].as_str().unwrap();
+    // The test server, which has no such database.
+    let base = std::env::var("DATABASE_URL").unwrap();
+    let (server, _) = base.rsplit_once('/').unwrap();
+    let password = server
+        .rsplit_once('@')
+        .and_then(|(credentials, _)| credentials.rsplit_once(':'))
+        .map(|(_, password)| password);
+    let url = format!("{server}/nexc_no_such_database");
+    let (status, check) = call(
+        &app,
+        Method::POST,
+        &format!("/workspaces/{wid}/transfers/check"),
+        &owner,
+        Some(json!({"url": url})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{check}");
+    assert_eq!(check["database_ok"], false);
+    let why = check["database"].as_str().unwrap();
+    assert!(
+        why.starts_with(
+            "cannot connect: error returned from database: \
+             database \"nexc_no_such_database\" does not exist"
+        ),
+        "{why}"
+    );
+    assert_eq!(why.matches("does not exist").count(), 1, "{why}");
+    if let Some(password) = password {
+        assert!(!why.contains(password), "{why}");
+    }
+}
+
 async fn finished(app: &TestApp, token: &str, transfers: &str) -> Value {
     for _ in 0..100 {
         let (_, list) = call(app, Method::GET, transfers, token, None).await;

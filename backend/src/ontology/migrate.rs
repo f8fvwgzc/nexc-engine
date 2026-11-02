@@ -29,6 +29,7 @@ use super::vocabulary::{GraphRef, graph_key};
 use super::{OntoError, OntologyBackend, Principal};
 use crate::app::AppState;
 use crate::app::caches::Key;
+use crate::domain::error_chain;
 use crate::domain::ontology::Ontology;
 use crate::repo::onto_migrations as repo;
 
@@ -244,7 +245,7 @@ pub fn spawn_at_start(state: &AppState, shutdown: CancellationToken) -> bool {
                 }
                 Ok(None) => repo::remaining(&state.db).await.is_ok_and(|left| left == 0),
                 Err(err) => {
-                    tracing::warn!(error = %err, "onto-intelli vocabulary migration failed");
+                    tracing::warn!(error = %error_chain(err.as_ref()), "onto-intelli vocabulary migration failed");
                     false
                 }
             };

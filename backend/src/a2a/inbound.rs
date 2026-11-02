@@ -27,6 +27,7 @@ use crate::domain::graph::{Executor, NodeDraft, NodeOrigin, NodeStatus};
 use crate::domain::policy::{Action, Decision, decide_with};
 use crate::domain::run::RunStatus;
 use crate::domain::trace::{SpanDraft, SpanKind, SpanStatus};
+use crate::domain::{AppError, error_chain};
 use crate::engine::{artifacts, knowledge, scheduler};
 use crate::realtime::hub::SseFrame;
 use crate::repo;
@@ -195,7 +196,9 @@ pub async fn send(
             {
                 let stored = knowledge::store_document(state, workspace, name, bytes, owner)
                     .await
-                    .map_err(|err| RpcError::invalid_params(format!("file {name}: {err}")))?;
+                    .map_err(|err| {
+                        RpcError::invalid_params(format!("file {name}: {}", error_chain(&err)))
+                    })?;
                 documents.push((name.clone(), Some(stored.0.id)));
             } else if let Part::File { name, .. } = part {
                 documents.push((name.clone(), None));
@@ -264,7 +267,11 @@ pub async fn send(
     )
     .await
     .map_err(internal)?
-    .ok_or_else(|| internal("the inbound run could not be claimed"))?;
+    .ok_or_else(|| {
+        internal(AppError::Internal(anyhow::anyhow!(
+            "the inbound run could not be claimed"
+        )))
+    })?;
     repo::a2a::insert_task(
         &mut *tx,
         &NewTask {
@@ -382,7 +389,11 @@ pub async fn send(
     let stored = repo::a2a::find_task(&state.db, inbound.task_id)
         .await
         .map_err(internal)?
-        .ok_or_else(|| internal("the task was not recorded"))?;
+        .ok_or_else(|| {
+            internal(AppError::Internal(anyhow::anyhow!(
+                "the task was not recorded"
+            )))
+        })?;
     Ok(Accepted {
         row: stored,
         graph_id,

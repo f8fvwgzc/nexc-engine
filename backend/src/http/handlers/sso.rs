@@ -390,8 +390,8 @@ fn provider_refusal(err: OidcError) -> Refusal {
 }
 
 /// Logs a failure on this side.
-fn failed(err: impl std::fmt::Display) -> Refusal {
-    tracing::error!(error = %err, "single sign-on failed");
+fn failed(err: impl std::error::Error + 'static) -> Refusal {
+    tracing::error!(error = %crate::domain::error_chain(&err), "single sign-on failed");
     Refusal::Failed
 }
 

@@ -12,6 +12,7 @@ use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::audit::AuditAction;
 use crate::domain::capabilities::DataLabel;
+use crate::domain::error_chain;
 use crate::domain::memory::{Memory, MemoryTopic};
 use crate::domain::validation::{FieldErrors, Validate, search_text};
 use crate::domain::workspace::WorkspaceAction;
@@ -166,7 +167,9 @@ pub async fn rebuild_topics(
     tokio::spawn(async move {
         match memory::topics::rebuild(&state.db, workspace).await {
             Ok(topics) => tracing::info!(%workspace, topics, "memory topics rebuilt"),
-            Err(err) => tracing::warn!(%workspace, error = %err, "memory topic rebuild failed"),
+            Err(err) => {
+                tracing::warn!(%workspace, error = %error_chain(err.as_ref()), "memory topic rebuild failed")
+            }
         }
     });
     Ok(StatusCode::ACCEPTED)

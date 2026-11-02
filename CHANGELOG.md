@@ -1894,6 +1894,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Errors are reported with their causes, and without what a cause can carry.** Logs, a stored
+  failure (a document's, a transfer's, an export's), `nexc doctor` and the CLI's errors go through
+  one walker, `domain::error_chain`: every cause once, on one line. An `anyhow` error used to lose
+  everything under its outermost message, and `internal error` lines were a `Caused by:` block; a
+  source interpolated into a message is now a `.context()`, and the words read as before. What a
+  cause can quote stays out: a URL keeps its host and path (a document the parser's answer did not
+  fit used to store the URL with the file's name in its query), a JSON error says what was wrong
+  and where but not the value, and tokens of a well-known shape are redacted. The backend image
+  sets `RUST_BACKTRACE=1` and `RUST_LIB_BACKTRACE=0`: a panic prints its backtrace, an `anyhow`
+  error captures none.
 - **Secrets are never kept, and two more documents are public** (CONTRACT §3). Sign-in and the
   account (`/auth/*` except `/auth/providers`), the LLM credentials, the knowledge settings,
   agent tokens, realtime tickets, span payloads, the SIEM exports and every download are

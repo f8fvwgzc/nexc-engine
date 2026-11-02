@@ -11,6 +11,7 @@ pub mod workers;
 
 use std::net::SocketAddr;
 
+use anyhow::Context as _;
 use tokio_util::sync::CancellationToken;
 
 pub use state::{AppState, guarded_http_client, http_client, operator_endpoints};
@@ -78,7 +79,7 @@ pub async fn bootstrap_admin(state: &AppState) -> anyhow::Result<()> {
         &hash,
     )
     .await
-    .map_err(|e| anyhow::anyhow!("cannot create bootstrap admin: {e}"))?;
+    .context("cannot create bootstrap admin")?;
     tracing::info!(%email, "bootstrap admin created");
     Ok(())
 }
@@ -88,7 +89,7 @@ pub async fn bootstrap_admin(state: &AppState) -> anyhow::Result<()> {
 pub async fn seed_missing_workspaces(state: &AppState) -> anyhow::Result<()> {
     crate::http::handlers::workspaces::ensure_personal(state)
         .await
-        .map_err(|e| anyhow::anyhow!("cannot create personal workspaces: {e}"))?;
+        .context("cannot create personal workspaces")?;
     let adopted = repo::graphs::adopt_orphans(&state.db).await?;
     if adopted > 0 {
         tracing::info!(adopted, "graphs assigned to their creators' workspaces");

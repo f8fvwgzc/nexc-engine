@@ -14,6 +14,7 @@ use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::audit::AuditAction;
 use crate::domain::capabilities::DataLabel;
+use crate::domain::error_chain;
 use crate::domain::knowledge::{DOCUMENT_NAME_MAX, Document, KnowledgeSettings, Passage, Topic};
 use crate::domain::settings::key_hint;
 use crate::domain::validation::{FieldErrors, Validate, search_text};
@@ -346,7 +347,9 @@ pub async fn rebuild_topics(
     tokio::spawn(async move {
         match knowledge::rebuild_topics(&state, wid).await {
             Ok(topics) => tracing::info!(workspace = %wid, topics, "knowledge topics rebuilt"),
-            Err(err) => tracing::warn!(workspace = %wid, error = %err, "topic rebuild failed"),
+            Err(err) => {
+                tracing::warn!(workspace = %wid, error = %error_chain(err.as_ref()), "topic rebuild failed")
+            }
         }
     });
     Ok(StatusCode::ACCEPTED)

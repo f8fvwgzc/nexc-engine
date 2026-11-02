@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use crate::app::http_client;
 use crate::config::Settings;
+use crate::domain::error_chain;
 use crate::domain::ontology::OntoMode;
 use crate::domain::settings::LlmProviderKind;
 use crate::ontology::grpc::GrpcOntology;
@@ -68,7 +69,13 @@ async fn check_database(r: &mut Report, settings: &Settings) {
     let connect = repo::connect(settings.database_url.expose(), 1);
     let pool = match tokio::time::timeout(Duration::from_secs(10), connect).await {
         Ok(Ok(pool)) => pool,
-        Ok(Err(err)) => return r.line(Level::Fail, "database", format!("cannot connect: {err}")),
+        Ok(Err(err)) => {
+            return r.line(
+                Level::Fail,
+                "database",
+                format!("cannot connect: {}", error_chain(err.as_ref())),
+            );
+        }
         Err(_) => return r.line(Level::Fail, "database", "connection timed out"),
     };
     match repo::server_version(&pool).await {
@@ -85,7 +92,7 @@ async fn check_database(r: &mut Report, settings: &Settings) {
         Err(err) => r.line(
             Level::Fail,
             "database",
-            format!("cannot read server version: {err}"),
+            format!("cannot read server version: {}", error_chain(err.as_ref())),
         ),
     }
     let applied: Result<i64, _> =
@@ -162,7 +169,13 @@ async fn check_runtime_grpc(r: &mut Report, settings: &Settings) {
     let url = settings.runtime_grpc_url.trim_end_matches('/');
     let channel = match crate::engine::executor::runtime_grpc::channel(url) {
         Ok(channel) => channel,
-        Err(err) => return r.line(Level::Fail, "runtime grpc", format!("{url}: {err}")),
+        Err(err) => {
+            return r.line(
+                Level::Fail,
+                "runtime grpc",
+                format!("{url}: {}", error_chain(err.as_ref())),
+            );
+        }
     };
     let probe = async {
         let mut client =
@@ -223,7 +236,7 @@ fn check_firewall(r: &mut Report, settings: &Settings) {
                     }
                 ),
             ),
-            Err(err) => r.line(Level::Fail, "firewall api", err.to_string()),
+            Err(err) => r.line(Level::Fail, "firewall api", error_chain(err.as_ref())),
         },
     }
 }
@@ -254,7 +267,7 @@ fn check_agent_tokens(r: &mut Report, settings: &Settings) {
                 ),
             );
         }
-        Err(err) => r.line(Level::Fail, "agent tokens", err.to_string()),
+        Err(err) => r.line(Level::Fail, "agent tokens", error_chain(err.as_ref())),
     }
 }
 
@@ -276,7 +289,11 @@ async fn check_otlp(r: &mut Report, settings: &Settings) {
     };
     match tokio::time::timeout(Duration::from_secs(3), connect).await {
         Ok(Ok(_)) => r.line(Level::Ok, "otlp export", format!("{endpoint}: reachable")),
-        Ok(Err(err)) => r.line(Level::Warn, "otlp export", format!("{endpoint}: {err}")),
+        Ok(Err(err)) => r.line(
+            Level::Warn,
+            "otlp export",
+            format!("{endpoint}: {}", error_chain(err.as_ref())),
+        ),
         Err(_) => r.line(
             Level::Warn,
             "otlp export",
@@ -519,7 +536,7 @@ async fn check_sso(r: &mut Report, settings: &Settings) {
     };
     let client = match OidcClient::new(oidc.clone(), settings.is_production()) {
         Ok(client) => client,
-        Err(err) => return r.line(Level::Fail, "sso", err.to_string()),
+        Err(err) => return r.line(Level::Fail, "sso", error_chain(err.as_ref())),
     };
     match client.discovery().await {
         Ok(doc) => {

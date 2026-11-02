@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::a2a::{A2aCheck, Hops, TaskState, validate_card};
+use crate::domain::error_chain;
 use crate::repo;
 use crate::repo::a2a::CounterpartRow;
 
@@ -277,7 +278,7 @@ pub fn auth_header(state: &AppState, row: &CounterpartRow) -> Option<String> {
     match state.secret_box.open(sealed, row.counterpart.id.as_bytes()) {
         Ok(bytes) => String::from_utf8(bytes).ok(),
         Err(err) => {
-            tracing::error!(counterpart = %row.counterpart.id, error = %err, "A2A auth header not decrypted");
+            tracing::error!(counterpart = %row.counterpart.id, error = %error_chain(err.as_ref()), "A2A auth header not decrypted");
             None
         }
     }
