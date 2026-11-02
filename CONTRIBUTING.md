@@ -47,6 +47,9 @@ network; never add tests that call a real LLM API.
 * New endpoints are annotated for utoipa so they appear in `/api/openapi.json`.
 * `unsafe` is confined to the C-kernel FFI module and every kernel has a Rust reference
   implementation that tests compare against.
+* The backend uses [Symposium](https://github.com/symposium-dev/symposium) for its Rust agent
+  skills: `cargo install symposium --locked`, then `cargo agents init --add-agent claude`.
+  `cargo agents sync` runs in `backend/`.
 
 ### TypeScript (`frontend/`)
 * `pnpm typecheck`, `pnpm lint` and `pnpm format:check` must pass.
