@@ -695,8 +695,8 @@ fn repo_workspace(agent: &Agent) -> Option<Uuid> {
         })
 }
 
-fn internal(err: impl std::fmt::Display) -> Status {
-    tracing::error!(error = %err, "firewall request failed");
+fn internal(err: impl std::error::Error + 'static) -> Status {
+    tracing::error!(error = %crate::domain::error_chain(&err), "firewall request failed");
     Status::internal("the request could not be served")
 }
 

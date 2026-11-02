@@ -202,9 +202,8 @@ async fn create_user(email: &str, name: &str, admin: bool) -> anyhow::Result<()>
     let state = AppState::new(settings, db)?;
     let hash = security::password::hash_password(&password)?;
     let role = if admin { Role::Admin } else { Role::User };
-    let created = http::handlers::auth::create_user(&state, &email, name.trim(), role, &hash)
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let created =
+        http::handlers::auth::create_user(&state, &email, name.trim(), role, &hash).await?;
     println!(
         "created {} user {} ({})",
         created.role, created.email, created.id

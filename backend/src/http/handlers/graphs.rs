@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::AppError;
+use crate::domain::error_chain;
 use crate::domain::graph::{
     EdgeSuggestion, GRAPH_NAME_MAX, GRAPH_TEXT_MAX, Graph, GraphAnalysis, GraphSummary,
 };
@@ -130,7 +131,7 @@ pub async fn create(
     let ontology = match editor::vocabulary_of(&state, auth.id, &meta).await {
         Ok(vocabulary) => Ontology::clone(&vocabulary),
         Err(err) => {
-            tracing::warn!(graph = %meta.id, error = %err, "the new graph's vocabulary is not in onto-intelli yet");
+            tracing::warn!(graph = %meta.id, error = %error_chain(&err), "the new graph's vocabulary is not in onto-intelli yet");
             Ontology::starter()
         }
     };

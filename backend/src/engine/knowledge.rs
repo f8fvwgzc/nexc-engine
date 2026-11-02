@@ -14,12 +14,14 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
+use anyhow::Context as _;
 use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::config::Secret;
 use crate::domain::AppError;
 use crate::domain::capabilities::DataLabel;
+use crate::domain::error_chain;
 use crate::domain::knowledge::{
     BUILTIN_EMBED_MODEL, Block, BlockKind, Chunk, DOCUMENT_MAX_BYTES, DOCUMENTS_MAX, Document,
     DocumentStatus, KnowledgeSettings, Parsed, Passage, Topic, chunk,
@@ -367,7 +369,7 @@ async fn ingest(state: &AppState, document: &Document) -> anyhow::Result<()> {
     // Topics are a convenience on top of a searchable document: failing to place it is logged.
     let model = &resolved.target.model;
     if let Err(err) = place_in_topics(state, document.workspace_id, model).await {
-        tracing::warn!(document = %document.id, error = %err, "cannot place passages in topics");
+        tracing::warn!(document = %document.id, error = %error_chain(err.as_ref()), "cannot place passages in topics");
     }
     Ok(())
 }
@@ -411,9 +413,7 @@ pub async fn store_document(
         tokio::fs::create_dir_all(&dir).await?;
         tokio::fs::write(&path, body).await
     };
-    stored
-        .await
-        .map_err(|err| anyhow::anyhow!("cannot store the upload: {err}"))?;
+    stored.await.context("cannot store the upload")?;
     let size = i64::try_from(body.len()).unwrap_or(i64::MAX);
     match repo::knowledge::insert(
         &state.db,
@@ -445,8 +445,8 @@ pub async fn work(state: &AppState) -> anyhow::Result<()> {
     let claimed = repo::knowledge::claim_pending(&state.db, CONCURRENT_DOCUMENTS).await?;
     let jobs = claimed.into_iter().map(|document| async move {
         if let Err(err) = ingest(state, &document).await {
-            tracing::warn!(document = %document.id, error = %err, "document ingestion failed");
-            let message: String = err.to_string().chars().take(500).collect();
+            tracing::warn!(document = %document.id, error = %error_chain(err.as_ref()), "document ingestion failed");
+            let message: String = error_chain(err.as_ref()).chars().take(500).collect();
             let failed = DocumentStatus::Failed;
             if let Err(err) =
                 repo::knowledge::set_status(&state.db, document.id, failed, &message).await
@@ -582,7 +582,7 @@ pub async fn search(
                 embedded.vectors.pop()
             }
             Err(err) => {
-                tracing::warn!(error = %err, "query embedding failed; ranking by keywords only");
+                tracing::warn!(error = %error_chain(err.as_ref()), "query embedding failed; ranking by keywords only");
                 None
             }
         }
@@ -825,7 +825,7 @@ pub async fn context_passages(
     let resolved = match settings(state, workspace).await {
         Ok(resolved) => resolved,
         Err(err) => {
-            tracing::warn!(error = %err, "knowledge settings unreadable; no documents used");
+            tracing::warn!(error = %error_chain(err.as_ref()), "knowledge settings unreadable; no documents used");
             return Vec::new();
         }
     };
@@ -840,7 +840,7 @@ pub async fn context_passages(
     {
         Ok(passages) => passages,
         Err(err) => {
-            tracing::warn!(error = %err, "document search failed; no documents used");
+            tracing::warn!(error = %error_chain(err.as_ref()), "document search failed; no documents used");
             return Vec::new();
         }
     };

@@ -20,6 +20,7 @@ use crate::domain::agent_template::{
     EvaluatedQuestion, excerpt,
 };
 use crate::domain::audit::AuditAction;
+use crate::domain::error_chain;
 use crate::domain::policy_document::{PolicyScope, diff_summary};
 use crate::domain::settings::LlmProviderKind;
 use crate::domain::skill;
@@ -120,14 +121,14 @@ async fn evaluate_answers(
             return None;
         }
         Err(err) => {
-            tracing::warn!(agent = %agent.principal_id, error = %err, "provider not resolved: the agent is not evaluated");
+            tracing::warn!(agent = %agent.principal_id, error = %error_chain(&err), "provider not resolved: the agent is not evaluated");
             return None;
         }
     };
     let policy = match guardrails::admit(state, Some(workspace), user, llm.target.provider).await {
         Ok(policy) => policy,
         Err(err) => {
-            tracing::warn!(agent = %agent.principal_id, error = %err, "guardrails refused the evaluation");
+            tracing::warn!(agent = %agent.principal_id, error = %error_chain(&err), "guardrails refused the evaluation");
             return None;
         }
     };

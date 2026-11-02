@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::audit::AuditAction;
+use crate::domain::error_chain;
 use crate::repo::{self, audit::Subject};
 use crate::security::signing::{self, Signer};
 
@@ -75,7 +76,7 @@ pub async fn purge_expired(state: &AppState) -> anyhow::Result<()> {
         // One graph that cannot be removed (a lock held elsewhere, say) does not hold up the
         // others.
         if let Err(err) = remove_expired(state, &graph).await {
-            tracing::warn!(graph_id = %graph.id, error = %err, "deleted graph not purged; tried again later");
+            tracing::warn!(graph_id = %graph.id, error = %error_chain(err.as_ref()), "deleted graph not purged; tried again later");
         }
     }
     Ok(())

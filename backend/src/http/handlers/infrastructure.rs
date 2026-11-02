@@ -17,6 +17,7 @@ use utoipa::ToSchema;
 
 use crate::app::AppState;
 use crate::domain::AppError;
+use crate::domain::error_chain;
 use crate::domain::status::BackendHealth;
 use crate::domain::validation::{FieldErrors, Validate};
 use crate::engine::knowledge;
@@ -284,7 +285,7 @@ pub async fn check(
                 pgvector_available: None,
                 migrations_applied: None,
             },
-            Ok(Err(err)) => unreachable(err.to_string()),
+            Ok(Err(err)) => unreachable(error_chain(err.as_ref())),
             Err(_) => unreachable("no answer within 5 seconds".into()),
         }
     } else {

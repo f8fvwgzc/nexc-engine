@@ -3,6 +3,7 @@
 
 use std::sync::OnceLock;
 
+use anyhow::Context as _;
 use argon2::{Algorithm, Argon2, Params, PasswordHasher, PasswordVerifier, Version};
 
 use super::random::random_token;
@@ -17,7 +18,7 @@ pub fn hash_password(password: &str) -> anyhow::Result<String> {
     hasher()
         .hash_password(password.as_bytes())
         .map(|h| h.to_string())
-        .map_err(|e| anyhow::anyhow!("password hashing failed: {e}"))
+        .context("password hashing failed")
 }
 
 /// Verifies `password` against a PHC hash. Malformed hashes never verify.

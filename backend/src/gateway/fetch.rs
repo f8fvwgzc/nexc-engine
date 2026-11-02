@@ -51,18 +51,7 @@ pub enum FetchError {
 /// A transport error with its causes (a refusal of the SSRF guard among
 /// them), without the URL (which may carry data).
 pub fn describe(err: reqwest::Error) -> String {
-    let err = err.without_url();
-    let mut text = err.to_string();
-    let mut cause = std::error::Error::source(&err);
-    while let Some(inner) = cause {
-        let more = inner.to_string();
-        if !text.contains(&more) {
-            text.push_str(": ");
-            text.push_str(&more);
-        }
-        cause = inner.source();
-    }
-    text
+    crate::domain::error_chain(&err.without_url())
 }
 
 /// Whether a content type is passed on to the model.

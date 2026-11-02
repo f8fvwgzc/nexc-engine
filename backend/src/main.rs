@@ -5,6 +5,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use nexc::cli::{self, Cli};
+use nexc::domain::error_chain;
 use nexc::{config, observability};
 
 fn main() -> ExitCode {
@@ -27,7 +28,7 @@ fn main() -> ExitCode {
     match runtime.block_on(cli::run(cli)) {
         Ok(code) => code,
         Err(err) => {
-            eprintln!("error: {err:#}");
+            eprintln!("error: {}", error_chain(err.as_ref()));
             ExitCode::FAILURE
         }
     }
