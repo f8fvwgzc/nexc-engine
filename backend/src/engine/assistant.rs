@@ -9,7 +9,7 @@
 use serde_json::json;
 use uuid::Uuid;
 
-use super::{credentials, guardrails, usage};
+use super::{credentials, guardrails, impact, usage};
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::assistant::{
@@ -366,6 +366,7 @@ pub async fn reply(
         };
         let mut tx = state.db.begin().await?;
         let id = repo::issues::create(&mut tx, &new).await?;
+        impact::issue_created(&mut tx, user, id).await?;
         tx.commit().await?;
         created.push(
             repo::issues::find(&state.db, user, id)

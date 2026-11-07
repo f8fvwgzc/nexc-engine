@@ -37,6 +37,8 @@ aes-gcm = "0.11"
 anyhow = "1.0.104"
 aws-lc-rs = "1"
 argon2 = "0.6"
+# The change-impact engine (src/engine/impact.rs), vendored: see vendor/assessment-core/README.md.
+assessment-core = { version = "0.1.0", path = "vendor/assessment-core" }
 async-stream = "0.3.6"
 async-trait = "0.1"
 axum = { version = "0.8.9", features = ["ws", "macros"] }

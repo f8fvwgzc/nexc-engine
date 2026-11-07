@@ -44,7 +44,10 @@ import { SEVERITY_META } from '@/schemas/policy';
 import type { Workspace } from '@/schemas/workspace';
 
 /** What the actor did to the issue. */
-const VERB: Record<'assigned' | 'comment' | 'state' | 'due' | 'run' | 'mention', string> = {
+const VERB: Record<
+  'assigned' | 'comment' | 'state' | 'due' | 'run' | 'mention' | 'impact',
+  string
+> = {
   assigned: 'assigned you',
   comment: 'commented on',
   mention: 'mentioned you in',
@@ -53,6 +56,8 @@ const VERB: Record<'assigned' | 'comment' | 'state' | 'due' | 'run' | 'mention',
   due: 'is due:',
   // Agents did this one: a run of the issue's graph finished and its result is on the issue.
   run: 'finished work on',
+  // The change-impact engine asks for a review or a re-plan of this issue after the actor's change.
+  impact: 'changed work that affects',
 };
 
 /** What an issue entry says the actor did, up to the issue; a reaction names its emoji. */

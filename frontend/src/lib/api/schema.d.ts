@@ -1610,15 +1610,49 @@ export interface paths {
         get: operations["get"];
         put?: never;
         post?: never;
-        /** Deletes an issue (a graph created for it stays). */
+        /**
+         * Deletes an issue (a graph created for it stays). The deletion is assessed
+         *     first: the owners of its sub-issues hear of it (`impact`) when a review or
+         *     a re-plan is recommended.
+         */
         delete: operations["delete"];
         options?: never;
         head?: never;
         /**
          * Updates an issue. Moving it to a completed or canceled state stamps
          *     `completed_at`; moving it back clears it.
+         * @description The change is assessed and versioned in the same transaction
+         *     (`GET /issues/{iid}/assessments`): `version` moves MAJOR when what others
+         *     planned against the issue broke, MINOR for compatible additions, PATCH for
+         *     a cosmetic edit; the owners of the items it affects hear of it (`impact`)
+         *     when a review or a re-plan is recommended. An issue moved to another parent
+         *     or project is pinned to that one's current version.
          */
         patch: operations["update"];
+        trace?: never;
+    };
+    "/api/v1/issues/{iid}/assessments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The assessed changes of an issue and of the items whose changes asked
+         *     something of it (a rewritten parent, a deleted blocker), newest first (the
+         *     last 50): how big each change was, the version it moved to, every item it
+         *     affects with an action each, the plan conflicts it introduced and the
+         *     recommendation (`no_action`, `notify`, `review`, `partial_replan`,
+         *     `full_replan`). Items the caller cannot see are left out.
+         */
+        get: operations["issue_assessments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/issues/{iid}/comments": {
@@ -1783,6 +1817,49 @@ export interface paths {
          *     most 1 MiB can be kept, and not while it is quarantined.
          */
         post: operations["keep"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/issues/{iid}/version": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * An issue's version, and the version of what it is part of (its parent
+         *     issue, else its project) that it was planned against next to that one's
+         *     version now: `incompatible` after a breaking change there, until the issue
+         *     is re-planned and acknowledged.
+         */
+        get: operations["get_issue_version"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/issues/{iid}/version/acknowledge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Records that the issue's plan was redone against the current version of
+         *     what it is part of: the issue is pinned to it, so its basis is `current`
+         *     again. Whoever may edit the issue may.
+         */
+        post: operations["acknowledge_issue_version"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3329,12 +3406,38 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Deletes a project (workspace admins); its issues stay, without a project. */
+        /**
+         * Deletes a project (workspace admins); its issues stay, without a project.
+         *     The deletion is assessed first, as an issue's is.
+         */
         delete: operations["delete_project"];
         options?: never;
         head?: never;
-        /** Updates a project (members and above). */
+        /**
+         * Updates a project (members and above). The change is assessed and
+         *     versioned as an issue's is (`GET /workspaces/{wid}/projects/{pid}/assessments`).
+         */
         patch: operations["update_project"];
+        trace?: never;
+    };
+    "/api/v1/workspaces/{wid}/projects/{pid}/assessments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The assessed changes of a project and of the items whose changes asked
+         *     something of it, newest first (the last 50), as for an issue.
+         */
+        get: operations["project_assessments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/workspaces/{wid}/runs": {
@@ -4584,6 +4687,11 @@ export interface components {
              */
             question: string;
         };
+        /**
+         * @description What happened to the item that made the engine assess it.
+         * @enum {string}
+         */
+        AssessmentCause: "created" | "updated" | "deleted" | "comment";
         /** @description `POST /admin/workspaces/{wid}/owners` body. */
         AssignOwner: {
             /** @description E-mail address of a registered account. */
@@ -4749,6 +4857,24 @@ export interface components {
             llm: components["schemas"]["BackendHealth"];
             symphony: components["schemas"]["BackendHealth"];
         };
+        /** @description The version of its parent an issue was planned against, and the parent's version now. */
+        Basis: {
+            current_version: string;
+            /** Format: uuid */
+            entity_id: string;
+            entity_kind: components["schemas"]["ImpactEntityKind"];
+            pinned_version: string;
+            /**
+             * @description `current`, `compatible`, `review_suggested` or `incompatible` (a breaking change since
+             *     the pin: re-plan, then acknowledge).
+             */
+            status: components["schemas"]["BasisStatus"];
+        };
+        /**
+         * @description Whether an item's plan still matches the version of what it was planned against.
+         * @enum {string}
+         */
+        BasisStatus: "not_pinned" | "current" | "compatible" | "review_suggested" | "incompatible" | "removed";
         /** @description The first entry that does not fit a chain. */
         BrokenEntry: {
             /**
@@ -4866,6 +4992,43 @@ export interface components {
             subject_digest: string;
             /** Format: uuid */
             workspace_id: string;
+        };
+        /** @description An assessed change to an issue or a project. */
+        ChangeAssessment: {
+            actor: components["schemas"]["IssuePerson"] | null;
+            bump: components["schemas"]["VersionBump"];
+            cause: components["schemas"]["AssessmentCause"];
+            /**
+             * Format: double
+             * @description How much the engine trusts its answer, `[0, 1]`.
+             */
+            confidence: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            entity_id: string;
+            entity_kind: components["schemas"]["ImpactEntityKind"];
+            /** Format: uuid */
+            id: string;
+            /** @description The affected items the reader can see, most affected first. */
+            impacts: components["schemas"]["Impact"][];
+            level: components["schemas"]["ImpactLevel"];
+            /** @description The item's version after the change; the previous one for a comment, none for a deletion. */
+            next_version: string | null;
+            previous_version: string | null;
+            recommendation: components["schemas"]["Recommendation"];
+            /**
+             * Format: uuid
+             * @description The smallest subtree to re-plan (an issue or a project); set for a re-plan.
+             */
+            replan_root: string | null;
+            /**
+             * Format: double
+             * @description The re-plan score, `[0, 1]`.
+             */
+            score: number;
+            summary: string;
+            violations: components["schemas"]["PlanViolation"][];
         };
         /** @description `POST /auth/password` body. */
         ChangePassword: {
@@ -5853,6 +6016,53 @@ export interface components {
             status: string;
             version: string;
         };
+        /** @description One item a change affects (the changed item included, as `changed`). */
+        Impact: {
+            action: components["schemas"]["ImpactAction"];
+            basis_status: components["schemas"]["BasisStatus"];
+            changed: boolean;
+            /**
+             * @description How the impact reached it: `self`, `down` (from its parent), `up` (from a sub-issue),
+             *     `sibling`, `dependency`, `upstream` or `related`.
+             */
+            channel: string;
+            /**
+             * Format: int32
+             * @description Hops from the changed item (0 = the changed item).
+             */
+            distance: number;
+            /** Format: uuid */
+            entity_id: string;
+            entity_kind: components["schemas"]["ImpactEntityKind"];
+            level: components["schemas"]["ImpactLevel"];
+            /**
+             * Format: int32
+             * @description 1 = most affected.
+             */
+            rank: number;
+            /** @description Why, in words. */
+            reasons: string[];
+            /**
+             * Format: double
+             * @description `[0, 1]`.
+             */
+            score: number;
+        };
+        /**
+         * @description What to do about one affected item.
+         * @enum {string}
+         */
+        ImpactAction: "none" | "notify" | "review" | "update_scope" | "re_estimate" | "reschedule" | "reverify" | "obsolete_candidate" | "cancel_or_rehome" | "reprioritize" | "replan" | "resolve_conflict";
+        /**
+         * @description What was assessed.
+         * @enum {string}
+         */
+        ImpactEntityKind: "issue" | "project";
+        /**
+         * @description How much attention a change needs, by score band.
+         * @enum {string}
+         */
+        ImpactLevel: "none" | "low" | "medium" | "high" | "critical";
         /** @description What the server runs on. */
         Infrastructure: {
             cache: string;
@@ -5961,6 +6171,12 @@ export interface components {
             title: string;
             /** Format: date-time */
             updated_at: string;
+            /**
+             * @description The issue's semantic version (`1.0.0` when filed): every change moves it MAJOR when what
+             *     others planned against the issue broke, MINOR for compatible additions, PATCH for a
+             *     cosmetic edit (`GET /issues/{iid}/assessments`).
+             */
+            version: string;
             /** Format: uuid */
             workspace_id: string;
         };
@@ -6089,6 +6305,12 @@ export interface components {
             title: string;
             /** Format: date-time */
             updated_at: string;
+            /**
+             * @description The issue's semantic version (`1.0.0` when filed): every change moves it MAJOR when what
+             *     others planned against the issue broke, MINOR for compatible additions, PATCH for a
+             *     cosmetic edit (`GET /issues/{iid}/assessments`).
+             */
+            version: string;
             /** Format: uuid */
             workspace_id: string;
         };
@@ -6096,6 +6318,13 @@ export interface components {
         IssueToken: {
             /** @description What the token is for, to tell tokens apart. */
             name?: string;
+        };
+        /** @description An issue's version and where its plan stands against what it is part of. */
+        IssueVersion: {
+            basis: components["schemas"]["Basis"] | null;
+            /** Format: uuid */
+            issue_id: string;
+            version: string;
         };
         /** @description A token just issued: the only time its value is given out. */
         IssuedAgentApiToken: {
@@ -6691,7 +6920,7 @@ export interface components {
          * @description Why an issue is in someone's inbox.
          * @enum {string}
          */
-        NotificationKind: "assigned" | "comment" | "state" | "due" | "approval" | "alert" | "run" | "mention" | "reaction";
+        NotificationKind: "assigned" | "comment" | "state" | "due" | "approval" | "alert" | "run" | "mention" | "reaction" | "impact";
         /**
          * @description How nexc reaches onto-intelli (`NEXC_ONTO_MODE`).
          * @enum {string}
@@ -6874,6 +7103,23 @@ export interface components {
          * @enum {string}
          */
         PlanStatus: "streaming" | "ready" | "failed" | "applied";
+        /**
+         * @description A plan conflict among the affected items (a sub-issue due after its parent,
+         *     active work under a canceled parent, …).
+         */
+        PlanViolation: {
+            entities: string[];
+            /** @description Whether this change introduced it. */
+            introduced: boolean;
+            /** @description `orphaned_work`, `schedule_conflict`, `premature_close`, `overdue`, …. */
+            kind: string;
+            message: string;
+            /**
+             * Format: double
+             * @description `[0, 1]`.
+             */
+            severity: number;
+        };
         /** @description Live view of the Planner for the current user: queue, running work, agents and backend health. */
         PlannerStatus: {
             /** Format: int64 */
@@ -7097,6 +7343,8 @@ export interface components {
              * @description The team that owns the project; `null` for a project of the whole workspace.
              */
             team_id: string | null;
+            /** @description The project's semantic version, moved by every change as an issue's is. */
+            version: string;
             /** Format: uuid */
             workspace_id: string;
         };
@@ -7155,6 +7403,11 @@ export interface components {
             /** @description One of 👍 👎 😄 🎉 😕 ❤️ 🚀 👀 🔥 ✅. */
             emoji: string;
         };
+        /**
+         * @description What to do about a change as a whole, from least to most.
+         * @enum {string}
+         */
+        Recommendation: "no_action" | "notify" | "review" | "partial_replan" | "full_replan";
         /**
          * @description What is kept of what agents say and hear, off by default: the prompt and
          *     the completion of every model turn, the input and output of every tool
@@ -8550,6 +8803,11 @@ export interface components {
             name: string;
             role: components["schemas"]["Role"];
         };
+        /**
+         * @description How much a version moved.
+         * @enum {string}
+         */
+        VersionBump: "none" | "patch" | "minor" | "major" | "initial";
         /** @description A workspace as seen by one of its members. */
         Workspace: {
             /** Format: date-time */
@@ -12676,6 +12934,36 @@ export interface operations {
             };
         };
     };
+    issue_assessments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Issue id */
+                iid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChangeAssessment"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     create_comment: {
         parameters: {
             query?: never;
@@ -13085,6 +13373,74 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_issue_version: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Issue id */
+                iid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueVersion"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    acknowledge_issue_version: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Issue id */
+                iid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueVersion"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -17558,6 +17914,38 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    project_assessments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                wid: string;
+                /** @description Project id */
+                pid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChangeAssessment"][];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

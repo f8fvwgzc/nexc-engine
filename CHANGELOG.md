@@ -180,6 +180,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Versioned issues and projects, and an impact assessment of every change** (migrations
+  `20261107000001`, `20261107000002`; `docs/CONTRACT.md` "Change impact"). Every issue and
+  project now has a semantic `version`, and every change to one (created, edited, deleted, or a
+  comment on an issue) is assessed in the transaction that writes it by the change-impact engine
+  (`backend/vendor/assessment-core`, run in-process against the item's parent chain, sub-issues,
+  siblings and projects read from PostgreSQL). A breaking change, such as rewriting a parent's
+  description while its sub-issues are in progress, is a MAJOR bump. Sub-issues pin the version
+  of the parent they were planned against, so they show as `incompatible` until re-planned and
+  acknowledged (`POST /issues/{iid}/version/acknowledge`). `GET /issues/{iid}/assessments` and
+  `GET /workspaces/{wid}/projects/{pid}/assessments` give each change's level, recommendation
+  (no action, notify, review, partial or full re-plan), the subtree to re-plan, and the affected
+  items ranked with an action each, redacted to what the reader can see. When a review or a
+  re-plan is recommended, the owners of the affected issues get an `impact` inbox entry.
 - **Indexes for the polls and lists that read whole tables** (migrations `20261024100000` to
   `20261024100019`, `docs/DATABASE.md`): an agent's pending approvals, what an agent spent today,
   the upstream labels as a node starts, a graph's memories, the approvals list, the console's open

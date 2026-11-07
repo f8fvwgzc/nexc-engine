@@ -20,6 +20,7 @@ pub mod evidence;
 pub mod exports;
 pub mod graphs;
 pub mod health;
+pub mod impact;
 pub mod infrastructure;
 pub mod insight;
 pub mod issues;

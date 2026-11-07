@@ -1,0 +1,29 @@
+# Vendored copy of `assessment-core` from https://github.com/f8fvwgzc/assessment-engine
+# (crates/assessment-core, v0.1.0). Only `src/` is copied; see README.md here for how to update
+# it. The upstream workspace's inherited keys are written out so the crate builds on its own
+# inside the backend's Docker context (`./backend`).
+[package]
+name = "assessment-core"
+description = "Change-impact assessment for versioned, hierarchical work items: scoring, propagation, ranking, SemVer and re-plan decisions"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+authors = ["nexc-engine contributors"]
+repository = "https://github.com/f8fvwgzc/assessment-engine"
+publish = false
+
+[dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "serde"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151", features = ["float_roundtrip"] }
+thiserror = "2"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+unwrap_used = "warn"

@@ -98,6 +98,7 @@ pub mod evidence;
 pub mod external_runs;
 pub mod graphs;
 pub mod idempotency;
+pub mod impact;
 pub mod insight;
 pub mod issues;
 pub mod knowledge;

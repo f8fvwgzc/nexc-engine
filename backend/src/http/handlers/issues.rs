@@ -24,7 +24,7 @@ use crate::domain::issue::{
 };
 use crate::domain::validation::{FieldErrors, Validate, check_text, search_text};
 use crate::domain::workspace::TeamAccess;
-use crate::engine::issue_agents;
+use crate::engine::{impact, issue_agents};
 use crate::http::extract::{AuthUser, Path, Query, ValidatedJson};
 use crate::http::problem::Problem;
 use crate::repo::audit::Subject;
@@ -383,6 +383,7 @@ pub async fn create(
     if !labels.is_empty() {
         repo::issues::set_labels(&mut *tx, id, &labels).await?;
     }
+    impact::issue_created(&mut tx, auth.id, id).await?;
     if let Some(assignee) = req.assignee_id.filter(|a| *a != auth.id) {
         repo::issues::notify(&mut *tx, id, assignee, auth.id, NotificationKind::Assigned).await?;
     }
@@ -410,7 +411,11 @@ pub async fn get(
 }
 
 /// Loads an issue the caller may change.
-async fn editable(state: &AppState, auth: AuthUser, iid: Uuid) -> Result<Issue, AppError> {
+pub(super) async fn editable(
+    state: &AppState,
+    auth: AuthUser,
+    iid: Uuid,
+) -> Result<Issue, AppError> {
     let issue = repo::issues::find(&state.db, auth.id, iid)
         .await
         .or_not_found("issue")?;
@@ -421,6 +426,13 @@ async fn editable(state: &AppState, auth: AuthUser, iid: Uuid) -> Result<Issue, 
 
 /// Updates an issue. Moving it to a completed or canceled state stamps
 /// `completed_at`; moving it back clears it.
+///
+/// The change is assessed and versioned in the same transaction
+/// (`GET /issues/{iid}/assessments`): `version` moves MAJOR when what others
+/// planned against the issue broke, MINOR for compatible additions, PATCH for
+/// a cosmetic edit; the owners of the items it affects hear of it (`impact`)
+/// when a review or a re-plan is recommended. An issue moved to another parent
+/// or project is pinned to that one's current version.
 #[utoipa::path(patch, path = "/issues/{iid}", tag = "issues", security(("bearer" = [])),
     params(("iid" = Uuid, Path, description = "Issue id")), request_body = UpdateIssue,
     responses((status = 200, body = Issue), (status = 403, body = Problem), (status = 404, body = Problem),
@@ -494,11 +506,16 @@ pub async fn update(
         due_date: req.due_date,
     };
     let mut tx = state.db.begin().await?;
+    // What the change is assessed against, locked until the commit: edits of one issue take turns.
+    let was = repo::impact::issue_for_update(&mut tx, iid)
+        .await
+        .or_not_found("issue")?;
     repo::issues::save(&mut *tx, &issue, &moves).await?;
     if let Some(labels) = &labels {
         repo::issues::set_labels(&mut *tx, iid, labels).await?;
     }
-    // Read back for the assignee's name, which the timeline shows.
+    impact::issue_updated(&mut tx, auth.id, &was).await?;
+    // Read back for the assignee's name, which the timeline shows, and the new version.
     let after = repo::issues::find(&mut *tx, auth.id, iid)
         .await
         .or_not_found("issue")?;
@@ -524,7 +541,9 @@ pub async fn update(
     Ok(Json(after))
 }
 
-/// Deletes an issue (a graph created for it stays).
+/// Deletes an issue (a graph created for it stays). The deletion is assessed
+/// first: the owners of its sub-issues hear of it (`impact`) when a review or
+/// a re-plan is recommended.
 #[utoipa::path(delete, path = "/issues/{iid}", tag = "issues", security(("bearer" = [])),
     params(("iid" = Uuid, Path, description = "Issue id")),
     responses((status = 204, description = "Deleted"), (status = 403, body = Problem), (status = 404, body = Problem)))]
@@ -534,7 +553,10 @@ pub async fn delete(
     Path(iid): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
     let issue = editable(&state, auth, iid).await?;
-    repo::issues::delete(&state.db, issue.id).await?;
+    let mut tx = state.db.begin().await?;
+    impact::issue_deleted(&mut tx, auth.id, issue.id).await?;
+    repo::issues::delete(&mut *tx, issue.id).await?;
+    tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -943,6 +965,7 @@ pub async fn create_comment(
         None => None,
     };
     let id = repo::issues::add_comment(&mut *tx, issue.id, auth.id, body, req.parent_id).await?;
+    impact::issue_commented(&mut tx, auth.id, issue.id, body).await?;
     let (told, agents) = act_on_mentions(&mut tx, &issue, auth.id, &mentioned).await?;
     let kind = NotificationKind::Comment;
     // The author of the comment replied to hears once, below, not as a watcher too.
@@ -1516,7 +1539,8 @@ pub async fn create_project(
     Ok((StatusCode::CREATED, Json(project)))
 }
 
-/// Updates a project (members and above).
+/// Updates a project (members and above). The change is assessed and
+/// versioned as an issue's is (`GET /workspaces/{wid}/projects/{pid}/assessments`).
 #[utoipa::path(patch, path = "/workspaces/{wid}/projects/{pid}", tag = "issues", security(("bearer" = [])),
     params(("wid" = Uuid, Path, description = "Workspace id"), ("pid" = Uuid, Path, description = "Project id")),
     request_body = UpdateProject,
@@ -1556,7 +1580,13 @@ pub async fn update_project(
     if let Some(team) = req.team_id {
         project.team_id = team;
     }
-    repo::issues::save_project(&state.db, &project).await?;
+    let mut tx = state.db.begin().await?;
+    let was = repo::impact::project_for_update(&mut tx, pid)
+        .await
+        .or_not_found("project")?;
+    repo::issues::save_project(&mut *tx, &project).await?;
+    impact::project_updated(&mut tx, auth.id, &was).await?;
+    tx.commit().await?;
     Ok(Json(
         repo::issues::find_project(&state.db, auth.id, wid, pid)
             .await
@@ -1565,6 +1595,7 @@ pub async fn update_project(
 }
 
 /// Deletes a project (workspace admins); its issues stay, without a project.
+/// The deletion is assessed first, as an issue's is.
 #[utoipa::path(delete, path = "/workspaces/{wid}/projects/{pid}", tag = "issues", security(("bearer" = [])),
     params(("wid" = Uuid, Path, description = "Workspace id"), ("pid" = Uuid, Path, description = "Project id")),
     responses((status = 204, description = "Deleted"), (status = 403, body = Problem), (status = 404, body = Problem)))]
@@ -1581,6 +1612,9 @@ pub async fn delete_project(
     repo::issues::find_project(&state.db, auth.id, wid, pid)
         .await
         .or_not_found("project")?;
-    repo::issues::delete_project(&state.db, pid).await?;
+    let mut tx = state.db.begin().await?;
+    impact::project_deleted(&mut tx, auth.id, pid).await?;
+    repo::issues::delete_project(&mut *tx, pid).await?;
+    tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }

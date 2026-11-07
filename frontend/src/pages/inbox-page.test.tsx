@@ -39,6 +39,12 @@ const reaction: Notification = {
   emoji: '🎉',
 };
 
+const impact: Notification = {
+  ...mention,
+  id: '0199eeee-0000-7000-8000-000000000006',
+  kind: 'impact',
+};
+
 /** What the inbox holds. */
 let inbox: Notification[] = [mention];
 
@@ -81,6 +87,17 @@ describe('a mention in the inbox', () => {
     expect(entry).toHaveTextContent('Grace Hopper mentioned you in ENG-12 Fix login');
     fireEvent.click(entry);
     expect(await screen.findByText(`Opened ${mention.issue?.id}`)).toBeInTheDocument();
+  });
+});
+
+describe('an impact in the inbox', () => {
+  it('says whose change affects which issue, and opens it', async () => {
+    inbox = [impact];
+    renderInbox();
+    const entry = await screen.findByRole('button', { name: /changed work that affects ENG-12/ });
+    expect(entry).toHaveTextContent('Grace Hopper changed work that affects ENG-12 Fix login');
+    fireEvent.click(entry);
+    expect(await screen.findByText(`Opened ${impact.issue?.id}`)).toBeInTheDocument();
   });
 });
 

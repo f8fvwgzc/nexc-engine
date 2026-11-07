@@ -149,8 +149,9 @@ export const notificationSchema = z.object({
     'run',
     'mention',
     'reaction',
+    'impact',
   ]),
-  /** The issue; null for approvals and alerts. */
+  /** The issue; null for approvals and alerts. For `impact`, the issue someone else's change affects. */
   issue: z.object({ id: idSchema, identifier: z.string(), title: z.string() }).nullable(),
   /** The tool call to decide (`approval`). */
   approval: z

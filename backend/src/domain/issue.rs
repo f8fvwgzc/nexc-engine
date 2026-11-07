@@ -163,6 +163,10 @@ pub struct Issue {
     /// The status of the latest run of the issue's graph; `null` without a graph or runs.
     #[schema(required = true)]
     pub run_status: Option<RunStatus>,
+    /// The issue's semantic version (`1.0.0` when filed): every change moves it MAJOR when what
+    /// others planned against the issue broke, MINOR for compatible additions, PATCH for a
+    /// cosmetic edit (`GET /issues/{iid}/assessments`).
+    pub version: String,
 }
 
 /// An issue as a list shows it: every field of [`Issue`] but its
@@ -213,6 +217,10 @@ pub struct IssueSummary {
     /// The status of the latest run of the issue's graph; `null` without a graph or runs.
     #[schema(required = true)]
     pub run_status: Option<RunStatus>,
+    /// The issue's semantic version (`1.0.0` when filed): every change moves it MAJOR when what
+    /// others planned against the issue broke, MINOR for compatible additions, PATCH for a
+    /// cosmetic edit (`GET /issues/{iid}/assessments`).
+    pub version: String,
 }
 
 impl IssueSummary {
@@ -243,6 +251,7 @@ impl IssueSummary {
             updated_at: self.updated_at,
             completed_at: self.completed_at,
             run_status: self.run_status,
+            version: self.version,
         }
     }
 }
@@ -292,6 +301,8 @@ pub struct Project {
     /// Of those, the ones in a completed or canceled state.
     pub closed_count: i64,
     pub created_at: DateTime<Utc>,
+    /// The project's semantic version, moved by every change as an issue's is.
+    pub version: String,
 }
 
 string_enum!(
@@ -506,6 +517,9 @@ string_enum!(
         Mention => "mention",
         /// Someone reacted to the member's comment on the issue (`emoji` says with what).
         Reaction => "reaction",
+        /// Someone's change affects the issue enough that the change-impact engine asks for a
+        /// review or a re-plan (`GET /issues/{iid}/assessments` says what and why).
+        Impact => "impact",
     }
 );
 
@@ -907,6 +921,7 @@ mod tests {
             updated_at: Utc::now(),
             completed_at: None,
             run_status: None,
+            version: "1.0.0".into(),
         };
         let link = "https://github.com/acme/app/issues/1";
         assert_eq!(

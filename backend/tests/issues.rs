@@ -770,6 +770,22 @@ async fn a_finished_run_reports_back_on_its_issue(pool: PgPool) {
     );
     let (_, issue) = call(&app, Method::GET, &path, &w.owner, None).await;
     assert_eq!(issue["state"]["name"], "In Review");
+    // The move is assessed and versioned like any change, as one nobody made.
+    assert_ne!(issue["version"], filed["version"], "{issue:#}");
+    let (_, assessed) = call(
+        &app,
+        Method::GET,
+        &format!("{path}/assessments"),
+        &w.owner,
+        None,
+    )
+    .await;
+    let by_run = &assessed[0];
+    assert_eq!(
+        (&by_run["cause"], &by_run["actor"], &by_run["next_version"]),
+        (&json!("updated"), &Value::Null, &issue["version"]),
+        "{assessed:#}"
+    );
 
     // The creator hears of it, and so does the member who started the run.
     let inbox = format!("{}/inbox", w.ws);

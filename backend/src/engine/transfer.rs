@@ -240,6 +240,8 @@ const TABLES: &[Table] = &[
         overlay: None,
     },
     table("notifications", IN_WORKSPACE, true),
+    // What every change to an issue or a project did to the plan (`crate::domain::impact`).
+    table("change_assessments", IN_WORKSPACE, true),
     // Folders refer to their parents and files to the file they were copied from: each table
     // in one statement. The versions hold the content, up to 1 MiB each.
     table("artifact_folders", IN_WORKSPACE, false),
