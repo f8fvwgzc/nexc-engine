@@ -199,6 +199,39 @@ spec:
       ports:
         - { port: {{ .Values.ontoIntelli.port }}, protocol: TCP }
 {{- end }}
+{{- if dig "enabled" false (.Values.assessmentEngine | default dict) }}
+---
+# change-impact engine: only from the backend, on its gRPC port.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: assessment-engine-from-backend
+  labels:
+    {{- include "nexc.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: assessment-engine }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: backend }
+      ports:
+        - { port: {{ .Values.assessmentEngine.port }}, protocol: TCP }
+---
+# change-impact engine, outbound: nothing. It answers the backend and needs no one: no DNS, no
+# internet, no other service (its probes ask it on loopback).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: assessment-engine-no-egress
+  labels:
+    {{- include "nexc.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: assessment-engine }
+  policyTypes: [Egress]
+{{- end }}
 {{- if .Values.postgres.enabled }}
 ---
 # postgres: only from the backend (and onto-intelli, when it runs, for its own database).

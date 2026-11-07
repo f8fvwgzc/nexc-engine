@@ -582,6 +582,14 @@ pub struct Notification {
     /// What the actor reacted with (`reaction`); `null` for the other kinds.
     #[schema(required = true)]
     pub emoji: Option<String>,
+    /// The change assessment an `impact` entry is about (`GET /issues/{iid}/assessments`);
+    /// `null` for the other kinds and for entries from before assessments were linked.
+    #[schema(required = true)]
+    pub assessment_id: Option<Uuid>,
+    /// The re-plan that assessment proposed, to open, review and apply on its graph (`impact`,
+    /// when the reader can see what is re-planned); `null` otherwise.
+    #[schema(required = true)]
+    pub replan: Option<crate::domain::impact::ReplanProposal>,
     pub created_at: DateTime<Utc>,
     #[schema(required = true)]
     pub read_at: Option<DateTime<Utc>>,

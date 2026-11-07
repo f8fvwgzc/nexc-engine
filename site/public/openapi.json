@@ -19280,6 +19280,7 @@
           "summary",
           "impacts",
           "violations",
+          "replan",
           "created_at"
         ],
         "properties": {
@@ -19345,6 +19346,17 @@
           },
           "recommendation": {
             "$ref": "#/components/schemas/Recommendation"
+          },
+          "replan": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReplanProposal",
+                "description": "The re-plan of `replan_root` this assessment asked for, as nexc's planner drafts it;\n`null` when it asked for none (or for one of an item the reader cannot see)."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "replan_root": {
             "type": [
@@ -23986,6 +23998,8 @@
           "alert",
           "actor",
           "emoji",
+          "assessment_id",
+          "replan",
           "created_at",
           "read_at"
         ],
@@ -24023,6 +24037,14 @@
               }
             ]
           },
+          "assessment_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The change assessment an `impact` entry is about (`GET /issues/{iid}/assessments`);\n`null` for the other kinds and for entries from before assessments were linked."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -24058,6 +24080,17 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "replan": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReplanProposal",
+                "description": "The re-plan that assessment proposed, to open, review and apply on its graph (`impact`,\nwhen the reader can see what is re-planned); `null` otherwise."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -25618,6 +25651,92 @@
             "type": "string"
           }
         }
+      },
+      "ReplanProposal": {
+        "type": "object",
+        "description": "A re-plan the engine called for, drafted by the planner and never applied\non its own: once `plan_status` is `ready`, review the plan on its graph and\napply it there (`POST /graphs/{graph_id}/plans/{plan_id}/apply`).",
+        "required": [
+          "id",
+          "status",
+          "root_kind",
+          "root_id",
+          "graph_id",
+          "plan_id",
+          "plan_status",
+          "error",
+          "starts_at",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why no plan was drafted (`skipped`), or why the plan failed."
+          },
+          "graph_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The graph the plan is drafted in, once started: the issue's own (given one if it had none)."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "plan_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "plan_status": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PlanStatus",
+                "description": "The drafted plan's own state: `streaming`, `ready` (to review and apply), `failed` or\n`applied`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "root_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "root_kind": {
+            "$ref": "#/components/schemas/ImpactEntityKind",
+            "description": "What is re-planned: an issue (its graph) or a project."
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The earliest the planner starts; further changes to the same item push it back."
+          },
+          "status": {
+            "$ref": "#/components/schemas/ReplanStatus"
+          }
+        }
+      },
+      "ReplanStatus": {
+        "type": "string",
+        "description": "Where a re-plan proposal stands.",
+        "enum": [
+          "pending",
+          "starting",
+          "started",
+          "superseded",
+          "skipped"
+        ]
       },
       "ResetPassword": {
         "type": "object",

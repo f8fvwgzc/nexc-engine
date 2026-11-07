@@ -138,11 +138,35 @@ dependencies = [
 [[package]]
 name = "assessment-core"
 version = "0.1.0"
+source = "git+https://github.com/f8fvwgzc/assessment-engine?tag=v0.1.0#6fd88264730e7be4a3860d66b95ecaf0bbeec145"
 dependencies = [
  "chrono",
  "serde",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "assessment-grpc"
+version = "0.1.0"
+source = "git+https://github.com/f8fvwgzc/assessment-engine?tag=v0.1.0#6fd88264730e7be4a3860d66b95ecaf0bbeec145"
+dependencies = [
+ "assessment-core",
+ "chrono",
+ "prost",
+ "prost-types",
+ "protox",
+ "serde_json",
+ "subtle",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-health",
+ "tonic-prost",
+ "tonic-prost-build",
+ "tonic-reflection",
+ "tower",
+ "tracing",
 ]
 
 [[package]]
@@ -1697,6 +1721,7 @@ dependencies = [
  "anyhow",
  "argon2",
  "assessment-core",
+ "assessment-grpc",
  "async-stream",
  "async-trait",
  "aws-lc-rs",
@@ -2091,9 +2116,9 @@ dependencies = [
 
 [[package]]
 name = "pulldown-cmark"
-version = "0.13.5"
+version = "0.13.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "278e9268c93b9e498a2da46c34d90ba93a3255eb99009646398f34bc73ab36eb"
+checksum = "3db2be46835f013dd3f4fa7f5f7402c537787b54ebb6fe2b94bbdd7e2669bb7b"
 dependencies = [
  "bitflags",
  "memchr",

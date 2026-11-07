@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { HelmetProvider } from 'react-helmet-async';
-import { MemoryRouter, Route, Routes, useParams } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useParams, useSearchParams } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Notification } from '@/schemas/issue';
@@ -28,6 +28,8 @@ const mention: Notification = {
   alert: null,
   actor: { user_id: '0199eeee-0000-7000-8000-000000000004', name: 'Grace Hopper' },
   emoji: null,
+  assessment_id: null,
+  replan: null,
   created_at: at,
   read_at: null,
 };
@@ -43,6 +45,25 @@ const impact: Notification = {
   ...mention,
   id: '0199eeee-0000-7000-8000-000000000006',
   kind: 'impact',
+  assessment_id: '0199eeee-0000-7000-8000-000000000007',
+};
+
+/** The change behind it called for a re-plan of the issue, and the planner drafted one. */
+const replan: Notification = {
+  ...impact,
+  id: '0199eeee-0000-7000-8000-000000000008',
+  replan: {
+    id: '0199eeee-0000-7000-8000-000000000009',
+    status: 'started',
+    root_kind: 'issue',
+    root_id: '0199eeee-0000-7000-8000-000000000003',
+    graph_id: '0199eeee-0000-7000-8000-00000000000a',
+    plan_id: '0199eeee-0000-7000-8000-00000000000b',
+    plan_status: 'ready',
+    error: null,
+    starts_at: at,
+    created_at: at,
+  },
 };
 
 /** What the inbox holds. */
@@ -60,7 +81,14 @@ vi.mock('@/lib/api/client', () => ({
 }));
 
 function Issue() {
-  return <p>Opened {useParams().issueId}</p>;
+  const [params] = useSearchParams();
+  const plan = params.get('plan');
+  return (
+    <p>
+      Opened {useParams().issueId}
+      {plan && ` with plan ${plan}`}
+    </p>
+  );
 }
 
 function renderInbox() {
@@ -98,6 +126,23 @@ describe('an impact in the inbox', () => {
     expect(entry).toHaveTextContent('Grace Hopper changed work that affects ENG-12 Fix login');
     fireEvent.click(entry);
     expect(await screen.findByText(`Opened ${impact.issue?.id}`)).toBeInTheDocument();
+  });
+});
+
+describe('a re-plan in the inbox', () => {
+  it('says the change calls for a re-plan, and opens the issue with the drafted plan', async () => {
+    inbox = [replan];
+    renderInbox();
+    const entry = await screen.findByRole('button', { name: /calls for a re-plan of ENG-12/ });
+    expect(entry).toHaveTextContent(
+      'Grace Hopper made a change that calls for a re-plan of ENG-12 Fix login',
+    );
+    fireEvent.click(entry);
+    expect(
+      await screen.findByText(
+        `Opened ${replan.issue?.id} with plan ${replan.replan?.plan_id ?? ''}`,
+      ),
+    ).toBeInTheDocument();
   });
 });
 

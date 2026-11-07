@@ -715,7 +715,7 @@ async fn finish_run(
     )
     .await?;
     // The issues the graph executes get the result once, under the run's fence.
-    let issues = super::issue_report::report(&mut tx, &row).await?;
+    let issues = super::issue_report::report(&state.impact, &mut tx, &row).await?;
     // The seal is on record in the transaction that makes it: evidence bundles require it.
     if let Some(hash) = hash {
         seal_audit(&mut tx, &row, hash, sealed.spans).await?;

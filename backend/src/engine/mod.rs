@@ -24,6 +24,7 @@ pub mod lease;
 pub mod planner;
 pub mod policy;
 pub mod recording;
+pub mod replan;
 pub mod risk;
 pub mod scheduler;
 pub mod sso;

@@ -104,6 +104,8 @@ const REFERENCED_USERS: &str = "t.id IN (
     UNION SELECT user_id FROM llm_usage WHERE workspace_id = $1
     UNION SELECT user_id FROM notifications WHERE workspace_id = $1
     UNION SELECT actor_id FROM notifications WHERE workspace_id = $1
+    UNION SELECT actor_id FROM change_assessments WHERE workspace_id = $1
+    UNION SELECT owner_id FROM replan_proposals WHERE workspace_id = $1
     UNION SELECT created_by FROM projects WHERE workspace_id = $1
     UNION SELECT lead_id FROM projects WHERE workspace_id = $1
     UNION SELECT assignee_id FROM issues WHERE workspace_id = $1
@@ -242,6 +244,8 @@ const TABLES: &[Table] = &[
     table("notifications", IN_WORKSPACE, true),
     // What every change to an issue or a project did to the plan (`crate::domain::impact`).
     table("change_assessments", IN_WORKSPACE, true),
+    // The re-plans they proposed, with the graphs and plans they were drafted in.
+    table("replan_proposals", IN_WORKSPACE, true),
     // Folders refer to their parents and files to the file they were copied from: each table
     // in one statement. The versions hold the content, up to 1 MiB each.
     table("artifact_folders", IN_WORKSPACE, false),

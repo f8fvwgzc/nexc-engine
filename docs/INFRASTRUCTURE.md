@@ -148,14 +148,15 @@ in-process histograms, every HTTP route by its template and every gRPC call the 
 figures over time, for every replica, come from Prometheus: `/metrics` (admin bearer or
 `NEXC_METRICS_TOKEN`) serves `nexc_http_request_duration_seconds`,
 `nexc_grpc_client_latency_seconds{service, method}`, `nexc_cache_lookups_total{cache, result}`,
-`nexc_llm_breaker_total{provider, event}` beside the run, token, span, firewall, gateway, alert
-and A2A counters, and `deploy/grafana/nexc-engine.json` is a dashboard over them (import it into
+`nexc_llm_breaker_total{provider, event}`, `nexc_assessments_total{outcome}`,
+`nexc_replan_proposals_total{event}` beside the run, token, span, firewall, gateway, alert and A2A
+counters, and `deploy/grafana/nexc-engine.json` is a dashboard over them (import it into
 Grafana with a Prometheus data source; the variable `datasource` picks it).
 
 ## gRPC channels, keepalive and the LLM circuit breaker
 
 The backend opens one channel to each gRPC service it talks to (the agent runtime, onto-intelli,
-the OTLP collector) when it starts and keeps it for the life of the process: `NEXC_GRPC_POOL_SIZE`
+the OTLP collector, the change-impact engine) when it starts and keeps it for the life of the process: `NEXC_GRPC_POOL_SIZE`
 connections (2), each with HTTP/2 keepalive (`NEXC_GRPC_KEEPALIVE_SECS` 30, dropped after
 `NEXC_GRPC_KEEPALIVE_TIMEOUT_SECS` 10 without an answer), requests and streams spread over them.
 The Agent Firewall server pings its clients the same way. `docker-compose.yml` and the Helm chart
@@ -417,6 +418,52 @@ answers 404 on those endpoints. Build the images (`docker compose up -d --build`
 (Helm), or tag a release once CI is green.
 
 <!-- #endregion secrets -->
+## The change-impact engine: versions and re-plans
+
+<!-- #region assessment -->
+[assessment-engine](https://github.com/f8fvwgzc/assessment-engine) gives every issue and project
+its semantic version and says what each change to one does to the plan (`docs/CONTRACT.md`,
+"Change impact"). It is a stateless gRPC service (`assessment.v1.AssessmentEngine`, image
+`ghcr.io/f8fvwgzc/assessment-engine`, linux/amd64 and arm64): the backend sends it each change with
+the item's neighbourhood and history (`Assess`) in the transaction that writes the change, and
+keeps the versions and pins in PostgreSQL, so the engine stores nothing, needs no volume and scales
+like any stateless tier. The backend's client is the engine's own crate (`assessment-grpc`, by the
+same release tag as the image, `backend/Cargo.toml`); bump the two together.
+
+- **Compose** runs `assessment-engine` on the internal `impact` network, reachable from the backend
+  alone and never published, with a healthcheck (`assessment-engine health`, `grpc.health.v1`).
+  `make init` generates `NEXC_ASSESSMENT_TOKEN`, which the backend sends and the engine requires
+  (`ASSESSMENT_AUTH_TOKEN`).
+- **Kubernetes** (`deploy/k8s/assessment-engine.yaml`) and **Helm** (`assessmentEngine.*`) run two
+  replicas behind the Service `assessment-engine:50061`; NetworkPolicies admit the backend alone
+  and let the engine reach nothing (no DNS, no internet). The token is the Secret's
+  `NEXC_ASSESSMENT_TOKEN` (`scripts/init-env.sh --k8s` generates it). An engine of your own:
+  `NEXC_ASSESSMENT_URL` (Helm: `backend.assessment.url`, `assessmentEngine.enabled=false`),
+  `https://` with `NEXC_GRPC_CA_FILE` as every channel.
+- **`make dev`** runs it from a checkout next to this repository (`../assessment-engine`), else
+  the pinned image with Docker.
+
+The call is short by design: the changed item's row is locked while it runs, so it has
+`NEXC_ASSESSMENT_TIMEOUT_MS` (2000) to answer, connecting included. An engine that is down,
+refuses the token or misses the deadline never fails an edit: the change saves unassessed, its
+version stays, a warning is logged, and calls rest for 5 seconds after the engine was unreachable
+so a burst of edits does not each wait out the deadline. `nexc_assessments_total{outcome}`
+(`assessed`, `refused`, `unavailable`, `timeout`, `resting`) and the `Assess` latency in
+`nexc_grpc_client_latency_seconds` show how it goes; `nexc doctor` checks that it serves and takes
+the token.
+
+**Re-plans.** When the engine recommends a partial or full re-plan, the backend proposes one
+(`NEXC_REPLAN_PROPOSALS`): once the change commits and `NEXC_REPLAN_DEBOUNCE_SECS` (30) pass with
+no further change to the same item, the planner drafts a plan of that issue's graph (the issue gets
+one when it has none), as the person who made the change, with their LLM key and guardrails. It is
+never applied on its own: it waits on the graph for someone to review and apply it, and the issue's
+owners find it from their `impact` inbox entry. A burst of edits starts one LLM run; at most one
+proposal per item is open, and a newer change supersedes it. A project has no graph: a re-plan of
+one is recorded as skipped, with the reason, and its issues' owners are told what each needs.
+`nexc_replan_proposals_total{event}` counts what happens to them; set `NEXC_REPLAN_PROPOSALS=false`
+to keep the assessments without spending LLM calls on drafts.
+<!-- #endregion assessment -->
+
 ## onto-intelli (optional): the audit's query engine
 
 <!-- #region onto -->

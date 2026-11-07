@@ -180,6 +180,7 @@ flowchart LR
         api["backend - nexc serve<br/>Rust / axum<br/>REST, SSE, WebSocket<br/>graph engine, scheduler,<br/>memory, Planner"]
         rt["agent-runtime<br/>Python / FastAPI<br/>agents, tools, sandbox"]
         db[("PostgreSQL 17")]
+        ae["assessment-engine<br/>Rust / gRPC<br/>change impact, versions"]
         sym["texc-symphony<br/>(optional)<br/>coding agents"]
     end
 
@@ -189,6 +190,7 @@ flowchart LR
     web -- "/api (HTTP, SSE, WS)" --> api
     api -- "SQL + LISTEN/NOTIFY" --> db
     api -- "POST /v1/execute<br/>NDJSON stream, bearer token" --> rt
+    api -- "Assess (gRPC), bearer token" --> ae
     api -- "WORKFLOW.md + /api/v1" --> sym
     api -- "plans, llm nodes" --> llm
     rt -- "agent tool loop" --> llm
@@ -203,6 +205,11 @@ flowchart LR
   tool loop (`write_file`, `make_docx`, `spawn_subagent`, optional sandboxed `run_python`). Internal
   only; authenticated with a shared bearer token.
 - **PostgreSQL 17** – the only database.
+- **assessment-engine** – the change-impact engine
+  ([f8fvwgzc/assessment-engine](https://github.com/f8fvwgzc/assessment-engine)): every change to an
+  issue or a project is assessed over gRPC and versioned (MAJOR, MINOR, PATCH), with the items it
+  affects and whether to re-plan; a re-plan it calls for is drafted by the Planner for a person to
+  apply. Stateless and internal only; an engine that is down fails no edit.
 - **texc-symphony** (optional) – executes `executor: symphony` nodes as real coding tasks.
 
 Request flows (plan and run) are described with sequence diagrams in
@@ -226,7 +233,7 @@ nexc-engine/
 ├── scripts/             init-env, dev, db, doctor and minikube helpers
 ├── docs/                CONTRACT.md (source of truth), ARCHITECTURE.md, AGENTSECOPS.md, media/
 ├── .github/             CI, CodeQL, release workflows, issue templates, Dependabot
-├── docker-compose.yml   Full stack: frontend, backend, agent-runtime, postgres (+ symphony profile)
+├── docker-compose.yml   Full stack: frontend, backend, agent-runtime, assessment-engine, postgres (+ symphony profile)
 ├── docker-compose.demo.yml  Overlay that pins the offline demo provider
 ├── Makefile             `make help` lists every command
 └── .env.example         Every configuration variable with safe defaults
@@ -264,8 +271,8 @@ make docker-logs      # follow logs
 make docker-down      # stop (named volumes keep your data)
 ```
 
-Only nginx is published (`NEXC_HTTP_PORT`, default 8080). The backend, runtime and database sit on
-internal networks; every container runs as non-root with a read-only root filesystem,
+Only nginx is published (`NEXC_HTTP_PORT`, default 8080). The backend, runtime, change-impact
+engine and database sit on internal networks; every container runs as non-root with a read-only root filesystem,
 `cap_drop: ALL` and `no-new-privileges`. `make demo` forces demo mode regardless of `.env`.
 `make demo-onto` adds [onto-intelli](https://github.com/f8fvwgzc/onto-intelli) (built from a
 checkout next to this one, `docker-compose.onto.yml`, profile `onto`, on a PostgreSQL server of

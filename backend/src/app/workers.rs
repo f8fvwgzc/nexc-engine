@@ -7,7 +7,7 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use super::AppState;
-use crate::engine::{knowledge, scheduler};
+use crate::engine::{knowledge, replan, scheduler};
 use crate::ontology::{export, migrate};
 use crate::{alerting, firewall, otlp, planner, realtime, repo};
 
@@ -34,6 +34,7 @@ pub fn spawn(state: &AppState, shutdown: CancellationToken) {
     );
     tokio::spawn(scheduler::dispatcher(state.clone(), shutdown.clone()));
     tokio::spawn(scheduler::keep_leases(state.clone(), shutdown.clone()));
+    tokio::spawn(replan::worker(state.clone(), shutdown.clone()));
     if export::spawn(state, shutdown.clone()) {
         tracing::info!(
             every_secs = export::TICK.as_secs(),

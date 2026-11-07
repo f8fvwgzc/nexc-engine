@@ -109,6 +109,7 @@ export default defineConfig({
           { text: 'Poll indexes and concurrent builds', link: '/operate/indexes' },
           { text: 'Single sign-on', link: '/operate/sso' },
           { text: 'onto-intelli', link: '/operate/ontology' },
+          { text: 'Change impact and re-plans', link: '/operate/assessment' },
           { text: 'Workspace transfers', link: '/operate/transfers' },
           { text: 'Alerts', link: '/operate/alerts' },
           { text: 'SIEM export', link: '/operate/siem' },

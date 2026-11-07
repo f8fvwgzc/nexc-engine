@@ -100,6 +100,20 @@ http{{ if include "nexc.tlsHost" (dict "host" $o.ingress.host "root" .) }}s{{ en
 {{- end -}}
 {{- end }}
 
+{{/*
+The address of the change-impact engine the backend calls: backend.assessment.url, else the
+release's Service when assessmentEngine.enabled; empty when there is none. Guarded for
+--reuse-values from an older release, which has neither.
+*/}}
+{{- define "nexc.assessmentUrl" -}}
+{{- $url := dig "assessment" "url" "" .Values.backend -}}
+{{- if $url -}}
+{{ $url }}
+{{- else if dig "enabled" false (.Values.assessmentEngine | default dict) -}}
+http://assessment-engine:{{ .Values.assessmentEngine.port }}
+{{- end -}}
+{{- end }}
+
 {{/* What runtime-egress lets through (runtime.egress.allow; guarded for --reuse-values from an
 older release, which has no runtime.egress). */}}
 {{- define "nexc.egressAllow" -}}

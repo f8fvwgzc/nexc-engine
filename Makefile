@@ -17,7 +17,7 @@ LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a;
 RUNTIME_ENV := env -u NEXC_MASTER_KEY -u NEXC_AGENT_TOKEN_SIGNING_KEY -u NEXC_FIREWALL_SIGNING_KEY \
   -u NEXC_JWT_SECRET -u NEXC_DATABASE_URL -u POSTGRES_PASSWORD -u NEXC_METRICS_TOKEN \
   -u NEXC_ONTO_TOKEN -u ONTO_SESSION_SECRET -u ONTO_POSTGRES_PASSWORD -u NEXC_ADMIN_PASSWORD \
-  -u ANTHROPIC_API_KEY -u NEXC_EMBED_API_KEY -u NEXC_OIDC_CLIENT_SECRET
+  -u ANTHROPIC_API_KEY -u NEXC_EMBED_API_KEY -u NEXC_OIDC_CLIENT_SECRET -u NEXC_ASSESSMENT_TOKEN
 
 .PHONY: help init tls-cert setup dev dev-backend dev-frontend dev-runtime db-up db-down db-shell \
         backup backup-check restore prove prove-trace prove-identity prove-audit prove-policy prove-agentsecops prove-gateway prove-firewall prove-api test-worst-case \
@@ -46,7 +46,7 @@ setup: ## Install dependencies: cargo fetch, frontend packages, runtime venv
 
 ##@ Local development
 
-dev: db-up ## Run PostgreSQL + backend + runtime + frontend (+ onto-intelli from ../onto-intelli when NEXC_ONTO_MODE=service) together (Ctrl-C stops all)
+dev: db-up ## Run PostgreSQL + backend + runtime + frontend + the change-impact engine (+ onto-intelli from ../onto-intelli when NEXC_ONTO_MODE=service) together (Ctrl-C stops all)
 	@scripts/dev.sh
 
 dev-backend: ## Run only the backend (nexc serve) on :8080

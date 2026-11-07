@@ -60,6 +60,12 @@ pub fn settings(overrides: &[(&str, &str)]) -> Settings {
         // The stand-in servers (MCP, A2A, alert receivers, the transfer's database) listen on
         // loopback, which the SSRF guard refuses unless the operator opens it.
         ("NEXC_EGRESS_ALLOW_PRIVATE", "127.0.0.0/8,::1"),
+        // A `TestApp` serves the real change-impact engine in-process and turns this on
+        // (`assessment_engine`); settings built on their own reach no engine.
+        ("NEXC_ASSESSMENT_ENABLED", "false"),
+        // Re-plans spend LLM calls: tests/impact.rs turns them on, with no debounce.
+        ("NEXC_REPLAN_PROPOSALS", "false"),
+        ("NEXC_REPLAN_DEBOUNCE_SECS", "0"),
     ]
     .iter()
     .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
@@ -244,17 +250,60 @@ pub struct Resp {
     pub body: Value,
 }
 
-impl TestApp {
-    /// App with the fake LLM and the run dispatcher started.
-    pub async fn new(pool: PgPool, overrides: &[(&str, &str)]) -> Self {
-        let fake = Arc::new(FakeLlm::default());
-        let state = AppState::with_provider(
-            settings(overrides),
-            pool,
-            http_client().unwrap(),
-            fake.clone(),
+/// Serves the real change-impact engine (`assessment-grpc`'s service, stateless
+/// and in memory, as the `assessment-engine` image runs it) on a loopback port
+/// for as long as the test's runtime lives, requiring `token` when given.
+/// Returns its URL for `NEXC_ASSESSMENT_URL`.
+pub async fn assessment_engine(token: Option<&str>) -> String {
+    use assessment_grpc::auth::BearerAuth;
+    use assessment_grpc::server::{ServerOptions, serve_with_incoming_shutdown};
+    use assessment_grpc::service::AssessmentService;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener);
+    let options = ServerOptions::default().with_auth(BearerAuth::from_option(token));
+    tokio::spawn(async move {
+        serve_with_incoming_shutdown(
+            AssessmentService::in_memory(),
+            options,
+            incoming,
+            std::future::pending(),
         )
+        .await
         .unwrap();
+    });
+    url
+}
+
+/// `overrides`, plus an engine of its own (`assessment_engine`) unless they
+/// say where the engine is or that there is none.
+async fn with_engine(overrides: &[(&str, &str)]) -> Vec<(String, String)> {
+    let mut vars: Vec<(String, String)> = overrides
+        .iter()
+        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+        .collect();
+    let chosen = overrides
+        .iter()
+        .any(|(k, _)| matches!(*k, "NEXC_ASSESSMENT_URL" | "NEXC_ASSESSMENT_ENABLED"));
+    if !chosen {
+        vars.push(("NEXC_ASSESSMENT_ENABLED".into(), "true".into()));
+        vars.push(("NEXC_ASSESSMENT_URL".into(), assessment_engine(None).await));
+    }
+    vars
+}
+
+impl TestApp {
+    /// App with the fake LLM, the run dispatcher and the re-plan worker
+    /// started, and the change-impact engine served in-process (unless
+    /// `overrides` name another one, or none).
+    pub async fn new(pool: PgPool, overrides: &[(&str, &str)]) -> Self {
+        let vars = with_engine(overrides).await;
+        let vars: Vec<(&str, &str)> = vars.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let fake = Arc::new(FakeLlm::default());
+        let state =
+            AppState::with_provider(settings(&vars), pool, http_client().unwrap(), fake.clone())
+                .unwrap();
         Self::start(state, fake)
     }
 
@@ -290,6 +339,10 @@ impl TestApp {
                 shutdown.clone(),
             )),
             tokio::spawn(nexc::engine::scheduler::keep_leases(
+                state.clone(),
+                shutdown.clone(),
+            )),
+            tokio::spawn(nexc::engine::replan::worker(
                 state.clone(),
                 shutdown.clone(),
             )),

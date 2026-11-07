@@ -52,6 +52,7 @@ pub async fn run() -> ExitCode {
     check_backends(&mut r, &settings).await;
     check_runtime_grpc(&mut r, &settings).await;
     check_ontology(&mut r, &settings).await;
+    check_assessment(&mut r, &settings).await;
     check_firewall(&mut r, &settings);
     check_agent_tokens(&mut r, &settings);
     check_otlp(&mut r, &settings).await;
@@ -195,6 +196,131 @@ async fn check_runtime_grpc(r: &mut Report, settings: &Settings) {
             "runtime grpc",
             format!("{url}: no answer within 3 seconds"),
         ),
+    }
+}
+
+/// The change-impact engine (`NEXC_ASSESSMENT_URL`): whether it serves
+/// (`grpc.health.v1`) and takes the backend's token (`GetPolicy`), and how
+/// re-plans are proposed. An engine that is down fails no edit, so this warns.
+async fn check_assessment(r: &mut Report, settings: &Settings) {
+    use assessment_grpc::client::{AssessmentClient, ClientErrorKind};
+    use tonic_health::pb::HealthCheckRequest;
+    use tonic_health::pb::health_check_response::ServingStatus;
+    use tonic_health::pb::health_client::HealthClient;
+
+    if !settings.assessment_enabled {
+        return r.line(
+            Level::Warn,
+            "assessment",
+            "off (NEXC_ASSESSMENT_ENABLED=false): changes to issues and projects are neither versioned nor assessed",
+        );
+    }
+    let url = settings.assessment_url.as_str();
+    let timeout = Duration::from_secs(3);
+    let channel = crate::rpc::ChannelSettings {
+        pool: 1,
+        ..settings.grpc_channel().connect_timeout(timeout)
+    };
+    let channel = match crate::rpc::channel(url, &channel) {
+        Ok(channel) => channel,
+        Err(err) => return r.line(Level::Fail, "assessment", format!("{url}: {err}")),
+    };
+    let mut health_client = HealthClient::new(channel.clone());
+    let health = health_client.check(HealthCheckRequest {
+        service: "assessment.v1.AssessmentEngine".into(),
+    });
+    match tokio::time::timeout(timeout, health).await {
+        Ok(Ok(reply)) if reply.get_ref().status() == ServingStatus::Serving => {}
+        Ok(Ok(reply)) => {
+            return r.line(
+                Level::Warn,
+                "assessment",
+                format!(
+                    "{url}: {} (changes save unassessed meanwhile)",
+                    reply.get_ref().status().as_str_name()
+                ),
+            );
+        }
+        Ok(Err(status)) => {
+            return r.line(
+                Level::Warn,
+                "assessment",
+                format!(
+                    "{url}: {} ({}); changes save unassessed meanwhile",
+                    status.message(),
+                    status.code()
+                ),
+            );
+        }
+        Err(_) => {
+            return r.line(
+                Level::Warn,
+                "assessment",
+                format!("{url}: no answer within 3 seconds; changes save unassessed meanwhile"),
+            );
+        }
+    }
+    let mut client = AssessmentClient::from_channel(channel);
+    if let Some(token) = &settings.assessment_token {
+        client = match client.with_bearer_token(token.expose()) {
+            Ok(client) => client,
+            Err(err) => {
+                return r.line(
+                    Level::Fail,
+                    "assessment",
+                    format!("NEXC_ASSESSMENT_TOKEN: {err}"),
+                );
+            }
+        };
+    }
+    match tokio::time::timeout(timeout, client.get_policy(None)).await {
+        Ok(Ok(_)) => r.line(
+            Level::Ok,
+            "assessment",
+            format!(
+                "{url}: serving, {}; deadline {} ms",
+                if settings.assessment_token.is_some() {
+                    "takes the token"
+                } else {
+                    "no token sent"
+                },
+                settings.assessment_timeout.as_millis()
+            ),
+        ),
+        Ok(Err(err)) if err.kind() == ClientErrorKind::Status(tonic::Code::Unauthenticated) => r.line(
+            Level::Fail,
+            "assessment",
+            format!(
+                "{url}: refuses {}: set NEXC_ASSESSMENT_TOKEN to the engine's ASSESSMENT_AUTH_TOKEN",
+                if settings.assessment_token.is_some() {
+                    "the token"
+                } else {
+                    "calls without a token"
+                }
+            ),
+        ),
+        Ok(Err(err)) => r.line(Level::Warn, "assessment", format!("{url}: {err}")),
+        Err(_) => r.line(
+            Level::Warn,
+            "assessment",
+            format!("{url}: no answer within 3 seconds"),
+        ),
+    }
+    if settings.replan_proposals {
+        r.line(
+            Level::Ok,
+            "re-plans",
+            format!(
+                "proposed when the engine recommends one, drafted after {} s without a further change; never applied without a person",
+                settings.replan_debounce.as_secs()
+            ),
+        );
+    } else {
+        r.line(
+            Level::Ok,
+            "re-plans",
+            "not proposed (NEXC_REPLAN_PROPOSALS=false)",
+        );
     }
 }
 

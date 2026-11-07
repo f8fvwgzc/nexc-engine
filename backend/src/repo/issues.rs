@@ -1313,6 +1313,8 @@ impl FromRow<'_, PgRow> for Notification {
                 name: actor_name.unwrap_or_default(),
             }),
             emoji: row.try_get("emoji")?,
+            assessment_id: row.try_get("assessment_id")?,
+            replan: super::impact::replan_col(row)?,
             created_at: row.try_get("created_at")?,
             read_at: row.try_get("read_at")?,
         })
@@ -1495,14 +1497,22 @@ pub async fn inbox(
                 a.expires_at AS approval_expires_at,
                 n.alert_id, al.kind AS alert_kind, al.severity AS alert_severity, al.rule AS alert_rule,
                 al.title AS alert_title, al.principal AS alert_principal, al.run_id AS alert_run_id,
-                al.graph_id AS alert_graph_id
-         FROM notifications n
+                al.graph_id AS alert_graph_id, n.assessment_id, ",
+        super::impact::replan_cols!(),
+        " FROM notifications n
          LEFT JOIN issues i ON i.id = n.issue_id
          LEFT JOIN teams t ON t.id = i.team_id
          LEFT JOIN approvals a ON a.id = n.approval_id
          LEFT JOIN alerts al ON al.id = n.alert_id
          JOIN workspace_members wm ON wm.workspace_id = n.workspace_id AND wm.user_id = $1
          LEFT JOIN users u ON u.id = n.actor_id
+         LEFT JOIN change_assessments ca ON ca.id = n.assessment_id
+         LEFT JOIN replan_proposals rq ON rq.id = ca.replan_id
+         LEFT JOIN teams rt ON rt.id = rq.team_id
+         LEFT JOIN replan_proposals rp ON rp.id = rq.id AND (rq.team_id IS NULL OR ",
+        team_visible!("rt", "wm", "$1"),
+        ")
+         LEFT JOIN plans pl ON pl.id = rp.plan_id
          WHERE n.user_id = $1 AND n.workspace_id = $2
            AND (n.issue_id IS NULL OR ",
         team_visible!("t", "wm", "$1"),

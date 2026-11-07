@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use super::enum_col;
 use crate::domain::impact::{
-    ChangeAssessment, Impact, IssueNode, NewAssessment, PlanViolation, ProjectNode,
+    ChangeAssessment, Impact, IssueNode, NewAssessment, PlanViolation, ProjectNode, ReplanProposal,
 };
 use crate::domain::issue::IssuePerson;
 
@@ -362,6 +362,59 @@ pub async fn insert_assessment(
     .await
 }
 
+/// The columns [`replan_col`] reads: the proposal `rp` (joined through an
+/// assessment's `replan_id`) and its plan `pl`.
+macro_rules! replan_cols {
+    () => {
+        "rp.id AS rp_id, rp.status AS rp_status, rp.root_kind AS rp_root_kind,
+         rp.root_id AS rp_root_id, rp.graph_id AS rp_graph_id, rp.plan_id AS rp_plan_id,
+         pl.status AS rp_plan_status, COALESCE(rp.error, pl.error) AS rp_error,
+         rp.not_before AS rp_not_before, rp.created_at AS rp_created_at"
+    };
+}
+pub(crate) use replan_cols;
+
+/// The re-plan proposal [`replan_cols`] selected, if any.
+pub(crate) fn replan_col(row: &PgRow) -> Result<Option<ReplanProposal>, sqlx::Error> {
+    let Some(id) = row.try_get::<Option<Uuid>, _>("rp_id")? else {
+        return Ok(None);
+    };
+    let plan_status = match row.try_get::<Option<String>, _>("rp_plan_status")? {
+        Some(_) => Some(enum_col(row, "rp_plan_status")?),
+        None => None,
+    };
+    Ok(Some(ReplanProposal {
+        id,
+        status: enum_col(row, "rp_status")?,
+        root_kind: enum_col(row, "rp_root_kind")?,
+        root_id: row.try_get("rp_root_id")?,
+        graph_id: row.try_get("rp_graph_id")?,
+        plan_id: row.try_get("rp_plan_id")?,
+        plan_status,
+        error: row.try_get("rp_error")?,
+        starts_at: row.try_get("rp_not_before")?,
+        created_at: row.try_get("rp_created_at")?,
+    }))
+}
+
+/// An assessment as [`ChangeAssessment`] reads it, with its re-plan proposal.
+macro_rules! assessment_select {
+    ($tail:literal) => {
+        concat!(
+            "SELECT a.id, a.entity_kind, a.entity_id, a.actor_id, u.name AS actor_name, a.cause,
+                    a.bump, a.previous_version, a.next_version, a.score, a.level,
+                    a.recommendation, a.confidence, a.replan_root, a.summary, a.impacts,
+                    a.violations, a.created_at, ",
+            replan_cols!(),
+            " FROM change_assessments a
+             LEFT JOIN users u ON u.id = a.actor_id
+             LEFT JOIN replan_proposals rp ON rp.id = a.replan_id
+             LEFT JOIN plans pl ON pl.id = rp.plan_id ",
+            $tail
+        )
+    };
+}
+
 impl FromRow<'_, PgRow> for ChangeAssessment {
     fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
         let actor_id: Option<Uuid> = row.try_get("actor_id")?;
@@ -388,9 +441,21 @@ impl FromRow<'_, PgRow> for ChangeAssessment {
             summary: row.try_get("summary")?,
             impacts,
             violations,
+            replan: replan_col(row)?,
             created_at: row.try_get("created_at")?,
         })
     }
+}
+
+/// One assessment, whoever may read it (engine use: the re-plan it seeds).
+pub async fn assessment(
+    db: impl PgExecutor<'_>,
+    id: Uuid,
+) -> Result<Option<ChangeAssessment>, sqlx::Error> {
+    sqlx::query_as(assessment_select!("WHERE a.id = $1"))
+        .bind(id)
+        .fetch_optional(db)
+        .await
 }
 
 /// The assessments of changes to `entity_id` or that asked something of it,
@@ -405,14 +470,11 @@ pub async fn assessments(
     limit: i64,
 ) -> Result<Vec<ChangeAssessment>, sqlx::Error> {
     sqlx::query_as(concat!(
-        "SELECT a.id, a.entity_kind, a.entity_id, a.actor_id, u.name AS actor_name, a.cause,
-                a.bump, a.previous_version, a.next_version, a.score, a.level, a.recommendation,
-                a.confidence, a.replan_root, a.summary, a.impacts, a.violations, a.created_at
-         FROM change_assessments a
-         JOIN workspace_members wm ON wm.workspace_id = a.workspace_id AND wm.user_id = $1
-         LEFT JOIN teams t ON t.id = a.team_id
-         LEFT JOIN users u ON u.id = a.actor_id
-         WHERE a.workspace_id = $2 AND (a.entity_id = $3 OR a.impacted @> ARRAY[$3::uuid])
+        assessment_select!(
+            "JOIN workspace_members wm ON wm.workspace_id = a.workspace_id AND wm.user_id = $1
+             LEFT JOIN teams t ON t.id = a.team_id"
+        ),
+        " WHERE a.workspace_id = $2 AND (a.entity_id = $3 OR a.impacted @> ARRAY[$3::uuid])
            AND (a.team_id IS NULL OR ",
         team_visible!("t", "wm", "$1"),
         ") ORDER BY a.created_at DESC, a.id DESC LIMIT $4"
@@ -460,12 +522,14 @@ pub async fn visible(
 /// Tells the owners of the issues `issue_ids` — their assignee and creator —
 /// that the actor's change affects them (`impact`), and the leads of the
 /// projects `project_ids` that it affects their project, as an entry about
-/// issue `about` (the changed issue; none for a project's own change). Never
-/// the actor (`None` for a change nobody made), only members who can see the
-/// issue the entry is about.
+/// issue `about` (the changed issue; none for a project's own change), and
+/// about assessment `assessment_id` (through which the inbox shows the re-plan
+/// it proposed). Never the actor (`None` for a change nobody made), only
+/// members who can see the issue the entry is about.
 pub async fn notify_impacted(
     db: impl PgExecutor<'_>,
     actor_id: Option<Uuid>,
+    assessment_id: Uuid,
     issue_ids: &[Uuid],
     project_ids: &[Uuid],
     about: Option<Uuid>,
@@ -474,8 +538,9 @@ pub async fn notify_impacted(
         return Ok(0);
     }
     let done = sqlx::query(concat!(
-        "INSERT INTO notifications (id, user_id, workspace_id, issue_id, actor_id, kind)
-         SELECT gen_random_uuid(), r.user_id, i.workspace_id, i.id, $2::uuid, 'impact'
+        "INSERT INTO notifications (id, user_id, workspace_id, issue_id, actor_id, kind,
+                                    assessment_id)
+         SELECT gen_random_uuid(), r.user_id, i.workspace_id, i.id, $2::uuid, 'impact', $5::uuid
          FROM (SELECT i.id, x AS user_id FROM issues i
                    CROSS JOIN LATERAL unnest(ARRAY[i.assignee_id, i.creator_id]) x
                WHERE i.id = ANY($1)
@@ -492,6 +557,7 @@ pub async fn notify_impacted(
     .bind(actor_id)
     .bind(project_ids)
     .bind(about)
+    .bind(assessment_id)
     .execute(db)
     .await?;
     Ok(done.rows_affected())

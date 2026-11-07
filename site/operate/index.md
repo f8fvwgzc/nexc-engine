@@ -11,6 +11,7 @@ This section is for whoever runs nexc-engine: how to deploy it, keep its data sa
 | [Backups](/operate/backups)                            | Back up, check and restore the database and the files on disk.                        |
 | [Infrastructure](/operate/infrastructure)              | The one PostgreSQL database, secrets, queues and caches.                               |
 | [Single sign-on](/operate/sso)                         | Sign in through an OpenID Connect provider, with roles from its groups.               |
+| [Change impact and re-plans](/operate/assessment)      | The engine that versions every change, and the re-plans it has drafted.               |
 | [Workspace transfers](/operate/transfers)              | Move one workspace to a database its owner controls.                                  |
 | [Alerts](/operate/alerts)                              | Route alerts and approvals to a webhook or Slack.                                     |
 | [SIEM export](/operate/siem)                           | Pull alerts and the audit log without webhooks.                                       |

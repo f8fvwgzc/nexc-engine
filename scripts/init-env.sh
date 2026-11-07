@@ -60,6 +60,8 @@ fill NEXC_MASTER_KEY "$(openssl rand -base64 32)"
 fill NEXC_RUNTIME_TOKEN "$(openssl rand -hex 32)"
 fill NEXC_METRICS_TOKEN "$(openssl rand -hex 32)"
 fill NEXC_ONTO_TOKEN "$(openssl rand -hex 32)"
+# What the change-impact engine requires of the backend (its ASSESSMENT_AUTH_TOKEN).
+fill NEXC_ASSESSMENT_TOKEN "$(openssl rand -hex 32)"
 # A new install gets a signing key of its own. An existing one keeps the key it signed with (derived
 # from NEXC_MASTER_KEY when none is set): a new key there is a rotation (docs/AGENTSECOPS.md §12).
 if [[ "$FRESH" == 1 ]]; then

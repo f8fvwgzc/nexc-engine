@@ -1,0 +1,82 @@
+{{- if .Values.assessmentEngine.enabled }}
+# The change-impact engine (https://github.com/f8fvwgzc/assessment-engine): the backend assesses
+# every change to an issue or a project over gRPC (`Assess`, stateless: the versions and pins stay
+# in PostgreSQL), so it stores nothing and scales like any stateless tier. Internal only (the
+# NetworkPolicy admits the backend alone and lets it reach nothing). An engine that is down fails
+# no edit: the change saves unassessed and its version stays.
+apiVersion: v1
+kind: Service
+metadata:
+  name: assessment-engine
+  labels:
+    app.kubernetes.io/name: assessment-engine
+    {{- include "nexc.labels" . | nindent 4 }}
+spec:
+  selector: { app.kubernetes.io/name: assessment-engine }
+  ports:
+    - name: grpc
+      port: {{ .Values.assessmentEngine.port }}
+      targetPort: grpc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: assessment-engine
+  labels:
+    app.kubernetes.io/name: assessment-engine
+    app.kubernetes.io/component: impact
+    {{- include "nexc.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas.assessmentEngine }}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels: { app.kubernetes.io/name: assessment-engine }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: assessment-engine, app.kubernetes.io/component: impact }
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 15
+      securityContext:
+        {{- include "nexc.podSecurity" (dict "uid" 10001) | nindent 8 }}
+      containers:
+        - name: assessment-engine
+          image: {{ include "nexc.image" (dict "image" .Values.images.assessmentEngine "chart" .Chart) }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.assessmentEngine.port }}
+          env:
+            - name: ASSESSMENT_ADDR
+              value: "0.0.0.0:{{ .Values.assessmentEngine.port }}"
+            - name: ASSESSMENT_LOG_FORMAT
+              value: json
+            # Required of every call (health and reflection stay open); the backend sends the same
+            # NEXC_ASSESSMENT_TOKEN. An empty or absent token requires none.
+            - name: ASSESSMENT_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef: { name: {{ include "nexc.secretName" . }}, key: NEXC_ASSESSMENT_TOKEN, optional: true }
+          # grpc.health.v1, asked by the engine's own binary (the image has no grpc_health_probe).
+          livenessProbe:
+            exec:
+              command: [assessment-engine, health, --endpoint, "http://127.0.0.1:{{ .Values.assessmentEngine.port }}"]
+            periodSeconds: 15
+            timeoutSeconds: 5
+          readinessProbe:
+            exec:
+              command: [assessment-engine, health, --endpoint, "http://127.0.0.1:{{ .Values.assessmentEngine.port }}"]
+            periodSeconds: 5
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml .Values.assessmentEngine.resources | nindent 12 }}
+          securityContext:
+            {{- include "nexc.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 16Mi }
+{{- end }}

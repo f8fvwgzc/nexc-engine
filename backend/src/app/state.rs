@@ -55,6 +55,11 @@ pub struct AppState {
     pub sessions: Arc<SessionGate>,
     pub engine: Arc<Engine>,
     pub symphony: Arc<SymphonyBridge>,
+    /// The change-impact engine every change to an issue or a project is assessed by (one gRPC
+    /// channel, shared).
+    pub impact: crate::engine::impact::Assessor,
+    /// Wakes the re-plan worker once a change that took up a re-plan committed.
+    pub replans: Arc<tokio::sync::Notify>,
     pub health: Arc<HealthCache>,
     /// Decoded memories per owner, so retrieval does not hit the database every time.
     pub memories: Arc<MemoryIndex>,
@@ -199,6 +204,13 @@ impl AppState {
                 tracing::warn!(url = %settings.runtime_grpc_url,
                     "the runtime's gRPC stream is plaintext, and it carries LLM keys: set NEXC_RUNTIME_GRPC_URL=https://… (NEXC_GRPC_CA_FILE for a private CA) and RUNTIME_GRPC_TLS_* on the runtime, unless a network policy or a mesh keeps the hop private");
             }
+            if settings.assessment_enabled
+                && settings.assessment_token.is_some()
+                && settings.assessment_url.starts_with("http://")
+            {
+                tracing::warn!(url = %settings.assessment_url,
+                    "the change-impact engine is reached over plaintext gRPC, with its token and the issues' text: use an https:// NEXC_ASSESSMENT_URL unless a network policy or a mesh keeps the hop private");
+            }
             if settings
                 .onto_url
                 .as_deref()
@@ -251,6 +263,8 @@ impl AppState {
             sessions: Arc::default(),
             engine: Arc::new(Engine::new(hub.instance())),
             symphony: Arc::new(SymphonyBridge::new(&settings)),
+            impact: crate::engine::impact::Assessor::new(&settings, metrics.clone())?,
+            replans: Arc::default(),
             health: Arc::new(HealthCache::default()),
             memories: Arc::new(MemoryIndex::default()),
             passage_vectors: Arc::default(),

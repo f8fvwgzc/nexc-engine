@@ -366,8 +366,9 @@ pub async fn reply(
         };
         let mut tx = state.db.begin().await?;
         let id = repo::issues::create(&mut tx, &new).await?;
-        impact::issue_created(&mut tx, user, id).await?;
+        let assessed = impact::issue_created(&state.impact, &mut tx, user, id).await?;
         tx.commit().await?;
+        super::replan::wake(state, assessed.as_ref());
         created.push(
             repo::issues::find(&state.db, user, id)
                 .await

@@ -5017,6 +5017,7 @@ export interface components {
             next_version: string | null;
             previous_version: string | null;
             recommendation: components["schemas"]["Recommendation"];
+            replan: components["schemas"]["ReplanProposal"] | null;
             /**
              * Format: uuid
              * @description The smallest subtree to re-plan (an issue or a project); set for a re-plan.
@@ -6866,6 +6867,12 @@ export interface components {
             actor: components["schemas"]["IssuePerson"] | null;
             alert: components["schemas"]["NotificationAlert"] | null;
             approval: components["schemas"]["NotificationApproval"] | null;
+            /**
+             * Format: uuid
+             * @description The change assessment an `impact` entry is about (`GET /issues/{iid}/assessments`);
+             *     `null` for the other kinds and for entries from before assessments were linked.
+             */
+            assessment_id: string | null;
             /** Format: date-time */
             created_at: string;
             /** @description What the actor reacted with (`reaction`); `null` for the other kinds. */
@@ -6876,6 +6883,7 @@ export interface components {
             kind: components["schemas"]["NotificationKind"];
             /** Format: date-time */
             read_at: string | null;
+            replan: components["schemas"]["ReplanProposal"] | null;
         };
         /** @description The alert an inbox entry points at, as much as the inbox shows. */
         NotificationAlert: {
@@ -7458,6 +7466,42 @@ export interface components {
             key: string;
             label: string;
         };
+        /**
+         * @description A re-plan the engine called for, drafted by the planner and never applied
+         *     on its own: once `plan_status` is `ready`, review the plan on its graph and
+         *     apply it there (`POST /graphs/{graph_id}/plans/{plan_id}/apply`).
+         */
+        ReplanProposal: {
+            /** Format: date-time */
+            created_at: string;
+            /** @description Why no plan was drafted (`skipped`), or why the plan failed. */
+            error: string | null;
+            /**
+             * Format: uuid
+             * @description The graph the plan is drafted in, once started: the issue's own (given one if it had none).
+             */
+            graph_id: string | null;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            plan_id: string | null;
+            plan_status: components["schemas"]["PlanStatus"] | null;
+            /** Format: uuid */
+            root_id: string;
+            /** @description What is re-planned: an issue (its graph) or a project. */
+            root_kind: components["schemas"]["ImpactEntityKind"];
+            /**
+             * Format: date-time
+             * @description The earliest the planner starts; further changes to the same item push it back.
+             */
+            starts_at: string;
+            status: components["schemas"]["ReplanStatus"];
+        };
+        /**
+         * @description Where a re-plan proposal stands.
+         * @enum {string}
+         */
+        ReplanStatus: "pending" | "starting" | "started" | "superseded" | "skipped";
         /** @description `POST /auth/password/reset` body. */
         ResetPassword: {
             /** @description 12–128 characters. */

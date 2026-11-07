@@ -4,9 +4,10 @@
 #   docker compose up -d --build
 #   open http://localhost:8080        # or https://localhost:8443: HTTP/2 and HTTP/3
 #
-# Only the web UI is published. The backend, the agent runtime and PostgreSQL live on internal
-# networks; the runtime reaches the internet only through runtime-egress, for the LLM endpoints
-# of NEXC_RUNTIME_EGRESS_ALLOW. Optional texc-symphony executor: `docker compose --profile symphony up -d`.
+# Only the web UI is published. The backend, the agent runtime, the change-impact engine and
+# PostgreSQL live on internal networks; the runtime reaches the internet only through
+# runtime-egress, for the LLM endpoints of NEXC_RUNTIME_EGRESS_ALLOW. Optional texc-symphony
+# executor: `docker compose --profile symphony up -d`.
 #
 # Two backend replicas (docs/HA.md), so a run survives the loss of the one executing it: set
 # NEXC_BACKEND_REPLICAS=2 in .env, so every later `docker compose up -d` keeps both, then
@@ -91,6 +92,9 @@ services:
       NEXC_GRPC_POOL_SIZE: ${NEXC_GRPC_POOL_SIZE:-2}
       # The Agent Firewall API stays off unless NEXC_GRPC_ADDR is set in .env; it is never
       # published by this file: put it behind your own mTLS or private network.
+      # The change-impact engine below: every change to an issue or a project is assessed over
+      # gRPC, with NEXC_ASSESSMENT_TOKEN from .env (the engine is given the same one).
+      NEXC_ASSESSMENT_URL: http://assessment-engine:50061
       NEXC_SYMPHONY_URL: http://texc-symphony:4000
       NEXC_SYMPHONY_WORKFLOW: /data/symphony/WORKFLOW.md
       NEXC_CORS_ORIGINS: http://localhost:${NEXC_HTTP_PORT:-8080},https://localhost:${NEXC_HTTPS_PORT:-8443}
@@ -118,13 +122,16 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       agent-runtime: { condition: service_healthy }
+      # Started with the backend, but not waited for: an engine that is down fails no edit (the
+      # change saves unassessed and its version stays).
+      assessment-engine: { condition: service_started }
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/v1/healthz"]
       interval: 10s
       timeout: 5s
       retries: 6
       start_period: 30s
-    networks: [web, agents, data, egress]
+    networks: [web, agents, data, impact, egress]
 
   agent-runtime:
     <<: *hardening
@@ -165,6 +172,32 @@ services:
     # agents only: reachable from the backend, and out through runtime-egress alone. It is on
     # no network with a route to the internet.
     networks: [agents]
+
+  # The change-impact engine (https://github.com/f8fvwgzc/assessment-engine): versions every change
+  # to an issue or a project and says what else it affects and whether to re-plan. Called
+  # statelessly (`Assess`): the backend keeps versions and pins in PostgreSQL, so the engine stores
+  # nothing and needs no volume. Reachable from the backend alone, on the internal `impact`
+  # network; never published. The image tag is the release the backend's client was built against
+  # (backend/Cargo.toml).
+  assessment-engine:
+    <<: *hardening
+    image: ghcr.io/f8fvwgzc/assessment-engine:0.1.0
+    environment:
+      ASSESSMENT_ADDR: 0.0.0.0:50061
+      # Required of every call when set (the backend sends NEXC_ASSESSMENT_TOKEN, `make init`
+      # generates it); health and reflection stay open.
+      ASSESSMENT_AUTH_TOKEN: ${NEXC_ASSESSMENT_TOKEN:-}
+      ASSESSMENT_LOG_FORMAT: json
+      RUST_LOG: ${ASSESSMENT_LOG:-info}
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "assessment-engine", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks: [impact]
 
   # The agent runtime's egress (`nexc egress-proxy`, from the backend image, with no secrets):
   # CONNECT to the hosts and ports of NEXC_RUNTIME_EGRESS_ALLOW, plain HTTP to a local provider
@@ -273,6 +306,9 @@ networks:
     internal: true
   # backend <-> PostgreSQL only.
   data:
+    internal: true
+  # backend <-> the change-impact engine only.
+  impact:
     internal: true
   # Outbound internet: LLM APIs (the backend, runtime-egress on the runtime's behalf) and
   # git/Codex (symphony). The agent runtime is not on it.

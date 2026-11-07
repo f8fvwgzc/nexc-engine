@@ -80,6 +80,26 @@ pub struct Settings {
     pub symphony_workflow: PathBuf,
     /// Agent command for texc-symphony; Symphony's default (Codex) when unset.
     pub symphony_agent_command: Option<String>,
+    /// Whether every change to an issue or a project is assessed by the change-impact engine
+    /// (`NEXC_ASSESSMENT_ENABLED`); off, nothing is versioned or assessed.
+    pub assessment_enabled: bool,
+    /// gRPC endpoint of the change-impact engine (`assessment-engine serve`,
+    /// `http://host:50061`).
+    pub assessment_url: String,
+    /// Bearer token the engine requires (its `ASSESSMENT_AUTH_TOKEN`); none sent when unset.
+    pub assessment_token: Option<Secret<String>>,
+    /// Longest one assessment may take, connecting included. It runs in the transaction that
+    /// writes the change, with the item's row locked, so it is short: past it the change saves
+    /// unassessed and its version does not move.
+    pub assessment_timeout: Duration,
+    /// Whether an assessment that recommends a partial or full re-plan proposes one
+    /// (`NEXC_REPLAN_PROPOSALS`): the planner drafts a plan of the re-plan root's graph, which
+    /// waits there for a person to apply it.
+    pub replan_proposals: bool,
+    /// How long a re-plan proposal waits for more changes to the same root before the planner
+    /// starts (each one restarts the wait, up to ten times this): a burst of edits starts one
+    /// LLM run.
+    pub replan_debounce: Duration,
     /// How nexc reaches onto-intelli (`NEXC_ONTO_MODE`): over gRPC (the default when
     /// `NEXC_ONTO_URL` is set), embedded (not in this build) or not at all.
     pub onto_mode: OntoMode,
@@ -288,6 +308,15 @@ impl Settings {
                 r.string("NEXC_SYMPHONY_WORKFLOW", "./data/symphony/WORKFLOW.md"),
             ),
             symphony_agent_command: r.optional("NEXC_SYMPHONY_AGENT_COMMAND"),
+            assessment_enabled: r.parse("NEXC_ASSESSMENT_ENABLED", true),
+            assessment_url: r
+                .string("NEXC_ASSESSMENT_URL", "http://localhost:50061")
+                .trim_end_matches('/')
+                .to_owned(),
+            assessment_token: r.optional("NEXC_ASSESSMENT_TOKEN").map(Secret::new),
+            assessment_timeout: Duration::from_millis(r.parse("NEXC_ASSESSMENT_TIMEOUT_MS", 2_000)),
+            replan_proposals: r.parse("NEXC_REPLAN_PROPOSALS", true),
+            replan_debounce: Duration::from_secs(r.parse("NEXC_REPLAN_DEBOUNCE_SECS", 30)),
             onto_mode: r.onto_mode(),
             onto_url: r.optional("NEXC_ONTO_URL"),
             onto_token: r.optional("NEXC_ONTO_TOKEN").map(Secret::new),
@@ -436,6 +465,18 @@ impl Settings {
             && !(url.starts_with("http://") || url.starts_with("https://"))
         {
             errors.push("NEXC_OTLP_ENDPOINT must start with http:// or https://".into());
+        }
+        if self.assessment_enabled
+            && !(self.assessment_url.starts_with("http://")
+                || self.assessment_url.starts_with("https://"))
+        {
+            errors.push("NEXC_ASSESSMENT_URL must start with http:// or https://".into());
+        }
+        if !(50..=30_000).contains(&self.assessment_timeout.as_millis()) {
+            errors.push("NEXC_ASSESSMENT_TIMEOUT_MS must be between 50 and 30000".into());
+        }
+        if self.replan_debounce > Duration::from_secs(3600) {
+            errors.push("NEXC_REPLAN_DEBOUNCE_SECS must be at most 3600".into());
         }
         if !(self.public_url.starts_with("http://") || self.public_url.starts_with("https://")) {
             errors.push("NEXC_PUBLIC_URL must start with http:// or https://".into());
@@ -1006,6 +1047,52 @@ mod tests {
             );
         }
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_change_impact_engine_is_on_by_default_with_a_short_deadline() {
+        let s = load(&base()).unwrap();
+        assert!(s.assessment_enabled);
+        assert_eq!(s.assessment_url, "http://localhost:50061");
+        assert!(s.assessment_token.is_none());
+        assert_eq!(s.assessment_timeout, Duration::from_secs(2));
+        assert!(s.replan_proposals);
+        assert_eq!(s.replan_debounce, Duration::from_secs(30));
+
+        let mut m = base();
+        m.insert(
+            "NEXC_ASSESSMENT_URL",
+            "http://assessment-engine:50061/".into(),
+        );
+        m.insert("NEXC_ASSESSMENT_TOKEN", "engine-token".into());
+        m.insert("NEXC_ASSESSMENT_TIMEOUT_MS", "750".into());
+        m.insert("NEXC_REPLAN_DEBOUNCE_SECS", "0".into());
+        let s = load(&m).unwrap();
+        assert_eq!(s.assessment_url, "http://assessment-engine:50061");
+        assert_eq!(
+            s.assessment_token.as_ref().map(|t| t.expose().as_str()),
+            Some("engine-token")
+        );
+        assert_eq!(s.assessment_timeout, Duration::from_millis(750));
+        assert!(s.replan_debounce.is_zero());
+
+        let mut m = base();
+        m.insert("NEXC_ASSESSMENT_URL", "assessment-engine:50061".into());
+        m.insert("NEXC_ASSESSMENT_TIMEOUT_MS", "60000".into());
+        m.insert("NEXC_REPLAN_DEBOUNCE_SECS", "7200".into());
+        let err = load(&m).unwrap_err().0.join("\n");
+        for var in [
+            "NEXC_ASSESSMENT_URL",
+            "NEXC_ASSESSMENT_TIMEOUT_MS",
+            "NEXC_REPLAN_DEBOUNCE_SECS",
+        ] {
+            assert!(err.contains(var), "{var}: {err}");
+        }
+        // Off, its URL is not read.
+        m.insert("NEXC_ASSESSMENT_ENABLED", "false".into());
+        m.insert("NEXC_ASSESSMENT_TIMEOUT_MS", "2000".into());
+        m.insert("NEXC_REPLAN_DEBOUNCE_SECS", "30".into());
+        assert!(!load(&m).unwrap().assessment_enabled);
     }
 
     #[test]

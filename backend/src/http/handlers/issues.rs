@@ -24,7 +24,7 @@ use crate::domain::issue::{
 };
 use crate::domain::validation::{FieldErrors, Validate, check_text, search_text};
 use crate::domain::workspace::TeamAccess;
-use crate::engine::{impact, issue_agents};
+use crate::engine::{impact, issue_agents, replan};
 use crate::http::extract::{AuthUser, Path, Query, ValidatedJson};
 use crate::http::problem::Problem;
 use crate::repo::audit::Subject;
@@ -383,11 +383,12 @@ pub async fn create(
     if !labels.is_empty() {
         repo::issues::set_labels(&mut *tx, id, &labels).await?;
     }
-    impact::issue_created(&mut tx, auth.id, id).await?;
+    let assessed = impact::issue_created(&state.impact, &mut tx, auth.id, id).await?;
     if let Some(assignee) = req.assignee_id.filter(|a| *a != auth.id) {
         repo::issues::notify(&mut *tx, id, assignee, auth.id, NotificationKind::Assigned).await?;
     }
     tx.commit().await?;
+    replan::wake(&state, assessed.as_ref());
     let issue = repo::issues::find(&state.db, auth.id, id)
         .await
         .or_not_found("issue")?;
@@ -514,7 +515,7 @@ pub async fn update(
     if let Some(labels) = &labels {
         repo::issues::set_labels(&mut *tx, iid, labels).await?;
     }
-    impact::issue_updated(&mut tx, auth.id, &was).await?;
+    let assessed = impact::issue_updated(&state.impact, &mut tx, auth.id, &was).await?;
     // Read back for the assignee's name, which the timeline shows, and the new version.
     let after = repo::issues::find(&mut *tx, auth.id, iid)
         .await
@@ -538,6 +539,7 @@ pub async fn update(
         }
     }
     tx.commit().await?;
+    replan::wake(&state, assessed.as_ref());
     Ok(Json(after))
 }
 
@@ -554,9 +556,10 @@ pub async fn delete(
 ) -> Result<StatusCode, AppError> {
     let issue = editable(&state, auth, iid).await?;
     let mut tx = state.db.begin().await?;
-    impact::issue_deleted(&mut tx, auth.id, issue.id).await?;
+    let assessed = impact::issue_deleted(&state.impact, &mut tx, auth.id, issue.id).await?;
     repo::issues::delete(&mut *tx, issue.id).await?;
     tx.commit().await?;
+    replan::wake(&state, assessed.as_ref());
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -965,7 +968,7 @@ pub async fn create_comment(
         None => None,
     };
     let id = repo::issues::add_comment(&mut *tx, issue.id, auth.id, body, req.parent_id).await?;
-    impact::issue_commented(&mut tx, auth.id, issue.id, body).await?;
+    let assessed = impact::issue_commented(&state.impact, &mut tx, auth.id, issue.id, body).await?;
     let (told, agents) = act_on_mentions(&mut tx, &issue, auth.id, &mentioned).await?;
     let kind = NotificationKind::Comment;
     // The author of the comment replied to hears once, below, not as a watcher too.
@@ -976,6 +979,7 @@ pub async fn create_comment(
         repo::issues::notify_members(&mut *tx, issue.id, auth.id, &[author], kind).await?;
     }
     tx.commit().await?;
+    replan::wake(&state, assessed.as_ref());
     ask_mentioned_agent(&state, auth.id, &issue, &agents, body).await;
     let comment = repo::issues::find_comment(&state.db, auth.id, issue.id, id)
         .await
@@ -1585,8 +1589,9 @@ pub async fn update_project(
         .await
         .or_not_found("project")?;
     repo::issues::save_project(&mut *tx, &project).await?;
-    impact::project_updated(&mut tx, auth.id, &was).await?;
+    let assessed = impact::project_updated(&state.impact, &mut tx, auth.id, &was).await?;
     tx.commit().await?;
+    replan::wake(&state, assessed.as_ref());
     Ok(Json(
         repo::issues::find_project(&state.db, auth.id, wid, pid)
             .await
@@ -1613,8 +1618,9 @@ pub async fn delete_project(
         .await
         .or_not_found("project")?;
     let mut tx = state.db.begin().await?;
-    impact::project_deleted(&mut tx, auth.id, pid).await?;
+    let assessed = impact::project_deleted(&state.impact, &mut tx, auth.id, pid).await?;
     repo::issues::delete_project(&mut *tx, pid).await?;
     tx.commit().await?;
+    replan::wake(&state, assessed.as_ref());
     Ok(StatusCode::NO_CONTENT)
 }

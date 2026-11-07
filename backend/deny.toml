@@ -46,3 +46,6 @@ wildcards = "allow"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# The change-impact engine's client (assessment-grpc, assessment-core), by release tag: it is not on
+# crates.io. Public, MIT, the same project's sibling service.
+allow-git = ["https://github.com/f8fvwgzc/assessment-engine"]

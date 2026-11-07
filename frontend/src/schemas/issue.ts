@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { idSchema, timestampSchema } from './common';
+import { planStatusSchema } from './plan';
 import { alertKindSchema, approvalStatusSchema, severitySchema } from './policy';
 import { runStatusSchema } from './run';
 
@@ -137,6 +138,24 @@ export const issueEventSchema = z.object({
 export type IssueEvent = z.infer<typeof issueEventSchema>;
 
 /** One entry of the caller's inbox. */
+/**
+ * A re-plan the change-impact engine called for, drafted by the planner and never applied on its
+ * own: once `plan_status` is `ready`, the plan waits on `graph_id` to be reviewed and applied.
+ */
+export const replanProposalSchema = z.object({
+  id: idSchema,
+  status: z.enum(['pending', 'starting', 'started', 'superseded', 'skipped']),
+  root_kind: z.enum(['issue', 'project']),
+  root_id: idSchema,
+  graph_id: idSchema.nullable(),
+  plan_id: idSchema.nullable(),
+  plan_status: planStatusSchema.nullable(),
+  error: z.string().nullable(),
+  starts_at: timestampSchema,
+  created_at: timestampSchema,
+});
+export type ReplanProposal = z.infer<typeof replanProposalSchema>;
+
 export const notificationSchema = z.object({
   id: idSchema,
   kind: z.enum([
@@ -183,6 +202,10 @@ export const notificationSchema = z.object({
   actor: z.object({ user_id: idSchema, name: z.string() }).nullable(),
   /** What the actor reacted to the caller's comment with (`reaction`). */
   emoji: z.string().nullable().default(null),
+  /** The change assessment an `impact` entry is about. */
+  assessment_id: idSchema.nullable().default(null),
+  /** The re-plan that assessment proposed (`impact`, when the reader can see what is re-planned). */
+  replan: replanProposalSchema.nullable().default(null),
   created_at: timestampSchema,
   read_at: timestampSchema.nullable(),
 });

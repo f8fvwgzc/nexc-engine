@@ -17,7 +17,11 @@ use crate::repo::runs::RunRow;
 
 /// Reports the finished run `row` to the issues its graph executes; returns
 /// the issues it reported to (none for a graph no issue hands work to).
-pub async fn report(db: &mut PgConnection, row: &RunRow) -> Result<Vec<Uuid>, sqlx::Error> {
+pub async fn report(
+    engine: &impact::Assessor,
+    db: &mut PgConnection,
+    row: &RunRow,
+) -> Result<Vec<Uuid>, sqlx::Error> {
     if !repo::issues::any_of_graph(&mut *db, row.graph_id).await? {
         return Ok(Vec::new());
     }
@@ -36,6 +40,6 @@ pub async fn report(db: &mut PgConnection, row: &RunRow) -> Result<Vec<Uuid>, sq
         },
     )
     .await?;
-    impact::issues_reported_to(db, &before).await?;
+    impact::issues_reported_to(engine, db, &before).await?;
     Ok(reported)
 }

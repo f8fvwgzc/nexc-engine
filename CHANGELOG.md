@@ -180,12 +180,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Re-plans proposed when a change calls for one** (migration `20261108000001`;
+  `docs/CONTRACT.md` "Change impact"). When an assessment recommends a partial or full re-plan,
+  the planner drafts a plan of the re-plan root issue's graph (the issue gets one when it has
+  none), as the person who made the change, once the change commits and
+  `NEXC_REPLAN_DEBOUNCE_SECS` (30) pass without a further change to that issue: a burst of edits
+  starts one LLM run. Nothing is applied on its own: the plan waits on the graph to be reviewed and
+  applied (`POST /graphs/{gid}/plans/{pid}/apply`). At most one proposal per issue is open, and a
+  newer assessment supersedes it. Its instructions are the assessment as the issue's team may read
+  it (what changed, what the issue reads now, what each affected item needs, the conflicts); items
+  of other teams are left out. A project has no graph, so a re-plan of one is recorded as skipped
+  with that reason. `ChangeAssessment.replan` and the `impact` inbox entry (`Notification.replan`,
+  `assessment_id`) lead to the proposal, and the re-planned issue's assignee and creator get the
+  entry too. `NEXC_REPLAN_PROPOSALS=false` keeps the assessments without the drafts.
 - **Versioned issues and projects, and an impact assessment of every change** (migrations
   `20261107000001`, `20261107000002`; `docs/CONTRACT.md` "Change impact"). Every issue and
   project now has a semantic `version`, and every change to one (created, edited, deleted, or a
-  comment on an issue) is assessed in the transaction that writes it by the change-impact engine
-  (`backend/vendor/assessment-core`, run in-process against the item's parent chain, sub-issues,
-  siblings and projects read from PostgreSQL). A breaking change, such as rewriting a parent's
+  comment on an issue) is assessed in the transaction that writes it by the change-impact engine,
+  [assessment-engine](https://github.com/f8fvwgzc/assessment-engine): a service of its own
+  (`ghcr.io/f8fvwgzc/assessment-engine:0.1.0`), called over gRPC (`Assess`, stateless, with
+  `NEXC_ASSESSMENT_TOKEN`) through the engine's own client crate pinned to the same release
+  (`assessment-grpc`, `tag = "v0.1.0"`), against the item's parent chain, sub-issues, siblings and
+  projects read from PostgreSQL, which alone keeps the versions and pins. Docker Compose,
+  Kubernetes (`deploy/k8s/assessment-engine.yaml`) and Helm (`assessmentEngine.*`) run it beside
+  the backend, internal only (NetworkPolicies admit the backend alone and let it reach nothing);
+  `make dev` runs it from `../assessment-engine` or the image. The call has
+  `NEXC_ASSESSMENT_TIMEOUT_MS` (2000) to answer, since the changed row is locked meanwhile: an
+  engine that is down, refuses or misses it never fails an edit (the change saves unassessed and
+  its version stays), and `nexc doctor` checks that it serves and takes the token
+  (`NEXC_ASSESSMENT_ENABLED`, `NEXC_ASSESSMENT_URL`; `nexc_assessments_total{outcome}`). A breaking change, such as rewriting a parent's
   description while its sub-issues are in progress, is a MAJOR bump. Sub-issues pin the version
   of the parent they were planned against, so they show as `incompatible` until re-planned and
   acknowledged (`POST /issues/{iid}/version/acknowledge`). `GET /issues/{iid}/assessments` and

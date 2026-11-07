@@ -23,7 +23,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
 import { CodeBlock, CodeBlockContent } from '@/components/ui/code-block';
@@ -39,7 +39,7 @@ import {
   TraceTitle,
 } from '@/components/ui/trace';
 import { issueRunArtifactsQuery } from '@/features/artifacts/api';
-import { applyPlan, requestPlan, startRun } from '@/features/graph/api';
+import { applyPlan, fetchPlan, requestPlan, startRun } from '@/features/graph/api';
 import { graphQuery } from '@/features/graphs/api';
 import { artifactsQuery, cancelRun, downloadArtifact, graphRunsQuery } from '@/features/runs/api';
 import { errorMessage } from '@/lib/api/errors';
@@ -234,6 +234,21 @@ export function IssueRun({ issue }: { issue: Issue }) {
   const graphId = issue.graph_id;
   const [plan, setPlan] = useState<Plan | null>(null);
   const [live, setLive] = useState<{ runId: string; steps: Record<string, Live> } | null>(null);
+
+  // A plan the inbox opened the issue with (`?plan=`, a re-plan the change-impact engine called
+  // for): shown for review once, as if it had been asked for here.
+  const [params] = useSearchParams();
+  const proposedId = params.get('plan');
+  const { data: proposed } = useQuery({
+    queryKey: qk.graphs.plan(graphId ?? '', proposedId ?? ''),
+    queryFn: () => fetchPlan(graphId ?? '', proposedId ?? ''),
+    enabled: Boolean(graphId && proposedId),
+  });
+  const [seeded, setSeeded] = useState<string | null>(null);
+  if (proposed && seeded !== proposed.id) {
+    setSeeded(proposed.id);
+    if (proposed.status === 'ready' || proposed.status === 'streaming') setPlan(proposed);
+  }
 
   const hand = useMutation({
     mutationFn: async () => {

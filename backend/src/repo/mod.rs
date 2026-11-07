@@ -114,6 +114,7 @@ pub mod outbox;
 pub mod plans;
 pub mod platform;
 pub mod policies;
+pub mod replan;
 pub mod resets;
 pub mod run_commands;
 pub mod run_leases;
