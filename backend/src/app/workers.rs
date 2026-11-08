@@ -7,6 +7,7 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use super::AppState;
+use crate::domain::error_chain;
 use crate::engine::{knowledge, replan, scheduler};
 use crate::ontology::{export, migrate};
 use crate::{alerting, firewall, otlp, planner, realtime, repo};
@@ -118,7 +119,7 @@ where
             _ = shutdown.cancelled() => return,
             _ = ticker.tick() => {
                 if let Err(err) = job(state.clone()).await {
-                    tracing::warn!(error = %err, "background job failed");
+                    tracing::warn!(error = %error_chain(err.as_ref()), "background job failed");
                 }
             }
         }
@@ -136,7 +137,7 @@ async fn housekeeping(state: &AppState) -> anyhow::Result<()> {
     repo::plans::fail_stale(&state.db).await?;
     // A purge that fails is tried again on the next tick; the rest of the housekeeping goes on.
     if let Err(err) = crate::engine::evidence::purge_expired(state).await {
-        tracing::warn!(error = %err, "the retention purge did not finish");
+        tracing::warn!(error = %error_chain(err.as_ref()), "the retention purge did not finish");
     }
     export::purge_when_off(state).await?;
     state

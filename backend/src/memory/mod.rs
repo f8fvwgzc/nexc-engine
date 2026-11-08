@@ -22,6 +22,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::domain::capabilities::DataLabel;
+use crate::domain::error_chain;
 use crate::domain::graph::GraphNode;
 use crate::domain::memory::{
     Consolidation, MEMORY_MAX_CHARS, MEMORY_SCHEMA_NAME, Memory, MemoryKind, MemoryScope,
@@ -506,7 +507,7 @@ pub async fn store(
         index.invalidate(workspace);
         // Topics are a view on top of the memory: failing to place a new one is logged.
         if let Err(err) = topics::place_new(db, workspace).await {
-            tracing::warn!(%workspace, error = %err, "cannot place new memories in topics");
+            tracing::warn!(%workspace, error = %error_chain(err.as_ref()), "cannot place new memories in topics");
         }
     }
     Ok(decisions)

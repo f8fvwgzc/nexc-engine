@@ -57,7 +57,7 @@ pub mod user;
 pub mod validation;
 pub mod workspace;
 
-pub use error::AppError;
+pub use error::{AppError, INTERNAL_DETAIL, error_chain};
 
 /// Error returned when parsing an unknown enum spelling.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

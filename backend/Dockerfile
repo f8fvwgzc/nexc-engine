@@ -57,6 +57,11 @@ ENV NEXC_ENV=production \
     NEXC_SYMPHONY_WORKFLOW=/data/symphony/WORKFLOW.md \
     NEXC_TRUST_PROXY=true
 
+# A panic prints its backtrace; an anyhow error captures none, which would cost every error
+# under load.
+ENV RUST_BACKTRACE=1 \
+    RUST_LIB_BACKTRACE=0
+
 USER 10001:10001
 WORKDIR /data
 VOLUME ["/data"]

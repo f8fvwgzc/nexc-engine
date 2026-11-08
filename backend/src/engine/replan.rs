@@ -38,10 +38,10 @@ use uuid::Uuid;
 
 use super::{issue_agents, planner};
 use crate::app::AppState;
-use crate::domain::AppError;
 use crate::domain::impact::{
     ImpactEntityKind, NewAssessment, REPLAN_INSTRUCTIONS_MAX, ReplanSeed, replan_instructions,
 };
+use crate::domain::{AppError, error_chain};
 use crate::repo;
 use crate::repo::replan::Claimed;
 
@@ -79,7 +79,7 @@ pub async fn worker(state: AppState, shutdown: CancellationToken) {
         let wait = match start_due(&state).await {
             Ok(next) => next.unwrap_or(SWEEP).clamp(MIN_WAIT, SWEEP),
             Err(err) => {
-                tracing::warn!(error = %err, "re-plan proposals could not be started; trying again");
+                tracing::warn!(error = %error_chain(&err), "re-plan proposals could not be started; trying again");
                 SWEEP
             }
         };
@@ -156,7 +156,7 @@ async fn start(state: &AppState, p: &Claimed) -> Result<(), sqlx::Error> {
 fn drafted_after(err: AppError, graph_id: Option<Uuid>) -> Drafted {
     match err {
         AppError::Internal(_) | AppError::Unavailable(_) | AppError::RateLimited { .. } => {
-            tracing::warn!(error = %err, "a re-plan could not be started; trying again later");
+            tracing::warn!(error = %error_chain(&err), "a re-plan could not be started; trying again later");
             Drafted::Retry { graph_id }
         }
         AppError::NotFound(what) => Drafted::Skipped {

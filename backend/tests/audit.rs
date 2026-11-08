@@ -1266,6 +1266,101 @@ async fn the_ask_endpoint_fails_safely(pool: PgPool) {
     assert_eq!(r.status, StatusCode::UNAUTHORIZED);
 }
 
+/// What the stream sends for `question`.
+async fn streamed(w: &World, token: &str, question: &str) -> String {
+    let r = w
+        .app
+        .request(
+            Method::POST,
+            &format!("/api/v1/workspaces/{}/audit/ask/stream", w.wid),
+            Some(token),
+            Some(json!({"question": question})),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    r.body.as_str().unwrap().to_owned()
+}
+
+/// The stream's `error` event with this `detail`.
+fn error_frame(detail: &str) -> String {
+    format!("event: error\ndata: {}", json!({"detail": detail}))
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn an_internal_error_does_not_reach_the_stream(pool: PgPool) {
+    let w = world(pool.clone()).await;
+    let member = member(&w.app, &pool, w.wid, "member").await;
+    let generic = error_frame("An unexpected error occurred.");
+
+    // The service fails with what only the operator should read, on each way
+    // the stream asks it: opening the stream for an admin, and in one event
+    // for a member and for a canned question.
+    let private = "index audit_facts is corrupt on 10.0.0.5";
+    w.stub.fail_with(Some(OntoError::Other(private.into())));
+    for (who, token, question) in [
+        ("an admin", &w.owner, "Tell me everything"),
+        ("a member", &member, "Tell me everything"),
+        (
+            "a canned question",
+            &w.owner,
+            "Who approved what this month?",
+        ),
+    ] {
+        let body = streamed(&w, token, question).await;
+        assert!(body.contains(&generic), "{who}: {body}");
+        assert!(!body.contains("audit_facts"), "{who}: {body}");
+        assert!(!body.contains("10.0.0.5"), "{who}: {body}");
+    }
+    w.stub.fail_with(None);
+
+    // The answer arrives, then what it cites cannot be resolved: the database's
+    // own message, on the last stretch of the stream.
+    let document = facts::document_id(w.document_id);
+    w.stub.answer_with(Box::new(move |_, _| AskAnswer {
+        answer: "One document.".into(),
+        mode: "llm".into(),
+        facts: vec![format!("agent read {document}")],
+        ..AskAnswer::default()
+    }));
+    sqlx::query("ALTER TABLE documents RENAME TO documents_gone")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let body = streamed(&w, &w.owner, "Tell me everything").await;
+    assert!(body.contains("event: delta"), "the answer began: {body}");
+    assert!(body.contains(&generic), "{body}");
+    assert!(!body.contains("relation"), "{body}");
+    assert!(!body.contains("does not exist"), "{body}");
+    assert!(!body.contains("event: done"), "{body}");
+}
+
+#[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
+async fn a_client_facing_error_keeps_its_message_on_the_stream(pool: PgPool) {
+    let w = world(pool.clone()).await;
+    let member = member(&w.app, &pool, w.wid, "member").await;
+    for (error, detail) in [
+        (
+            OntoError::Invalid("unknown entity".into()),
+            "unknown entity",
+        ),
+        (OntoError::NotFound("no such run".into()), "no such run"),
+        (
+            OntoError::Denied("user:x has no access to workspace w".into()),
+            "the audit service refused the question: user:x has no access to workspace w",
+        ),
+        (
+            OntoError::Unavailable("connection refused".into()),
+            "the audit service is not reachable: connection refused",
+        ),
+    ] {
+        w.stub.fail_with(Some(error));
+        for token in [&w.owner, &member] {
+            let body = streamed(&w, token, "Tell me everything").await;
+            assert!(body.contains(&error_frame(detail)), "{detail}: {body}");
+        }
+    }
+}
+
 #[sqlx::test(migrator = "nexc::repo::MIGRATOR")]
 async fn the_grpc_client_speaks_to_a_server_end_to_end(pool: PgPool) {
     let stub = Arc::new(StubOntology::new());

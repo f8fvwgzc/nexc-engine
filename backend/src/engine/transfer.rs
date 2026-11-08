@@ -21,6 +21,7 @@
 //! the graph's first read there (`docs/ONTOLOGY.md` §7). A transfer fails
 //! rather than leave them behind when onto-intelli does not answer.
 
+use anyhow::Context as _;
 use serde::Serialize;
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
@@ -29,6 +30,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::app::AppState;
+use crate::domain::error_chain;
 use crate::domain::ontology::Ontology;
 use crate::ontology::vocabulary::graph_key;
 use crate::ontology::{OntoError, Principal};
@@ -442,9 +444,7 @@ async fn copy_table(
 /// Connects to the target, and says what it is: used by the owner's
 /// connection check. Refuses a target that already holds the workspace.
 pub async fn probe_target(url: &str, workspace: Uuid) -> anyhow::Result<String> {
-    let target = repo::connect(url, 1)
-        .await
-        .map_err(|err| anyhow::anyhow!("cannot connect: {err}"))?;
+    let target = repo::connect(url, 1).await.context("cannot connect")?;
     let version: String = sqlx::query_scalar("SELECT version()")
         .fetch_one(&target)
         .await?;
@@ -491,9 +491,11 @@ pub async fn vocabularies(
         match backend.vocabulary(&service, &graph_key(graph)).await {
             Ok(vocabulary) => found.push((graph, vocabulary)),
             Err(OntoError::NotFound(_)) => {}
-            Err(err) => anyhow::bail!(
-                "cannot read the graphs' vocabularies from onto-intelli, where they live: {err}"
-            ),
+            Err(err) => {
+                return Err(err).context(
+                    "cannot read the graphs' vocabularies from onto-intelli, where they live",
+                );
+            }
         }
     }
     Ok(found)
@@ -510,12 +512,10 @@ pub async fn copy_workspace(
 ) -> anyhow::Result<Vec<TableReport>> {
     let target = repo::connect(url, 2)
         .await
-        .map_err(|err| anyhow::anyhow!("cannot connect to the target database: {err}"))?;
-    repo::migrate(&target).await.map_err(|err| {
-        anyhow::anyhow!(
-            "cannot prepare the target database (it needs the right to create tables): {err}"
-        )
-    })?;
+        .context("cannot connect to the target database")?;
+    repo::migrate(&target)
+        .await
+        .context("cannot prepare the target database (it needs the right to create tables)")?;
     let already: bool =
         sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM workspaces WHERE id = $1)")
             .bind(workspace)
@@ -539,7 +539,7 @@ pub async fn copy_workspace(
     for (t, columns) in TABLES.iter().zip(&columns) {
         let report = copy_table(source, &mut tx, columns, t, workspace)
             .await
-            .map_err(|err| anyhow::anyhow!("copying {} failed: {err}", t.name))?;
+            .with_context(|| format!("copying {} failed", t.name))?;
         reports.push(report);
     }
     // The audit log arrives as the same chain: the target's database computed every hash again
@@ -563,7 +563,7 @@ pub async fn copy_workspace(
             .bind(sqlx::types::Json(vocabulary))
             .execute(&mut *tx)
             .await
-            .map_err(|err| anyhow::anyhow!("writing the graphs' vocabularies failed: {err}"))?;
+            .context("writing the graphs' vocabularies failed")?;
     }
     tx.commit().await?;
     target.close().await;
@@ -622,7 +622,7 @@ pub async fn copy_files(
         .bind(content)
         .execute(target)
         .await
-        .map_err(|err| anyhow::anyhow!("copying file {path} failed: {err}"))?;
+        .with_context(|| format!("copying file {path} failed"))?;
         written += 1;
     }
     Ok(TableReport {
@@ -715,13 +715,13 @@ pub async fn run(
         let mut report = copy_workspace(&state.db, &url, workspace, &vocabularies).await?;
         let target = repo::connect(&url, 1)
             .await
-            .map_err(|err| anyhow::anyhow!("cannot connect to the target database: {err}"))?;
+            .context("cannot connect to the target database")?;
         report.push(copy_files(state, &target, workspace).await?);
         target.close().await;
         if let Some(redis) = redis_url.as_deref() {
             hand_over_redis(redis, &state.egress, workspace, &location(&url))
                 .await
-                .map_err(|err| anyhow::anyhow!("the rows and files are there, but Redis: {err}"))?;
+                .context("the rows and files are there, but Redis")?;
         }
         Ok::<_, anyhow::Error>(report)
     }
@@ -729,12 +729,12 @@ pub async fn run(
     let (status, report, error) = match outcome {
         Ok(reports) => ("done", json!(reports), String::new()),
         Err(err) => {
-            tracing::warn!(%workspace, error = %err, "workspace transfer failed");
+            tracing::warn!(%workspace, error = %error_chain(err.as_ref()), "workspace transfer failed");
             // The driver's messages name hosts and reasons, not passwords.
             (
                 "failed",
                 json!([]),
-                err.to_string().chars().take(500).collect(),
+                error_chain(err.as_ref()).chars().take(500).collect(),
             )
         }
     };

@@ -27,6 +27,7 @@ use crate::domain::alert_routing::{
 };
 use crate::domain::approval::Approval;
 use crate::domain::audit::AuditAction;
+use crate::domain::error_chain;
 use crate::domain::policy_document::Severity;
 use crate::engine::defend::{About, Finding};
 use crate::gateway::fetch::is_private_host;
@@ -96,7 +97,7 @@ async fn run(state: AppState, shutdown: CancellationToken) {
                         tracing::debug!(?progress, "alert routing pass");
                     }
                     Ok(_) => {}
-                    Err(err) => tracing::warn!(error = %err, "alert routing pass failed"),
+                    Err(err) => tracing::warn!(error = %error_chain(err.as_ref()), "alert routing pass failed"),
                 }
             }
         }
@@ -245,7 +246,10 @@ async fn deliver(state: &AppState, claimed: Claimed) -> Outcome {
     let opened = match open(state, &row) {
         Ok(opened) => opened,
         Err(err) => {
-            let detail = format!("the destination's URL or secret could not be read: {err}");
+            let detail = format!(
+                "the destination's URL or secret could not be read: {}",
+                error_chain(err.as_ref())
+            );
             return settle(
                 state,
                 &row,

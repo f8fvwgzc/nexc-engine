@@ -29,6 +29,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::app::AppState;
+use crate::domain::error_chain;
 use crate::domain::trace::{Span, SpanKind, SpanStatus};
 use crate::repo::otlp_export::{self as cursor, OtlpSpan as Exported};
 use crate::rpc::ChannelSettings;
@@ -114,7 +115,7 @@ async fn run(state: AppState, shutdown: CancellationToken) {
                             tracing::debug!(?progress, "OTLP export pass");
                         }
                     }
-                    Err(err) => tracing::warn!(error = %err, "OTLP export pass failed"),
+                    Err(err) => tracing::warn!(error = %error_chain(err.as_ref()), "OTLP export pass failed"),
                 }
             }
         }

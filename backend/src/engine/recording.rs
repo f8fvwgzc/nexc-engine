@@ -3,6 +3,7 @@
 //! sealed with the master key bound to the span id, and it is written
 //! beside the span. Recording never fails the work being recorded.
 
+use crate::domain::error_chain;
 use crate::domain::guardrails::redact_secrets;
 use crate::domain::recording::{self, PayloadKind};
 use crate::engine::executor::ExecContext;
@@ -45,7 +46,7 @@ pub async fn store(ctx: &ExecContext, capture: Capture) {
     {
         Ok(sealed) => sealed,
         Err(err) => {
-            tracing::error!(span = %capture.span_id, error = %err, "payload not sealed; dropped");
+            tracing::error!(span = %capture.span_id, error = %error_chain(err.as_ref()), "payload not sealed; dropped");
             return;
         }
     };

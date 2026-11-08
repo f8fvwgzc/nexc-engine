@@ -14,6 +14,7 @@ use super::workspaces::{audit, member_of};
 use crate::app::AppState;
 use crate::domain::AppError;
 use crate::domain::audit::AuditAction;
+use crate::domain::error_chain;
 use crate::domain::issue::{
     AGENT_DELEGATED, COMMENT_MAX_BYTES, COMMENT_MENTIONS_MAX, DESCRIPTION_MAX_BYTES,
     ISSUE_LABELS_MAX, Issue, IssueEvent, IssueEventKind, IssuePerson, IssueState, IssueSummary,
@@ -909,7 +910,7 @@ async fn ask_mentioned_agent(
     let (state, issue, comment) = (state.clone(), issue.clone(), comment.to_owned());
     let ask = tokio::spawn(async move {
         if let Err(err) = issue_agents::ask_to_plan(&state, actor, &issue, &agent, &comment).await {
-            tracing::warn!(issue = %issue.id, agent = %agent.id, error = %err,
+            tracing::warn!(issue = %issue.id, agent = %agent.id, error = %error_chain(&err),
                 "a mentioned agent could not be asked for a plan");
         }
     });

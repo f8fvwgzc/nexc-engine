@@ -31,6 +31,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use anyhow::Context as _;
 use assessment_core as ac;
 use assessment_core::model::{
     ActivityEvent, ActivityKind, AssessOptions, AssessmentRequest, ChangeSet, Entity, HistoryPoint,
@@ -41,6 +42,7 @@ use sqlx::PgConnection;
 use uuid::Uuid;
 
 use crate::config::Settings;
+use crate::domain::error_chain;
 use crate::domain::impact::{
     AssessmentCause, HISTORY_MAX, IMPACTS_MAX, ImpactAction, ImpactEntityKind, IssueNode,
     NewAssessment, ProjectNode, VersionBump,
@@ -134,10 +136,13 @@ impl Assessor {
                 .grpc_channel()
                 .connect_timeout(settings.assessment_timeout)
         };
-        let channel = crate::rpc::channel(&settings.assessment_url, &channel)?;
+        let channel = crate::rpc::channel(&settings.assessment_url, &channel)
+            .context("NEXC_ASSESSMENT_URL is not a usable gRPC endpoint")?;
         let mut client = AssessmentClient::from_channel(channel);
         if let Some(token) = &settings.assessment_token {
-            client = client.with_bearer_token(token.expose())?;
+            client = client
+                .with_bearer_token(token.expose())
+                .context("NEXC_ASSESSMENT_TOKEN is not a valid header value")?;
         }
         assessor.inner = Some(Arc::new(Remote {
             client,
@@ -194,8 +199,7 @@ impl Assessor {
                     ClientErrorKind::Status(tonic::Code::DeadlineExceeded) => Failure::Timeout,
                     _ => Failure::Refused,
                 };
-                let detail = err.status().map(|s| s.message().to_owned());
-                tracing::warn!(url = %remote.url, error = %err, detail = detail.as_deref().unwrap_or_default(),
+                tracing::warn!(url = %remote.url, error = %error_chain(&err),
                     outcome = failure.as_str(),
                     "the change-impact engine did not assess a change; it saves unassessed and its version stays");
                 failure

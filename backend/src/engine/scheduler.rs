@@ -45,6 +45,7 @@ use crate::domain::approval::Approval;
 use crate::domain::audit::AuditAction;
 use crate::domain::capabilities::{Capabilities, DataLabel};
 use crate::domain::context;
+use crate::domain::error_chain;
 use crate::domain::evidence::{self, Given};
 use crate::domain::graph::{Executor, GraphEdge, GraphNode, NodeStatus};
 use crate::domain::guardrails::Guardrails;
@@ -600,7 +601,7 @@ async fn work(
     match Execution::prepare(state, row, lease.clone(), token, trace, resumed).await {
         Ok(execution) => execution.drive(resume).await,
         Err(err) => {
-            tracing::error!(run_id = %row.id, error = %err, "run preparation failed");
+            tracing::error!(run_id = %row.id, error = %error_chain(err.as_ref()), "run preparation failed");
             Vec::new()
         }
     }
@@ -1645,7 +1646,7 @@ async fn run_node(
     {
         Ok(task) => task.run(index, first_attempt, budget).await,
         Err(err) => {
-            let message = err.to_string();
+            let message = error_chain(err.as_ref());
             let attempt = first_attempt - 1;
             let outcome = NodeOutcome {
                 status: NodeStatus::Failed,
@@ -2343,7 +2344,10 @@ impl NodeTask {
         {
             self.ctx.log(
                 LogLevel::Warn,
-                format!("cached artifacts could not be copied: {err}"),
+                format!(
+                    "cached artifacts could not be copied: {}",
+                    error_chain(err.as_ref())
+                ),
             );
         }
         state.metrics.node_cache_hits.add(1);
@@ -2740,7 +2744,7 @@ impl NodeTask {
             }
             .await;
             if let Err(err) = result {
-                tracing::debug!(node_id = %node.id, error = %err, "memory extraction skipped");
+                tracing::debug!(node_id = %node.id, error = %error_chain(err.as_ref()), "memory extraction skipped");
             }
         });
     }

@@ -96,6 +96,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   still go to the provider without passing the tools gateway, and a compromised runtime can send
   data to an allowed provider under a key of its own: an open gap, recorded in
   `docs/AGENTSECOPS.md` §4.3.
+- **The audit stream keeps an internal error's message from the client.** The `error` event of
+  `POST /workspaces/{wid}/audit/ask/stream` used to carry the error's own text, which could be a
+  database's message or onto-intelli's detail. It now says what a 500 says, and the causes go to
+  the log. Errors meant for the client keep their words.
 
 **Upgrade note for existing deployments.**
 
@@ -1930,6 +1934,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Errors are reported with their causes, and without what a cause can carry.** Logs, a stored
+  failure (a document's, a transfer's, an export's), `nexc doctor` and the CLI's errors go through
+  one walker, `domain::error_chain`: every cause once, on one line. An `anyhow` error used to lose
+  everything under its outermost message, and `internal error` lines were a `Caused by:` block; a
+  source interpolated into a message is now a `.context()`, and the words read as before. What a
+  cause can quote stays out: a URL keeps its host and path (a document the parser's answer did not
+  fit used to store the URL with the file's name in its query), a JSON error says what was wrong
+  and where but not the value, and tokens of a well-known shape are redacted. The backend image
+  sets `RUST_BACKTRACE=1` and `RUST_LIB_BACKTRACE=0`: a panic prints its backtrace, an `anyhow`
+  error captures none.
 - **Secrets are never kept, and two more documents are public** (CONTRACT §3). Sign-in and the
   account (`/auth/*` except `/auth/providers`), the LLM credentials, the knowledge settings,
   agent tokens, realtime tickets, span payloads, the SIEM exports and every download are

@@ -15,6 +15,7 @@ use uuid::Uuid;
 
 use super::analysis::dependency_graph;
 use crate::app::AppState;
+use crate::domain::error_chain;
 use crate::domain::graph::{EdgeOrigin, EdgeSuggestion, GraphEdge, GraphNode, wikilinks};
 use crate::domain::ontology::Ontology;
 use crate::dsa::bm25::Bm25Index;
@@ -141,7 +142,7 @@ pub fn schedule(state: &AppState, graph_id: Uuid) {
         tokio::time::sleep(DEBOUNCE).await;
         state.engine.clear_deps_pending(graph_id);
         if let Err(err) = detect(&state, graph_id).await {
-            tracing::warn!(%graph_id, error = %err, "dependency detection failed");
+            tracing::warn!(%graph_id, error = %error_chain(err.as_ref()), "dependency detection failed");
         }
     });
 }

@@ -19,6 +19,7 @@ use super::super::approvals::{self, Delivery, Granted};
 use super::super::artifacts::MAX_ARTIFACT_BYTES;
 use super::{ExecContext, ExecError, ExecOutput, NodeExecutor};
 use crate::config::RuntimeProtocol;
+use crate::domain::error_chain;
 use crate::domain::evidence;
 use crate::domain::mcp::GatewayTool;
 use crate::domain::policy::{Action, Effect};
@@ -472,7 +473,12 @@ pub(super) fn mint_token(ctx: &ExecContext) -> Result<String, ExecError> {
         .state
         .agent_tokens
         .issue(&grant, ctx.state.settings.node_timeout + EXPIRY_SLACK)
-        .map_err(|e| ExecError::fatal(format!("cannot mint the agent token: {e}")))?;
+        .map_err(|e| {
+            ExecError::fatal(format!(
+                "cannot mint the agent token: {}",
+                error_chain(e.as_ref())
+            ))
+        })?;
     tracing::debug!(
         run_id = %ctx.run_id,
         node_id = %ctx.node.id,
