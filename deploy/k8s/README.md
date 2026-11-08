@@ -46,11 +46,12 @@ Tunables: `MINIKUBE_PROFILE`, `MINIKUBE_CPUS` (4), `MINIKUBE_MEMORY` (8192), `MI
 | `StatefulSet postgres` + headless `Service` | `postgres:17-alpine`, 5 Gi PVC, runs as uid 70, read-only root |
 | `Deployment backend` (1 replica: its volume is `ReadWriteOnce`) + `Service` + `PVC backend-data` | a `migrate` init container applies migrations first (`nexc migrate`, no probe to stop it); startup/liveness `/api/v1/healthz`, readiness `/api/v1/readyz`; port 8081 serves the agent-token key set alone (`NEXC_KEYS_ADDR`); a pod affinity keeps a rollout's new pod on the node of the running one, since `backend-data` attaches to one node |
 | `Deployment agent-runtime` (2 replicas) + `Service` | gets only `NEXC_RUNTIME_TOKEN`, the backend's agent-token key set URL and runtime settings, workspace on an `emptyDir` |
+| `Deployment assessment-engine` (2 replicas) + `Service` | the change-impact engine (`ghcr.io/f8fvwgzc/assessment-engine:0.1.0`, the release the backend's client is built against): stateless gRPC on 50061, no volume; the backend calls it for every change to an issue or a project (`NEXC_ASSESSMENT_URL`), with the Secret's `NEXC_ASSESSMENT_TOKEN`, which it requires; probes run its own `assessment-engine health` |
 | `Deployment runtime-egress` (2 replicas) + `Service` | `nexc egress-proxy` from the backend image, no secrets: the runtime's only way out, to the `host:port` entries of `NEXC_RUNTIME_EGRESS_ALLOW` |
 | `Deployment frontend` (2 replicas) + `Service` | nginx-unprivileged on 8080; with the optional `http3` component also TLS and QUIC on 8443, published by the LoadBalancer `Service frontend-https` (TCP and UDP 443) |
 | `Ingress nexc`, `nexc-a2a`, `nexc-documents` | class `nginx`, host `nexc.local` over TLS (Secret `nexc-tls`); `/api` → backend, `/` → frontend; SSE/WebSocket timeouts and no buffering; bodies up to 2m, A2A tasks (`/a2a`) 17m, knowledge documents 51m (an annotation applies to every path of its Ingress, hence three) |
-| `NetworkPolicy` ×8 | default deny ingress; frontend ← ingress; backend ← frontend + ingress (8080), runtime (8081, the agent-token key set alone); runtime ← backend (HTTP 8090 and the gRPC stream 8095); runtime → backend 8081 and runtime-egress only, no DNS (it finds both by their Service environment variables, so apply the Services first: `kubectl apply -k` does); runtime-egress ← runtime; runtime-egress → DNS and TLS on public addresses (IPv4 and IPv6); postgres ← backend. The Agent Firewall API (`NEXC_GRPC_ADDR`) is off by default and documented in the file for when you open it to another namespace |
-| `PodDisruptionBudget` ×4 | `minAvailable: 1` for runtime, runtime-egress and frontend; `maxUnavailable: 1` for the backend, so a drain moves its one replica |
+| `NetworkPolicy` ×10 | default deny ingress; frontend ← ingress; backend ← frontend + ingress (8080), runtime (8081, the agent-token key set alone); runtime ← backend (HTTP 8090 and the gRPC stream 8095); runtime → backend 8081 and runtime-egress only, no DNS (it finds both by their Service environment variables, so apply the Services first: `kubectl apply -k` does); runtime-egress ← runtime; runtime-egress → DNS and TLS on public addresses (IPv4 and IPv6); assessment-engine ← backend (50061), and → nothing at all; postgres ← backend. The Agent Firewall API (`NEXC_GRPC_ADDR`) is off by default and documented in the file for when you open it to another namespace |
+| `PodDisruptionBudget` ×5 | `minAvailable: 1` for runtime, runtime-egress, assessment-engine and frontend; `maxUnavailable: 1` for the backend, so a drain moves its one replica |
 
 Every pod runs as non-root with `readOnlyRootFilesystem`, `allowPrivilegeEscalation: false`,
 `capabilities.drop: [ALL]`, seccomp `RuntimeDefault` and no service-account token.
@@ -65,7 +66,12 @@ Every pod runs as non-root with `readOnlyRootFilesystem`, `allowPrivilegeEscalat
   administrator (an account for the platform console; it does not work inside workspaces).
 * Images – `kustomization.yaml` pins `ghcr.io/f8fvwgzc/nexc-engine-*:local` (built by the script).
   For released images: `cd deploy/k8s && kustomize edit set image ghcr.io/f8fvwgzc/nexc-engine-backend:0.1.0`
-  (same for `-frontend` and `-runtime`).
+  (same for `-frontend` and `-runtime`). The change-impact engine is pinned in
+  `assessment-engine.yaml` to the release the backend's client is built against
+  (`backend/Cargo.toml`); move the two together.
+* Change impact – `NEXC_ASSESSMENT_*` and `NEXC_REPLAN_*` in `config.env` (the engine's address,
+  the call's deadline, whether re-plans are drafted and after how long a quiet period); an engine
+  that is down fails no edit (`docs/INFRASTRUCTURE.md`, The change-impact engine).
 
 Render without applying: `make k8s-render`.
 
@@ -80,8 +86,11 @@ the non-secret settings (`config`), the runtime's ports (`runtime.httpPort`, `ru
 the gRPC stream the backend opens, the only port the NetworkPolicy admits besides HTTP), the
 Agent Firewall API (`backend.grpcAddr` turns it on; `backend.firewall.port` is its Service port
 and `networkPolicies.firewallFrom` the namespaces admitted to it), the OTLP collector
-(`backend.otlpEndpoint`) and onto-intelli (`backend.ontoUrl`, its token in the Secret as
-`NEXC_ONTO_TOKEN`), the ingress host and TLS, the frontend's own TLS and HTTP/3 behind a
+(`backend.otlpEndpoint`), onto-intelli (`backend.ontoUrl`, its token in the Secret as
+`NEXC_ONTO_TOKEN`), the change-impact engine (`assessmentEngine.*`, in the release by default;
+`backend.assessment.url` for one of your own, `backend.assessment.timeoutMs`, and the re-plans it
+calls for in `backend.replans`; its token in the Secret as `NEXC_ASSESSMENT_TOKEN`), the ingress
+host and TLS, the frontend's own TLS and HTTP/3 behind a
 LoadBalancer (`frontend.http3`, off by default), whether the chart runs PostgreSQL
 (`postgres.enabled=false` for a managed database, its URL in the Secret) and the connection
 budget (`postgres.maxConnections`: each backend pod's pool is its share unless
@@ -101,7 +110,8 @@ helm install nexc deploy/helm/nexc-engine -n nexc --set secrets.existingSecret=n
 helm template nexc deploy/helm/nexc-engine -n nexc --set secrets.existingSecret=nexc-secrets   # render only
 ```
 
-CI lints the chart and renders it with the firewall, the collector and onto-intelli on.
+CI lints the chart and renders it with the firewall, the collector and onto-intelli on, and with
+the change-impact engine on (the default) and off.
 
 <!-- #endregion helm -->
 <!-- #region production -->

@@ -97,6 +97,7 @@ impl FromRow<'_, PgRow> for IssueSummary {
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,
             completed_at: row.try_get("completed_at")?,
+            version: row.try_get("version")?,
             // A status this version does not know reads as none rather than failing the list.
             run_status: run_status.and_then(|s| s.parse().ok()),
         })
@@ -133,6 +134,7 @@ impl FromRow<'_, PgRow> for Project {
             issue_count: row.try_get("issue_count")?,
             closed_count: row.try_get("closed_count")?,
             created_at: row.try_get("created_at")?,
+            version: row.try_get("version")?,
         })
     }
 }
@@ -152,7 +154,7 @@ macro_rules! issue_select {
             $description,
             " i.priority, i.assignee_id, au.name AS assignee_name, i.agent_id,
                     i.project_id, i.graph_id, i.creator_id, i.due_date, i.github_url, i.created_at,
-                    i.updated_at, i.completed_at, s.id AS state_id, s.name AS state_name,
+                    i.updated_at, i.completed_at, i.version, s.id AS state_id, s.name AS state_name,
                     s.category AS state_category, s.color AS state_color,
                     s.position AS state_position,
                     COALESCE((SELECT jsonb_agg(jsonb_build_object(
@@ -463,8 +465,10 @@ pub struct NewIssue<'a> {
     pub due_date: Option<NaiveDate>,
 }
 
-/// Inserts an issue with the team's next number. Must run in a transaction:
-/// the counter row is locked until the issue exists.
+/// Inserts an issue with the team's next number, at version 1.0.0 and pinned
+/// to the current version of what it is part of (its parent, else its
+/// project): what it is planned against (`crate::domain::impact`). Must run in
+/// a transaction: the counter row is locked until the issue exists.
 pub async fn create(db: &mut PgConnection, n: &NewIssue<'_>) -> Result<Uuid, sqlx::Error> {
     let number: i32 = sqlx::query_scalar(
         "UPDATE teams SET next_issue_number = next_issue_number + 1 WHERE id = $1
@@ -476,9 +480,13 @@ pub async fn create(db: &mut PgConnection, n: &NewIssue<'_>) -> Result<Uuid, sql
     sqlx::query_scalar(
         "INSERT INTO issues (id, workspace_id, team_id, number, title, description, state_id, priority,
                              assignee_id, agent_id, project_id, creator_id, completed_at, github_url,
-                             parent_id, cycle_id, due_date)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-                 CASE WHEN $13 THEN now() END, $14, $15, $16, $17)
+                             parent_id, cycle_id, due_date, basis_id, basis_version)
+         SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+                CASE WHEN $13 THEN now() END, $14, $15, $16, $17, b.id, b.version
+         FROM (SELECT COALESCE(p.id, pr.id) AS id, COALESCE(p.version, pr.version) AS version
+               FROM (SELECT 1) one
+               LEFT JOIN issues p ON p.id = $15
+               LEFT JOIN projects pr ON pr.id = $11 AND $15::uuid IS NULL) b
          RETURNING id",
     )
     .bind(Uuid::now_v7())
@@ -1305,6 +1313,8 @@ impl FromRow<'_, PgRow> for Notification {
                 name: actor_name.unwrap_or_default(),
             }),
             emoji: row.try_get("emoji")?,
+            assessment_id: row.try_get("assessment_id")?,
+            replan: super::impact::replan_col(row)?,
             created_at: row.try_get("created_at")?,
             read_at: row.try_get("read_at")?,
         })
@@ -1487,14 +1497,22 @@ pub async fn inbox(
                 a.expires_at AS approval_expires_at,
                 n.alert_id, al.kind AS alert_kind, al.severity AS alert_severity, al.rule AS alert_rule,
                 al.title AS alert_title, al.principal AS alert_principal, al.run_id AS alert_run_id,
-                al.graph_id AS alert_graph_id
-         FROM notifications n
+                al.graph_id AS alert_graph_id, n.assessment_id, ",
+        super::impact::replan_cols!(),
+        " FROM notifications n
          LEFT JOIN issues i ON i.id = n.issue_id
          LEFT JOIN teams t ON t.id = i.team_id
          LEFT JOIN approvals a ON a.id = n.approval_id
          LEFT JOIN alerts al ON al.id = n.alert_id
          JOIN workspace_members wm ON wm.workspace_id = n.workspace_id AND wm.user_id = $1
          LEFT JOIN users u ON u.id = n.actor_id
+         LEFT JOIN change_assessments ca ON ca.id = n.assessment_id
+         LEFT JOIN replan_proposals rq ON rq.id = ca.replan_id
+         LEFT JOIN teams rt ON rt.id = rq.team_id
+         LEFT JOIN replan_proposals rp ON rp.id = rq.id AND (rq.team_id IS NULL OR ",
+        team_visible!("rt", "wm", "$1"),
+        ")
+         LEFT JOIN plans pl ON pl.id = rp.plan_id
          WHERE n.user_id = $1 AND n.workspace_id = $2
            AND (n.issue_id IS NULL OR ",
         team_visible!("t", "wm", "$1"),
@@ -1583,7 +1601,7 @@ macro_rules! project_for_user {
     ($tail:literal) => {
         concat!(
             "SELECT p.id, p.workspace_id, p.name, p.description, p.status, p.lead_id, p.target_date,
-                    p.created_at, p.team_id, pt.key AS team_key, pt.name AS team_name,
+                    p.created_at, p.version, p.team_id, pt.key AS team_key, pt.name AS team_name,
                     COALESCE(c.issue_count, 0) AS issue_count,
                     COALESCE(c.closed_count, 0) AS closed_count
              FROM projects p

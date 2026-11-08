@@ -22,6 +22,11 @@ images:
   postgres:
     repository: postgres
     tag: 17-alpine
+  # The change-impact engine's release: the one the backend's client is built against
+  # (backend/Cargo.toml, the same tag).
+  assessmentEngine:
+    repository: ghcr.io/f8fvwgzc/assessment-engine
+    tag: "0.1.0"
   pullPolicy: IfNotPresent
 
 replicas:
@@ -30,6 +35,8 @@ replicas:
   backend: 1
   runtime: 2
   frontend: 2
+  # Stateless: any number serve the backend's calls.
+  assessmentEngine: 2
 
 # Non-secret settings of every service (ConfigMap nexc-config); CONTRACT §2 lists them.
 # Production by default: Secure cookies, served over TLS (ingress.tlsSecretName), and no
@@ -122,6 +129,21 @@ backend:
   runLeaseSecs: 30
   # Give every workspace the 30 expert agents and the core team's skills once (docs/AGENT-CATALOG.md).
   seedExpertAgents: true
+  # The change-impact engine every change to an issue or a project is assessed by
+  # (assessmentEngine below runs it in the release). url: an engine you run yourself, e.g.
+  # https://assessment.example.com (TLS like every gRPC channel); empty: the release's own, or
+  # none when assessmentEngine.enabled is false (nothing is versioned or assessed). timeoutMs: the
+  # longest one call may take; the changed item's row is locked meanwhile, and past it the change
+  # saves unassessed. The token goes in the Secret as NEXC_ASSESSMENT_TOKEN.
+  assessment:
+    url: ""
+    timeoutMs: 2000
+  # A change the engine says needs a re-plan has the planner draft one in the issue's graph, as
+  # whoever made the change, once no further change to the same item came for debounceSecs; it
+  # waits there for a person to apply it.
+  replans:
+    enabled: true
+    debounceSecs: 30
   terminationGracePeriodSeconds: 60
   # The backend's data volume (NEXC_DATA_DIR: run artifacts, uploaded documents), mounted by every
   # backend replica. ReadWriteOnce attaches it to one node, so it carries one replica (the
@@ -223,6 +245,17 @@ ontoIntelli:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: "2", memory: 2Gi }
 
+# The change-impact engine (https://github.com/f8fvwgzc/assessment-engine), called statelessly over
+# gRPC: the versions and pins stay in PostgreSQL, so it stores nothing. Internal only (the
+# NetworkPolicy admits the backend alone and lets it reach nothing). It requires the Secret's
+# NEXC_ASSESSMENT_TOKEN when that is set. An engine that is down fails no edit.
+assessmentEngine:
+  enabled: true
+  port: 50061
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: "1", memory: 256Mi }
+
 postgres:
   # false: bring your own (a managed database or an operator) and put its URL in the Secret as
   # NEXC_DATABASE_URL.
@@ -297,6 +330,9 @@ secrets:
     # Signs run seals, firewall decisions and evidence bundles (the older name
     # NEXC_FIREWALL_SIGNING_KEY is still read); empty derives it from NEXC_MASTER_KEY.
     NEXC_SIGNING_KEY: ""
+    # What the change-impact engine requires of the backend (its ASSESSMENT_AUTH_TOKEN); empty:
+    # none is required or sent.
+    NEXC_ASSESSMENT_TOKEN: ""
     NEXC_ONTO_TOKEN: ""
     ONTO_SESSION_SECRET: ""
     # onto-intelli's own login on the chart's PostgreSQL (role `onto`, owning its database only).

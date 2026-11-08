@@ -416,6 +416,42 @@ pub const ENV_VARS: &[EnvVar] = &[
         "agent command for texc-symphony (default: Symphony's own, Codex)",
     ),
     var(
+        "NEXC_ASSESSMENT_ENABLED",
+        "true",
+        false,
+        "assess and version every change to an issue or a project with the change-impact engine",
+    ),
+    var(
+        "NEXC_ASSESSMENT_URL",
+        "http://localhost:50061",
+        false,
+        "the change-impact engine's gRPC endpoint (assessment-engine serve)",
+    ),
+    var(
+        "NEXC_ASSESSMENT_TOKEN",
+        "",
+        true,
+        "bearer token the change-impact engine requires (its ASSESSMENT_AUTH_TOKEN)",
+    ),
+    var(
+        "NEXC_ASSESSMENT_TIMEOUT_MS",
+        "2000",
+        false,
+        "longest one assessment may take (50-30000); past it the change saves unassessed",
+    ),
+    var(
+        "NEXC_REPLAN_PROPOSALS",
+        "true",
+        false,
+        "a change the engine says needs a re-plan has the planner draft one, never applied without a person",
+    ),
+    var(
+        "NEXC_REPLAN_DEBOUNCE_SECS",
+        "30",
+        false,
+        "how long a re-plan waits for more changes to the same item before the planner starts (0-3600)",
+    ),
+    var(
         "NEXC_ONTO_MODE",
         "",
         false,

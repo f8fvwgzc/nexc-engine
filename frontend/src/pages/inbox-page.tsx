@@ -44,7 +44,10 @@ import { SEVERITY_META } from '@/schemas/policy';
 import type { Workspace } from '@/schemas/workspace';
 
 /** What the actor did to the issue. */
-const VERB: Record<'assigned' | 'comment' | 'state' | 'due' | 'run' | 'mention', string> = {
+const VERB: Record<
+  'assigned' | 'comment' | 'state' | 'due' | 'run' | 'mention' | 'impact',
+  string
+> = {
   assigned: 'assigned you',
   comment: 'commented on',
   mention: 'mentioned you in',
@@ -53,12 +56,21 @@ const VERB: Record<'assigned' | 'comment' | 'state' | 'due' | 'run' | 'mention',
   due: 'is due:',
   // Agents did this one: a run of the issue's graph finished and its result is on the issue.
   run: 'finished work on',
+  // The change-impact engine asks for a review or a re-plan of this issue after the actor's change.
+  impact: 'changed work that affects',
 };
 
+/** The re-plan of the entry's own issue its change proposed, if any. */
+function replanOf(n: Notification) {
+  return n.kind === 'impact' && n.replan && n.replan.root_id === n.issue?.id ? n.replan : null;
+}
+
 /** What an issue entry says the actor did, up to the issue; a reaction names its emoji. */
-function verbOf(kind: keyof typeof VERB | 'reaction', emoji: string | null): string {
-  if (kind !== 'reaction') return VERB[kind];
-  return emoji ? `reacted ${emoji} to your comment on` : 'reacted to your comment on';
+function verbOf(n: Notification): string {
+  if (n.kind === 'approval' || n.kind === 'alert') return '';
+  if (replanOf(n)) return 'made a change that calls for a re-plan of';
+  if (n.kind !== 'reaction') return VERB[n.kind];
+  return n.emoji ? `reacted ${n.emoji} to your comment on` : 'reacted to your comment on';
 }
 
 /** Who an issue entry names: nobody for a reminder, the agents for a run, else the actor. */
@@ -93,7 +105,7 @@ function IssueEntry({ n, onOpen }: { n: Notification; onOpen: (n: Notification) 
         className={`min-w-0 flex-1 truncate ${read ? 'text-muted-foreground' : ''}`}
         title={`${n.issue.identifier} ${n.issue.title}`}
       >
-        <span className="font-medium">{entryActor(n)}</span> {verbOf(n.kind, n.emoji)}{' '}
+        <span className="font-medium">{entryActor(n)}</span> {verbOf(n)}{' '}
         <span className="font-mono text-xs">{n.issue.identifier}</span> {n.issue.title}
       </span>
       <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
@@ -276,7 +288,11 @@ function List({ workspace }: { workspace: Workspace }) {
   const unread = inbox.filter((n) => n.read_at === null).length;
   const open = (n: Notification) => {
     if (n.read_at === null) read.mutate([n.id]);
-    if (n.issue) void navigate(issuePath(n.issue.id));
+    // A re-plan of the issue opens it with the drafted plan, to review and apply there.
+    const replan = replanOf(n);
+    if (n.issue && replan?.plan_id)
+      void navigate(`${issuePath(n.issue.id)}?plan=${replan.plan_id}`);
+    else if (n.issue) void navigate(issuePath(n.issue.id));
     else if (n.alert) void navigate('/app/settings/alerts');
   };
   return (

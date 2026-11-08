@@ -11,18 +11,25 @@ use sqlx::PgConnection;
 use uuid::Uuid;
 
 use crate::domain::issue::run_report;
+use crate::engine::impact;
 use crate::repo;
 use crate::repo::runs::RunRow;
 
 /// Reports the finished run `row` to the issues its graph executes; returns
 /// the issues it reported to (none for a graph no issue hands work to).
-pub async fn report(db: &mut PgConnection, row: &RunRow) -> Result<Vec<Uuid>, sqlx::Error> {
+pub async fn report(
+    engine: &impact::Assessor,
+    db: &mut PgConnection,
+    row: &RunRow,
+) -> Result<Vec<Uuid>, sqlx::Error> {
     if !repo::issues::any_of_graph(&mut *db, row.graph_id).await? {
         return Ok(Vec::new());
     }
     let (results, failures) = repo::issues::run_outcomes(&mut *db, row.id).await?;
     let body = run_report(&results, &failures);
-    repo::issues::report_run(
+    // As they were before the report moves them, locked as `report_run` would lock them.
+    let before = repo::impact::issues_of_graph_for_update(&mut *db, row.graph_id).await?;
+    let reported = repo::issues::report_run(
         &mut *db,
         &repo::issues::RunReport {
             run_id: row.id,
@@ -32,5 +39,7 @@ pub async fn report(db: &mut PgConnection, row: &RunRow) -> Result<Vec<Uuid>, sq
             body: &body,
         },
     )
-    .await
+    .await?;
+    impact::issues_reported_to(engine, db, &before).await?;
+    Ok(reported)
 }

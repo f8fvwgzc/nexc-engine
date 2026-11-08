@@ -215,6 +215,10 @@ jobs:
           grep -q 'NEXC_ENV: production' "$RUNNER_TEMP/k8s.yaml"
           grep -q 'NEXC_ALLOW_SIGNUP: "false"' "$RUNNER_TEMP/k8s.yaml"
           grep -q 'secretName: nexc-tls' "$RUNNER_TEMP/k8s.yaml"
+          # The change-impact engine runs beside the backend, pinned, and is what it calls.
+          grep -q 'image: ghcr.io/f8fvwgzc/assessment-engine:0.1.0' "$RUNNER_TEMP/k8s.yaml"
+          grep -q 'NEXC_ASSESSMENT_URL: http://assessment-engine:50061' "$RUNNER_TEMP/k8s.yaml"
+          grep -q 'name: assessment-engine-from-backend' "$RUNNER_TEMP/k8s.yaml"
           kubectl kustomize deploy/minikube > /dev/null
       - name: helm lint and render
         run: |
@@ -241,6 +245,15 @@ jobs:
           grep -q 'NEXC_ALLOW_SIGNUP: "false"' "$RUNNER_TEMP/default.yaml"
           grep -q 'NEXC_CORS_ORIGINS: "https://nexc.local"' "$RUNNER_TEMP/default.yaml"
           grep -q 'secretName: nexc-tls' "$RUNNER_TEMP/default.yaml"
+          # The change-impact engine in the release, called by the backend; off, nothing is assessed.
+          grep -q 'NEXC_ASSESSMENT_URL: "http://assessment-engine:50061"' "$RUNNER_TEMP/default.yaml"
+          grep -q 'image: ghcr.io/f8fvwgzc/assessment-engine:0.1.0' "$RUNNER_TEMP/default.yaml"
+          helm template nexc deploy/helm/nexc-engine -n nexc --set secrets.existingSecret=nexc-secrets \
+            --set assessmentEngine.enabled=false > "$RUNNER_TEMP/no-engine.yaml"
+          grep -q 'NEXC_ASSESSMENT_ENABLED: "false"' "$RUNNER_TEMP/no-engine.yaml"
+          if grep -q 'name: assessment-engine' "$RUNNER_TEMP/no-engine.yaml"; then
+            echo "rendered the change-impact engine with assessmentEngine.enabled=false" >&2; exit 1
+          fi
           if helm template nexc deploy/helm/nexc-engine -n nexc --set secrets.existingSecret=nexc-secrets \
             --set ingress.tlsSecretName= > /dev/null 2>&1; then
             echo "rendered production over plain http" >&2; exit 1

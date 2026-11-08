@@ -37,6 +37,12 @@ aes-gcm = "0.11"
 anyhow = "1.0.104"
 aws-lc-rs = "1"
 argon2 = "0.6"
+# The change-impact engine (src/engine/impact.rs), a sibling service reached over gRPC
+# (https://github.com/f8fvwgzc/assessment-engine): the typed client, and the core types it takes
+# and returns (the mapping in src/domain/impact.rs builds them). Same tag as the image in
+# docker-compose.yml and deploy/.
+assessment-core = { git = "https://github.com/f8fvwgzc/assessment-engine", tag = "v0.1.0" }
+assessment-grpc = { git = "https://github.com/f8fvwgzc/assessment-engine", tag = "v0.1.0", default-features = false, features = ["client"] }
 async-stream = "0.3.6"
 async-trait = "0.1"
 axum = { version = "0.8.9", features = ["ws", "macros"] }
@@ -89,4 +95,6 @@ protox = "0.10"
 tonic-prost-build = "0.14"
 
 [dev-dependencies]
+# The real engine, served in-process by the tests (tests/common/mod.rs): no Docker needed.
+assessment-grpc = { git = "https://github.com/f8fvwgzc/assessment-engine", tag = "v0.1.0", features = ["server", "client"] }
 tokio-tungstenite = "0.30.0"

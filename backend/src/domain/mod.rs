@@ -25,6 +25,7 @@ pub mod error;
 pub mod evidence;
 pub mod graph;
 pub mod guardrails;
+pub mod impact;
 pub mod injection;
 pub mod insight;
 pub mod issue;

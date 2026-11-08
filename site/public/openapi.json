@@ -5695,7 +5695,7 @@
         "tags": [
           "issues"
         ],
-        "summary": "Deletes an issue (a graph created for it stays).",
+        "summary": "Deletes an issue (a graph created for it stays). The deletion is assessed\nfirst: the owners of its sub-issues hear of it (`impact`) when a review or\na re-plan is recommended.",
         "operationId": "delete",
         "parameters": [
           {
@@ -5743,6 +5743,7 @@
           "issues"
         ],
         "summary": "Updates an issue. Moving it to a completed or canceled state stamps\n`completed_at`; moving it back clears it.",
+        "description": "The change is assessed and versioned in the same transaction\n(`GET /issues/{iid}/assessments`): `version` moves MAJOR when what others\nplanned against the issue broke, MINOR for compatible additions, PATCH for\na cosmetic edit; the owners of the items it affects hear of it (`impact`)\nwhen a review or a re-plan is recommended. An issue moved to another parent\nor project is pinned to that one's current version.",
         "operationId": "update",
         "parameters": [
           {
@@ -5795,6 +5796,55 @@
             }
           },
           "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/issues/{iid}/assessments": {
+      "get": {
+        "tags": [
+          "issues"
+        ],
+        "summary": "The assessed changes of an issue and of the items whose changes asked\nsomething of it (a rewritten parent, a deleted blocker), newest first (the\nlast 50): how big each change was, the version it moved to, every item it\naffects with an action each, the plan conflicts it introduced and the\nrecommendation (`no_action`, `notify`, `review`, `partial_replan`,\n`full_replan`). Items the caller cannot see are left out.",
+        "operationId": "issue_assessments",
+        "parameters": [
+          {
+            "name": "iid",
+            "in": "path",
+            "description": "Issue id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ChangeAssessment"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
             "content": {
               "application/json": {
                 "schema": {
@@ -6447,6 +6497,107 @@
             }
           },
           "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/issues/{iid}/version": {
+      "get": {
+        "tags": [
+          "issues"
+        ],
+        "summary": "An issue's version, and the version of what it is part of (its parent\nissue, else its project) that it was planned against next to that one's\nversion now: `incompatible` after a breaking change there, until the issue\nis re-planned and acknowledged.",
+        "operationId": "get_issue_version",
+        "parameters": [
+          {
+            "name": "iid",
+            "in": "path",
+            "description": "Issue id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueVersion"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/issues/{iid}/version/acknowledge": {
+      "post": {
+        "tags": [
+          "issues"
+        ],
+        "summary": "Records that the issue's plan was redone against the current version of\nwhat it is part of: the issue is pinned to it, so its basis is `current`\nagain. Whoever may edit the issue may.",
+        "operationId": "acknowledge_issue_version",
+        "parameters": [
+          {
+            "name": "iid",
+            "in": "path",
+            "description": "Issue id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueVersion"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
             "content": {
               "application/json": {
                 "schema": {
@@ -13479,7 +13630,7 @@
         "tags": [
           "issues"
         ],
-        "summary": "Deletes a project (workspace admins); its issues stay, without a project.",
+        "summary": "Deletes a project (workspace admins); its issues stay, without a project.\nThe deletion is assessed first, as an issue's is.",
         "operationId": "delete_project",
         "parameters": [
           {
@@ -13536,7 +13687,7 @@
         "tags": [
           "issues"
         ],
-        "summary": "Updates a project (members and above).",
+        "summary": "Updates a project (members and above). The change is assessed and\nversioned as an issue's is (`GET /workspaces/{wid}/projects/{pid}/assessments`).",
         "operationId": "update_project",
         "parameters": [
           {
@@ -13599,6 +13750,65 @@
             }
           },
           "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/workspaces/{wid}/projects/{pid}/assessments": {
+      "get": {
+        "tags": [
+          "issues"
+        ],
+        "summary": "The assessed changes of a project and of the items whose changes asked\nsomething of it, newest first (the last 50), as for an issue.",
+        "operationId": "project_assessments",
+        "parameters": [
+          {
+            "name": "wid",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "pid",
+            "in": "path",
+            "description": "Project id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ChangeAssessment"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
             "content": {
               "application/json": {
                 "schema": {
@@ -18253,6 +18463,16 @@
         },
         "additionalProperties": false
       },
+      "AssessmentCause": {
+        "type": "string",
+        "description": "What happened to the item that made the engine assess it.",
+        "enum": [
+          "created",
+          "updated",
+          "deleted",
+          "comment"
+        ]
+      },
       "AssignOwner": {
         "type": "object",
         "description": "`POST /admin/workspaces/{wid}/owners` body.",
@@ -18682,6 +18902,48 @@
           }
         }
       },
+      "Basis": {
+        "type": "object",
+        "description": "The version of its parent an issue was planned against, and the parent's version now.",
+        "required": [
+          "entity_kind",
+          "entity_id",
+          "pinned_version",
+          "current_version",
+          "status"
+        ],
+        "properties": {
+          "current_version": {
+            "type": "string"
+          },
+          "entity_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "entity_kind": {
+            "$ref": "#/components/schemas/ImpactEntityKind"
+          },
+          "pinned_version": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/BasisStatus",
+            "description": "`current`, `compatible`, `review_suggested` or `incompatible` (a breaking change since\nthe pin: re-plan, then acknowledge)."
+          }
+        }
+      },
+      "BasisStatus": {
+        "type": "string",
+        "description": "Whether an item's plan still matches the version of what it was planned against.",
+        "enum": [
+          "not_pinned",
+          "current",
+          "compatible",
+          "review_suggested",
+          "incompatible",
+          "removed"
+        ]
+      },
       "BrokenEntry": {
         "type": "object",
         "description": "The first entry that does not fit a chain.",
@@ -18997,6 +19259,128 @@
           }
         },
         "additionalProperties": false
+      },
+      "ChangeAssessment": {
+        "type": "object",
+        "description": "An assessed change to an issue or a project.",
+        "required": [
+          "id",
+          "entity_kind",
+          "entity_id",
+          "actor",
+          "cause",
+          "bump",
+          "previous_version",
+          "next_version",
+          "score",
+          "level",
+          "recommendation",
+          "confidence",
+          "replan_root",
+          "summary",
+          "impacts",
+          "violations",
+          "replan",
+          "created_at"
+        ],
+        "properties": {
+          "actor": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IssuePerson",
+                "description": "Who made the change; `null` for one nobody made and once the account is gone."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "bump": {
+            "$ref": "#/components/schemas/VersionBump"
+          },
+          "cause": {
+            "$ref": "#/components/schemas/AssessmentCause"
+          },
+          "confidence": {
+            "type": "number",
+            "format": "double",
+            "description": "How much the engine trusts its answer, `[0, 1]`."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "entity_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "entity_kind": {
+            "$ref": "#/components/schemas/ImpactEntityKind"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "impacts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Impact"
+            },
+            "description": "The affected items the reader can see, most affected first."
+          },
+          "level": {
+            "$ref": "#/components/schemas/ImpactLevel"
+          },
+          "next_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The item's version after the change; the previous one for a comment, none for a deletion."
+          },
+          "previous_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recommendation": {
+            "$ref": "#/components/schemas/Recommendation"
+          },
+          "replan": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReplanProposal",
+                "description": "The re-plan of `replan_root` this assessment asked for, as nexc's planner drafts it;\n`null` when it asked for none (or for one of an item the reader cannot see)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "replan_root": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The smallest subtree to re-plan (an issue or a project); set for a re-plan."
+          },
+          "score": {
+            "type": "number",
+            "format": "double",
+            "description": "The re-plan score, `[0, 1]`."
+          },
+          "summary": {
+            "type": "string"
+          },
+          "violations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanViolation"
+            }
+          }
+        }
       },
       "ChangePassword": {
         "type": "object",
@@ -21390,6 +21774,109 @@
           }
         }
       },
+      "Impact": {
+        "type": "object",
+        "description": "One item a change affects (the changed item included, as `changed`).",
+        "required": [
+          "entity_kind",
+          "entity_id",
+          "rank",
+          "score",
+          "level",
+          "action",
+          "channel",
+          "distance",
+          "changed",
+          "basis_status",
+          "reasons"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/ImpactAction"
+          },
+          "basis_status": {
+            "$ref": "#/components/schemas/BasisStatus"
+          },
+          "changed": {
+            "type": "boolean"
+          },
+          "channel": {
+            "type": "string",
+            "description": "How the impact reached it: `self`, `down` (from its parent), `up` (from a sub-issue),\n`sibling`, `dependency`, `upstream` or `related`."
+          },
+          "distance": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Hops from the changed item (0 = the changed item).",
+            "minimum": 0
+          },
+          "entity_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "entity_kind": {
+            "$ref": "#/components/schemas/ImpactEntityKind"
+          },
+          "level": {
+            "$ref": "#/components/schemas/ImpactLevel"
+          },
+          "rank": {
+            "type": "integer",
+            "format": "int32",
+            "description": "1 = most affected.",
+            "minimum": 0
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Why, in words."
+          },
+          "score": {
+            "type": "number",
+            "format": "double",
+            "description": "`[0, 1]`."
+          }
+        }
+      },
+      "ImpactAction": {
+        "type": "string",
+        "description": "What to do about one affected item.",
+        "enum": [
+          "none",
+          "notify",
+          "review",
+          "update_scope",
+          "re_estimate",
+          "reschedule",
+          "reverify",
+          "obsolete_candidate",
+          "cancel_or_rehome",
+          "reprioritize",
+          "replan",
+          "resolve_conflict"
+        ]
+      },
+      "ImpactEntityKind": {
+        "type": "string",
+        "description": "What was assessed.",
+        "enum": [
+          "issue",
+          "project"
+        ]
+      },
+      "ImpactLevel": {
+        "type": "string",
+        "description": "How much attention a change needs, by score band.",
+        "enum": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "critical"
+        ]
+      },
       "Infrastructure": {
         "type": "object",
         "description": "What the server runs on.",
@@ -21584,7 +22071,8 @@
           "created_at",
           "updated_at",
           "completed_at",
-          "run_status"
+          "run_status",
+          "version"
         ],
         "properties": {
           "agent_id": {
@@ -21729,6 +22217,10 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "version": {
+            "type": "string",
+            "description": "The issue's semantic version (`1.0.0` when filed): every change moves it MAJOR when what\nothers planned against the issue broke, MINOR for compatible additions, PATCH for a\ncosmetic edit (`GET /issues/{iid}/assessments`)."
           },
           "workspace_id": {
             "type": "string",
@@ -21948,7 +22440,8 @@
           "created_at",
           "updated_at",
           "completed_at",
-          "run_status"
+          "run_status",
+          "version"
         ],
         "properties": {
           "agent_id": {
@@ -22091,6 +22584,10 @@
             "type": "string",
             "format": "date-time"
           },
+          "version": {
+            "type": "string",
+            "description": "The issue's semantic version (`1.0.0` when filed): every change moves it MAJOR when what\nothers planned against the issue broke, MINOR for compatible additions, PATCH for a\ncosmetic edit (`GET /issues/{iid}/assessments`)."
+          },
           "workspace_id": {
             "type": "string",
             "format": "uuid"
@@ -22107,6 +22604,35 @@
           }
         },
         "additionalProperties": false
+      },
+      "IssueVersion": {
+        "type": "object",
+        "description": "An issue's version and where its plan stands against what it is part of.",
+        "required": [
+          "issue_id",
+          "version",
+          "basis"
+        ],
+        "properties": {
+          "basis": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Basis",
+                "description": "What the issue was planned against: its parent issue, or its project when it has none;\n`null` for an issue that is part of nothing, or whose pin is on something it left."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "issue_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
       },
       "IssuedAgentApiToken": {
         "type": "object",
@@ -23472,6 +23998,8 @@
           "alert",
           "actor",
           "emoji",
+          "assessment_id",
+          "replan",
           "created_at",
           "read_at"
         ],
@@ -23509,6 +24037,14 @@
               }
             ]
           },
+          "assessment_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The change assessment an `impact` entry is about (`GET /issues/{iid}/assessments`);\n`null` for the other kinds and for entries from before assessments were linked."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -23544,6 +24080,17 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "replan": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReplanProposal",
+                "description": "The re-plan that assessment proposed, to open, review and apply on its graph (`impact`,\nwhen the reader can see what is re-planned); `null` otherwise."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -23679,7 +24226,8 @@
           "alert",
           "run",
           "mention",
-          "reaction"
+          "reaction",
+          "impact"
         ]
       },
       "OntoMode": {
@@ -24184,6 +24732,42 @@
           "failed",
           "applied"
         ]
+      },
+      "PlanViolation": {
+        "type": "object",
+        "description": "A plan conflict among the affected items (a sub-issue due after its parent,\nactive work under a canceled parent, …).",
+        "required": [
+          "kind",
+          "entities",
+          "severity",
+          "introduced",
+          "message"
+        ],
+        "properties": {
+          "entities": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "introduced": {
+            "type": "boolean",
+            "description": "Whether this change introduced it."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`orphaned_work`, `schedule_conflict`, `premature_close`, `overdue`, …."
+          },
+          "message": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "number",
+            "format": "double",
+            "description": "`[0, 1]`."
+          }
+        }
       },
       "PlannerStatus": {
         "type": "object",
@@ -24724,7 +25308,8 @@
           "target_date",
           "issue_count",
           "closed_count",
-          "created_at"
+          "created_at",
+          "version"
         ],
         "properties": {
           "closed_count": {
@@ -24786,6 +25371,10 @@
             ],
             "format": "uuid",
             "description": "The team that owns the project; `null` for a project of the whole workspace."
+          },
+          "version": {
+            "type": "string",
+            "description": "The project's semantic version, moved by every change as an issue's is."
           },
           "workspace_id": {
             "type": "string",
@@ -24935,6 +25524,17 @@
         },
         "additionalProperties": false
       },
+      "Recommendation": {
+        "type": "string",
+        "description": "What to do about a change as a whole, from least to most.",
+        "enum": [
+          "no_action",
+          "notify",
+          "review",
+          "partial_replan",
+          "full_replan"
+        ]
+      },
       "Recording": {
         "type": "object",
         "description": "What is kept of what agents say and hear, off by default: the prompt and\nthe completion of every model turn, the input and output of every tool\ncall, each for `retention_days`, with the passages and memories of the\nlabels in `redact_labels` replaced by their citation before anything is\nwritten (`domain::recording`).",
@@ -25051,6 +25651,92 @@
             "type": "string"
           }
         }
+      },
+      "ReplanProposal": {
+        "type": "object",
+        "description": "A re-plan the engine called for, drafted by the planner and never applied\non its own: once `plan_status` is `ready`, review the plan on its graph and\napply it there (`POST /graphs/{graph_id}/plans/{plan_id}/apply`).",
+        "required": [
+          "id",
+          "status",
+          "root_kind",
+          "root_id",
+          "graph_id",
+          "plan_id",
+          "plan_status",
+          "error",
+          "starts_at",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why no plan was drafted (`skipped`), or why the plan failed."
+          },
+          "graph_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The graph the plan is drafted in, once started: the issue's own (given one if it had none)."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "plan_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "plan_status": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PlanStatus",
+                "description": "The drafted plan's own state: `streaming`, `ready` (to review and apply), `failed` or\n`applied`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "root_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "root_kind": {
+            "$ref": "#/components/schemas/ImpactEntityKind",
+            "description": "What is re-planned: an issue (its graph) or a project."
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The earliest the planner starts; further changes to the same item push it back."
+          },
+          "status": {
+            "$ref": "#/components/schemas/ReplanStatus"
+          }
+        }
+      },
+      "ReplanStatus": {
+        "type": "string",
+        "description": "Where a re-plan proposal stands.",
+        "enum": [
+          "pending",
+          "starting",
+          "started",
+          "superseded",
+          "skipped"
+        ]
       },
       "ResetPassword": {
         "type": "object",
@@ -28659,6 +29345,17 @@
             "$ref": "#/components/schemas/Role"
           }
         }
+      },
+      "VersionBump": {
+        "type": "string",
+        "description": "How much a version moved.",
+        "enum": [
+          "none",
+          "patch",
+          "minor",
+          "major",
+          "initial"
+        ]
       },
       "Workspace": {
         "type": "object",

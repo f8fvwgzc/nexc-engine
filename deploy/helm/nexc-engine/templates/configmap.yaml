@@ -54,6 +54,16 @@ data:
   {{- if .Values.backend.otlpEndpoint }}
   NEXC_OTLP_ENDPOINT: {{ .Values.backend.otlpEndpoint | quote }}
   {{- end }}
+  {{- $assessmentUrl := include "nexc.assessmentUrl" . }}
+  {{- if $assessmentUrl }}
+  NEXC_ASSESSMENT_ENABLED: "true"
+  NEXC_ASSESSMENT_URL: {{ $assessmentUrl | quote }}
+  NEXC_ASSESSMENT_TIMEOUT_MS: {{ dig "assessment" "timeoutMs" 2000 .Values.backend | quote }}
+  {{- else }}
+  NEXC_ASSESSMENT_ENABLED: "false"
+  {{- end }}
+  NEXC_REPLAN_PROPOSALS: {{ dig "replans" "enabled" true .Values.backend | quote }}
+  NEXC_REPLAN_DEBOUNCE_SECS: {{ dig "replans" "debounceSecs" 30 .Values.backend | quote }}
   {{- $ontoUrl := include "nexc.ontoUrl" . }}
   {{- if $ontoUrl }}
   NEXC_ONTO_MODE: service

@@ -16,6 +16,7 @@ pub fn render() -> String {
             "NEXC_JWT_SECRET"
             | "NEXC_RUNTIME_TOKEN"
             | "NEXC_ONTO_TOKEN"
+            | "NEXC_ASSESSMENT_TOKEN"
             | "ONTO_SESSION_SECRET" => random_token(),
             // A signing key of its own: seals and decisions do not hang on the master key.
             "NEXC_MASTER_KEY" | "NEXC_SIGNING_KEY" => {

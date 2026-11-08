@@ -200,6 +200,12 @@ pub struct Metrics {
     /// The LLM circuit breaker's events, by provider and event
     /// (`opened`, `half_open`, `closed`, `refused`).
     pub llm_breaker: LabeledCounter,
+    /// Calls to the change-impact engine, by outcome (`assessed`, `refused`, `unavailable`,
+    /// `timeout`, `resting`: not called while it rests after being unreachable).
+    pub assessments: LabeledCounter,
+    /// Re-plan proposals, by event (`proposed`, `extended`, `superseded`, `started`, `postponed`,
+    /// `skipped`).
+    pub replan_proposals: LabeledCounter,
     /// The last five minutes per endpoint, for `GET /admin/latency`.
     pub latency_window: Window,
 }
@@ -233,6 +239,8 @@ impl Default for Metrics {
             cache_lookups: LabeledCounter::default(),
             grpc_client_latency: LabeledHistogram::default(),
             llm_breaker: LabeledCounter::default(),
+            assessments: LabeledCounter::default(),
+            replan_proposals: LabeledCounter::default(),
             latency_window: Window::default(),
         }
     }
@@ -471,6 +479,21 @@ impl Metrics {
             "LLM circuit breaker events, by provider and event (opened, half_open, closed, refused).",
         );
         self.llm_breaker.render(&mut out, "nexc_llm_breaker_total");
+        header(
+            &mut out,
+            "nexc_assessments_total",
+            "counter",
+            "Calls to the change-impact engine, by outcome (assessed, refused, unavailable, timeout, resting).",
+        );
+        self.assessments.render(&mut out, "nexc_assessments_total");
+        header(
+            &mut out,
+            "nexc_replan_proposals_total",
+            "counter",
+            "Re-plan proposals, by event (proposed, extended, superseded, started, postponed, skipped).",
+        );
+        self.replan_proposals
+            .render(&mut out, "nexc_replan_proposals_total");
         out
     }
 }

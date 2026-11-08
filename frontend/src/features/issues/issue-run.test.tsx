@@ -29,6 +29,35 @@ vi.mock('@/lib/realtime/sse', () => ({
   },
 }));
 
+vi.mock('@/features/graph/api', () => ({
+  applyPlan: vi.fn(),
+  requestPlan: vi.fn(),
+  startRun: vi.fn(),
+  fetchPlan: (graphId: string, planId: string) =>
+    Promise.resolve({
+      id: planId,
+      graph_id: graphId,
+      status: 'ready',
+      summary: 'Re-plan for company sign-in.',
+      ontology: { node_types: [], relation_types: [] },
+      nodes: [
+        {
+          ref: 'oidc',
+          existing_id: null,
+          title: 'Wire up OIDC sign-in',
+          content: '',
+          kind: 'task',
+          agent_role: 'engineer',
+          executor: 'llm',
+          tags: [],
+        },
+      ],
+      edges: [],
+      error: null,
+      created_at: '2026-10-20T09:00:00Z',
+    }),
+}));
+
 vi.mock('@/features/graphs/api', () => ({
   graphQuery: (graphId: string) => ({
     queryKey: ['graphs', 'detail', graphId],
@@ -227,12 +256,12 @@ describe('IssueRun', () => {
   } as Issue;
   const fromRuns = ['artifacts', 'runs', issue.id];
 
-  function renderRun() {
+  function renderRun(path = '/app/issues/x') {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const invalidated = vi.spyOn(client, 'invalidateQueries');
     render(
       <QueryClientProvider client={client}>
-        <MemoryRouter>
+        <MemoryRouter initialEntries={[path]}>
           <IssueRun issue={issue} />
         </MemoryRouter>
       </QueryClientProvider>,
@@ -257,5 +286,12 @@ describe('IssueRun', () => {
     act(() => stream.onEvent?.({ type: 'run.finished', id: null, data: { run } }));
 
     expect(invalidated).toHaveBeenCalledWith({ queryKey: fromRuns });
+  });
+
+  it('shows a re-plan the inbox opened it with, ready to review and apply', async () => {
+    renderRun('/app/issues/x?plan=0199bbbb-0000-7000-8000-00000000p001');
+
+    expect(await screen.findByText('Wire up OIDC sign-in')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Apply plan and run/ })).toBeEnabled();
   });
 });

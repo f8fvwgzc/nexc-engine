@@ -142,6 +142,33 @@ spec:
       ports:
         - { port: 443, protocol: TCP }
 ---
+# change-impact engine: only from the backend, on its gRPC port.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: assessment-engine-from-backend
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: assessment-engine }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: backend }
+      ports:
+        - { port: 50061, protocol: TCP }
+---
+# change-impact engine, outbound: nothing. It answers the backend and needs no one: no DNS, no
+# internet, no other service (its probes ask it on loopback).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: assessment-engine-no-egress
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: assessment-engine }
+  policyTypes: [Egress]
+---
 # The Agent Firewall API (NEXC_GRPC_ADDR, off by default) is service to service: when you
 # turn it on, add its port here for the namespaces of the agent platforms that call it, e.g.
 #   - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: agents } } }]

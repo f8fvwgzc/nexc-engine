@@ -7,6 +7,10 @@
 # database (its own database `onto`). The dev PostgreSQL needs pgvector for it (NEXC_DB_IMAGE in
 # .env); without, onto-intelli is not started and the backend runs with NEXC_ONTO_MODE=off, rather
 # than onto serve exiting and taking the others down.
+#
+# The change-impact engine runs too, unless NEXC_ASSESSMENT_ENABLED=false: from a checkout next to
+# this repository (../assessment-engine, or ASSESSMENT_DIR) when there is one, else the pinned image
+# with Docker. Without either, the backend runs and changes save unassessed.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -99,12 +103,34 @@ else
   echo "  workspace map is off. With ../onto-intelli checked out, set NEXC_ONTO_MODE=service in .env."
 fi
 
+# The change-impact engine (https://github.com/f8fvwgzc/assessment-engine), the release the
+# backend's client is built against; it requires the backend's NEXC_ASSESSMENT_TOKEN when set.
+ASSESSMENT_DIR="${ASSESSMENT_DIR:-$ROOT/../assessment-engine}"
+ASSESSMENT_IMAGE="ghcr.io/f8fvwgzc/assessment-engine:0.1.0"
+assessment_port="${ASSESSMENT_PORT:-50061}"
+if [[ "${NEXC_ASSESSMENT_ENABLED:-true}" == false ]]; then
+  echo "change-impact engine: off (NEXC_ASSESSMENT_ENABLED=false): changes are not versioned or assessed."
+else
+  export NEXC_ASSESSMENT_URL="${NEXC_ASSESSMENT_URL:-http://127.0.0.1:$assessment_port}"
+  if [[ -d "$ASSESSMENT_DIR" ]]; then
+    start impact 34 env ASSESSMENT_AUTH_TOKEN="${NEXC_ASSESSMENT_TOKEN:-}" \
+      cargo run --release --quiet --manifest-path "$ASSESSMENT_DIR/Cargo.toml" -p assessment-server -- \
+      serve --addr "127.0.0.1:$assessment_port"
+  elif command -v docker >/dev/null 2>&1; then
+    start impact 34 docker run --rm --name nexc-assessment-engine \
+      -p "127.0.0.1:$assessment_port:50061" -e ASSESSMENT_AUTH_TOKEN="${NEXC_ASSESSMENT_TOKEN:-}" \
+      "$ASSESSMENT_IMAGE"
+  else
+    echo "change-impact engine: not started (no $ASSESSMENT_DIR, no docker): changes save unassessed."
+  fi
+fi
+
 # The runtime gets none of the backend's keys and credentials from .env (with the master key it
 # could derive the agent-token signing key): the same list as RUNTIME_ENV in the Makefile.
 start runtime 35 env -u NEXC_MASTER_KEY -u NEXC_AGENT_TOKEN_SIGNING_KEY -u NEXC_FIREWALL_SIGNING_KEY \
   -u NEXC_JWT_SECRET -u NEXC_DATABASE_URL -u POSTGRES_PASSWORD -u NEXC_METRICS_TOKEN \
   -u NEXC_ONTO_TOKEN -u ONTO_SESSION_SECRET -u ONTO_POSTGRES_PASSWORD -u NEXC_ADMIN_PASSWORD \
-  -u ANTHROPIC_API_KEY -u NEXC_EMBED_API_KEY -u NEXC_OIDC_CLIENT_SECRET \
+  -u ANTHROPIC_API_KEY -u NEXC_EMBED_API_KEY -u NEXC_OIDC_CLIENT_SECRET -u NEXC_ASSESSMENT_TOKEN \
   bash -c 'cd agent-runtime && exec uv run nexc-runtime'
 start backend 36 cargo run --manifest-path backend/Cargo.toml -- serve
 start web 32 "$PNPM" --dir frontend dev

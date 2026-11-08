@@ -203,6 +203,10 @@ fn v1_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(cycles::list, cycles::create))
         .routes(routes!(cycles::update, cycles::delete))
         .routes(routes!(issues::events))
+        .routes(routes!(impact::issue_assessments))
+        .routes(routes!(impact::get_issue_version))
+        .routes(routes!(impact::acknowledge_issue_version))
+        .routes(routes!(impact::project_assessments))
         .routes(routes!(issues::inbox))
         .routes(routes!(issues::unread_count))
         .routes(routes!(issues::mark_read))
@@ -470,7 +474,7 @@ mod tests {
     fn spec_enum_values_match_the_wire_format() {
         use crate::domain::{
             account, agent, alert, alert_routing, approval, artifact_file, audit, capabilities,
-            cycle, evidence, graph, issue, knowledge, memory, ontology, plan, platform,
+            cycle, evidence, graph, impact, issue, knowledge, memory, ontology, plan, platform,
             policy_document, recording, run, search, session, settings, trace, usage, user,
             workspace,
         };
@@ -544,10 +548,18 @@ mod tests {
                 "DeliveryEvent" => check::<alert_routing::DeliveryEvent>(values),
                 "ExportFormat" => check::<handlers::exports::ExportFormat>(values),
                 "ArtifactKind" => check::<artifact_file::ArtifactKind>(values),
+                "ImpactEntityKind" => check::<impact::ImpactEntityKind>(values),
+                "AssessmentCause" => check::<impact::AssessmentCause>(values),
+                "VersionBump" => check::<impact::VersionBump>(values),
+                "ImpactLevel" => check::<impact::ImpactLevel>(values),
+                "Recommendation" => check::<impact::Recommendation>(values),
+                "ImpactAction" => check::<impact::ImpactAction>(values),
+                "BasisStatus" => check::<impact::BasisStatus>(values),
+                "ReplanStatus" => check::<impact::ReplanStatus>(values),
                 _ => continue,
             }
             checked += 1;
         }
-        assert_eq!(checked, 51, "every string enum schema is covered");
+        assert_eq!(checked, 59, "every string enum schema is covered");
     }
 }
