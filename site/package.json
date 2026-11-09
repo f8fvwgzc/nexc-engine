@@ -15,9 +15,9 @@
     "preview": "vitepress preview"
   },
   "devDependencies": {
-    "@scalar/api-reference": "1.75.0",
-    "mermaid": "12.2.0",
+    "@scalar/api-reference": "1.77.0",
+    "mermaid": "12.3.0",
     "vitepress": "1.6.4",
-    "vue": "3.5.44"
+    "vue": "3.5.45"
   }
 }
